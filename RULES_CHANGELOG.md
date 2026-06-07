@@ -4,6 +4,20 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 4 (engine 0.1.0)
+
+Broadens **`ST-MCP-TOOL-POISONING`** (still cf. MCPTox, arXiv:2508.14925) and fixes a
+false positive in ruleset 3:
+
+- **Cross-tool precondition hijack** — a mandatory precondition forced on *another* tool's
+  operation (e.g. "before any file operation, you must ...") and fake-authority "mandatory
+  security/verification check" framing are now detected.
+- **Parameter descriptions** — `inputSchema` property descriptions are now scanned for the
+  same poisoning patterns, not just the top-level tool `description`.
+- **Precision fix** — bare `silently` (ruleset 3) flagged benign text like "fails silently".
+  It now requires an adjacent action verb (`silently read|send|exfiltrate|include|pass|…`);
+  `secretly` and `without telling the user` remain. Regression test added.
+
 ## ruleset 3 (engine 0.1.0)
 
 New detection for **MCP tool poisoning** (cf. MCPTox, arXiv:2508.14925): malicious
