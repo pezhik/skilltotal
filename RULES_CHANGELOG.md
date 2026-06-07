@@ -4,6 +4,21 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 3 (engine 0.1.0)
+
+New detection for **MCP tool poisoning** (cf. MCPTox, arXiv:2508.14925): malicious
+instructions embedded in a tool's *description/metadata* that steer the agent when the tool
+is merely listed — no execution required.
+
+- **`ST-MCP-TOOL-POISONING`** (HIGH, capability `prompt_surface_risk`) — fires when an MCP
+  tool description (JSON manifest) or a code-defined tool's docstring/metadata (in a file that
+  exposes an MCP tool surface) contains agent-directed imperatives or fake-authority markers:
+  `<IMPORTANT>`/`[system]` tags, `system note:`/`developer instruction:`, `before using this
+  tool …`, `always call … first`, `ignore the tool's description`, `do not tell the user`,
+  `secretly`/`without telling the user`. These are distinct from the generic
+  `ST-PROMPT-INJECTION` phrases (prompt_surface) and are scoped to MCP surfaces to stay
+  high-signal / low-FP. Benign descriptions (e.g. "Adds two numbers") are not flagged.
+
 ## ruleset 2 (engine 0.1.0)
 
 False-positive calibration against reputable real-world repos (requests, flask, urllib3,

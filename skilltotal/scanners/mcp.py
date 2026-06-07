@@ -14,7 +14,13 @@ import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
-from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, RuleSpec, Scanner, ScanResult
+from skilltotal.scanners.base import (
+    MAX_EVIDENCE_PER_FINDING,
+    RuleSpec,
+    Scanner,
+    ScanResult,
+    alternation,
+)
 
 CATEGORY = "mcp"
 
@@ -53,6 +59,25 @@ DANGEROUS_TOOL_PATTERNS: dict[str, re.Pattern[str]] = {
         re.IGNORECASE,
     ),
 }
+
+# Tool-poisoning signatures (MCPTox-style): agent-directed instructions hidden in a tool's
+# description/metadata, rather than documentation of what the tool does. These are distinct
+# from the generic prompt-injection phrases in prompt_surface.py and are scoped to MCP tool
+# surfaces, so matches are high-signal / low false-positive.
+_POISONING = alternation(
+    # Fake authority / hidden-block markers smuggled into a description.
+    r"<\s*(?:important|system|secret|instructions?)\s*>",
+    r"\[\s*(?:system|important|instructions?)\s*\]",
+    r"(?:system|developer|admin(?:istrator)?)\s+(?:note|message|instruction)\s*:",
+    # Imperatives aimed at the agent about *this* tool.
+    r"before\s+(?:using|calling|invoking|running)\s+(?:this\s+)?tool",
+    r"(?:always|first)\s+(?:call|use|invoke|run)\s+[^\n]{0,40}?\b(?:first|before)\b",
+    r"ignore\s+(?:the\s+)?(?:tool['’]?s?\s+)?(?:actual\s+)?(?:description|purpose|instructions)",
+    # Covert behaviour / exfiltration directed at the agent from within metadata.
+    r"do\s+not\s+(?:tell|inform|mention|reveal|notify)[^\n]{0,30}user",
+    r"(?:secretly|silently|without\s+(?:telling|informing)\s+the\s+user)",
+    flags=re.IGNORECASE,
+)
 
 # Source-level signals that an MCP tool surface exists.
 _CODE_SURFACE = re.compile(
@@ -123,12 +148,33 @@ class McpScanner(Scanner):
             ),
             capability=Capability.MCP_TOOLS_DETECTED,
         ),
+        RuleSpec(
+            id="ST-MCP-TOOL-POISONING",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="MCP tool description contains agent-directed instructions (tool poisoning)",
+            description=(
+                "An MCP tool's description/metadata embeds instructions aimed at the agent "
+                "rather than documenting the tool (e.g. fake 'system note:' authority, "
+                "'before using this tool ...', 'ignore the tool's description', or 'do not "
+                "tell the user'). This is the tool-poisoning surface (cf. MCPTox): the agent "
+                "may follow these hidden directives when the tool is listed, without the "
+                "tool ever being executed."
+            ),
+            recommendation=(
+                "Treat tool descriptions as untrusted input. Remove agent-directed "
+                "imperatives from metadata and review whether the server attempts to steer "
+                "or hide actions from the user."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
         detected: list[Evidence] = []
         dangerous: list[Evidence] = []
         server_exec: list[Evidence] = []
+        poisoning: list[Evidence] = []
         needs_review: list[NeedsReview] = []
         dangerous_categories: set[str] = set()
 
@@ -150,7 +196,7 @@ class McpScanner(Scanner):
 
             self._analyze_json(
                 f, data, is_manifest_name, detected, dangerous, server_exec,
-                dangerous_categories,
+                poisoning, dangerous_categories,
             )
 
         # Source-level tool definitions (Python / JS decorators & SDK calls).
@@ -161,6 +207,10 @@ class McpScanner(Scanner):
 
         # Classify the names of tools defined in code (not just JSON manifests).
         self._classify_code_tools(index, dangerous, dangerous_categories)
+
+        # Tool poisoning hidden in code-defined tool descriptions/docstrings. Scope to files
+        # that actually expose an MCP tool surface to keep this high-signal / low false-positive.
+        self._scan_code_poisoning(index, poisoning)
 
         findings: list[Finding] = []
         if dangerous:
@@ -178,6 +228,8 @@ class McpScanner(Scanner):
             )
         if server_exec:
             findings.append(self._finding("ST-MCP-SERVER-EXEC", server_exec))
+        if poisoning:
+            findings.append(self._finding("ST-MCP-TOOL-POISONING", poisoning))
         if detected:
             findings.append(self._finding("ST-MCP-DETECTED", detected))
 
@@ -186,7 +238,7 @@ class McpScanner(Scanner):
     # -------------------------------------------------------------- internals
     def _analyze_json(
         self, f, data, is_manifest_name, detected, dangerous, server_exec,
-        dangerous_categories,
+        poisoning, dangerous_categories,
     ) -> None:
         if not isinstance(data, dict):
             return
@@ -226,6 +278,12 @@ class McpScanner(Scanner):
                     anchor = _evidence_for(f, '"name"')
                 if anchor:
                     dangerous.append(anchor)
+            pm = _POISONING.search(desc)
+            if pm and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
+                # Anchor to the offending phrase in the raw source; fall back to the field key.
+                anchor = _evidence_for(f, pm.group(0)) or _evidence_for(f, '"description"')
+                if anchor:
+                    poisoning.append(anchor)
 
     def _classify_code_tools(
         self,
@@ -249,6 +307,21 @@ class McpScanner(Scanner):
                     dangerous_categories.update(cats)
                     if len(dangerous) < MAX_EVIDENCE_PER_FINDING:
                         dangerous.append(ev)
+
+    def _scan_code_poisoning(self, index: FileIndex, poisoning: list[Evidence]) -> None:
+        """Flag tool-poisoning phrases in code files that expose an MCP tool surface."""
+        seen: set[tuple[str, int]] = set()
+        for f in index.select(suffixes=CODE_SUFFIXES):
+            if not _CODE_SURFACE.search(f.text):
+                continue
+            for m in _POISONING.finditer(f.text):
+                ev = f.evidence_for_span(m.start(), m.end())
+                key = (ev.file, ev.line_start)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if len(poisoning) < MAX_EVIDENCE_PER_FINDING:
+                    poisoning.append(ev)
 
     def _rule(self, rule_id: str) -> RuleSpec:
         return next(r for r in self.rules if r.id == rule_id)
