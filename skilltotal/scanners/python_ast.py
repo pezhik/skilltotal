@@ -42,7 +42,12 @@ SHELL_CALLS = frozenset(
 # Third-party libraries whose whole purpose is running OS processes; importing one is a
 # shell-execution signal even without a direct subprocess call.
 SHELL_MODULES = frozenset({"sh", "plumbum", "pexpect", "invoke", "fabric"})
-DYNAMIC_CALLS = frozenset({"eval", "exec", "compile", "__import__", "importlib.import_module"})
+# True arbitrary-code execution: a confirmed finding.
+DYNAMIC_CALLS = frozenset({"eval", "exec", "compile"})
+# Dynamic *module import* by name. Extremely common in legitimate code (optional
+# dependencies, plugin loaders) and a much weaker signal than eval/exec, so it is routed to
+# needs_review rather than a high-severity finding.
+DYNAMIC_IMPORT_CALLS = frozenset({"__import__", "importlib.import_module"})
 FS_READ_SUFFIXES = ("read_text", "read_bytes")
 FS_WRITE_SUFFIXES = ("write_text", "write_bytes")
 FS_WRITE_PREFIXES = ("shutil.copy", "shutil.move", "shutil.rmtree", "os.remove", "os.unlink")
@@ -154,7 +159,7 @@ class PythonAstScanner(Scanner):
             title="Python dynamic code execution",
             description=(
                 "Python dynamic execution primitives were detected "
-                "(eval / exec / compile / importlib / __import__)."
+                "(eval / exec / compile)."
             ),
             recommendation=(
                 "Avoid evaluating dynamically constructed code; if unavoidable, ensure "
@@ -166,8 +171,6 @@ class PythonAstScanner(Scanner):
                 r"\beval\s*\(",
                 r"\bexec\s*\(",
                 r"\bcompile\s*\(",
-                r"\bimportlib\.import_module\s*\(",
-                r"\b__import__\s*\(",
             ),
         ),
     ]
@@ -197,6 +200,22 @@ class PythonAstScanner(Scanner):
             visitor.visit(tree)
             for rid, evidence in visitor.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
+            for ev in visitor.dynamic_imports:
+                if len(needs_review) >= MAX_EVIDENCE_PER_FINDING:
+                    break
+                needs_review.append(
+                    NeedsReview(
+                        category="dynamic_code_execution",
+                        title="Dynamic module import",
+                        reason=(
+                            f"Dynamic import by name at line {ev.line_start} "
+                            "(__import__ / importlib.import_module); common for optional "
+                            "dependencies or plugins, but verify the module name is not "
+                            "attacker-controlled."
+                        ),
+                        file=ev.file,
+                    )
+                )
 
         return ScanResult(findings=self._build_findings(acc), needs_review=needs_review)
 
@@ -240,6 +259,7 @@ class _CallVisitor(ast.NodeVisitor):
     def __init__(self, file: IndexedFile):
         self.file = file
         self.hits: dict[str, list[Evidence]] = {}
+        self.dynamic_imports: list[Evidence] = []  # __import__ / importlib.import_module
         self.aliases: dict[str, str] = {}  # local name -> top-level module
         self.from_imports: dict[str, str] = {}  # local name -> module.attr
 
@@ -277,6 +297,8 @@ class _CallVisitor(ast.NodeVisitor):
             self._add(R_SHELL, node)
         elif name in DYNAMIC_CALLS:
             self._add(R_DYN, node)
+        elif name in DYNAMIC_IMPORT_CALLS:
+            self._add_dynamic_import(node)
         elif name == "open":
             self._add(R_FS_WRITE if _open_is_write(node) else R_FS_READ, node)
         elif name.endswith(FS_WRITE_SUFFIXES):
@@ -308,9 +330,17 @@ class _CallVisitor(ast.NodeVisitor):
         bucket = self.hits.setdefault(rule_id, [])
         if len(bucket) >= MAX_EVIDENCE_PER_FINDING:
             return
+        bucket.append(self._evidence(node))
+
+    def _add_dynamic_import(self, node: ast.AST) -> None:
+        if len(self.dynamic_imports) >= MAX_EVIDENCE_PER_FINDING:
+            return
+        self.dynamic_imports.append(self._evidence(node))
+
+    def _evidence(self, node: ast.AST) -> Evidence:
         line_start = getattr(node, "lineno", 1)
         line_end = getattr(node, "end_lineno", line_start) or line_start
-        bucket.append(self.file.evidence_for_lines(line_start, line_end))
+        return self.file.evidence_for_lines(line_start, line_end)
 
 
 def _open_is_write(node: ast.Call) -> bool:

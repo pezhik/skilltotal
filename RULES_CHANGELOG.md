@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 2 (engine 0.1.0)
+
+False-positive calibration against reputable real-world repos (requests, flask, urllib3,
+axios, context7). Precision-only; no rule ids, severities, or categories changed.
+
+- **`ST-SENS-PATH`** — the bare ``.env`` file token is no longer flagged in documentation
+  files (`.md`/`.mdx`/`.rst`/`.txt`/`.adoc`) or ignore files
+  (`.gitignore`/`.dockerignore`/`.npmignore`/`.prettierignore`/`.eslintignore`), where it
+  almost always describes dotenv support or lists `.env` for exclusion. Strong, path-like
+  indicators (`~/.ssh`, `~/.aws`, `.aws/credentials`, `id_rsa`, …) still fire in **all**
+  file types, so prompt-injection instructions to read credentials in an `.md` are still
+  caught. Eliminated FPs in flask/requests/urllib3 (docs) and `.env` ignore-list entries.
+- **`ST-DYN-PY`** — dynamic *module import by name* (`__import__`,
+  `importlib.import_module`) is routed to `needs_review` ("Dynamic module import") instead
+  of a high-severity finding; it is a common, low-signal pattern (optional dependencies,
+  plugin loaders). True arbitrary-code execution (`eval`/`exec`/`compile`) remains a
+  confirmed `ST-DYN-PY` finding. Eliminated the requests FP.
+
 ## ruleset 1 (engine 0.1.0)
 
 Initial ruleset (27 rules across 11 scanners):
