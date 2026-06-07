@@ -7,13 +7,18 @@ itself — never from the user's environment.
 
 from __future__ import annotations
 
+import io
 import json
 import re
 import shutil
 import subprocess  # nosec B404
+import tarfile
 import tempfile
-from dataclasses import dataclass
+import urllib.request
+import zipfile
+from dataclasses import dataclass, replace
 from pathlib import Path
+from urllib.parse import quote
 
 try:  # Python 3.11+
     import tomllib
@@ -23,6 +28,15 @@ except ModuleNotFoundError:  # pragma: no cover
 from skilltotal.models import Component
 
 _GIT_URL_RE = re.compile(r"^(?:https?://|git@|ssh://|git://).+", re.IGNORECASE)
+_NPMJS_URL_RE = re.compile(r"^https?://(?:www\.)?npmjs\.com/package/(@?[\w.-]+(?:/[\w.-]+)?)", re.I)
+_PYPI_URL_RE = re.compile(r"^https?://pypi\.org/project/([\w.-]+)", re.I)
+# Conservative package-name shapes (also block path traversal in specs).
+_NPM_NAME_RE = re.compile(r"^@?[a-z0-9][\w.-]*(?:/[a-z0-9][\w.-]*)?$", re.I)
+_PYPI_NAME_RE = re.compile(r"^[a-z0-9][\w.-]*$", re.I)
+
+_HTTP_TIMEOUT = 60  # seconds for a registry/download request
+_MAX_ARCHIVE_BYTES = 150 * 1024 * 1024  # cap the downloaded archive
+_MAX_EXTRACT_BYTES = 400 * 1024 * 1024  # cap total uncompressed size (decompression-bomb guard)
 
 
 class CollectionError(Exception):
@@ -53,9 +67,53 @@ def is_url(source: str) -> bool:
     return bool(_GIT_URL_RE.match(source.strip()))
 
 
+def classify_source(source: str) -> str:
+    """Classify a source string into 'npm', 'pypi', 'git', or 'local'."""
+    s = source.strip()
+    if s.lower().startswith("npm:") or _NPMJS_URL_RE.match(s):
+        return "npm"
+    if s.lower().startswith("pypi:") or _PYPI_URL_RE.match(s):
+        return "pypi"
+    if is_url(s):
+        return "git"
+    return "local"
+
+
+def npm_package_name(source: str) -> str | None:
+    """Extract the npm package name from an `npm:<name>` spec or an npmjs.com URL."""
+    s = source.strip()
+    if s.lower().startswith("npm:"):
+        name = s[4:].strip()
+    else:
+        m = _NPMJS_URL_RE.match(s)
+        name = m.group(1) if m else ""
+    return name if name and _NPM_NAME_RE.match(name) else None
+
+
+def pypi_package_name(source: str) -> str | None:
+    """Extract the PyPI project name from a `pypi:<name>` spec or a pypi.org URL."""
+    s = source.strip()
+    if s.lower().startswith("pypi:"):
+        name = s[5:].strip()
+    else:
+        m = _PYPI_URL_RE.match(s)
+        name = m.group(1) if m else ""
+    return name if name and _PYPI_NAME_RE.match(name) else None
+
+
 def collect(source: str) -> SourceContext:
-    """Resolve ``source`` (local path or git URL) into a :class:`SourceContext`."""
-    if is_url(source):
+    """Resolve ``source`` into a :class:`SourceContext`.
+
+    Supports a local directory, a git URL (shallow clone), and npm / PyPI packages
+    (`npm:<name>` / `pypi:<name>` specs or npmjs.com / pypi.org URLs — the latest published
+    release is downloaded from the registry and extracted).
+    """
+    kind = classify_source(source)
+    if kind == "npm":
+        return _collect_npm(source)
+    if kind == "pypi":
+        return _collect_pypi(source)
+    if kind == "git":
         return _collect_remote(source)
     return _collect_local(source)
 
@@ -98,6 +156,112 @@ def _collect_remote(url: str) -> SourceContext:
         ) from exc
     component = detect_component(dest, source=url)
     return SourceContext(root=dest, component=component, _tempdir=tmp)
+
+
+# --------------------------------------------------------------- package registries
+
+def _open(url: str):
+    """Open an https URL (scheme enforced) with a timeout."""
+    if not url.lower().startswith("https://"):
+        raise CollectionError(f"refusing to fetch non-https URL: {url}")
+    return urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT)  # nosec B310 - https enforced above
+
+
+def _http_get(url: str) -> bytes:
+    """Fetch a URL, capping the response size (guards against oversized payloads)."""
+    try:
+        with _open(url) as resp:
+            data = resp.read(_MAX_ARCHIVE_BYTES + 1)
+    except (OSError, ValueError) as exc:  # URLError/HTTPError are OSError subclasses
+        raise CollectionError(f"failed to fetch {url}: {exc}") from exc
+    if len(data) > _MAX_ARCHIVE_BYTES:
+        raise CollectionError(f"response from {url} exceeds the size limit")
+    return data
+
+
+def _single_root(extract_dir: Path) -> Path:
+    """If the archive extracted to a single top-level directory, return it; else the dir."""
+    entries = list(extract_dir.iterdir())
+    if len(entries) == 1 and entries[0].is_dir():
+        return entries[0]
+    return extract_dir
+
+
+def _safe_extract_tar(data: bytes, dest: Path) -> None:
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
+        safe, total = [], 0
+        for m in tf.getmembers():
+            if m.issym() or m.islnk():
+                continue  # never extract links (path-escape risk)
+            target = (dest / m.name).resolve()
+            if not str(target).startswith(str(dest.resolve())):
+                raise CollectionError("archive contains an unsafe path")
+            if m.isfile():
+                total += m.size
+                if total > _MAX_EXTRACT_BYTES:
+                    raise CollectionError("archive too large when extracted")
+            safe.append(m)
+        tf.extractall(dest, members=safe)  # nosec B202 - members validated above
+
+
+def _safe_extract_zip(data: bytes, dest: Path) -> None:
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        total = 0
+        for info in zf.infolist():
+            target = (dest / info.filename).resolve()
+            if not str(target).startswith(str(dest.resolve())):
+                raise CollectionError("archive contains an unsafe path")
+            total += info.file_size
+            if total > _MAX_EXTRACT_BYTES:
+                raise CollectionError("archive too large when extracted")
+        zf.extractall(dest)  # nosec B202 - paths validated above
+
+
+def _collect_archive(source: str, ctype: str, version: str, archive_url: str, filename: str) -> SourceContext:
+    data = _http_get(archive_url)
+    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    try:
+        extract_dir = Path(tmp.name) / "x"
+        extract_dir.mkdir()
+        if filename.lower().endswith(".whl") or filename.lower().endswith(".zip"):
+            _safe_extract_zip(data, extract_dir)
+        else:  # .tgz / .tar.gz / .tar.*
+            _safe_extract_tar(data, extract_dir)
+        root = _single_root(extract_dir)
+        component = detect_component(root, source=source)
+        component = replace(component, type=ctype, version=component.version or version)
+        return SourceContext(root=root, component=component, _tempdir=tmp)
+    except Exception:
+        tmp.cleanup()
+        raise
+
+
+def _collect_npm(source: str) -> SourceContext:
+    name = npm_package_name(source)
+    if not name:
+        raise CollectionError(f"invalid npm package name in: {source}")
+    meta = json.loads(_http_get(f"https://registry.npmjs.org/{quote(name, safe='@')}"))
+    latest = (meta.get("dist-tags") or {}).get("latest")
+    versions = meta.get("versions") or {}
+    dist = (versions.get(latest) or {}).get("dist") if latest else None
+    tarball = (dist or {}).get("tarball")
+    if not (latest and tarball):
+        raise CollectionError(f"npm package '{name}' has no resolvable latest release")
+    return _collect_archive(source, "npm_package", str(latest), tarball, tarball)
+
+
+def _collect_pypi(source: str) -> SourceContext:
+    name = pypi_package_name(source)
+    if not name:
+        raise CollectionError(f"invalid PyPI package name in: {source}")
+    meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/json"))
+    version = str((meta.get("info") or {}).get("version") or "")
+    urls = meta.get("urls") or []
+    chosen = next((u for u in urls if u.get("packagetype") == "sdist"), None)
+    chosen = chosen or next((u for u in urls if u.get("packagetype") == "bdist_wheel"), None)
+    if not (version and chosen and chosen.get("url")):
+        raise CollectionError(f"PyPI project '{name}' has no downloadable distribution")
+    return _collect_archive(source, "python_package", version, chosen["url"], chosen.get("filename", ""))
 
 
 def detect_component(root: Path, source: str) -> Component:
