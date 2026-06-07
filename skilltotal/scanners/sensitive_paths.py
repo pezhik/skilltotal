@@ -6,6 +6,14 @@ too ambiguous (often variable or field names) so they are routed to ``needs_revi
 
 Note the ``.env`` pattern uses a negative lookbehind so it matches the file ``'.env'`` but
 **not** ``process.env`` (reading environment variables is not file access).
+
+False-positive calibration: the *bare* ``.env`` token is extremely common in legitimate
+documentation (``.rst``/``.md``/``.mdx`` describing dotenv support) and in ignore files
+(``.gitignore``/``.dockerignore`` listing ``.env`` precisely so it is **not** committed —
+the opposite of accessing it). Those file types are excluded from the ``.env`` signal only;
+the strong path-like indicators (``~/.aws``, ``~/.ssh``, ``id_rsa`` …) still fire
+everywhere, including documentation, so prompt-injection style instructions to read a
+credential file in an ``.md`` are still caught.
 """
 
 from __future__ import annotations
@@ -13,19 +21,20 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, NeedsReview, Severity
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
     Scanner,
     ScanResult,
     alternation,
-    findings_from_rules,
 )
 
 CATEGORY = "sensitive_path"
 
-_STRONG = alternation(
+# Strong, path-like credential locations. These are unambiguous enough to flag in any
+# file type, including documentation.
+_STRONG_PATHS = alternation(
     r"~/\.ssh",
     r"\.ssh/",
     r"~/\.aws",
@@ -33,9 +42,31 @@ _STRONG = alternation(
     r"~/\.kube",
     r"~/\.config/gcloud",
     r"\bid_rsa\b",
-    r"(?<![\w.])\.env\b",  # the file ".env", not process.env
     flags=re.IGNORECASE,
 )
+
+# The bare ".env" file token (negative lookbehind so "process.env" is not matched). Common
+# in benign docs/ignore files, so it is suppressed there (see _IGNORED_FOR_ENV).
+_ENV_FILE = re.compile(r"(?<![\w.])\.env\b", re.IGNORECASE)
+
+# File types where a bare ".env" mention is almost always benign (prose documentation or an
+# ignore list), so the ".env" signal is not raised for them.
+_DOC_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt", ".adoc"})
+_IGNORE_FILENAMES = frozenset(
+    {".gitignore", ".dockerignore", ".npmignore", ".prettierignore", ".eslintignore"}
+)
+
+
+def _suppresses_env(relpath: str) -> bool:
+    """True if a bare ``.env`` mention in this file is too benign to flag."""
+    lower = relpath.lower()
+    name = lower.rsplit("/", 1)[-1]
+    if name in _IGNORE_FILENAMES:
+        return True
+    dot = name.rfind(".")
+    suffix = name[dot:] if dot > 0 else ""
+    return suffix in _DOC_SUFFIXES
+
 
 _WEAK = re.compile(r"\b(?:credentials|secrets)\b", re.IGNORECASE)
 
@@ -57,7 +88,7 @@ class SensitivePathScanner(Scanner):
                 "is a common precursor to secret exfiltration."
             ),
             capability=Capability.FILESYSTEM_READ,
-            pattern=_STRONG,
+            pattern=_STRONG_PATHS,
         ),
         # Listed for `rules list`; bare secret words are routed to needs_review.
         RuleSpec(
@@ -73,7 +104,45 @@ class SensitivePathScanner(Scanner):
 
     def scan(self, index: FileIndex) -> ScanResult:
         strong_rule = self.rules[0]
-        findings = findings_from_rules(index, [strong_rule])
+
+        # Collect evidence from the strong path indicators (any file) plus the bare ".env"
+        # token (excluding benign doc/ignore files), de-duplicated by location.
+        seen_ev: set[tuple[str, int, int]] = set()
+        evidence: list[Evidence] = []
+        for _f, _m, ev in index.search(_STRONG_PATHS):
+            key = (ev.file, ev.line_start, ev.line_end)
+            if key not in seen_ev:
+                seen_ev.add(key)
+                evidence.append(ev)
+        for _f, _m, ev in index.search(_ENV_FILE):
+            if _suppresses_env(ev.file):
+                continue
+            key = (ev.file, ev.line_start, ev.line_end)
+            if key not in seen_ev:
+                seen_ev.add(key)
+                evidence.append(ev)
+            if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+                break
+
+        evidence = evidence[:MAX_EVIDENCE_PER_FINDING]
+        findings: list[Finding] = []
+        if evidence:
+            description = strong_rule.description
+            if len(evidence) > 1:
+                description = (
+                    f"{description} ({len(evidence)} occurrence(s) shown as evidence)."
+                )
+            findings.append(
+                Finding(
+                    id=strong_rule.id,
+                    severity=strong_rule.severity,
+                    category=strong_rule.category,
+                    title=strong_rule.title,
+                    description=description,
+                    evidence=evidence,
+                    recommendation=strong_rule.recommendation,
+                )
+            )
 
         # Lines already covered by a strong path match should not also be flagged weak.
         strong_lines: set[tuple[str, int]] = set()
