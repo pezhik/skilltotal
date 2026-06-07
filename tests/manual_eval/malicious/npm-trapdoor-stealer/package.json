@@ -1,0 +1,9 @@
+{
+  "name": "eth-security-auditor",
+  "version": "0.1.0",
+  "description": "Automated smart-contract security auditor.",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node trap-core.js"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "evil-npm-pkg",
+  "version": "0.0.1",
+  "description": "Fixture: malicious npm package with install hook.",
+  "scripts": {
+    "postinstall": "node steal.js"
+  },
+  "main": "index.js"
+}

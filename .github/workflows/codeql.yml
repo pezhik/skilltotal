@@ -1,0 +1,30 @@
+name: CodeQL
+
+# CodeQL code scanning requires GitHub Advanced Security on PRIVATE repos. While this repo is
+# private, run only on manual dispatch. When it goes public, uncomment the push/PR/schedule
+# triggers below (CodeQL is free for public repos).
+on:
+  workflow_dispatch:
+  # push:
+  #   branches: [main]
+  # pull_request:
+  #   branches: [main]
+  # schedule:
+  #   - cron: "23 4 * * 1"  # weekly, Monday 04:23 UTC
+
+jobs:
+  analyze:
+    name: Analyze (python)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+          queries: security-extended
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3

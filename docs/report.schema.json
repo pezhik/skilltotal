@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://skilltotal.dev/schemas/report-1.0.json",
+  "title": "SkillTotal Report",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.0. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "type": "object",
+  "required": [
+    "component",
+    "risk_score",
+    "risk_level",
+    "summary",
+    "capabilities",
+    "findings",
+    "needs_review",
+    "metadata"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "component": {
+      "type": "object",
+      "required": ["name", "type", "source", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "source": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "risk_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "risk_level": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+    "summary": { "type": "string" },
+    "capabilities": {
+      "type": "object",
+      "description": "Capability name -> list of evidence proving it.",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "$ref": "#/$defs/evidence" }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "needs_review": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/needs_review" }
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Run metadata. Known keys below; additional keys are allowed for forward compatibility.",
+      "properties": {
+        "skilltotal_version": { "type": "string" },
+        "schema_version": { "type": "string" },
+        "ruleset_version": { "type": "integer" },
+        "generated_at": { "type": "string" },
+        "files_indexed": { "type": "integer" },
+        "files_skipped_binary": { "type": "integer" },
+        "files_skipped_large": { "type": "integer" },
+        "scanners_run": { "type": "array", "items": { "type": "string" } },
+        "findings_by_severity": { "type": "object" },
+        "suppressed_count": { "type": "integer" }
+      },
+      "required": ["skilltotal_version", "schema_version", "ruleset_version"],
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["critical", "high", "medium", "low"]
+    },
+    "evidence": {
+      "type": "object",
+      "description": "A concrete anchor for a finding. Every confirmed finding has at least one.",
+      "required": ["file", "line_start", "line_end", "snippet"],
+      "additionalProperties": false,
+      "properties": {
+        "file": { "type": "string" },
+        "line_start": { "type": "integer", "minimum": 1 },
+        "line_end": { "type": "integer", "minimum": 1 },
+        "snippet": { "type": "string" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "severity",
+        "category",
+        "title",
+        "description",
+        "evidence",
+        "recommendation"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "category": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/evidence" }
+        },
+        "recommendation": { "type": "string" }
+      }
+    },
+    "needs_review": {
+      "type": "object",
+      "required": ["category", "title", "reason", "file"],
+      "additionalProperties": false,
+      "properties": {
+        "category": { "type": "string" },
+        "title": { "type": "string" },
+        "reason": { "type": "string" },
+        "file": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

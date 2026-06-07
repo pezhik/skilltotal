@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "skilltotal"
+version = "0.1.0"
+description = "AI Component Security Platform — static security analysis for AI components (CLI engine)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "SkillTotal" }]
+keywords = ["security", "ai", "mcp", "supply-chain", "static-analysis", "prompt-injection"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+]
+# Zero runtime dependencies — Python standard library only.
+dependencies = []
+
+[project.optional-dependencies]
+# Dev-only — the runtime engine stays zero-dependency. jsonschema validates that reports
+# conform to docs/report.schema.json (the engine<->consumer contract).
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.4",
+    "jsonschema>=4.0",
+    "bandit>=1.7",
+    "build>=1.0",
+    "twine>=5.0",
+    "pre-commit>=3.5",
+    "detect-secrets>=1.5",
+]
+
+[project.scripts]
+skilltotal = "skilltotal.cli:main"
+
+[project.urls]
+Homepage = "https://example.com/skilltotal"
+
+[tool.setuptools.packages.find]
+include = ["skilltotal*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# manual_eval holds the manual calibration harness, generators, and a cloned third-party
+# corpus (with its own tests) — none of it should be collected by our test run.
+addopts = "-q --ignore=tests/manual_eval"
+
+[tool.bandit]
+# Scan the engine package; fixtures/corpus/tests are not shipped code.
+exclude_dirs = ["tests", "build", "dist"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# Scanner regexes intentionally contain detection string literals (e.g. "eval", "exec");
+# they are not executable code, so no per-file ignores are needed here.
+

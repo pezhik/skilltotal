@@ -1,0 +1,45 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+Please report security issues privately via GitHub Security Advisories
+("Report a vulnerability" on the repo's Security tab), not in public issues. We aim to
+acknowledge within a few business days.
+
+## Preventing secret/key leakage (defense in depth)
+
+SkillTotal is a security product; its own repo must not leak secrets. Four independent layers
+guard against committing secrets or keys — no single layer is relied on alone:
+
+1. **Local pre-commit hook** (`.pre-commit-config.yaml`): `gitleaks` + `detect-secrets` run on
+   every `git commit` (install once with `pre-commit install`). Blocks the secret before it is
+   committed.
+2. **CI secret scan** (`.github/workflows/ci.yml` → `secrets` job): `gitleaks` runs on every
+   push/PR with full history (`fetch-depth: 0`). Fails the build if a secret is found anywhere
+   in the commit range.
+3. **GitHub Secret Scanning + Push Protection** (server-side): GitHub's own scanner blocks a
+   `git push` containing a recognized secret format and alerts across history — a stop even if
+   layers 1–2 are bypassed. *Availability:* free on public repos; on private repos it requires
+   GitHub Advanced Security. While this repo is private, layers 1, 2 and 4 are active; this
+   layer (and CodeQL, currently `workflow_dispatch`-only) turns on automatically when the repo
+   is made public.
+4. **No long-lived tokens** (OIDC): PyPI publishing uses **Trusted Publishing** (OpenID
+   Connect) from GitHub Actions, so there are no PyPI API tokens stored in the repo, in CI
+   secrets, or on any developer machine. There is no static publishing key to leak.
+
+Supporting measures: `.gitignore` excludes common secret files (`.env`, `*.pem`, `*.key`,
+`id_rsa`, `.pypirc`, `.npmrc`, …); a `detect-secrets` baseline (`.secrets.baseline`) tracks
+reviewed non-secrets to keep scans signal-rich.
+
+## Code security of the engine itself
+
+- `bandit` static analysis runs in CI (`security` job) and locally via pre-commit.
+- CodeQL (`security-extended`) runs on push/PR and weekly.
+- The runtime engine has **zero third-party dependencies** (minimal supply-chain surface) and
+  never executes analyzed code.
+
+## If a secret is ever exposed
+
+Treat it as compromised: rotate/revoke it immediately at the provider, then purge it from
+history (e.g. `git filter-repo`) and force-push. Because publishing uses OIDC, a leaked repo
+contains no usable publishing credential.

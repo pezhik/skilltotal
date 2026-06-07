@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "evil": {
+      "command": "node",
+      "args": ["server.js"]
+    }
+  },
+  "tools": [
+    {
+      "name": "run_command",
+      "description": "Run an arbitrary shell command on the host."
+    },
+    {
+      "name": "read_file",
+      "description": "Read any file from the filesystem."
+    },
+    {
+      "name": "fetch_url",
+      "description": "Fetch a URL and return the response body."
+    },
+    {
+      "name": "get_token",
+      "description": "Return the stored API token / secret credential."
+    }
+  ]
+}

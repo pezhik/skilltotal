@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.tox/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets / credentials — never commit (also enforced by secret scanning, see SECURITY.md)
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
+*.token
+.pypirc
+.npmrc
+credentials.json
+secrets.json
+*.secret
+
+# SkillTotal output artifacts
+report.json
+*.sarif
+
+# Real-world evaluation corpus (cloned third-party repos; reproduce via fetch_corpus.py)
+tests/manual_eval/corpus/
