@@ -58,6 +58,29 @@ def test_zip_extraction_blocks_traversal(tmp_path):
         collector._safe_extract_zip(_zip({"../evil.txt": "x"}), tmp_path)
 
 
+def test_tar_extraction_blocks_sibling_prefix_escape(tmp_path):
+    # A sibling dir sharing a name prefix (dest 'pkg' vs 'pkg-evil') would fool a
+    # str.startswith check; boundary-correct relative_to must still reject it.
+    dest = tmp_path / "pkg"
+    dest.mkdir()
+    with pytest.raises(CollectionError):
+        collector._safe_extract_tar(_tgz({"../pkg-evil/x.txt": b"x"}), dest)
+
+
+def test_zip_extraction_skips_symlinks(tmp_path):
+    dest = tmp_path / "z"
+    dest.mkdir()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        link = zipfile.ZipInfo("link")
+        link.external_attr = (0xA1FF) << 16  # S_IFLNK | perms
+        zf.writestr(link, "/etc/passwd")
+        zf.writestr("normal.txt", "ok")
+    collector._safe_extract_zip(buf.getvalue(), dest)
+    assert (dest / "normal.txt").exists()
+    assert not (dest / "link").exists()  # symlink entry was skipped
+
+
 def test_collect_npm_resolves_latest_and_extracts(monkeypatch):
     registry = json.dumps(
         {

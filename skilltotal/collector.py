@@ -11,6 +11,7 @@ import io
 import json
 import re
 import shutil
+import stat
 import subprocess  # nosec B404
 import tarfile
 import tempfile
@@ -187,14 +188,23 @@ def _single_root(extract_dir: Path) -> Path:
     return extract_dir
 
 
+def _within(dest_resolved: Path, name: str, dest: Path) -> bool:
+    """True if extracting ``name`` stays inside ``dest`` (boundary-correct, not prefix-based)."""
+    try:
+        (dest / name).resolve().relative_to(dest_resolved)
+        return True
+    except ValueError:
+        return False
+
+
 def _safe_extract_tar(data: bytes, dest: Path) -> None:
+    dest_resolved = dest.resolve()
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
         safe, total = [], 0
         for m in tf.getmembers():
             if m.issym() or m.islnk():
                 continue  # never extract links (path-escape risk)
-            target = (dest / m.name).resolve()
-            if not str(target).startswith(str(dest.resolve())):
+            if not _within(dest_resolved, m.name, dest):
                 raise CollectionError("archive contains an unsafe path")
             if m.isfile():
                 total += m.size
@@ -205,16 +215,20 @@ def _safe_extract_tar(data: bytes, dest: Path) -> None:
 
 
 def _safe_extract_zip(data: bytes, dest: Path) -> None:
+    dest_resolved = dest.resolve()
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        total = 0
+        safe, total = [], 0
         for info in zf.infolist():
-            target = (dest / info.filename).resolve()
-            if not str(target).startswith(str(dest.resolve())):
+            # zipfile.extractall can create symlinks from the stored unix mode on some platforms.
+            if stat.S_ISLNK(info.external_attr >> 16):
+                continue  # never extract symlinks (path-escape risk)
+            if not _within(dest_resolved, info.filename, dest):
                 raise CollectionError("archive contains an unsafe path")
             total += info.file_size
             if total > _MAX_EXTRACT_BYTES:
                 raise CollectionError("archive too large when extracted")
-        zf.extractall(dest)  # nosec B202 - paths validated above
+            safe.append(info)
+        zf.extractall(dest, members=safe)  # nosec B202 - members validated above
 
 
 def _collect_archive(source: str, ctype: str, version: str, archive_url: str, filename: str) -> SourceContext:
