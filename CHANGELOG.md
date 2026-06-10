@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.3.1]
+
+### Fixed
+- PyPI page (long description) shipped with 0.3.0 still showed pre-PyPI install
+  instructions; README now leads with `pipx install skilltotal` (PEP 668-safe) and the
+  page is refreshed by this release. Added `tests/test_release_hygiene.py` so the release
+  gate mechanically blocks tagging with a stale CHANGELOG/README/schema-id.
+
 ## [0.3.0]
 
 ### Added

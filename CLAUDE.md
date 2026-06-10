@@ -134,6 +134,13 @@ schema update** — so a contract change is always deliberate. Version-bump rule
 `docs/releasing.md`. Never make the runtime engine depend on third-party packages (zero-dep);
 `jsonschema` is dev-only.
 
+**Docs ship with releases.** The package is public on PyPI (`skilltotal`, OIDC release on
+`v*` tags). `README.md` is the PyPI long description — frozen into the artifact at tag time,
+so review Install/Usage before tagging. The version lives ONLY in
+`skilltotal/__init__.py::__version__` (pyproject reads it dynamically).
+`tests/test_release_hygiene.py` blocks a release with a stale CHANGELOG/README/schema-id;
+update docs in the same commit as the change they describe, not "later".
+
 ## Open-core boundary (what belongs here vs the private web app)
 
 This repo is the **open-source engine** (Apache-2.0). It is the full, free, offline,
