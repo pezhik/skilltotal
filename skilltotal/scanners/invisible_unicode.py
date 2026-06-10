@@ -13,7 +13,7 @@ to the ASCII it smuggles, so the hidden instruction is shown in the report.
 from __future__ import annotations
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, RuleSpec, Scanner, ScanResult
 
 CATEGORY = "hidden_unicode"
@@ -69,6 +69,7 @@ class InvisibleUnicodeScanner(Scanner):
                 "text; legitimate AI components do not hide instructions in invisible Unicode."
             ),
             capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
         RuleSpec(
             id="ST-HIDDEN-UNICODE-AMBIG",

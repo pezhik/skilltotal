@@ -22,7 +22,9 @@ from skilltotal.models import (
     NeedsReview,
     Report,
     Severity,
+    ThreatClass,
 )
+from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
 from skilltotal.scoring import combined_fs_network_finding, compute_score, risk_level
 
@@ -62,6 +64,8 @@ def analyze_directory(
     if combo is not None:
         findings.append(combo)
 
+    _assign_threat_classes(findings)
+
     score = compute_score(findings)
     level = risk_level(score)
 
@@ -70,12 +74,41 @@ def analyze_directory(
         risk_score=score,
         risk_level=level,
         summary=_summary(level, score, findings, capabilities, needs_review),
+        verdict=_verdict(findings),
         capabilities=capabilities,
         findings=_sort_findings(findings),
         needs_review=needs_review,
         metadata=_metadata(index, findings, suppressed_count),
     )
     return report
+
+
+# Rule id -> threat class, from the single source of truth (RuleSpec via the registry).
+_THREAT_CLASS_BY_ID = {r.id: r.threat_class for r in get_rules()}
+
+
+def _assign_threat_classes(findings: list[Finding]) -> None:
+    """Project each rule's declared threat_class onto its findings (one chokepoint)."""
+    for f in findings:
+        f.threat_class = _THREAT_CLASS_BY_ID.get(f.id, f.threat_class)
+
+
+def _verdict(findings: list[Finding]) -> dict:
+    """Fast top-line answer to 'is this likely malware?', separate from the risk score.
+
+    Driven only by malicious_indicator findings (deliberate deception / hidden execution),
+    so legitimate-but-powerful or merely sloppy components do not read as malware.
+    """
+    by_class = {c: 0 for c in ThreatClass}
+    for f in findings:
+        by_class[f.threat_class] += 1
+    n_mal = by_class[ThreatClass.MALICIOUS_INDICATOR]
+    return {
+        "has_malicious_indicators": n_mal > 0,
+        "malicious_indicators": n_mal,
+        "risky_constructs": by_class[ThreatClass.RISKY_CONSTRUCT],
+        "capabilities": by_class[ThreatClass.CAPABILITY],
+    }
 
 
 def _split_test_evidence(

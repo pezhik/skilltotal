@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.6.0]
+
+### Added
+- **Threat-class axis** on findings (`malicious_indicator` | `risky_construct` |
+  `capability`) and a top-level **`verdict`** (fast "is this likely malware?" read,
+  independent of `risk_score`). Lets consumers separate a malware verdict from code-safety
+  hygiene. Existing rules tagged: prompt-injection, MCP tool-poisoning, decode-and-exec, and
+  hidden-unicode are `malicious_indicator`; sensitive-path is `risky_construct`; capability
+  rules (shell/fs/network/dynamic/MCP/combo) stay `capability`. Report schema **1.3**
+  (finding.threat_class + verdict; additive). Detectors for the risky-construct classes
+  (secrets, command injection, unsafe deserialization, network exposure) land next.
+
 ## [0.5.1]
 
 ### Fixed

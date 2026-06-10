@@ -13,7 +13,7 @@ import json
 import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
-from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
@@ -177,6 +177,7 @@ class McpScanner(Scanner):
                 "or hide actions from the user."
             ),
             capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
     ]
 

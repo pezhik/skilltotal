@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 
 # Cap evidence kept per finding so a noisy file cannot bloat the report.
 MAX_EVIDENCE_PER_FINDING = 25
@@ -35,6 +35,7 @@ class RuleSpec:
     pattern: re.Pattern[str] | None = None
     suffixes: tuple[str, ...] | None = None
     names: tuple[str, ...] | None = None
+    threat_class: ThreatClass = ThreatClass.CAPABILITY
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -45,6 +46,7 @@ class RuleSpec:
             "description": self.description,
             "recommendation": self.recommendation,
             "capability": self.capability.value if self.capability else "",
+            "threat_class": self.threat_class.value,
         }
 
 

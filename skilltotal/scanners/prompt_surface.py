@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, NeedsReview, Severity
+from skilltotal.models import Capability, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
@@ -62,6 +62,7 @@ class PromptSurfaceScanner(Scanner):
                 "attempts to manipulate an agent's behavior or hide actions from users."
             ),
             capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
             pattern=_STRONG,
         ),
         # Listed for `rules list`; routed to needs_review, never a confirmed finding.

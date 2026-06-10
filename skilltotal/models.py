@@ -83,6 +83,23 @@ class Capability(str, Enum):
     PROMPT_SURFACE_RISK = "prompt_surface_risk"
 
 
+class ThreatClass(str, Enum):
+    """How to read a finding — the second axis next to severity.
+
+    Separates "is this likely malware?" from "is this risky code?" so the report can give a
+    fast malware verdict without drowning it in code-safety hygiene.
+    """
+
+    # Signals of deliberate deception / hidden execution (drives the malware verdict):
+    # tool poisoning, prompt injection, decode-and-exec, hidden unicode instructions.
+    MALICIOUS_INDICATOR = "malicious_indicator"
+    # Dangerous, likely-unintentional constructs: hardcoded secrets, command injection,
+    # unsafe deserialization, network exposure. A real risk regardless of author intent.
+    RISKY_CONSTRUCT = "risky_construct"
+    # Neutral capability surface (can exec / read fs / reach network). Informational.
+    CAPABILITY = "capability"
+
+
 @dataclass(frozen=True)
 class Evidence:
     """A concrete, verifiable anchor for a finding.
@@ -115,6 +132,8 @@ class Finding:
     description: str
     evidence: list[Evidence]
     recommendation: str
+    # Projected from the rule's RuleSpec by the engine; defaults to capability.
+    threat_class: ThreatClass = ThreatClass.CAPABILITY
 
     def __post_init__(self) -> None:
         # Hard invariant: a confirmed finding cannot exist without evidence.
@@ -133,6 +152,7 @@ class Finding:
             "description": self.description,
             "evidence": [e.to_dict() for e in self.evidence],
             "recommendation": self.recommendation,
+            "threat_class": self.threat_class.value,
         }
 
 
@@ -205,6 +225,9 @@ class Report:
     capabilities: dict[Capability, list[Evidence]] = field(default_factory=dict)
     findings: list[Finding] = field(default_factory=list)
     needs_review: list[NeedsReview] = field(default_factory=list)
+    # Fast top-line answer to "is this likely malware?" — independent of risk_score, which
+    # also rises on legitimate-but-powerful or sloppy code. Populated by the engine.
+    verdict: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -213,6 +236,7 @@ class Report:
             "risk_score": self.risk_score,
             "risk_level": self.risk_level.value,
             "summary": self.summary,
+            "verdict": self.verdict,
             "capabilities": {
                 cap.value: [e.to_dict() for e in evs]
                 for cap, evs in self.capabilities.items()

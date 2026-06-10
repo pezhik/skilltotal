@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, NeedsReview, Severity
+from skilltotal.models import Capability, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
@@ -56,6 +56,7 @@ class ObfuscationScanner(Scanner):
                 "manually and inspect what it does before trusting this component."
             ),
             capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
             pattern=_DECODE_EXEC,
         ),
         # The following are listed for `rules list`; they emit needs_review only.

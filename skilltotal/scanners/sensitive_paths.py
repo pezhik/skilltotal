@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
@@ -88,6 +88,7 @@ class SensitivePathScanner(Scanner):
                 "is a common precursor to secret exfiltration."
             ),
             capability=Capability.FILESYSTEM_READ,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
             pattern=_STRONG_PATHS,
         ),
         # Listed for `rules list`; bare secret words are routed to needs_review.
