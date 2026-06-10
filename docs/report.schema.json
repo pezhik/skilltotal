@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skilltotal.dev/schemas/report-1.1.json",
+  "$id": "https://skilltotal.dev/schemas/report-1.2.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.1 (1.0 + optional needs_review[].line). Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.2 (1.1 + optional component.download_url). Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -24,7 +24,11 @@
         "name": { "type": "string" },
         "type": { "type": "string" },
         "source": { "type": "string" },
-        "version": { "type": "string" }
+        "version": { "type": "string" },
+        "download_url": {
+          "type": ["string", "null"],
+          "description": "Distribution artifact fetched for package sources (npm/PyPI); null for git/local (added in 1.2)."
+        }
       }
     },
     "risk_score": { "type": "integer", "minimum": 0, "maximum": 100 },

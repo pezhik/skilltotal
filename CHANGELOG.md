@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.4.0]
+
+### Added
+- `Component.download_url`: for npm/PyPI sources, the exact distribution artifact that was
+  fetched and analyzed (null for git/local). Lets consumers deep-link evidence to the
+  published artifact — e.g. a PyPI `files.pythonhosted.org` URL maps to inspector.pypi.io.
+  Report schema **1.2** (additive; 1.1 readers unaffected).
+
 ## [0.3.1]
 
 ### Fixed

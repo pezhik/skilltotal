@@ -179,6 +179,10 @@ class Component:
     type: str
     source: str
     version: str = ""
+    # For package sources (npm/PyPI): the exact distribution artifact that was fetched
+    # and analyzed. Lets consumers deep-link evidence to the published artifact (e.g.
+    # PyPI files.pythonhosted.org URL -> inspector.pypi.io). None for git/local sources.
+    download_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -186,6 +190,7 @@ class Component:
             "type": self.type,
             "source": self.source,
             "version": self.version,
+            "download_url": self.download_url,
         }
 
 

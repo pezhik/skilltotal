@@ -22,7 +22,7 @@ REQUIRED_TOP_KEYS = {
 def test_json_schema_shape(malicious_npm):
     data = json.loads(render_json(malicious_npm))
     assert REQUIRED_TOP_KEYS <= set(data)
-    assert set(data["component"]) == {"name", "type", "source", "version"}
+    assert set(data["component"]) == {"name", "type", "source", "version", "download_url"}
     for f in data["findings"]:
         assert set(f) >= {
             "id", "severity", "category", "title", "description",

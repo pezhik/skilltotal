@@ -245,7 +245,12 @@ def _collect_archive(
             _safe_extract_tar(data, extract_dir)
         root = _single_root(extract_dir)
         component = detect_component(root, source=source)
-        component = replace(component, type=ctype, version=component.version or version)
+        component = replace(
+            component,
+            type=ctype,
+            version=component.version or version,
+            download_url=archive_url,
+        )
         return SourceContext(root=root, component=component, _tempdir=tmp)
     except Exception:
         tmp.cleanup()

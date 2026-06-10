@@ -124,3 +124,6 @@ def test_collect_pypi_prefers_sdist_and_extracts(monkeypatch):
         assert (ctx.root / "pyproject.toml").exists()
         assert ctx.component.type == "python_package"
         assert ctx.component.version == "2.0.0"
+        # the analyzed distribution URL is surfaced for source deep-linking (schema 1.2)
+        assert ctx.component.download_url == "https://files.pythonhosted.org/x-2.0.0.tar.gz"
+        assert ctx.component.to_dict()["download_url"] == ctx.component.download_url
