@@ -4,7 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skilltotal"
-version = "0.1.0"
+# Single source of truth for the version is skilltotal/__init__.py (__version__);
+# a hardcoded copy here once drifted (0.1.0 vs 0.3.0) and nearly shipped mislabeled.
+dynamic = ["version"]
 description = "AI Component Security Platform — static security analysis for AI components (CLI engine)"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -40,10 +42,15 @@ dev = [
 skilltotal = "skilltotal.cli:main"
 
 [project.urls]
-Homepage = "https://example.com/skilltotal"
+Homepage = "https://github.com/pezhik/skilltotal"
+Repository = "https://github.com/pezhik/skilltotal"
+Changelog = "https://github.com/pezhik/skilltotal/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["skilltotal*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "skilltotal.__version__" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
