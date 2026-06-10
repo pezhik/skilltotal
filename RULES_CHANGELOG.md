@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 5 (engine 0.5.0)
+
+Adds an MCP **exfiltration-surface** heuristic (toxic agent flow / lethal trifecta),
+inspired by the Invariant Labs GitHub MCP writeup
+(<https://invariantlabs.ai/blog/mcp-github-vulnerability>).
+
+- When a component's MCP tools span a **network** channel AND **data access**
+  (`filesystem` / `browser` / `credential`), a `needs_review` note is emitted:
+  *"MCP exfiltration surface (network + data access)"*. Shell tools are excluded (already
+  flagged HIGH on their own).
+- Deliberately a **needs_review**, never a scored finding: the exploit is architectural
+  (indirect prompt injection in runtime data + the agent's permissions), not a flaw in the
+  server code, and legitimate servers (e.g. a GitHub server) share this surface. We only
+  surface the capability combination and point to runtime permissioning as the mitigation —
+  consistent with the "interpret evidence only, never assert intent" invariant. No score
+  impact, so no false-positive pressure on the trusted corpus.
+
 ## ruleset 4 (engine 0.1.0)
 
 Broadens **`ST-MCP-TOOL-POISONING`** (still cf. MCPTox, arXiv:2508.14925) and fixes a

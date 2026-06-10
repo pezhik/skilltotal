@@ -244,7 +244,48 @@ class McpScanner(Scanner):
         if detected:
             findings.append(self._finding("ST-MCP-DETECTED", detected))
 
+        self._flag_exfiltration_surface(dangerous_categories, dangerous, needs_review)
+
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    # Data-access capabilities that, combined with an off-host network channel, form the
+    # surface a "toxic agent flow" needs (lethal trifecta: data access + untrusted content +
+    # exfiltration). Shell is excluded — it is already flagged HIGH on its own.
+    _DATA_ACCESS_CATEGORIES = frozenset({"filesystem", "browser", "credential"})
+
+    def _flag_exfiltration_surface(
+        self,
+        categories: set[str],
+        dangerous: list[Evidence],
+        needs_review: list[NeedsReview],
+    ) -> None:
+        """Component-level note: tools span network egress AND data access.
+
+        Emitted as needs_review (never scored): on its own this is not proof of malicious
+        behavior — legitimate servers (e.g. a GitHub server) have this surface too. The real
+        risk is architectural and depends on the agent's runtime permissions; we only point
+        out the capability combination. Mirrors ST-COMBO-FS-NET for MCP tool capabilities.
+        """
+        others = sorted(categories & self._DATA_ACCESS_CATEGORIES)
+        if "network" not in categories or not others:
+            return
+        anchor = dangerous[0] if dangerous else None
+        needs_review.append(
+            NeedsReview(
+                category=CATEGORY,
+                title="MCP exfiltration surface (network + data access)",
+                reason=(
+                    f"This component's MCP tools combine network access with "
+                    f"{', '.join(others)} access. An agent exposed to untrusted content "
+                    "could be steered to move data off-host (a 'toxic agent flow' / "
+                    "lethal-trifecta surface). This is not proof of malicious behavior — the "
+                    "risk depends on the agent's runtime permissions; restrict which "
+                    "resources the server may reach and treat external content as untrusted."
+                ),
+                file=anchor.file if anchor else None,
+                line=anchor.line_start if anchor else None,
+            )
+        )
 
     # -------------------------------------------------------------- internals
     def _analyze_json(

@@ -192,6 +192,38 @@ def test_mcp_silently_benign_not_poisoning(tmp_path):
     assert not any(f.id == "ST-MCP-TOOL-POISONING" for f in result.findings)
 
 
+def test_mcp_exfiltration_surface_flagged(tmp_path):
+    """A server spanning network + filesystem tools = lethal-trifecta surface (needs_review)."""
+    from skilltotal.file_index import FileIndex
+    from skilltotal.scanners.mcp import McpScanner
+
+    (tmp_path / "mcp.json").write_text(
+        '{"tools": [{"name": "fetch_url", "description": "Fetch a URL."}, '
+        '{"name": "read_file", "description": "Read a local file."}]}\n',
+        encoding="utf-8",
+    )
+    result = McpScanner().scan(FileIndex.build(tmp_path))
+    note = next((n for n in result.needs_review if "exfiltration surface" in n.title), None)
+    assert note is not None
+    assert note.line is not None  # anchored to a tool
+    # Stays out of findings — it must never affect the score.
+    assert not any("exfiltration" in f.title.lower() for f in result.findings)
+
+
+def test_mcp_single_capability_no_exfiltration_note(tmp_path):
+    """Filesystem-only server (no network channel) must NOT raise the trifecta note (FP guard)."""
+    from skilltotal.file_index import FileIndex
+    from skilltotal.scanners.mcp import McpScanner
+
+    (tmp_path / "mcp.json").write_text(
+        '{"tools": [{"name": "read_file", "description": "Read a file."}, '
+        '{"name": "write_file", "description": "Write a file."}]}\n',
+        encoding="utf-8",
+    )
+    result = McpScanner().scan(FileIndex.build(tmp_path))
+    assert not any("exfiltration surface" in n.title for n in result.needs_review)
+
+
 def test_clean_has_no_findings(clean_report):
     assert clean_report.findings == []
     assert clean_report.risk_score == 0

@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.5.0]
+
+### Added
+- MCP **exfiltration-surface** signal (ruleset 5): when one component's MCP tools span a
+  network channel AND data access (filesystem/browser/credential), emit a `needs_review`
+  note — the capability surface a "toxic agent flow" (lethal trifecta) needs. Emitted as
+  needs_review, never scored: legitimate servers have this surface too; the real risk is
+  architectural (runtime agent permissions). Inspired by the Invariant Labs GitHub MCP
+  toxic-flow writeup. See `RULES_CHANGELOG.md`.
+
 ## [0.4.0]
 
 ### Added
