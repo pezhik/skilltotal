@@ -20,8 +20,23 @@ files inside the component.
 Requires **Python 3.10+**. Zero runtime dependencies. `git` is required only for scanning
 remote URLs.
 
+Recommended for the CLI — [pipx](https://pipx.pypa.io) (isolated install; also works on
+Debian/Ubuntu where bare `pip install` is blocked by PEP 668):
+
 ```bash
-pip install -e .
+pipx install skilltotal
+```
+
+Or into a virtual environment / as a library:
+
+```bash
+pip install skilltotal
+```
+
+From source (development):
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ## Usage
