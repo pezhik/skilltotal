@@ -248,10 +248,13 @@ class McpScanner(Scanner):
 
         return ScanResult(findings=findings, needs_review=needs_review)
 
-    # Data-access capabilities that, combined with an off-host network channel, form the
-    # surface a "toxic agent flow" needs (lethal trifecta: data access + untrusted content +
-    # exfiltration). Shell is excluded — it is already flagged HIGH on its own.
-    _DATA_ACCESS_CATEGORIES = frozenset({"filesystem", "browser", "credential"})
+    # Off-host channels (can reach the outside / ingest untrusted content) and sensitive-data
+    # capabilities. A server whose tools span BOTH is the surface a "toxic agent flow" needs
+    # (lethal trifecta). Shell is excluded — it is already flagged HIGH on its own. Browser
+    # counts as a channel: web automation can both pull untrusted content and exfiltrate
+    # (attacker URLs / form posts).
+    _CHANNEL_CATEGORIES = frozenset({"network", "browser"})
+    _DATA_CATEGORIES = frozenset({"filesystem", "credential"})
 
     def _flag_exfiltration_surface(
         self,
@@ -259,28 +262,30 @@ class McpScanner(Scanner):
         dangerous: list[Evidence],
         needs_review: list[NeedsReview],
     ) -> None:
-        """Component-level note: tools span network egress AND data access.
+        """Component-level note: tools span an off-host channel AND sensitive-data access.
 
         Emitted as needs_review (never scored): on its own this is not proof of malicious
         behavior — legitimate servers (e.g. a GitHub server) have this surface too. The real
         risk is architectural and depends on the agent's runtime permissions; we only point
         out the capability combination. Mirrors ST-COMBO-FS-NET for MCP tool capabilities.
         """
-        others = sorted(categories & self._DATA_ACCESS_CATEGORIES)
-        if "network" not in categories or not others:
+        channels = sorted(categories & self._CHANNEL_CATEGORIES)
+        data = sorted(categories & self._DATA_CATEGORIES)
+        if not channels or not data:
             return
         anchor = dangerous[0] if dangerous else None
         needs_review.append(
             NeedsReview(
                 category=CATEGORY,
-                title="MCP exfiltration surface (network + data access)",
+                title="MCP exfiltration surface (off-host channel + data access)",
                 reason=(
-                    f"This component's MCP tools combine network access with "
-                    f"{', '.join(others)} access. An agent exposed to untrusted content "
-                    "could be steered to move data off-host (a 'toxic agent flow' / "
-                    "lethal-trifecta surface). This is not proof of malicious behavior — the "
-                    "risk depends on the agent's runtime permissions; restrict which "
-                    "resources the server may reach and treat external content as untrusted."
+                    f"This component's MCP tools combine an off-host channel "
+                    f"({', '.join(channels)}) with {', '.join(data)} access. An agent exposed "
+                    "to untrusted content could be steered to move data off-host (a 'toxic "
+                    "agent flow' / lethal-trifecta surface). This is not proof of malicious "
+                    "behavior — the risk depends on the agent's runtime permissions; restrict "
+                    "which resources the server may reach and treat external content as "
+                    "untrusted."
                 ),
                 file=anchor.file if anchor else None,
                 line=anchor.line_start if anchor else None,

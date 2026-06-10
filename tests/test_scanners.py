@@ -210,6 +210,20 @@ def test_mcp_exfiltration_surface_flagged(tmp_path):
     assert not any("exfiltration" in f.title.lower() for f in result.findings)
 
 
+def test_mcp_browser_credential_is_exfiltration_surface(tmp_path):
+    """Browser (off-host channel) + credential (data) is a trifecta surface, even w/o network."""
+    from skilltotal.file_index import FileIndex
+    from skilltotal.scanners.mcp import McpScanner
+
+    (tmp_path / "mcp.json").write_text(
+        '{"tools": [{"name": "navigate", "description": "Open a page in a browser."}, '
+        '{"name": "get_token", "description": "Read the stored API token."}]}\n',
+        encoding="utf-8",
+    )
+    result = McpScanner().scan(FileIndex.build(tmp_path))
+    assert any("exfiltration surface" in n.title for n in result.needs_review)
+
+
 def test_mcp_single_capability_no_exfiltration_note(tmp_path):
     """Filesystem-only server (no network channel) must NOT raise the trifecta note (FP guard)."""
     from skilltotal.file_index import FileIndex

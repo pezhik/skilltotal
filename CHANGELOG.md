@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.5.1]
+
+### Fixed
+- MCP exfiltration-surface signal now treats **browser** as an off-host channel (web
+  automation can ingest untrusted content and exfiltrate), so a browser+credential or
+  browser+filesystem server is flagged even without a `network` tool. The 0.5.0 logic
+  anchored only on `network` and missed this (e.g. the `mcp` package itself).
+
 ## [0.5.0]
 
 ### Added
