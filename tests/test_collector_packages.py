@@ -111,7 +111,10 @@ def test_collect_pypi_prefers_sdist_and_extracts(monkeypatch):
         }
     ).encode()
     sdist = _tgz(
-        {"x-2.0.0/pyproject.toml": b'[project]\nname="x"\nversion="2.0.0"\n', "x-2.0.0/x.py": b"y=1\n"}
+        {
+            "x-2.0.0/pyproject.toml": b'[project]\nname="x"\nversion="2.0.0"\n',
+            "x-2.0.0/x.py": b"y=1\n",
+        }
     )
     monkeypatch.setattr(
         collector, "_http_get", lambda url: sdist if url.endswith(".tar.gz") else meta
