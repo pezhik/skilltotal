@@ -34,6 +34,20 @@ report JSON schema.
 on its own — that is what attracts the audience. Monetization is the layer *above* detection,
 not a subset of it.
 
+### Roadmap (paid, server-side — NOT the OSS engine)
+
+These need runtime or external data, so they sit above the component-only static engine:
+
+- **Runtime MCP proxy / continuous monitoring** — a local proxy between the agent and its MCP
+  servers that inspects tool listings and calls live (catches behavior the static pass cannot,
+  and re-checks on every update). Different architecture from the "never execute, component
+  only" engine; belongs in the paid layer.
+- **Upstream-diff & registry reputation** — compare a published package against its source
+  repo to flag typosquats / forked-and-modified supply-chain trojans (e.g. the Postmark MCP
+  email-stealer: the legitimate server re-published with one added BCC line). This needs
+  external references (upstream repo, registry metadata), outside component-only static
+  analysis — hence paid/server-side, not an engine rule.
+
 ## Why paid features can't be "taken from OSS"
 
 They are **server-side services on top of the engine**, not functions inside it. The code that

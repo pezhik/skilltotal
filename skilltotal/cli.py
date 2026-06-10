@@ -21,8 +21,11 @@ from skilltotal import __version__
 from skilltotal.baseline import build_baseline, load_baseline
 from skilltotal.collector import CollectionError
 from skilltotal.engine import analyze
+from skilltotal.inventory import discover
 from skilltotal.models import Severity
 from skilltotal.report import (
+    render_inventory_json,
+    render_inventory_text,
     render_json,
     render_rules_json,
     render_rules_text,
@@ -73,6 +76,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Exit with code 2 if any finding is high or critical.",
     )
 
+    inv = sub.add_parser(
+        "inventory",
+        help="Discover AI components installed on this machine and scan them.",
+    )
+    inv.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
+    inv.add_argument(
+        "--no-scan", action="store_true", help="Only list discovered components, do not scan."
+    )
+    inv.add_argument(
+        "--project", metavar="DIR", help="Also look for project-local agent configs in DIR."
+    )
+
     rules = sub.add_parser("rules", help="Inspect the detection rules.")
     rules_sub = rules.add_subparsers(dest="rules_command", required=True)
     rules_list = rules_sub.add_parser("list", help="List all detection rules.")
@@ -87,6 +102,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan":
         return _cmd_scan(args)
+    if args.command == "inventory":
+        return _cmd_inventory(args)
     if args.command == "rules":
         return _cmd_rules(args)
     parser.error("unknown command")  # pragma: no cover
@@ -136,6 +153,37 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     if args.fail_on_high and _has_high(report):
         return EXIT_FAIL_ON_HIGH
+    return EXIT_OK
+
+
+def _cmd_inventory(args: argparse.Namespace) -> int:
+    project = Path(args.project) if args.project else None
+    components = discover(project=project)
+
+    items: list[dict] = []
+    for c in components:
+        item = {
+            "host": c.host, "name": c.name, "kind": c.kind,
+            "source": c.source, "scannable": c.scannable, "note": c.note,
+            "config": c.config,
+        }
+        if c.scannable and not args.no_scan and c.source is not None:
+            try:
+                report = analyze(c.source)
+                item["verdict"] = report.verdict.get("level")
+                item["risk_level"] = report.risk_level.value
+                item["risk_score"] = report.risk_score
+                item["has_malicious_indicators"] = report.verdict.get("has_malicious_indicators")
+            except CollectionError as exc:
+                item["error"] = str(exc)
+            except Exception as exc:  # noqa: BLE001 - one bad item must not abort the sweep
+                item["error"] = f"scan failed: {exc}"
+        items.append(item)
+
+    if args.json:
+        print(render_inventory_json(items))
+    else:
+        print(render_inventory_text(items))
     return EXIT_OK
 
 

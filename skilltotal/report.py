@@ -66,6 +66,34 @@ def render_text(report: Report) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_inventory_json(items: list[dict]) -> str:
+    return json.dumps(items, indent=2, ensure_ascii=False)
+
+
+def render_inventory_text(items: list[dict]) -> str:
+    """Render the installed-component inventory as an aligned table."""
+    if not items:
+        return "No installed AI components (MCP servers or skills) found.\n"
+    rows = []
+    for it in items:
+        verdict = it.get("verdict") or ("-" if it.get("scannable") else "not scanned")
+        risk = it.get("risk_level") or ""
+        where = it.get("source") or it.get("note", "")
+        rows.append((it["host"], it["name"], it["kind"], where, verdict, risk))
+    headers = ("HOST", "NAME", "KIND", "SOURCE", "VERDICT", "RISK")
+    widths = [max(len(headers[i]), *(len(str(r[i])) for r in rows)) for i in range(len(headers))]
+    lines = [f"SkillTotal inventory ({len(items)} component(s))", ""]
+    lines.append("  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)))
+    lines.append("-" * (sum(widths) + 2 * (len(headers) - 1)))
+    for r in rows:
+        lines.append("  ".join(str(r[i]).ljust(widths[i]) for i in range(len(headers))))
+    flagged = [it for it in items if it.get("verdict") in ("malicious", "critical", "high")]
+    if flagged:
+        lines.append("")
+        lines.append(f"{len(flagged)} component(s) need attention (high risk or malicious).")
+    return "\n".join(lines) + "\n"
+
+
 def render_rules_json(rules: list[RuleSpec]) -> str:
     return json.dumps([r.to_dict() for r in rules], indent=2, ensure_ascii=False)
 

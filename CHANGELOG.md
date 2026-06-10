@@ -24,6 +24,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
     without SafeLoader).
   - `ST-EXPOSE-BIND` / `ST-EXPOSE-DEBUG` — network exposure (bind 0.0.0.0, debug server).
   Corpus-calibrated (no false positives on the trusted real-world corpus).
+- **`skilltotal inventory`** — discover AI components already installed on this machine
+  (MCP servers + skills from Claude Desktop/Code, Cursor, Windsurf, VS Code, Gemini configs),
+  derive an `npm:`/`pypi:`/local source for each, and scan them. Pure local discovery (reads
+  config files only, never launches). `--json`, `--no-scan`, `--project DIR`. No change to the
+  report schema or the `analyze`/`analyze_directory` API.
 
 ## [0.5.1]
 

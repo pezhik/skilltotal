@@ -15,6 +15,16 @@ files inside the component.
 > snippet). Anything that cannot be evidenced is placed in `needs_review`, never in
 > `findings`, and never affects the score.
 
+## Why SkillTotal
+
+- **100% local & offline** — the component's code **never leaves your machine**. No account,
+  no API token, no cloud upload (unlike cloud scanners that send your components to a backend).
+- **Zero runtime dependencies**, pure Python stdlib — auditable and easy to vendor/air-gap.
+- **Deterministic** — regex + AST, no LLM in the static engine; the same input always yields
+  the same report.
+- **Evidence-anchored & low false-positive** — every finding points at an exact file:line.
+- **Free and open source** (Apache-2.0) — the full static report is free, forever.
+
 ## Install
 
 Requires **Python 3.10+**. Zero runtime dependencies. `git` is required only for scanning
@@ -63,6 +73,14 @@ skilltotal scan ./component --fail-on-high
 # Baseline: snapshot current findings, then suppress them on later scans
 skilltotal scan ./component --write-baseline .skilltotal-baseline.json
 skilltotal scan ./component --baseline .skilltotal-baseline.json --fail-on-high
+
+# Inventory: discover AI components already installed on this machine and scan them
+# (reads agent configs for Claude Desktop/Code, Cursor, Windsurf, VS Code, Gemini, and
+#  local skills; derives an npm:/pypi:/local source per MCP server and runs the engine)
+skilltotal inventory
+skilltotal inventory --json
+skilltotal inventory --no-scan          # list only, do not scan
+skilltotal inventory --project .        # also include this project's agent configs
 
 # List every detection rule
 skilltotal rules list
