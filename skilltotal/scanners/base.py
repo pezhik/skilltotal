@@ -127,4 +127,5 @@ def _finding_from_rule(rule: RuleSpec, evidence: list[Evidence]) -> Finding:
         description=description,
         evidence=evidence,
         recommendation=rule.recommendation,
+        threat_class=rule.threat_class,
     )

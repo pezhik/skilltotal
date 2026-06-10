@@ -13,7 +13,7 @@ import ast
 import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
-from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
@@ -54,8 +54,23 @@ FS_WRITE_PREFIXES = ("shutil.copy", "shutil.move", "shutil.rmtree", "os.remove",
 NETWORK_HEADS = frozenset({"requests", "aiohttp", "httpx"})
 WRITE_MODE_CHARS = frozenset("wax+")
 
+# Calls that always run through a shell (so a dynamic command is injectable).
+ALWAYS_SHELL_CALLS = frozenset({"os.system", "os.popen", "asyncio.create_subprocess_shell"})
+
+# Deserializers that execute / instantiate arbitrary objects from their input.
+UNSAFE_DESERIALIZE_CALLS = frozenset(
+    {
+        "pickle.loads", "pickle.load", "cPickle.loads", "cPickle.load",
+        "_pickle.loads", "_pickle.load", "marshal.loads", "marshal.load",
+        "dill.loads", "dill.load", "jsonpickle.decode", "jsonpickle.loads",
+        "shelve.open",
+    }
+)
+
 # Rule ids
 R_SHELL = "ST-SHELL-PY"
+R_CMDI = "ST-CMDI-PY"
+R_DESERIAL = "ST-DESERIALIZE-PY"
 R_FS_READ = "ST-FS-PY-READ"
 R_FS_WRITE = "ST-FS-PY-WRITE"
 R_NET = "ST-NET-PY"
@@ -87,6 +102,50 @@ class PythonAstScanner(Scanner):
                 r"asyncio\.create_subprocess_(?:shell|exec)\s*\(",
                 r"\bimport\s+(?:sh|plumbum|pexpect|invoke|fabric)\b",
                 r"\bfrom\s+(?:sh|plumbum|pexpect|invoke|fabric)\b",
+            ),
+        ),
+        RuleSpec(
+            id=R_CMDI,
+            category="command_injection",
+            severity=Severity.HIGH,
+            title="Possible command injection (shell + dynamic command)",
+            description=(
+                "A shell command is built from a non-constant value (f-string, "
+                "concatenation, .format, or a variable) and run through a shell "
+                "(os.system/os.popen or subprocess with shell=True). If any part comes from "
+                "untrusted input, this is a command-injection vector."
+            ),
+            recommendation=(
+                "Pass arguments as a list without shell=True (e.g. "
+                "subprocess.run(['git', 'checkout', branch])); never build a shell string "
+                "from external input. If a shell is unavoidable, quote with shlex.quote."
+            ),
+            capability=None,  # the shell capability is already covered by ST-SHELL-PY
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+        ),
+        RuleSpec(
+            id=R_DESERIAL,
+            category="unsafe_deserialization",
+            severity=Severity.HIGH,
+            title="Unsafe deserialization",
+            description=(
+                "A deserializer that can execute or instantiate arbitrary objects from its "
+                "input was detected (pickle/cPickle/dill/marshal/jsonpickle/shelve, or "
+                "yaml.load without SafeLoader). Loading such data from an untrusted source "
+                "allows arbitrary code execution."
+            ),
+            recommendation=(
+                "Deserialize untrusted data with a safe format/loader: JSON, or "
+                "yaml.safe_load / Loader=SafeLoader. Reserve pickle/marshal for data you "
+                "fully control."
+            ),
+            capability=None,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+            pattern=alternation(
+                r"\b(?:c?[Pp]ickle|_pickle|dill|marshal)\.loads?\s*\(",
+                r"\bjsonpickle\.(?:decode|loads)\s*\(",
             ),
         ),
         RuleSpec(
@@ -243,6 +302,7 @@ class PythonAstScanner(Scanner):
                     description=description,
                     evidence=evidence,
                     recommendation=rule.recommendation,
+                    threat_class=rule.threat_class,
                 )
             )
         return findings
@@ -297,6 +357,12 @@ class _CallVisitor(ast.NodeVisitor):
     def _classify_call(self, name: str, node: ast.Call) -> None:
         if name in SHELL_CALLS:
             self._add(R_SHELL, node)
+            if _is_command_injection(name, node):
+                self._add(R_CMDI, node)
+        elif name in UNSAFE_DESERIALIZE_CALLS:
+            self._add(R_DESERIAL, node)
+        elif name in ("yaml.load", "yaml.load_all") and _yaml_load_is_unsafe(node):
+            self._add(R_DESERIAL, node)
         elif name in DYNAMIC_CALLS:
             self._add(R_DYN, node)
         elif name in DYNAMIC_IMPORT_CALLS:
@@ -343,6 +409,66 @@ class _CallVisitor(ast.NodeVisitor):
         line_start = getattr(node, "lineno", 1)
         line_end = getattr(node, "end_lineno", line_start) or line_start
         return self.file.evidence_for_lines(line_start, line_end)
+
+
+def _shell_true(node: ast.Call) -> bool:
+    """True if the call passes shell=True (a literal True)."""
+    for kw in node.keywords:
+        if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+            return True
+    return False
+
+
+def _command_arg(node: ast.Call) -> ast.expr | None:
+    """The command/argv argument: first positional, else args=/cmd= keyword."""
+    if node.args:
+        return node.args[0]
+    for kw in node.keywords:
+        if kw.arg in ("args", "cmd", "command"):
+            return kw.value
+    return None
+
+
+def _is_dynamic_command(arg: ast.expr | None) -> bool:
+    """True if the command is built from anything other than pure constants."""
+    if arg is None:
+        return False
+    if isinstance(arg, ast.Constant):
+        return False
+    if isinstance(arg, ast.JoinedStr):  # f-string: dynamic only if it interpolates
+        return any(isinstance(v, ast.FormattedValue) for v in arg.values)
+    if isinstance(arg, ast.BinOp):  # "a " + x  or  "fmt %s" % x
+        return isinstance(arg.op, (ast.Add, ast.Mod))
+    if isinstance(arg, (ast.List, ast.Tuple)):  # argv form: dynamic if any element is
+        return any(_is_dynamic_command(e) for e in arg.elts)
+    if isinstance(arg, ast.Constant):
+        return False
+    # Name / Attribute / Subscript / Call (e.g. .format(), or any variable) -> dynamic.
+    return isinstance(arg, (ast.Name, ast.Attribute, ast.Subscript, ast.Call))
+
+
+def _is_command_injection(name: str, node: ast.Call) -> bool:
+    """Shell call + dynamic command = injectable. Excludes argv-without-shell (safe)."""
+    uses_shell = name in ALWAYS_SHELL_CALLS or (
+        name.startswith("subprocess.") and _shell_true(node)
+    )
+    if not uses_shell:
+        return False
+    return _is_dynamic_command(_command_arg(node))
+
+
+def _yaml_load_is_unsafe(node: ast.Call) -> bool:
+    """yaml.load(...) is unsafe unless a Safe loader is passed (positional or Loader=)."""
+    loader: ast.expr | None = None
+    if len(node.args) >= 2:
+        loader = node.args[1]
+    for kw in node.keywords:
+        if kw.arg == "Loader":
+            loader = kw.value
+    if loader is None:
+        return True  # no loader -> historically the unsafe full loader
+    tail = loader.attr if isinstance(loader, ast.Attribute) else getattr(loader, "id", "")
+    return "Safe" not in tail  # SafeLoader / CSafeLoader are safe
 
 
 def _open_is_write(node: ast.Call) -> bool:

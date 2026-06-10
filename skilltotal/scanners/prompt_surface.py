@@ -23,6 +23,7 @@ from skilltotal.scanners.base import (
 CATEGORY = "prompt_surface"
 
 _STRONG = alternation(
+    # Instruction-override imperatives (unambiguous).
     r"ignore\s+(?:all\s+)?(?:the\s+)?previous\s+(?:instructions|prompts|context)",
     r"ignore\s+(?:everything\s+)?above",
     r"disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior)\s+(?:instructions|prompts)",
@@ -30,11 +31,17 @@ _STRONG = alternation(
     r"override\s+(?:developer|system|previous|prior)\s+(?:instructions|prompt)",
     r"do(?:\s*not|n['’]?t)\s+tell\s+the\s+user",
     r"hidden\s+instruction",
-    r"\bexfiltrate\b",
+    # Data-theft DIRECTIVES — require an action verb + sensitive target and/or a
+    # destination, so security prose ("can't exfiltrate ...", "read credentials from env")
+    # does not match. Bare nouns like "exfiltrate" alone are intentionally NOT strong.
+    r"exfiltrate\s+[^\n]{0,40}\b(?:to|via|through|into)\b",
+    # Unambiguous theft verbs only (NOT "collect", which appears in benign prose).
+    r"(?:steal|harvest|grab)\s+(?:the\s+)?(?:user['’]?s?\s+)?"
+    r"(?:credentials|secrets|api[\s_-]?keys?|tokens?|private\s+keys?|passwords?)",
+    r"send\s+(?:the\s+)?(?:credentials|secrets|api[\s_-]?keys?|tokens?|passwords?|"
+    r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|system\s+prompt)\s+to\b",
     r"send\s+(?:it|this|them|the\s+data)?\s*to\s+[^\n]{0,40}webhook",
     r"send\s+to\s+webhook",
-    r"collect\s+(?:the\s+)?tokens",
-    r"read\s+credentials",
     flags=re.IGNORECASE | re.MULTILINE,
 )
 

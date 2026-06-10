@@ -4,6 +4,26 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 6 (engine 0.6.0)
+
+Adds detectors for the **unintentional risky-construct** classes (the bulk of real-world MCP
+issues catalogued at vulnerablemcp.info). All are `threat_class = risky_construct`: they are
+real, exploitable risks regardless of author intent, but they do NOT raise the malware
+verdict (which stays reserved for deliberate deception). Corpus-calibrated against the
+trusted real-world corpus with zero false positives.
+
+- **`ST-SECRET-EMBEDDED`** — hardcoded credentials shipped in the component: known-prefix
+  tokens (AWS/GitHub/GitLab/OpenAI/Anthropic/Slack/Google/Stripe), private-key blocks, and a
+  secret-named-variable assignment rule. Placeholder/example values and test paths are
+  filtered; the secret value is **redacted** in evidence so the report never re-leaks it.
+- **`ST-CMDI-PY` / `ST-CMDI-NODE`** — command injection: a shell sink (os.system/os.popen,
+  `subprocess(..., shell=True)`, `child_process.exec`) fed a command built by interpolation/
+  concatenation/variable. Safe argv-without-shell and constant commands are excluded.
+- **`ST-DESERIALIZE-PY`** — unsafe deserialization: pickle/cPickle/dill/marshal/jsonpickle,
+  and `yaml.load` without a Safe loader (a Safe loader is recognized and not flagged).
+- **`ST-EXPOSE-BIND` / `ST-EXPOSE-DEBUG`** — network-exposure posture: binding to 0.0.0.0 /
+  all interfaces, and debug servers (e.g. Flask `debug=True`).
+
 ## ruleset 5 (engine 0.5.0)
 
 Adds an MCP **exfiltration-surface** heuristic (toxic agent flow / lethal trifecta),

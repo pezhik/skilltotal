@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
+from skilltotal.scanners.exposure import ExposureScanner
 from skilltotal.scanners.filesystem import FilesystemScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
@@ -17,6 +18,7 @@ from skilltotal.scanners.network import NetworkScanner
 from skilltotal.scanners.obfuscation import ObfuscationScanner
 from skilltotal.scanners.prompt_surface import PromptSurfaceScanner
 from skilltotal.scanners.python_ast import PythonAstScanner
+from skilltotal.scanners.secrets import SecretsScanner
 from skilltotal.scanners.sensitive_paths import SensitivePathScanner
 from skilltotal.scanners.shell_exec import ShellExecScanner
 
@@ -32,6 +34,8 @@ SCANNERS: list[Scanner] = [
     McpScanner(),
     PromptSurfaceScanner(),
     InvisibleUnicodeScanner(),
+    SecretsScanner(),
+    ExposureScanner(),
 ]
 
 

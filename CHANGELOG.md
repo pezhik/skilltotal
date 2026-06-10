@@ -13,8 +13,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
   hygiene. Existing rules tagged: prompt-injection, MCP tool-poisoning, decode-and-exec, and
   hidden-unicode are `malicious_indicator`; sensitive-path is `risky_construct`; capability
   rules (shell/fs/network/dynamic/MCP/combo) stay `capability`. Report schema **1.3**
-  (finding.threat_class + verdict; additive). Detectors for the risky-construct classes
-  (secrets, command injection, unsafe deserialization, network exposure) land next.
+  (finding.threat_class + verdict; additive).
+- **Risky-construct detectors** (ruleset 6) covering the unintentional-mistake classes from
+  vulnerablemcp.info, all `risky_construct`:
+  - `ST-SECRET-EMBEDDED` — hardcoded credentials/keys shipped in the component (known-prefix
+    tokens + private keys + secret-variable assignment); values redacted in evidence.
+  - `ST-CMDI-PY` / `ST-CMDI-NODE` — command injection: a shell sink fed a dynamically built
+    command (excludes safe argv-without-shell).
+  - `ST-DESERIALIZE-PY` — unsafe deserialization (pickle/marshal/jsonpickle, yaml.load
+    without SafeLoader).
+  - `ST-EXPOSE-BIND` / `ST-EXPOSE-DEBUG` — network exposure (bind 0.0.0.0, debug server).
+  Corpus-calibrated (no false positives on the trusted real-world corpus).
 
 ## [0.5.1]
 
