@@ -37,11 +37,17 @@
     "summary": { "type": "string" },
     "verdict": {
       "type": "object",
-      "description": "Fast malware read, independent of risk_score (added in 1.3).",
-      "required": ["has_malicious_indicators"],
+      "description": "Plain-language top-line answer, independent of risk_score (added in 1.3).",
+      "required": ["has_malicious_indicators", "level", "headline"],
       "additionalProperties": true,
       "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["malicious", "critical", "high", "medium", "low"]
+        },
+        "headline": { "type": "string" },
         "has_malicious_indicators": { "type": "boolean" },
+        "reasons": { "type": "array", "items": { "type": "string" } },
         "malicious_indicators": { "type": "integer", "minimum": 0 },
         "risky_constructs": { "type": "integer", "minimum": 0 },
         "capabilities": { "type": "integer", "minimum": 0 }

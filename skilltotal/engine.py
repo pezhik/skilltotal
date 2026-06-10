@@ -21,6 +21,7 @@ from skilltotal.models import (
     Finding,
     NeedsReview,
     Report,
+    RiskLevel,
     Severity,
     ThreatClass,
 )
@@ -74,7 +75,7 @@ def analyze_directory(
         risk_score=score,
         risk_level=level,
         summary=_summary(level, score, findings, capabilities, needs_review),
-        verdict=_verdict(findings),
+        verdict=_verdict(findings, level),
         capabilities=capabilities,
         findings=_sort_findings(findings),
         needs_review=needs_review,
@@ -93,22 +94,58 @@ def _assign_threat_classes(findings: list[Finding]) -> None:
         f.threat_class = _THREAT_CLASS_BY_ID.get(f.id, f.threat_class)
 
 
-def _verdict(findings: list[Finding]) -> dict:
-    """Fast top-line answer to 'is this likely malware?', separate from the risk score.
+def _verdict(findings: list[Finding], level) -> dict:
+    """Plain-language top-line answer, mapped to the two real user fears:
 
-    Driven only by malicious_indicator findings (deliberate deception / hidden execution),
-    so legitimate-but-powerful or merely sloppy components do not read as malware.
+    1. "Is it malicious?" -> ``has_malicious_indicators`` (deliberate deception/stealth
+       only: poisoning, obfuscated exec, prompt injection, hidden unicode). Kept narrow and
+       high-confidence so we never label a legitimate-but-powerful component "malware".
+    2. "Could it leak my data / get me compromised?" -> the severity tier, surfaced as
+       "High-risk capabilities" even with no malice (e.g. a clear-text credential+network
+       exfiltration path). This keeps the headline consistent with the risk score instead of
+       the confusing "critical, but not malware".
+
+    Returns a single ``level`` (one of malicious | critical | high | medium | low), a
+    human ``headline``, and up to three plain ``reasons``.
     """
     by_class = {c: 0 for c in ThreatClass}
     for f in findings:
         by_class[f.threat_class] += 1
-    n_mal = by_class[ThreatClass.MALICIOUS_INDICATOR]
+    has_mal = by_class[ThreatClass.MALICIOUS_INDICATOR] > 0
+
+    if has_mal:
+        vlevel, headline = "malicious", "Malicious indicators found"
+    elif level in (RiskLevel.CRITICAL, RiskLevel.HIGH):
+        vlevel, headline = level.value, "High-risk capabilities - review before installing"
+    elif level is RiskLevel.MEDIUM:
+        vlevel, headline = "medium", "Some risk - review before installing"
+    else:
+        vlevel, headline = "low", "No significant risks found"
+
     return {
-        "has_malicious_indicators": n_mal > 0,
-        "malicious_indicators": n_mal,
+        "level": vlevel,
+        "headline": headline,
+        "has_malicious_indicators": has_mal,
+        "reasons": _verdict_reasons(findings),
+        "malicious_indicators": by_class[ThreatClass.MALICIOUS_INDICATOR],
         "risky_constructs": by_class[ThreatClass.RISKY_CONSTRUCT],
         "capabilities": by_class[ThreatClass.CAPABILITY],
     }
+
+
+def _verdict_reasons(findings: list[Finding], limit: int = 3) -> list[str]:
+    """Top distinct finding titles (malicious first, then by severity) as plain reasons."""
+    ordered = sorted(
+        findings,
+        key=lambda f: (f.threat_class is not ThreatClass.MALICIOUS_INDICATOR, -f.severity.rank),
+    )
+    reasons: list[str] = []
+    for f in ordered:
+        if f.title not in reasons:
+            reasons.append(f.title)
+        if len(reasons) >= limit:
+            break
+    return reasons
 
 
 def _split_test_evidence(
