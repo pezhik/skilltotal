@@ -115,6 +115,7 @@ class ObfuscationScanner(Scanner):
                         "malicious intent without decoding."
                     ),
                     file=ev.file,
+                    line=ev.line_start,
                 )
             )
             if len(needs_review) >= 3 * MAX_EVIDENCE_PER_FINDING:
@@ -122,7 +123,7 @@ class ObfuscationScanner(Scanner):
 
     def _minified(self, index: FileIndex, needs_review: list[NeedsReview]) -> None:
         for f in index.files:
-            for line in f.text.splitlines():
+            for lineno, line in enumerate(f.text.splitlines(), start=1):
                 if len(line) > _MINIFIED_LINE_CHARS:
                     needs_review.append(
                         NeedsReview(
@@ -133,6 +134,7 @@ class ObfuscationScanner(Scanner):
                                 "minification); not analyzable line-by-line."
                             ),
                             file=f.relpath,
+                            line=lineno,
                         )
                     )
                     break  # one note per file is enough

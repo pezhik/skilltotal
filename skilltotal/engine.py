@@ -110,6 +110,7 @@ def _split_test_evidence(
                         f"({', '.join(files[:5])}); test code is not executed by consumers."
                     ),
                     file=files[0],
+                    line=next((e.line_start for e in test if e.file == files[0]), None),
                 )
             )
     return kept, review

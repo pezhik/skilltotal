@@ -166,6 +166,7 @@ class SensitivePathScanner(Scanner):
                         "secret store but is too ambiguous to confirm."
                     ),
                     file=ev.file,
+                    line=ev.line_start,
                 )
             )
             if len(needs_review) >= MAX_EVIDENCE_PER_FINDING:

@@ -96,6 +96,7 @@ class PromptSurfaceScanner(Scanner):
                         "prompt control but is too ambiguous to confirm as a finding."
                     ),
                     file=ev.file,
+                    line=ev.line_start,
                 )
             )
             if len(needs_review) >= MAX_EVIDENCE_PER_FINDING:

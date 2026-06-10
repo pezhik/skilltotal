@@ -47,6 +47,14 @@ def test_prompt_injection_strong_and_weak(prompt_report):
     assert any("Ambiguous" in n.title for n in prompt_report.needs_review)
 
 
+def test_needs_review_carries_line_when_known(prompt_report):
+    # Heuristics that anchor to a match must expose the 1-based line so consumers
+    # (e.g. the web UI) can deep-link; it is also serialized (schema 1.1).
+    ambiguous = next(n for n in prompt_report.needs_review if "Ambiguous" in n.title)
+    assert ambiguous.line is not None and ambiguous.line >= 1
+    assert ambiguous.to_dict()["line"] == ambiguous.line
+
+
 def test_node_shell_library_import_detected(tmp_path):
     """Importing a process-spawning library (zx/execa) signals shell execution."""
     from skilltotal.file_index import FileIndex

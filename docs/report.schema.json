@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://skilltotal.dev/schemas/report-1.0.json",
+  "$id": "https://skilltotal.dev/schemas/report-1.1.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.0. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.1 (1.0 + optional needs_review[].line). Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -116,7 +116,12 @@
         "category": { "type": "string" },
         "title": { "type": "string" },
         "reason": { "type": "string" },
-        "file": { "type": ["string", "null"] }
+        "file": { "type": ["string", "null"] },
+        "line": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "1-based line when the heuristic knows it (added in 1.1); lets consumers deep-link."
+        }
       }
     }
   }

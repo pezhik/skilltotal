@@ -110,6 +110,7 @@ class InvisibleUnicodeScanner(Scanner):
                                 "legitimate (emoji/script) but can also hide text."
                             ),
                             file=f.relpath,
+                            line=lineno,
                         )
                     )
 

@@ -140,13 +140,15 @@ class Finding:
 class NeedsReview:
     """A low-confidence or un-evidenced signal that must NOT affect the score.
 
-    ``file`` is optional because some heuristics flag a condition without a precise line.
+    ``file``/``line`` are optional because some heuristics flag a condition without a
+    precise location; when the line IS known, populate it so consumers can deep-link.
     """
 
     category: str
     title: str
     reason: str
     file: str | None = None
+    line: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -154,6 +156,7 @@ class NeedsReview:
             "title": self.title,
             "reason": self.reason,
             "file": self.file,
+            "line": self.line,
         }
 
 

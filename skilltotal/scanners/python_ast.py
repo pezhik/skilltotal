@@ -182,7 +182,7 @@ class PythonAstScanner(Scanner):
         for f in index.select(suffixes=PY_SUFFIXES):
             try:
                 tree = ast.parse(f.text, filename=f.relpath)
-            except SyntaxError:
+            except SyntaxError as exc:
                 self._regex_fallback(f, acc)
                 needs_review.append(
                     NeedsReview(
@@ -193,6 +193,7 @@ class PythonAstScanner(Scanner):
                             "regex fallback, results may be incomplete."
                         ),
                         file=f.relpath,
+                        line=exc.lineno,
                     )
                 )
                 continue
@@ -214,6 +215,7 @@ class PythonAstScanner(Scanner):
                             "attacker-controlled."
                         ),
                         file=ev.file,
+                        line=ev.line_start,
                     )
                 )
 

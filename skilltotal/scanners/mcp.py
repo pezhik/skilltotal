@@ -192,7 +192,7 @@ class McpScanner(Scanner):
             is_manifest_name = f.name.lower() in MANIFEST_NAMES
             try:
                 data = json.loads(f.text)
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError) as exc:
                 if is_manifest_name or "mcpServers" in f.text or '"tools"' in f.text:
                     needs_review.append(
                         NeedsReview(
@@ -200,6 +200,7 @@ class McpScanner(Scanner):
                             title="Unparseable potential MCP manifest",
                             reason="File resembles an MCP manifest but is not valid JSON.",
                             file=f.relpath,
+                            line=getattr(exc, "lineno", None),
                         )
                     )
                 continue

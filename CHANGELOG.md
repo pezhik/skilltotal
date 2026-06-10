@@ -4,7 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.3.0]
+
+### Added
+- `NeedsReview.line` (optional, 1-based): heuristics now record the exact line when they
+  know it (ambiguous words/phrases, zero-width unicode, obfuscation hints, dynamic imports,
+  unparseable Python/JSON, test-only demotions), so consumers can deep-link straight to the
+  location. Report schema **1.1** (additive; 1.0 reports remain valid for readers).
+
+## [0.2.0]
 
 ### Added
 - **npm / PyPI package collection** (`collector.py`): `collect()` now resolves `npm:<name>`
