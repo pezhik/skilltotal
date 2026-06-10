@@ -88,8 +88,12 @@ def test_collect_npm_resolves_latest_and_extracts(monkeypatch):
             "versions": {"1.2.3": {"dist": {"tarball": "https://registry.npmjs.org/x/-/x-1.2.3.tgz"}}},
         }
     ).encode()
-    tarball = _tgz({"package/package.json": b'{"name":"x","version":"1.2.3"}', "package/index.js": b"1;"})
-    monkeypatch.setattr(collector, "_http_get", lambda url: tarball if url.endswith(".tgz") else registry)
+    tarball = _tgz(
+        {"package/package.json": b'{"name":"x","version":"1.2.3"}', "package/index.js": b"1;"}
+    )
+    monkeypatch.setattr(
+        collector, "_http_get", lambda url: tarball if url.endswith(".tgz") else registry
+    )
 
     with collector.collect("npm:x") as ctx:
         assert (ctx.root / "package.json").exists()
@@ -106,8 +110,12 @@ def test_collect_pypi_prefers_sdist_and_extracts(monkeypatch):
             ],
         }
     ).encode()
-    sdist = _tgz({"x-2.0.0/pyproject.toml": b'[project]\nname="x"\nversion="2.0.0"\n', "x-2.0.0/x.py": b"y=1\n"})
-    monkeypatch.setattr(collector, "_http_get", lambda url: sdist if url.endswith(".tar.gz") else meta)
+    sdist = _tgz(
+        {"x-2.0.0/pyproject.toml": b'[project]\nname="x"\nversion="2.0.0"\n', "x-2.0.0/x.py": b"y=1\n"}
+    )
+    monkeypatch.setattr(
+        collector, "_http_get", lambda url: sdist if url.endswith(".tar.gz") else meta
+    )
 
     with collector.collect("pypi:x") as ctx:
         assert (ctx.root / "pyproject.toml").exists()

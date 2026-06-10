@@ -231,7 +231,9 @@ def _safe_extract_zip(data: bytes, dest: Path) -> None:
         zf.extractall(dest, members=safe)  # nosec B202 - members validated above
 
 
-def _collect_archive(source: str, ctype: str, version: str, archive_url: str, filename: str) -> SourceContext:
+def _collect_archive(
+    source: str, ctype: str, version: str, archive_url: str, filename: str
+) -> SourceContext:
     data = _http_get(archive_url)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
@@ -275,7 +277,9 @@ def _collect_pypi(source: str) -> SourceContext:
     chosen = chosen or next((u for u in urls if u.get("packagetype") == "bdist_wheel"), None)
     if not (version and chosen and chosen.get("url")):
         raise CollectionError(f"PyPI project '{name}' has no downloadable distribution")
-    return _collect_archive(source, "python_package", version, chosen["url"], chosen.get("filename", ""))
+    return _collect_archive(
+        source, "python_package", version, chosen["url"], chosen.get("filename", "")
+    )
 
 
 def detect_component(root: Path, source: str) -> Component:

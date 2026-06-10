@@ -164,7 +164,7 @@ def test_mcp_cross_tool_precondition_poisoning(tmp_path):
 
 
 def test_mcp_param_description_poisoning(tmp_path):
-    """Poisoning hidden in an inputSchema parameter description is flagged, not just the tool desc."""
+    """Poisoning hidden in an inputSchema parameter description is flagged too."""
     from skilltotal.file_index import FileIndex
     from skilltotal.scanners.mcp import McpScanner
 
