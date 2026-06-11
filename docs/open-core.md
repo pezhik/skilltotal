@@ -53,6 +53,11 @@ These need runtime or external data, so they sit above the component-only static
   never-execute, never-call-an-LLM engine deliberately excludes. The OSS engine deliberately
   does **not** vendor third-party rule packs (e.g. agent-audit's 573 imported YAML rules):
   every engine rule is corpus-calibrated for low false positives, which a bulk import is not.
+- **Markdown/data-URI exfiltration detection** — flagging a markdown image/link as an
+  exfiltration sink requires the surrounding prompt-instruction context ("put the file
+  contents in this URL"); the URL shape alone is indistinguishable from benign doc links
+  (a static rule on it false-positives on ordinary READMEs). Reliable detection belongs with
+  the runtime/LLM layer that can see the instruction, not the component-only static engine.
 
 ## Why paid features can't be "taken from OSS"
 

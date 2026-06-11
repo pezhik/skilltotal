@@ -4,7 +4,37 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [0.7.0]
+## [0.7.1]
+
+Calibration hardening: a labeled-corpus run (django, numpy, typescript, webpack, the MCP
+SDK, github-mcp-server, …) surfaced false "malicious" verdicts on trusted packages. All were
+over-broad `malicious_indicator` rules; this release fixes them and adds regression tests so
+they cannot recur. Net effect: 0 benign false positives on the calibration corpus.
+
+### Fixed
+- **Removed `ST-PROMPT-EXFIL-MD`** (added in the yanked 0.7.0): it fired on any markdown
+  link whose URL contained a literal `$`/`{` (e.g. AngularJS `$http` doc links, dynamic
+  shields badges), wrongly flagging trusted packages (axios, django, numpy, typescript, …)
+  as malicious. Reliable markdown-exfil detection needs prompt-instruction context that
+  pure static regex can't supply — deferred to the runtime/paid layer (see open-core.md).
+- **`ST-HIDDEN-UNICODE` now flags only tag characters (U+E0000+)** as malicious — the
+  unambiguous ASCII-smuggling signal. **Bidi overrides and zero-width characters** moved to
+  `needs_review` (`ST-HIDDEN-UNICODE-AMBIG`): they appear legitimately in RTL-locale `.po`
+  files, CJK text, HTML-entity tables (webpack), and emoji, so they no longer raise a malware
+  verdict on their own.
+- **`ST-MCP-TOOL-POISONING`**: dropped the over-broad `always/first … before` sub-pattern,
+  which fired on benign call-ordering guidance ("Always call list_tables before queries" in
+  the MCP TypeScript SDK examples).
+- **`ST-PROMPT-INJECTION`**: `do not tell the user` / `without telling the user` moved from a
+  scored finding to `needs_review` — a genuine concealment marker that also appears in benign
+  UX guardrails (GitHub's official MCP server: "Do NOT tell the user the issue was updated;
+  the user MUST click Submit"). Real concealment still co-occurs with stronger scored signals.
+- Regression tests added for each of the above (the calibration corpus cases).
+
+## [0.7.0] — YANKED
+
+Yanked from PyPI: shipped `ST-PROMPT-EXFIL-MD` which produced false "malicious" verdicts on
+popular trusted packages. Superseded by 0.7.1.
 
 ### Added
 - **MCP detectors (ruleset 7)** closing gaps from agent-scan / agent-audit:
@@ -12,8 +42,6 @@ All notable changes to the SkillTotal engine. Format loosely follows
     to prefer/override/avoid *other* tools (tool shadowing).
   - `ST-MCP-AUTO-APPROVE` (`risky_construct`) — an `mcpServers` entry pre-authorizing tool
     calls (`autoApprove` / `alwaysAllow` / `trust`), removing the human confirmation gate.
-  - `ST-PROMPT-EXFIL-MD` (`malicious_indicator`) — a markdown image/link whose URL embeds a
-    template placeholder (an exfiltration sink; cf. the Invariant Labs GitHub-MCP attack).
 - **Version pinning** for package sources: `npm:name@1.2.3` and `pypi:name==1.2.3`
   (`pypi:name@1.2.3` accepted too) download that exact release instead of latest.
 - **Calibration harness** (`tests/manual_eval/calibrate.py`): run the engine over a labeled

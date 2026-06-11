@@ -47,3 +47,6 @@ report.json
 
 # Real-world evaluation corpus (cloned third-party repos; reproduce via fetch_corpus.py)
 tests/manual_eval/corpus/
+
+# Local calibration scratch output (run via tests/manual_eval/calibrate.py)
+/calib_*

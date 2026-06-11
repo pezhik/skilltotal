@@ -29,7 +29,6 @@ _STRONG = alternation(
     r"disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior)\s+(?:instructions|prompts)",
     r"(?:reveal|print|show|repeat|expose)\s+(?:your\s+|the\s+)?(?:system|developer)\s+prompt",
     r"override\s+(?:developer|system|previous|prior)\s+(?:instructions|prompt)",
-    r"do(?:\s*not|n['’]?t)\s+tell\s+the\s+user",
     r"hidden\s+instruction",
     # Data-theft DIRECTIVES — require an action verb + sensitive target and/or a
     # destination, so security prose ("can't exfiltrate ...", "read credentials from env")
@@ -45,20 +44,16 @@ _STRONG = alternation(
     flags=re.IGNORECASE | re.MULTILINE,
 )
 
-_WEAK = re.compile(
+# Ambiguous concealment phrasing -> needs_review (never scored). "do not tell the user"
+# is a genuine malicious-concealment marker, but it also appears in benign UX guardrails
+# (e.g. GitHub's official MCP server: "Do NOT tell the user the issue was updated. The user
+# MUST click Submit ...") — too ambiguous to drive a malware verdict on its own. Real
+# concealment co-occurs with stronger signals (exfil verbs, fake authority) that stay strong.
+_WEAK = alternation(
     r"before\s+(?:answering|you\s+answer)",
-    re.IGNORECASE | re.MULTILINE,
-)
-
-# Markdown image/link exfiltration: an image or link whose URL embeds a template
-# placeholder ({{...}} / ${...} / {x}), the channel used to smuggle data out by having
-# the agent fill the URL with file contents/secrets (cf. the Invariant Labs GitHub-MCP
-# attack). FP guard: a literal badge/shields URL has no '{' or '$' placeholder, so it
-# won't match — the placeholder is what makes this an exfiltration template.
-_EXFIL_MD = alternation(
-    r"!\[[^\]]*\]\(\s*https?://[^)\s]*[{$]",          # ![alt](http://host/?x={{data}})
-    r"\[[^\]]*\]\(\s*https?://[^)\s]*[{$][^)\s]*\)",  # [text](http://host/?x=${data})
-    flags=re.IGNORECASE,
+    r"do(?:\s*not|n['’]?t)\s+tell\s+the\s+user",
+    r"without\s+(?:telling|informing|notifying)\s+the\s+user",
+    flags=re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -82,25 +77,6 @@ class PromptSurfaceScanner(Scanner):
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             pattern=_STRONG,
-        ),
-        RuleSpec(
-            id="ST-PROMPT-EXFIL-MD",
-            category=CATEGORY,
-            severity=Severity.HIGH,
-            title="Markdown image/link with a templated exfiltration URL",
-            description=(
-                "A markdown image or link embeds a template placeholder in its URL "
-                "(e.g. ![x](https://host/?d={{file_contents}})). This is a known "
-                "data-exfiltration channel: an agent rendering the markdown is steered to "
-                "fill the URL with file contents or secrets, sending them off-host."
-            ),
-            recommendation=(
-                "Treat embedded markdown as untrusted. A URL that interpolates agent data "
-                "into an image/link is an exfiltration sink — remove it and review intent."
-            ),
-            capability=Capability.PROMPT_SURFACE_RISK,
-            threat_class=ThreatClass.MALICIOUS_INDICATOR,
-            pattern=_EXFIL_MD,
         ),
         # Listed for `rules list`; routed to needs_review, never a confirmed finding.
         RuleSpec(
