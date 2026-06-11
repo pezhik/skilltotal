@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import re
 import shutil
 import stat
@@ -38,6 +39,10 @@ _PYPI_NAME_RE = re.compile(r"^[a-z0-9][\w.-]*$", re.I)
 _HTTP_TIMEOUT = 60  # seconds for a registry/download request
 _MAX_ARCHIVE_BYTES = 150 * 1024 * 1024  # cap the downloaded archive
 _MAX_EXTRACT_BYTES = 400 * 1024 * 1024  # cap total uncompressed size (decompression-bomb guard)
+# Bound a git clone so a slow/huge remote can't hang the caller (a long-lived server holds a
+# request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
+# blocking forever on an interactive credential prompt for a private/typo'd URL.
+_CLONE_TIMEOUT = int(os.environ.get("SKILLTOTAL_CLONE_TIMEOUT", "300"))
 
 
 class CollectionError(Exception):
@@ -172,13 +177,22 @@ def _collect_remote(url: str) -> SourceContext:
         )
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     dest = Path(tmp.name) / "repo"
+    # Non-interactive (no credential prompt that could block) and bounded in time.
+    clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
     try:
         subprocess.run(  # nosec B603 B607
             ["git", "clone", "--depth", "1", url, str(dest)],
             check=True,
             capture_output=True,
             text=True,
+            timeout=_CLONE_TIMEOUT,
+            env=clone_env,
         )
+    except subprocess.TimeoutExpired as exc:
+        tmp.cleanup()
+        raise CollectionError(
+            f"git clone timed out after {_CLONE_TIMEOUT}s for {url}"
+        ) from exc
     except subprocess.CalledProcessError as exc:
         tmp.cleanup()
         raise CollectionError(

@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.7.2]
+
+### Security
+- **Bounded git clone**: `git clone --depth 1` now runs with a timeout
+  (`SKILLTOTAL_CLONE_TIMEOUT`, default 300s) and `GIT_TERMINAL_PROMPT=0` /
+  `GCM_INTERACTIVE=never`, so a slow/huge remote or a private-URL credential prompt can no
+  longer hang the caller (important for a long-lived server that runs scans inline). Timeout
+  surfaces as a `CollectionError`.
+
 ## [0.7.1]
 
 Calibration hardening: a labeled-corpus run (django, numpy, typescript, webpack, the MCP

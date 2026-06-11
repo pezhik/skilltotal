@@ -193,3 +193,18 @@ def test_collect_pypi_prefers_sdist_and_extracts(monkeypatch):
         # the analyzed distribution URL is surfaced for source deep-linking (schema 1.2)
         assert ctx.component.download_url == "https://files.pythonhosted.org/x-2.0.0.tar.gz"
         assert ctx.component.to_dict()["download_url"] == ctx.component.download_url
+
+
+def test_git_clone_timeout_becomes_collection_error(monkeypatch, tmp_path):
+    """A hung/slow clone (subprocess timeout) surfaces as a clean CollectionError, not a hang."""
+    import subprocess
+
+    def fake_run(*args, **kwargs):
+        # The clone passes timeout= and a non-interactive env; simulate it expiring.
+        assert kwargs.get("timeout")  # clone must be time-bounded
+        assert kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT") == "0"
+        raise subprocess.TimeoutExpired(cmd="git clone", timeout=kwargs["timeout"])
+
+    monkeypatch.setattr(collector.subprocess, "run", fake_run)
+    with pytest.raises(CollectionError, match="timed out"):
+        collector.collect("https://github.com/owner/repo")

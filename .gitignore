@@ -50,3 +50,8 @@ tests/manual_eval/corpus/
 
 # Local calibration scratch output (run via tests/manual_eval/calibrate.py)
 /calib_*
+
+# Stray JS tooling must never land in this zero-dep Python engine
+node_modules/
+package.json
+package-lock.json
