@@ -4,6 +4,29 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 7 (engine 0.7.0)
+
+Closes MCP/skill coverage gaps confirmed against agent-scan and agent-audit, and removes a
+high-volume source of report noise. Corpus-calibrated with zero new false positives.
+
+- **`ST-MCP-TOOL-SHADOWING`** (`malicious_indicator`, HIGH) — a tool description that steers
+  the agent's choice *between* tools (e.g. "use this tool instead of the X tool", "do not use
+  the X tool", "overrides the X tool"). Distinct from tool-poisoning (which hides imperatives
+  about the tool itself). Scanned in JSON manifests and code-defined tool descriptions.
+- **`ST-MCP-AUTO-APPROVE`** (`risky_construct`, MEDIUM) — an `mcpServers` entry with a
+  non-empty `autoApprove` / `alwaysAllow` list (or `"trust": true`): pre-authorized tool
+  calls remove the per-call human confirmation gate for the whole server.
+- **`ST-PROMPT-EXFIL-MD`** (`malicious_indicator`, HIGH) — a markdown image/link whose URL
+  embeds a template placeholder (`![x](https://h/?d={{file_contents}})`). Known exfiltration
+  channel (Invariant Labs GitHub-MCP attack). FP-guarded: a literal badge URL has no
+  placeholder and does not match.
+
+### Changed
+- **`ST-OBF-MINIFIED`** — skips build artifacts that are long-line by design (`.map`,
+  `.d.ts`/`.d.mts`/`.d.cts`, `*.min.*`, `package-lock.json`) and aggregates the rest into a
+  single `needs_review` entry instead of one row per file. Eliminates the dozens of identical
+  rows a legitimate SDK (e.g. an OpenAI client with bundled source maps) used to produce.
+
 ## ruleset 6 (engine 0.6.0)
 
 Adds detectors for the **unintentional risky-construct** classes (the bulk of real-world MCP

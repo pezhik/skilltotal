@@ -69,6 +69,7 @@ def _suppresses_env(relpath: str) -> bool:
 
 
 _WEAK = re.compile(r"\b(?:credentials|secrets)\b", re.IGNORECASE)
+_SENS_WORD_EXAMPLES = 8
 
 
 class SensitivePathScanner(Scanner):
@@ -151,25 +152,37 @@ class SensitivePathScanner(Scanner):
             for e in f.evidence:
                 strong_lines.add((e.file, e.line_start))
 
-        needs_review: list[NeedsReview] = []
+        # Bare secret-related words are common in legitimate code/docs (a large SDK can
+        # mention "credentials"/"secret" dozens of times). One row per hit floods the report,
+        # so aggregate distinct hit files into a single informational entry.
         seen: set[tuple[str, int]] = set()
+        files: list[str] = []
+        words: set[str] = set()
         for _f, m, ev in index.search(_WEAK):
             key = (ev.file, ev.line_start)
             if key in strong_lines or key in seen:
                 continue
             seen.add(key)
+            words.add(m.group(0).lower())
+            if ev.file not in files:
+                files.append(ev.file)
+
+        needs_review: list[NeedsReview] = []
+        if seen:
+            shown = ", ".join(files[:_SENS_WORD_EXAMPLES])
+            more = len(files) - _SENS_WORD_EXAMPLES
+            if more > 0:
+                shown += f", and {more} more"
             needs_review.append(
                 NeedsReview(
                     category=CATEGORY,
-                    title="Ambiguous secret-related word",
+                    title=f"Ambiguous secret-related words ({len(seen)})",
                     reason=(
-                        f"Word '{m.group(0)}' at line {ev.line_start} may refer to a "
-                        "secret store but is too ambiguous to confirm."
+                        f"{len(seen)} mention(s) of secret-related words "
+                        f"({', '.join(sorted(words))}) across {len(files)} file(s) may refer "
+                        f"to a secret store but are too ambiguous to confirm: {shown}."
                     ),
-                    file=ev.file,
-                    line=ev.line_start,
+                    file=files[0] if files else None,
                 )
             )
-            if len(needs_review) >= MAX_EVIDENCE_PER_FINDING:
-                break
         return ScanResult(findings=findings, needs_review=needs_review)

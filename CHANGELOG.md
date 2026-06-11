@@ -4,6 +4,27 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.7.0]
+
+### Added
+- **MCP detectors (ruleset 7)** closing gaps from agent-scan / agent-audit:
+  - `ST-MCP-TOOL-SHADOWING` (`malicious_indicator`) — a tool description steering the agent
+    to prefer/override/avoid *other* tools (tool shadowing).
+  - `ST-MCP-AUTO-APPROVE` (`risky_construct`) — an `mcpServers` entry pre-authorizing tool
+    calls (`autoApprove` / `alwaysAllow` / `trust`), removing the human confirmation gate.
+  - `ST-PROMPT-EXFIL-MD` (`malicious_indicator`) — a markdown image/link whose URL embeds a
+    template placeholder (an exfiltration sink; cf. the Invariant Labs GitHub-MCP attack).
+- **Version pinning** for package sources: `npm:name@1.2.3` and `pypi:name==1.2.3`
+  (`pypi:name@1.2.3` accepted too) download that exact release instead of latest.
+- **Calibration harness** (`tests/manual_eval/calibrate.py`): run the engine over a labeled
+  CSV and report benign false-positive rate, detection rate, and `needs_review` noise.
+
+### Changed
+- **Minified-line noise** (`ST-OBF-MINIFIED`) no longer floods reports: build artifacts that
+  are long-line by design (`.map`, `.d.ts`/`.d.mts`/`.d.cts`, `*.min.*`, `package-lock.json`)
+  are skipped, and the remaining minified files collapse into a single aggregated
+  `needs_review` entry instead of one per file.
+
 ## [0.6.0]
 
 ### Added

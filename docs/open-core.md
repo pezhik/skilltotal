@@ -47,6 +47,12 @@ These need runtime or external data, so they sit above the component-only static
   email-stealer: the legitimate server re-published with one added BCC line). This needs
   external references (upstream repo, registry metadata), outside component-only static
   analysis — hence paid/server-side, not an engine rule.
+- **Runtime/session forensics & LLM-assisted verification** — analyzing agent session logs,
+  traces, and live homes (as agent-audit's "forensic mode" does), and using an LLM to
+  cross-verify findings. Both need runtime data or a model call, which the deterministic,
+  never-execute, never-call-an-LLM engine deliberately excludes. The OSS engine deliberately
+  does **not** vendor third-party rule packs (e.g. agent-audit's 573 imported YAML rules):
+  every engine rule is corpus-calibrated for low false positives, which a bulk import is not.
 
 ## Why paid features can't be "taken from OSS"
 

@@ -48,6 +48,72 @@ def test_name_parsing_rejects_traversal():
     assert collector.pypi_package_name("pypi:../evil") is None
 
 
+def test_version_spec_parsing():
+    # npm: trailing @version is a pin; the leading scope @ is not.
+    assert collector.npm_package_spec("npm:lodash@4.17.21") == ("lodash", "4.17.21")
+    assert collector.npm_package_spec("npm:@scope/pkg@1.0.0") == ("@scope/pkg", "1.0.0")
+    assert collector.npm_package_spec("npm:@scope/pkg") == ("@scope/pkg", None)
+    assert collector.npm_package_spec("npm:lodash") == ("lodash", None)
+    # pypi: == and @ both pin.
+    assert collector.pypi_package_spec("pypi:requests==2.31.0") == ("requests", "2.31.0")
+    assert collector.pypi_package_spec("pypi:requests@2.31.0") == ("requests", "2.31.0")
+    assert collector.pypi_package_spec("pypi:requests") == ("requests", None)
+
+
+def test_collect_npm_pinned_version(monkeypatch):
+    registry = json.dumps(
+        {
+            "dist-tags": {"latest": "2.0.0"},
+            "versions": {
+                "1.2.3": {"dist": {"tarball": "https://registry.npmjs.org/x/-/x-1.2.3.tgz"}},
+                "2.0.0": {"dist": {"tarball": "https://registry.npmjs.org/x/-/x-2.0.0.tgz"}},
+            },
+        }
+    ).encode()
+    tarball = _tgz(
+        {"package/package.json": b'{"name":"x","version":"1.2.3"}', "package/index.js": b"1;"}
+    )
+    monkeypatch.setattr(
+        collector, "_http_get",
+        lambda url: tarball if url.endswith("x-1.2.3.tgz") else registry,
+    )
+    with collector.collect("npm:x@1.2.3") as ctx:
+        assert ctx.component.version == "1.2.3"  # pinned, not latest 2.0.0
+
+
+def test_collect_npm_unknown_version_errors(monkeypatch):
+    registry = json.dumps(
+        {"dist-tags": {"latest": "2.0.0"},
+         "versions": {"2.0.0": {"dist": {"tarball": "https://r/x-2.0.0.tgz"}}}}
+    ).encode()
+    monkeypatch.setattr(collector, "_http_get", lambda url: registry)
+    with pytest.raises(CollectionError):
+        with collector.collect("npm:x@9.9.9"):
+            pass
+
+
+def test_collect_pypi_pinned_version(monkeypatch):
+    meta = json.dumps(
+        {
+            "info": {"version": "1.5.0"},
+            "urls": [
+                {"packagetype": "sdist", "filename": "x-1.5.0.tar.gz",
+                 "url": "https://files.pythonhosted.org/x-1.5.0.tar.gz"}
+            ],
+        }
+    ).encode()
+    sdist = _tgz({"x-1.5.0/pyproject.toml": b'[project]\nname="x"\nversion="1.5.0"\n'})
+    seen = {}
+
+    def fake_get(url):
+        seen["url"] = url
+        return sdist if url.endswith(".tar.gz") else meta
+
+    monkeypatch.setattr(collector, "_http_get", fake_get)
+    with collector.collect("pypi:x==1.5.0") as ctx:
+        assert ctx.component.version == "1.5.0"
+
+
 def test_tar_extraction_blocks_traversal(tmp_path):
     with pytest.raises(CollectionError):
         collector._safe_extract_tar(_tgz({"../evil.txt": b"x"}), tmp_path)

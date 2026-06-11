@@ -58,6 +58,12 @@ skilltotal scan ./path/to/component
 # Scan a remote repository (shallow git clone)
 skilltotal scan https://github.com/owner/repo
 
+# Scan a package from a registry (latest, or a pinned version)
+skilltotal scan npm:left-pad
+skilltotal scan npm:left-pad@1.3.0
+skilltotal scan pypi:requests
+skilltotal scan pypi:requests==2.31.0
+
 # JSON to stdout
 skilltotal scan ./component --json
 

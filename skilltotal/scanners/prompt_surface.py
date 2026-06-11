@@ -50,6 +50,17 @@ _WEAK = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# Markdown image/link exfiltration: an image or link whose URL embeds a template
+# placeholder ({{...}} / ${...} / {x}), the channel used to smuggle data out by having
+# the agent fill the URL with file contents/secrets (cf. the Invariant Labs GitHub-MCP
+# attack). FP guard: a literal badge/shields URL has no '{' or '$' placeholder, so it
+# won't match — the placeholder is what makes this an exfiltration template.
+_EXFIL_MD = alternation(
+    r"!\[[^\]]*\]\(\s*https?://[^)\s]*[{$]",          # ![alt](http://host/?x={{data}})
+    r"\[[^\]]*\]\(\s*https?://[^)\s]*[{$][^)\s]*\)",  # [text](http://host/?x=${data})
+    flags=re.IGNORECASE,
+)
+
 
 class PromptSurfaceScanner(Scanner):
     name = "prompt_surface"
@@ -72,6 +83,25 @@ class PromptSurfaceScanner(Scanner):
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             pattern=_STRONG,
         ),
+        RuleSpec(
+            id="ST-PROMPT-EXFIL-MD",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Markdown image/link with a templated exfiltration URL",
+            description=(
+                "A markdown image or link embeds a template placeholder in its URL "
+                "(e.g. ![x](https://host/?d={{file_contents}})). This is a known "
+                "data-exfiltration channel: an agent rendering the markdown is steered to "
+                "fill the URL with file contents or secrets, sending them off-host."
+            ),
+            recommendation=(
+                "Treat embedded markdown as untrusted. A URL that interpolates agent data "
+                "into an image/link is an exfiltration sink — remove it and review intent."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            pattern=_EXFIL_MD,
+        ),
         # Listed for `rules list`; routed to needs_review, never a confirmed finding.
         RuleSpec(
             id="ST-PROMPT-WEAK",
@@ -85,8 +115,8 @@ class PromptSurfaceScanner(Scanner):
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
-        strong_rule = self.rules[0]
-        findings = findings_from_rules(index, [strong_rule])
+        pattern_rules = [r for r in self.rules if r.pattern is not None]
+        findings = findings_from_rules(index, pattern_rules)
 
         needs_review: list[NeedsReview] = []
         seen: set[tuple[str, int]] = set()

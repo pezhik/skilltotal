@@ -80,26 +80,55 @@ def classify_source(source: str) -> str:
     return "local"
 
 
-def npm_package_name(source: str) -> str | None:
-    """Extract the npm package name from an `npm:<name>` spec or an npmjs.com URL."""
+def npm_package_spec(source: str) -> tuple[str | None, str | None]:
+    """Parse `npm:<name>[@<version>]` (or an npmjs.com URL) into (name, version).
+
+    Scoped names keep their leading ``@`` (``@scope/pkg``); only a trailing ``@version``
+    after the name is treated as a pin. Returns ``(None, None)`` for an invalid name.
+    """
     s = source.strip()
     if s.lower().startswith("npm:"):
-        name = s[4:].strip()
+        spec = s[4:].strip()
     else:
         m = _NPMJS_URL_RE.match(s)
-        name = m.group(1) if m else ""
-    return name if name and _NPM_NAME_RE.match(name) else None
+        spec = m.group(1) if m else ""
+    version: str | None = None
+    # Split a trailing @version, but not the leading scope '@'. Look for '@' after index 0.
+    at = spec.find("@", 1)
+    if at > 0:
+        spec, version = spec[:at], spec[at + 1:].strip() or None
+    if not (spec and _NPM_NAME_RE.match(spec)):
+        return None, None
+    return spec, version
+
+
+def pypi_package_spec(source: str) -> tuple[str | None, str | None]:
+    """Parse `pypi:<name>[==<version>]` / `pypi:<name>[@<version>]` into (name, version)."""
+    s = source.strip()
+    if s.lower().startswith("pypi:"):
+        spec = s[5:].strip()
+    else:
+        m = _PYPI_URL_RE.match(s)
+        spec = m.group(1) if m else ""
+    version: str | None = None
+    for sep in ("==", "@"):
+        if sep in spec:
+            spec, _, ver = spec.partition(sep)
+            spec, version = spec.strip(), ver.strip() or None
+            break
+    if not (spec and _PYPI_NAME_RE.match(spec)):
+        return None, None
+    return spec, version
+
+
+def npm_package_name(source: str) -> str | None:
+    """Extract the npm package name from an `npm:<name>` spec or an npmjs.com URL."""
+    return npm_package_spec(source)[0]
 
 
 def pypi_package_name(source: str) -> str | None:
     """Extract the PyPI project name from a `pypi:<name>` spec or a pypi.org URL."""
-    s = source.strip()
-    if s.lower().startswith("pypi:"):
-        name = s[5:].strip()
-    else:
-        m = _PYPI_URL_RE.match(s)
-        name = m.group(1) if m else ""
-    return name if name and _PYPI_NAME_RE.match(name) else None
+    return pypi_package_spec(source)[0]
 
 
 def collect(source: str) -> SourceContext:
@@ -258,25 +287,35 @@ def _collect_archive(
 
 
 def _collect_npm(source: str) -> SourceContext:
-    name = npm_package_name(source)
+    name, pin = npm_package_spec(source)
     if not name:
         raise CollectionError(f"invalid npm package name in: {source}")
     meta = json.loads(_http_get(f"https://registry.npmjs.org/{quote(name, safe='@')}"))
-    latest = (meta.get("dist-tags") or {}).get("latest")
     versions = meta.get("versions") or {}
-    dist = (versions.get(latest) or {}).get("dist") if latest else None
+    if pin:
+        if pin not in versions:
+            raise CollectionError(f"npm package '{name}' has no version '{pin}'")
+        chosen = pin
+    else:
+        chosen = (meta.get("dist-tags") or {}).get("latest")
+    dist = (versions.get(chosen) or {}).get("dist") if chosen else None
     tarball = (dist or {}).get("tarball")
-    if not (latest and tarball):
-        raise CollectionError(f"npm package '{name}' has no resolvable latest release")
-    return _collect_archive(source, "npm_package", str(latest), tarball, tarball)
+    if not (chosen and tarball):
+        raise CollectionError(f"npm package '{name}' has no resolvable release")
+    return _collect_archive(source, "npm_package", str(chosen), tarball, tarball)
 
 
 def _collect_pypi(source: str) -> SourceContext:
-    name = pypi_package_name(source)
+    name, pin = pypi_package_spec(source)
     if not name:
         raise CollectionError(f"invalid PyPI package name in: {source}")
-    meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/json"))
-    version = str((meta.get("info") or {}).get("version") or "")
+    if pin:
+        # Per-version metadata endpoint lists that release's distributions directly.
+        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/{pin}/json"))
+        version = str((meta.get("info") or {}).get("version") or pin)
+    else:
+        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/json"))
+        version = str((meta.get("info") or {}).get("version") or "")
     urls = meta.get("urls") or []
     chosen = next((u for u in urls if u.get("packagetype") == "sdist"), None)
     chosen = chosen or next((u for u in urls if u.get("packagetype") == "bdist_wheel"), None)

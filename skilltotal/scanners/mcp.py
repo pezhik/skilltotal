@@ -87,6 +87,22 @@ _POISONING = alternation(
     flags=re.IGNORECASE,
 )
 
+# Tool-shadowing signatures: a tool's description steering the agent's use of OTHER
+# tools — redirecting calls to itself, overriding another tool, or forbidding one.
+# Distinct from _POISONING (hidden imperatives about *this* tool / fake authority).
+_SHADOWING = alternation(
+    r"instead\s+of\s+(?:using\s+|calling\s+)?(?:the\s+)?[\w.-]+\s+tool",
+    r"use\s+this\s+(?:tool|server)\s+instead",
+    r"when\s+the\s+user\s+(?:asks|requests|wants)[^\n.]{0,60}?use\s+this\s+tool",
+    r"(?:overrides?|replaces?|takes?\s+precedence\s+over)\s+(?:the\s+)?[\w.-]+\s+(?:tool|server)",
+    r"do\s+not\s+use\s+(?:the\s+)?[\w.-]+\s+(?:tool|server)",
+    flags=re.IGNORECASE,
+)
+
+# Auto-approval keys in mcpServers entries (Cursor/Cline/VS Code style): pre-authorizing
+# tool calls removes the human confirmation gate for everything the server exposes.
+_AUTO_APPROVE_KEYS = ("autoApprove", "alwaysAllow")
+
 # Source-level signals that an MCP tool surface exists.
 _CODE_SURFACE = re.compile(
     r"@(?:mcp|server|app)\.tool\b|FastMCP\s*\(|\bnew\s+Server\s*\(|\.registerTool\s*\(|"
@@ -179,6 +195,41 @@ class McpScanner(Scanner):
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
+        RuleSpec(
+            id="ST-MCP-TOOL-SHADOWING",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="MCP tool description steers the agent's use of other tools (shadowing)",
+            description=(
+                "An MCP tool's description instructs the agent to prefer this tool over, "
+                "override, or avoid OTHER tools (e.g. 'instead of using the X tool', 'use "
+                "this tool instead', 'do not use the X tool'). A malicious server can use "
+                "this to intercept calls meant for trusted tools (tool shadowing)."
+            ),
+            recommendation=(
+                "Tool metadata should document the tool itself, never direct the agent's "
+                "choice between tools. Review why this server references other tools."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
+        RuleSpec(
+            id="ST-MCP-AUTO-APPROVE",
+            category=CATEGORY,
+            severity=Severity.MEDIUM,
+            title="MCP server configured with auto-approved tool calls",
+            description=(
+                "An mcpServers entry pre-authorizes tool calls (autoApprove / alwaysAllow / "
+                "trust), removing the human confirmation gate for everything this server "
+                "exposes."
+            ),
+            recommendation=(
+                "Auto-approval turns every tool on this server into an unattended action. "
+                "Approve individual tools deliberately instead of trusting the whole server."
+            ),
+            capability=Capability.MCP_TOOLS_DETECTED,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -186,6 +237,8 @@ class McpScanner(Scanner):
         dangerous: list[Evidence] = []
         server_exec: list[Evidence] = []
         poisoning: list[Evidence] = []
+        shadowing: list[Evidence] = []
+        auto_approve: list[Evidence] = []
         needs_review: list[NeedsReview] = []
         dangerous_categories: set[str] = set()
 
@@ -208,7 +261,7 @@ class McpScanner(Scanner):
 
             self._analyze_json(
                 f, data, is_manifest_name, detected, dangerous, server_exec,
-                poisoning, dangerous_categories,
+                poisoning, shadowing, auto_approve, dangerous_categories,
             )
 
         # Source-level tool definitions (Python / JS decorators & SDK calls).
@@ -220,9 +273,11 @@ class McpScanner(Scanner):
         # Classify the names of tools defined in code (not just JSON manifests).
         self._classify_code_tools(index, dangerous, dangerous_categories)
 
-        # Tool poisoning hidden in code-defined tool descriptions/docstrings. Scope to files
-        # that actually expose an MCP tool surface to keep this high-signal / low false-positive.
-        self._scan_code_poisoning(index, poisoning)
+        # Tool poisoning / shadowing hidden in code-defined tool descriptions/docstrings.
+        # Scope to files that actually expose an MCP tool surface to keep this high-signal /
+        # low false-positive.
+        self._scan_code_phrases(index, _POISONING, poisoning)
+        self._scan_code_phrases(index, _SHADOWING, shadowing)
 
         findings: list[Finding] = []
         if dangerous:
@@ -242,6 +297,10 @@ class McpScanner(Scanner):
             findings.append(self._finding("ST-MCP-SERVER-EXEC", server_exec))
         if poisoning:
             findings.append(self._finding("ST-MCP-TOOL-POISONING", poisoning))
+        if shadowing:
+            findings.append(self._finding("ST-MCP-TOOL-SHADOWING", shadowing))
+        if auto_approve:
+            findings.append(self._finding("ST-MCP-AUTO-APPROVE", auto_approve))
         if detected:
             findings.append(self._finding("ST-MCP-DETECTED", detected))
 
@@ -296,7 +355,7 @@ class McpScanner(Scanner):
     # -------------------------------------------------------------- internals
     def _analyze_json(
         self, f, data, is_manifest_name, detected, dangerous, server_exec,
-        poisoning, dangerous_categories,
+        poisoning, shadowing, auto_approve, dangerous_categories,
     ) -> None:
         if not isinstance(data, dict):
             return
@@ -307,10 +366,23 @@ class McpScanner(Scanner):
             if ev:
                 detected.append(ev)
             for srv in servers.values():
-                if isinstance(srv, dict) and "command" in srv:
+                if not isinstance(srv, dict):
+                    continue
+                if "command" in srv:
                     cev = _evidence_for(f, '"command"')
                     if cev:
                         server_exec.append(cev)
+                # Pre-authorized tool calls: autoApprove/alwaysAllow lists (or true) and
+                # "trust": true remove the per-call human confirmation gate.
+                for key in _AUTO_APPROVE_KEYS:
+                    if srv.get(key):
+                        aev = _evidence_for(f, f'"{key}"')
+                        if aev:
+                            auto_approve.append(aev)
+                if srv.get("trust") is True:
+                    aev = _evidence_for(f, '"trust"')
+                    if aev:
+                        auto_approve.append(aev)
 
         tools = data.get("tools")
         tool_list = []
@@ -342,6 +414,11 @@ class McpScanner(Scanner):
                 anchor = _evidence_for(f, pm.group(0)) or _evidence_for(f, '"description"')
                 if anchor:
                     poisoning.append(anchor)
+            sm = _SHADOWING.search(desc)
+            if sm and len(shadowing) < MAX_EVIDENCE_PER_FINDING:
+                anchor = _evidence_for(f, sm.group(0)) or _evidence_for(f, '"description"')
+                if anchor:
+                    shadowing.append(anchor)
             # Poisoning also hides in inputSchema parameter descriptions, not just the top-level
             # tool description (MCPTox). Scan each declared parameter's description too.
             schema = tool.get("inputSchema")
@@ -379,20 +456,22 @@ class McpScanner(Scanner):
                     if len(dangerous) < MAX_EVIDENCE_PER_FINDING:
                         dangerous.append(ev)
 
-    def _scan_code_poisoning(self, index: FileIndex, poisoning: list[Evidence]) -> None:
-        """Flag tool-poisoning phrases in code files that expose an MCP tool surface."""
+    def _scan_code_phrases(
+        self, index: FileIndex, pattern: re.Pattern[str], sink: list[Evidence]
+    ) -> None:
+        """Flag poisoning/shadowing phrases in code files that expose an MCP tool surface."""
         seen: set[tuple[str, int]] = set()
         for f in index.select(suffixes=CODE_SUFFIXES):
             if not _CODE_SURFACE.search(f.text):
                 continue
-            for m in _POISONING.finditer(f.text):
+            for m in pattern.finditer(f.text):
                 ev = f.evidence_for_span(m.start(), m.end())
                 key = (ev.file, ev.line_start)
                 if key in seen:
                     continue
                 seen.add(key)
-                if len(poisoning) < MAX_EVIDENCE_PER_FINDING:
-                    poisoning.append(ev)
+                if len(sink) < MAX_EVIDENCE_PER_FINDING:
+                    sink.append(ev)
 
     def _rule(self, rule_id: str) -> RuleSpec:
         return next(r for r in self.rules if r.id == rule_id)

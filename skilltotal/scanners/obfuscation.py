@@ -38,6 +38,22 @@ _BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
 _HEX_ESCAPES = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){10,}")
 _MINIFIED_LINE_CHARS = 2000
 
+# Build artifacts where a single very long line is the *expected* format, not an
+# obfuscation signal: source maps (single-line JSON), pre-minified bundles, TypeScript
+# declaration files, and lockfiles. Other rules still scan these files normally — only
+# the minified-line note skips them.
+_EXPECTED_LONG_LINE_SUFFIXES = (
+    ".map", ".min.js", ".min.mjs", ".min.cjs", ".min.css",
+    ".d.ts", ".d.mts", ".d.cts",
+)
+_EXPECTED_LONG_LINE_NAMES = {"package-lock.json"}
+_MINIFIED_EXAMPLES_SHOWN = 8
+
+
+def _is_expected_long_line_file(relpath: str) -> bool:
+    name = relpath.rsplit("/", 1)[-1].lower()
+    return name in _EXPECTED_LONG_LINE_NAMES or name.endswith(_EXPECTED_LONG_LINE_SUFFIXES)
+
 
 class ObfuscationScanner(Scanner):
     name = "obfuscation"
@@ -123,19 +139,33 @@ class ObfuscationScanner(Scanner):
                 return
 
     def _minified(self, index: FileIndex, needs_review: list[NeedsReview]) -> None:
+        """One aggregated note per report (not per file), skipping expected formats.
+
+        Source maps / .d.ts / lockfiles are long-line *by design*; flagging each one
+        floods a legitimate SDK's report with dozens of identical rows. Files that
+        remain are summarized in a single entry listing a few examples.
+        """
+        minified: list[str] = []
         for f in index.files:
-            for lineno, line in enumerate(f.text.splitlines(), start=1):
-                if len(line) > _MINIFIED_LINE_CHARS:
-                    needs_review.append(
-                        NeedsReview(
-                            category=CATEGORY,
-                            title="Heavily minified / very long line",
-                            reason=(
-                                f"Contains a line of {len(line)} characters (possible "
-                                "minification); not analyzable line-by-line."
-                            ),
-                            file=f.relpath,
-                            line=lineno,
-                        )
-                    )
-                    break  # one note per file is enough
+            if _is_expected_long_line_file(f.relpath):
+                continue
+            if any(len(line) > _MINIFIED_LINE_CHARS for line in f.text.splitlines()):
+                minified.append(f.relpath)
+        if not minified:
+            return
+        examples = ", ".join(minified[:_MINIFIED_EXAMPLES_SHOWN])
+        more = len(minified) - _MINIFIED_EXAMPLES_SHOWN
+        if more > 0:
+            examples += f", and {more} more"
+        needs_review.append(
+            NeedsReview(
+                category=CATEGORY,
+                title=f"Heavily minified files ({len(minified)})",
+                reason=(
+                    f"{len(minified)} file(s) contain lines over {_MINIFIED_LINE_CHARS} "
+                    f"characters (possible minification); not analyzable line-by-line: "
+                    f"{examples}."
+                ),
+                file=minified[0],
+            )
+        )
