@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.7.4]
+
+### Fixed
+- **False-positive "malicious" verdicts on real MCP servers** (ruleset 8). A scan of 37 popular
+  MCP servers flagged 6 legitimate ones (awslabs, apify, exa, Figma-Context-MCP,
+  DesktopCommander, serena) as malicious. Recalibrated:
+  - `ST-MCP-TOOL-SHADOWING` → **needs_review** (no longer a scored malicious indicator): "use X
+    instead" / "do not use the Y tool" is indistinguishable from legitimate intra-server routing
+    and code comments.
+  - `ST-MCP-TOOL-POISONING`: dropped the bare "before using/calling this tool" imperative (legit
+    prerequisite/UX guidance); the cross-tool precondition now requires a sensitive read/send
+    target (e.g. `~/.ssh`, credentials) to fire.
+  - `ST-PROMPT-INJECTION`: "print"/"show the system prompt" no longer match (legit
+    `print-system-prompt` CLI features); dropped the lone "hidden instruction" phrase; "send
+    <secret> to" is suppressed when negated ("MUST NOT send tokens to…", spec prose).
+  - Added regression tests for all six.
+
 ## [0.7.3]
 
 ### Changed

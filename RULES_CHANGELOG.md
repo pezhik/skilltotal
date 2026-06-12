@@ -4,6 +4,25 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 8 (engine 0.7.4)
+
+False-positive recalibration after scanning 37 real MCP servers (the labeled corpus was
+general packages, not MCP servers, and missed these). 6 popular servers were wrongly flagged
+malicious; all fixed, with regression tests. No new rules; existing rules narrowed/demoted.
+
+- **`ST-MCP-TOOL-SHADOWING`** → demoted from `malicious_indicator` finding to **`needs_review`**.
+  Steering between tools ("use X instead", "do not use the Y tool") can't be distinguished by
+  pattern from legitimate intra-server routing ("DO NOT use this tool for PDFs; use `write_pdf`")
+  or code comments ("# override create_broker tool"). Still surfaced, never scored.
+- **`ST-MCP-TOOL-POISONING`** — removed the bare "before using/calling this tool" imperative
+  (matched benign prerequisites like awslabs "ask the user before calling this tool"). The
+  cross-tool precondition now requires a sensitive read/send target (`~/.ssh`, credentials,
+  tokens, …) to fire.
+- **`ST-PROMPT-INJECTION`** — narrowed: dropped `print`/`show` from "reveal the system prompt"
+  (legit `print-system-prompt` CLI), dropped the standalone "hidden instruction" phrase (FP'd on
+  a hidden-char scanner's own comment), and suppressed "send <secret> to" when negated (MCP spec
+  prose "MUST NOT send tokens to the MCP server").
+
 ## ruleset 7 (engine 0.7.1; 0.7.0 yanked)
 
 Closes MCP/skill coverage gaps confirmed against agent-scan and agent-audit, removes a
