@@ -3,8 +3,9 @@
 ## Reporting a vulnerability
 
 Please report security issues privately via GitHub Security Advisories
-("Report a vulnerability" on the repo's Security tab), not in public issues. We aim to
-acknowledge within a few business days.
+("Report a vulnerability" on the repo's Security tab) or by email to
+**contact@skilltotal.ai** — not in public issues. We aim to acknowledge within a few
+business days.
 
 ## Preventing secret/key leakage (defense in depth)
 

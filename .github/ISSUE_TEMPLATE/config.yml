@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Try it online
+    url: https://www.skilltotal.ai
+    about: Scan a component in the browser (same engine, no install).
+  - name: Security vulnerability (private)
+    url: https://github.com/pezhik/skilltotal/security/advisories/new
+    about: Report a vulnerability privately — do NOT open a public issue. Or email contact@skilltotal.ai.
+  - name: Questions & ideas
+    url: https://github.com/pezhik/skilltotal/discussions
+    about: Ask a question or discuss an idea in Discussions.

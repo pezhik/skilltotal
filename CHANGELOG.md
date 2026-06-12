@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.7.3]
+
+### Changed
+- **Packaging & project metadata** for the public release: PyPI card now carries the website
+  (`Homepage = https://www.skilltotal.ai`), Documentation/Issues/Changelog URLs, Python
+  3.10–3.13 + OS-Independent classifiers, and README badges. Added `CODE_OF_CONDUCT.md`,
+  GitHub issue/PR templates, and `contact@skilltotal.ai` as a security report channel. No
+  detection or schema changes (ruleset 7, schema 1.3 unchanged).
+
 ## [0.7.2]
 
 ### Security

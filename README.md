@@ -1,11 +1,19 @@
 # SkillTotal
 
+[![PyPI](https://img.shields.io/pypi/v/skilltotal)](https://pypi.org/project/skilltotal/)
+[![Python](https://img.shields.io/pypi/pyversions/skilltotal)](https://pypi.org/project/skilltotal/)
+[![License](https://img.shields.io/pypi/l/skilltotal)](LICENSE)
+[![CI](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml/badge.svg)](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml)
+
 **AI Component Security Platform — open-source CLI engine.**
 
 SkillTotal statically analyzes AI-related components (skills, plugins, MCP servers, npm /
 Python packages, repositories) to surface supply-chain risks, dangerous capabilities,
 prompt-injection surfaces, and data-exfiltration paths **before** the component is installed
 or trusted.
+
+**Try it online (no install, no account):** [www.skilltotal.ai](https://www.skilltotal.ai) —
+the website runs this same engine. Prefer the CLI? `pipx install skilltotal` (below).
 
 It analyzes **only the component itself** — never your user, company, environment,
 deployment, or runtime context. Every score and finding is derived exclusively from the
