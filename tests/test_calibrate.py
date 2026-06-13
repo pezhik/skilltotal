@@ -32,6 +32,45 @@ def test_judge_rules():
     assert calibrate._judge("vulnerable-lab", False, "medium", 1, 0) is True
 
 
+def test_judge_expected_result_overrides_class():
+    # An explicit gold label is authoritative over the row's class.
+    # "allow" => pass only if not called malicious (even if class says malicious).
+    assert calibrate._judge("malicious", False, "high", 0, 1, expected="allow") is True
+    assert calibrate._judge("malicious", True, "low", 0, 0, expected="allow") is False
+    # "detect" => pass only if flagged (even if class says benign-baseline).
+    assert calibrate._judge("benign-baseline", True, "low", 0, 0, expected="detect") is True
+    assert calibrate._judge("benign-baseline", False, "low", 0, 0, expected="detect") is False
+    # "detect" on a lab keeps the softer rule (a risky construct is enough).
+    assert calibrate._judge("vulnerable-lab", False, "medium", 1, 0, expected="detect") is True
+
+
+def test_calibrate_fixture_source(tmp_path):
+    # ``fixture:<name>`` resolves to the in-repo malicious corpus and is scanned offline,
+    # giving the dataset a deterministic detection floor that never gets taken down.
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,ecosystem,source,version,notes,expected_result\n"
+        "malicious,fixture,fixture:npm-trapdoor-stealer,,known stealer,detect\n",
+        encoding="utf-8",
+    )
+    results, summary = calibrate.calibrate(csv_path)
+    assert summary["scanned"] == 1 and summary["skipped"] == 0
+    row = results[0]
+    assert row.status == "ok" and row.passed is True
+
+
+def test_calibrate_unknown_fixture_is_skipped(tmp_path):
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,ecosystem,source,version,notes\n"
+        "malicious,fixture,fixture:does-not-exist,,typo\n",
+        encoding="utf-8",
+    )
+    results, summary = calibrate.calibrate(csv_path)
+    assert summary["skipped"] == 1
+    assert results[0].status == "skipped"
+
+
 def _write(dir_: Path, name: str, content: str) -> None:
     dir_.mkdir(parents=True, exist_ok=True)
     (dir_ / name).write_text(content, encoding="utf-8")

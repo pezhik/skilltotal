@@ -9,8 +9,14 @@ metric).
 
 CSV columns (header required): ``class,ecosystem,source,version,notes``
   - ``class``    one of: malicious | compromised-version | vulnerable-lab | benign-baseline
-  - ``source``   an engine spec (``npm:x``, ``pypi:y``, a git URL) OR empty -> row SKIPPED
+  - ``source``   an engine spec (``npm:x``, ``pypi:y``, a git URL), a local ``fixture:<name>``
+                 (resolved to ``manual_eval/malicious/<name>`` and scanned offline), OR empty
+                 -> row SKIPPED
   - ``version``  optional pin; folded into the spec (``npm:x@v`` / ``pypi:y==v``)
+  - ``expected_result`` (optional): ``detect`` | ``allow`` — an explicit per-row gold label.
+                 When present it drives the pass/fail judgement (``allow`` = must not be called
+                 malicious; ``detect`` = must be flagged) instead of inferring from ``class``.
+                 ``vulnerable-lab`` rows keep their softer rule (a risky construct is enough).
 
 This is an *informational* tool (always exits 0). It never changes rules; calibration
 decisions are made by a human. The real labeled dataset lives in the private ops repo;
@@ -29,12 +35,19 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from skilltotal import engine
-from skilltotal.collector import CollectionError
+from skilltotal.collector import CollectionError, detect_component
 
 # Expected-class -> what counts as a correct outcome.
 BENIGN = "benign-baseline"
 DETECT_CLASSES = {"malicious", "compromised-version"}
 LAB_CLASSES = {"vulnerable-lab"}
+
+# Local known-malicious fixtures, addressable as ``fixture:<name>`` in the dataset. These are
+# always reachable (committed in-repo), unlike registry packages that get taken down — so they
+# give the network corpus a deterministic detection floor when it runs (Tier 3). The dedicated
+# offline gate is ``tests/test_offline_calibration.py``.
+FIXTURE_ROOT = Path(__file__).parent / "malicious"
+FIXTURE_PREFIX = "fixture:"
 
 
 @dataclass
@@ -64,9 +77,25 @@ def _spec(source: str, version: str) -> str:
     return source  # git URLs / other: version handled by the ref in the URL, if any
 
 
-def _judge(cls: str, has_mal: bool, risk_level: str, risky: int, caps: int) -> bool:
-    """Did the engine produce the expected kind of outcome for this class?"""
+def _judge(
+    cls: str, has_mal: bool, risk_level: str, risky: int, caps: int, expected: str = ""
+) -> bool:
+    """Did the engine produce the expected kind of outcome for this row?
+
+    ``expected`` is the optional per-row gold label (``detect`` | ``allow``). When given it is
+    authoritative: ``allow`` rows pass iff not called malicious; ``detect`` rows pass iff
+    flagged (with ``vulnerable-lab`` keeping its softer "a risky construct is enough" rule).
+    When absent the outcome is inferred from ``class`` (back-compat).
+    """
     elevated = risk_level in ("high", "critical")
+    expected = expected.strip().lower()
+    if expected == "allow":
+        return not has_mal
+    if expected == "detect":
+        if cls in LAB_CLASSES:
+            return has_mal or elevated or risky > 0
+        return has_mal or elevated
+    # No explicit gold label: fall back to class-based judging.
     if cls == BENIGN:
         # PASS = not called malware. Powerful (even critical) capabilities are fine here;
         # only a malicious-indicator on a trusted package is a real false positive.
@@ -80,12 +109,23 @@ def _judge(cls: str, has_mal: bool, risk_level: str, risky: int, caps: int) -> b
     return True  # unknown class: informational only
 
 
-def run_row(cls: str, source: str, version: str) -> RowResult:
+def _analyze_spec(spec: str):
+    """Run the static engine on a spec, resolving local ``fixture:<name>`` offline."""
+    if spec.lower().startswith(FIXTURE_PREFIX):
+        name = spec[len(FIXTURE_PREFIX) :].strip()
+        root = FIXTURE_ROOT / name
+        if not root.is_dir():
+            raise CollectionError(f"unknown fixture: {name}")
+        return engine.analyze_directory(root, detect_component(root, source=str(root)))
+    return engine.analyze(spec)
+
+
+def run_row(cls: str, source: str, version: str, expected: str = "") -> RowResult:
     spec = _spec(source, version)
     if not spec:
         return RowResult(cls=cls, source="", status="skipped", detail="no source")
     try:
-        report = engine.analyze(spec)
+        report = _analyze_spec(spec)
     except CollectionError as exc:
         # Package pulled from the registry / repo unreachable: not a scanner failure.
         return RowResult(cls=cls, source=spec, status="skipped", detail=str(exc))
@@ -105,7 +145,7 @@ def run_row(cls: str, source: str, version: str) -> RowResult:
         risk_level=report.risk_level.value,
     )
     res.passed = _judge(
-        cls, res.has_malicious, res.risk_level, res.risky_constructs, res.capabilities
+        cls, res.has_malicious, res.risk_level, res.risky_constructs, res.capabilities, expected
     )
     return res
 
@@ -160,8 +200,8 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def load_rows(path: Path) -> list[tuple[str, str, str]]:
-    rows: list[tuple[str, str, str]] = []
+def load_rows(path: Path) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
     with path.open(encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
             rows.append(
@@ -169,13 +209,14 @@ def load_rows(path: Path) -> list[tuple[str, str, str]]:
                     (row.get("class") or "").strip(),
                     (row.get("source") or "").strip(),
                     (row.get("version") or "").strip(),
+                    (row.get("expected_result") or "").strip(),
                 )
             )
     return rows
 
 
 def calibrate(dataset: Path) -> tuple[list[RowResult], dict]:
-    results = [run_row(cls, source, version) for cls, source, version in load_rows(dataset)]
+    results = [run_row(c, s, v, exp) for c, s, v, exp in load_rows(dataset)]
     return results, summarize(results)
 
 
