@@ -21,6 +21,7 @@ from skilltotal.scanners.base import (
     ScanResult,
     alternation,
 )
+from skilltotal.text_normalize import normalize_with_map, original_span
 
 CATEGORY = "mcp"
 
@@ -435,15 +436,15 @@ class McpScanner(Scanner):
                     anchor = _evidence_for(f, '"name"')
                 if anchor:
                     dangerous.append(anchor)
-            pm = _POISONING.search(desc)
-            if pm and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
+            pphrase = _match_phrase(desc, _POISONING)
+            if pphrase and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
                 # Anchor to the offending phrase in the raw source; fall back to the field key.
-                anchor = _evidence_for(f, pm.group(0)) or _evidence_for(f, '"description"')
+                anchor = _evidence_for(f, pphrase) or _evidence_for(f, '"description"')
                 if anchor:
                     poisoning.append(anchor)
-            sm = _SHADOWING.search(desc)
-            if sm and len(shadowing) < MAX_EVIDENCE_PER_FINDING:
-                anchor = _evidence_for(f, sm.group(0)) or _evidence_for(f, '"description"')
+            sphrase = _match_phrase(desc, _SHADOWING)
+            if sphrase and len(shadowing) < MAX_EVIDENCE_PER_FINDING:
+                anchor = _evidence_for(f, sphrase) or _evidence_for(f, '"description"')
                 if anchor:
                     shadowing.append(anchor)
             # Poisoning also hides in inputSchema parameter descriptions, not just the top-level
@@ -454,9 +455,9 @@ class McpScanner(Scanner):
                 for pname, pspec in props.items():
                     if not isinstance(pspec, dict):
                         continue
-                    ppm = _POISONING.search(str(pspec.get("description", "")))
-                    if ppm and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
-                        anchor = _evidence_for(f, ppm.group(0)) or _evidence_for(f, f'"{pname}"')
+                    pphrase = _match_phrase(str(pspec.get("description", "")), _POISONING)
+                    if pphrase and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
+                        anchor = _evidence_for(f, pphrase) or _evidence_for(f, f'"{pname}"')
                         if anchor:
                             poisoning.append(anchor)
 
@@ -486,13 +487,23 @@ class McpScanner(Scanner):
     def _scan_code_phrases(
         self, index: FileIndex, pattern: re.Pattern[str], sink: list[Evidence]
     ) -> None:
-        """Flag poisoning/shadowing phrases in code files that expose an MCP tool surface."""
+        """Flag poisoning/shadowing phrases in code files that expose an MCP tool surface.
+
+        Runs the pattern on the raw source and, for obfuscated source, again on the de-obfuscated
+        text (homoglyph / full-width / diacritic / zero-width folded) with spans mapped back.
+        """
         seen: set[tuple[str, int]] = set()
         for f in index.select(suffixes=CODE_SUFFIXES):
             if not _CODE_SURFACE.search(f.text):
                 continue
-            for m in pattern.finditer(f.text):
-                ev = f.evidence_for_span(m.start(), m.end())
+            spans = [(m.start(), m.end()) for m in pattern.finditer(f.text)]
+            norm, idx = normalize_with_map(f.text)
+            if norm and norm != f.text:
+                spans += [original_span(idx, m.start(), m.end()) for m in pattern.finditer(norm)]
+            for start, end in spans:
+                if start >= end:
+                    continue
+                ev = f.evidence_for_span(start, end)
                 key = (ev.file, ev.line_start)
                 if key in seen:
                     continue
@@ -521,3 +532,23 @@ def _evidence_for(f: IndexedFile, needle: str, start: int = 0) -> Evidence | Non
     if idx < 0:
         return None
     return f.evidence_for_span(idx, idx + len(needle))
+
+
+def _match_phrase(text: str, pattern: re.Pattern[str]) -> str | None:
+    """Return the ORIGINAL substring of ``text`` matching ``pattern``, raw or de-obfuscated.
+
+    A raw match wins; otherwise the text is normalized (homoglyphs / full-width / diacritics /
+    zero-width folded away) and, if the pattern matches there, the span is mapped back so the
+    returned substring is the real (possibly obfuscated) text — anchorable in the source file.
+    """
+    m = pattern.search(text)
+    if m:
+        return m.group(0)
+    norm, idx = normalize_with_map(text)
+    if norm and norm != text:
+        m = pattern.search(norm)
+        if m:
+            s, e = original_span(idx, m.start(), m.end())
+            if s < e:
+                return text[s:e]
+    return None

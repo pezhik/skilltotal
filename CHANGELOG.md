@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.9.0]
+
+### Added
+- **De-obfuscated instruction detection (no LLM).** Prompt-injection (`ST-PROMPT-INJECTION`)
+  and MCP tool-poisoning (`ST-MCP-TOOL-POISONING`) are now matched after a deterministic
+  Unicode-normalization pass — folding homoglyphs (Cyrillic/Greek look-alikes), full-width
+  forms, combining diacritics, and zero-width-spliced characters — so instructions hidden
+  behind look-alike characters are caught. Matches are mapped back to the exact original span,
+  so evidence stays anchored to the real file/line. New module `skilltotal.text_normalize`.
+  Pure stdlib + a curated confusable table (zero runtime deps); semantic/paraphrase and
+  arbitrary-language understanding remain out of scope for the static engine. (RULESET 11.)
+
 ## [0.8.1]
 
 ### Fixed

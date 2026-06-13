@@ -10,14 +10,15 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, NeedsReview, Severity, ThreatClass
+from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     RuleSpec,
     Scanner,
     ScanResult,
+    _finding_from_rule,
     alternation,
-    findings_from_rules,
+    deobfuscated_spans,
 )
 
 CATEGORY = "prompt_surface"
@@ -108,8 +109,28 @@ class PromptSurfaceScanner(Scanner):
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
-        pattern_rules = [r for r in self.rules if r.pattern is not None]
-        findings = findings_from_rules(index, pattern_rules)
+        inj_rule = next(r for r in self.rules if r.id == "ST-PROMPT-INJECTION")
+        evidence: list[Evidence] = []
+        seen: set[tuple[str, int]] = set()
+
+        def add(ev: Evidence) -> None:
+            key = (ev.file, ev.match_offset)
+            if key in seen or len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+                return
+            seen.add(key)
+            evidence.append(ev)
+
+        # Raw pass: the patterns as written.
+        for _f, _m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
+            add(ev)
+        # De-obfuscation pass: the same patterns after folding homoglyphs / full-width /
+        # diacritics / zero-width splicing, mapped back to the original span. Catches
+        # injection hidden behind look-alike characters; de-duped against the raw pass.
+        for f, start, end in deobfuscated_spans(index, _STRONG):
+            if start < end:
+                add(f.evidence_for_span(start, end))
+
+        findings = [_finding_from_rule(inj_rule, evidence)] if evidence else []
 
         needs_review: list[NeedsReview] = []
         seen: set[tuple[str, int]] = set()

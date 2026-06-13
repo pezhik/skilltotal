@@ -4,6 +4,27 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 11 (engine 0.9.0)
+
+**De-obfuscation pass for instruction surfaces (deterministic, no LLM).** Attackers hide
+instruction-override / tool-poisoning phrases from byte-for-byte regex by swapping Latin letters
+for look-alikes (Cyrillic `а`, Greek `ο`), adding combining accents, using full-width forms, or
+splicing zero-width characters mid-word — none of which changes what a model reads.
+
+New module `skilltotal/text_normalize.py` (`normalize_with_map`) folds those away and returns an
+index map so a match on the normalized text anchors back to the exact ORIGINAL span (evidence
+invariant preserved). `scanners/base.py::deobfuscated_spans` runs a pattern over the normalized
+text only for files that actually contain non-ASCII obfuscation (normalized == original → skipped,
+so it's nearly free on ordinary repos).
+
+- `ST-PROMPT-INJECTION` now also matches the strong phrases after normalization.
+- `ST-MCP-TOOL-POISONING` / `ST-MCP-TOOL-SHADOWING` match manifest tool/parameter descriptions
+  and code-defined tool surfaces after normalization (`_match_phrase`).
+- Curated confusable table covers the common Cyrillic/Greek→Latin homoglyph set; only multi-word
+  English phrases are matched, so folding does not create matches on genuine non-Latin text.
+- Scope: deterministic only. Semantic paraphrase and arbitrary-language understanding stay in the
+  paid Deep Analysis layer (open-core boundary). Calibrated benign FP = 0.
+
 ## ruleset 10 (engine 0.8.1)
 
 **Prompt-injection FP calibration.** `ST-PROMPT-INJECTION`'s "ignore … above" alternative was

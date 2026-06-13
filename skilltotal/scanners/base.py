@@ -12,13 +12,36 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from skilltotal.file_index import FileIndex
+from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
+from skilltotal.text_normalize import normalize_with_map, original_span
 
 # Cap evidence kept per finding so a noisy file cannot bloat the report.
 MAX_EVIDENCE_PER_FINDING = 25
+
+
+def deobfuscated_spans(
+    index: FileIndex, pattern: re.Pattern[str]
+) -> Iterator[tuple[IndexedFile, int, int]]:
+    """Yield ``(file, start, end)`` for ``pattern`` matches found only after de-obfuscation.
+
+    Folds away homoglyphs / full-width / diacritics / zero-width splicing (see
+    :mod:`skilltotal.text_normalize`) and maps each match span back to the ORIGINAL file offsets
+    so evidence stays anchored. Files whose normalized form equals the original are skipped — the
+    ordinary raw-text scan already covered them — so this is nearly free for normal (ASCII) repos
+    and only does work where text was actually obfuscated. The caller de-dupes against raw matches
+    and builds evidence via ``file.evidence_for_span``.
+    """
+    for f in index.select():
+        norm, idx = normalize_with_map(f.text)
+        if not norm or norm == f.text:
+            continue
+        for m in pattern.finditer(norm):
+            start, end = original_span(idx, m.start(), m.end())
+            yield f, start, end
 
 
 @dataclass(frozen=True)

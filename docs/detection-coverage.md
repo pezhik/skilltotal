@@ -39,6 +39,8 @@ risk; `capability` rules are informational (they never push the score up — cap
   pickle. Extending the decode-and-execute indicator to cover `exec(marshal.loads(...))` /
   `exec(pickle.loads(...))` would close this (a deliberate ruleset change — bump
   `RULESET_VERSION`, add fixture `py-marshal-loader`, calibrate FP=0).
-- **Obfuscated / non-English natural-language injection** — instruction-override phrases hidden
-  behind homoglyphs, full-width, diacritics, or zero-width-in-word are not normalized before
-  matching (English-only, raw text). Tracked separately (Unicode-normalization pass).
+- **Obfuscated natural-language injection** — CLOSED (ruleset 11): instruction-override and
+  tool-poisoning phrases hidden behind homoglyphs, full-width, diacritics, or zero-width-in-word
+  are now de-obfuscated before matching (`skilltotal.text_normalize`). Still out of scope for the
+  free static engine (and deferred to paid Deep Analysis): semantic paraphrase and arbitrary
+  *non-English* natural-language understanding — those need an LLM, not a keyword list.
