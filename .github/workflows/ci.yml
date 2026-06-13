@@ -54,4 +54,6 @@ jobs:
           GL=8.24.3
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" \
             | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --redact -v --exit-code 1
+          # -c .gitleaks.toml allowlists this scanner's own fake-secret test fixtures
+          # (production paths stay fully scanned).
+          /tmp/gitleaks detect --source . --config .gitleaks.toml --redact -v --exit-code 1

@@ -1,0 +1,18 @@
+# gitleaks configuration for the SkillTotal engine repo.
+#
+# This repo IS a secret scanner, so its own tests deliberately contain fake, non-functional
+# secrets as detection inputs (e.g. tests/test_secrets.py: a dummy "AKIA…" AWS key, a fake
+# "ghp_…" GitHub token, a placeholder OpenSSH private key). Those are not real credentials.
+# We allowlist the test/fixture paths so gitleaks doesn't flag them, while every other path —
+# notably the production engine in skilltotal/ — is still scanned with the full default ruleset.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deliberate fake secrets in this secret-scanner's own test fixtures"
+paths = [
+  '''tests/test_secrets\.py''',
+  '''tests/fixtures/.*''',
+  '''tests/manual_eval/.*''',
+]
