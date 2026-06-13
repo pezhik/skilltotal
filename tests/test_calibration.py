@@ -41,9 +41,13 @@ def test_process_env_is_not_sensitive_path(tmp_path: Path):
     assert result.needs_review == []
 
 
-def test_env_file_is_sensitive_path(tmp_path: Path):
+def test_env_file_reference_goes_to_needs_review(tmp_path: Path):
+    # A bare ".env" reference is too common in legit apps (dotenv) to score; surfaced for
+    # review instead of being a scored sensitive-path finding (and, combined with network,
+    # would otherwise flag almost every web app as a credential-exfiltration path).
     result = _sens(tmp_path, "fs.writeFile(path.join(d, '.env'), data);\n")
-    assert any(f.id == "ST-SENS-PATH" for f in result.findings)
+    assert all(f.id != "ST-SENS-PATH" for f in result.findings)
+    assert any(".env" in n.title for n in result.needs_review)
 
 
 def test_ssh_key_is_sensitive_path(tmp_path: Path):
@@ -77,11 +81,12 @@ def test_env_in_documentation_is_not_flagged(tmp_path: Path):
         assert result.findings == [], name
 
 
-def test_env_in_python_docstring_still_flagged_in_code(tmp_path: Path):
-    # A bare ".env" inside a real source file (not docs/ignore) remains a finding so we do
-    # not lose detection of code that actually touches the file.
+def test_env_reference_in_source_is_needs_review(tmp_path: Path):
+    # A bare ".env" anywhere (incl. real source) is routed to needs_review, not scored — too
+    # common in legitimate apps. Genuine secret theft is caught by strong paths + secrets.
     result = _sens_named(tmp_path, "loader.py", 'open(".env").read()\n')
-    assert any(f.id == "ST-SENS-PATH" for f in result.findings)
+    assert all(f.id != "ST-SENS-PATH" for f in result.findings)
+    assert any(".env" in n.title for n in result.needs_review)
 
 
 def test_strong_path_in_markdown_still_flagged(tmp_path: Path):

@@ -55,3 +55,8 @@ tests/manual_eval/corpus/
 node_modules/
 package.json
 package-lock.json
+
+# Stray local SQLite DBs from running the web app with the engine on PYTHONPATH
+_test_web.db
+_dev_web.db
+local_e2e.db

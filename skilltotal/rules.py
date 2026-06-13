@@ -7,22 +7,26 @@ looks for.
 
 from __future__ import annotations
 
-from skilltotal.models import Severity
+from skilltotal.models import Severity, ThreatClass
 from skilltotal.scanners import all_rules
 from skilltotal.scanners.base import RuleSpec
 from skilltotal.scoring import COMBO_FINDING_ID
 
 # The combination rule is synthesized in scoring, not by a scanner; expose it for listing.
+# Its threat_class must match the synthesized finding (RISKY_CONSTRUCT): _assign_threat_classes
+# projects this registry value onto the finding, so a mismatch here would silently un-score it.
 _COMBO_RULE = RuleSpec(
     id=COMBO_FINDING_ID,
     category="exfiltration_path",
     severity=Severity.CRITICAL,
-    title="Combined filesystem access and network egress",
+    title="Sensitive-data access combined with network egress",
     description=(
-        "Raised when a component exhibits both filesystem and network capabilities."
+        "Raised when a component references credential/secret locations and can also reach "
+        "the network — together a credential-exfiltration path."
     ),
-    recommendation="Verify disk data is never transmitted off-host without consent.",
+    recommendation="Verify secrets read from disk are never transmitted off-host without consent.",
     capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
 )
 
 

@@ -73,6 +73,9 @@ class ObfuscationScanner(Scanner):
             ),
             capability=Capability.DYNAMIC_CODE_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # A real decode-and-exec is code; the same text inside a .py string/comment is a
+            # pattern literal or doc example (e.g. this scanner's own rules) — not behavior.
+            code_context="strings_and_comments",
             pattern=_DECODE_EXEC,
         ),
         # The following are listed for `rules list`; they emit needs_review only.

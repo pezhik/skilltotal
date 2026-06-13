@@ -40,7 +40,7 @@ def test_sarif_result_fields_and_levels():
         assert region["endLine"] >= region["startLine"]
         assert region["snippet"]["text"]
     # The synthesized critical combo finding must map to SARIF "error".
-    combo = [r for r in results if r["ruleId"] == "ST-COMBO-FS-NET"]
+    combo = [r for r in results if r["ruleId"] == "ST-COMBO-EXFIL"]
     assert combo and all(r["level"] == "error" for r in combo)
 
 

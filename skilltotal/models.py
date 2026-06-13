@@ -111,6 +111,12 @@ class Evidence:
     line_start: int
     line_end: int
     snippet: str
+    # Character offset of the match start within the source file. Internal only: NOT
+    # serialized (keeps REPORT_SCHEMA_VERSION stable) and excluded from equality/hash, so it
+    # never changes dedupe behavior. The engine's code-context demotion uses it to tell a real
+    # construct from a pattern that merely appears inside a Python string literal or comment.
+    # None when the evidence did not come from a regex match (e.g. AST/JSON anchored).
+    match_offset: int | None = field(default=None, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {

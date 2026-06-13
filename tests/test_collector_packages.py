@@ -199,12 +199,27 @@ def test_git_clone_timeout_becomes_collection_error(monkeypatch, tmp_path):
     """A hung/slow clone (subprocess timeout) surfaces as a clean CollectionError, not a hang."""
     import subprocess
 
-    def fake_run(*args, **kwargs):
-        # The clone passes timeout= and a non-interactive env; simulate it expiring.
-        assert kwargs.get("timeout")  # clone must be time-bounded
-        assert kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT") == "0"
-        raise subprocess.TimeoutExpired(cmd="git clone", timeout=kwargs["timeout"])
+    monkeypatch.setattr(collector, "_reject_if_too_large", lambda _u: None)  # no network
 
-    monkeypatch.setattr(collector.subprocess, "run", fake_run)
+    class _Proc:
+        returncode = None
+
+        def poll(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+        def communicate(self, timeout=None):
+            if timeout is not None:  # the time-bounded clone wait -> simulate it expiring
+                raise subprocess.TimeoutExpired(cmd="git clone", timeout=timeout)
+            return ("", "")  # the post-kill drain
+
+    def fake_popen(args, **kwargs):
+        # The clone runs non-interactively (no credential prompt that could hang).
+        assert kwargs.get("env", {}).get("GIT_TERMINAL_PROMPT") == "0"
+        return _Proc()
+
+    monkeypatch.setattr(collector.subprocess, "Popen", fake_popen)
     with pytest.raises(CollectionError, match="timed out"):
         collector.collect("https://github.com/owner/repo")

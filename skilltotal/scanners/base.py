@@ -36,6 +36,15 @@ class RuleSpec:
     suffixes: tuple[str, ...] | None = None
     names: tuple[str, ...] | None = None
     threat_class: ThreatClass = ThreatClass.CAPABILITY
+    # How much Python code-context awareness this rule needs. A behavior/text detector matches
+    # its own pattern literals when scanning analyzer/security source, so a match inside a
+    # Python string/comment is demoted to NeedsReview (never scored). One of:
+    #   "any"                  - count every match (default; e.g. AST/JSON-anchored rules).
+    #   "comments"             - demote matches inside Python comments only (real positives are
+    #                            value-strings, e.g. ST-EXPOSE-* `host="0.0.0.0"`).
+    #   "strings_and_comments" - demote matches inside Python string literals OR comments (real
+    #                            positives are never a plain .py value-string).
+    code_context: str = "any"
 
     def to_dict(self) -> dict[str, str]:
         return {

@@ -21,6 +21,7 @@ from skilltotal.scanners.base import (
     ScanResult,
     alternation,
 )
+from skilltotal.scanners.sensitive_paths import _STRONG_PATHS  # reuse the credential-path set
 
 PY_SUFFIXES = (".py", ".pyw")
 
@@ -75,6 +76,15 @@ R_FS_READ = "ST-FS-PY-READ"
 R_FS_WRITE = "ST-FS-PY-WRITE"
 R_NET = "ST-NET-PY"
 R_DYN = "ST-DYN-PY"
+R_SENS_PY = "ST-SENS-PATH-PY"
+
+# Calls that *use* a path/command/URL — a sensitive path passed here is a real read/exec/send,
+# not a mere mention. Excludes regex builders / metadata constructors, so a detector matching its
+# own pattern literals (or a docstring example) is not flagged.
+_PATH_CONSUMER_NAMES = frozenset(
+    {"open", "io.open", "codecs.open", "os.open", "Path", "pathlib.Path", "PosixPath"}
+)
+_PATH_CONSUMER_PREFIXES = ("os.path.", "shutil.", "pathlib.")
 
 
 class PythonAstScanner(Scanner):
@@ -232,6 +242,27 @@ class PythonAstScanner(Scanner):
                 r"\bcompile\s*\(",
             ),
         ),
+        RuleSpec(
+            id=R_SENS_PY,
+            category="sensitive_path",
+            severity=Severity.HIGH,
+            title="Sensitive path / secret-location access",
+            description=(
+                "A credential/secret location (e.g. ~/.ssh, ~/.aws/credentials, id_rsa) is "
+                "passed to a filesystem, process, or network call — the code reads or ships a "
+                "secret location, not merely mentions it."
+            ),
+            recommendation=(
+                "Verify why the component accesses credential locations; reading these is a "
+                "common precursor to secret exfiltration."
+            ),
+            capability=Capability.FILESYSTEM_READ,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+            # AST-only (no regex pattern): matched structurally via call arguments, so a
+            # credential path that merely appears in a string literal / docstring / regex
+            # pattern is never flagged here.
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -378,6 +409,14 @@ class _CallVisitor(ast.NodeVisitor):
         elif _is_network_call(name):
             self._add(R_NET, node)
 
+        # Independent of the classification above: a credential path passed to a path/IO/process/
+        # network call is a real sensitive-data access (e.g. open("~/.aws/credentials"),
+        # expanduser("~/.ssh/id_rsa"), subprocess.run(["cat", "~/.ssh/id_rsa"])).
+        if _is_path_consumer(name) and any(
+            _STRONG_PATHS.search(s) for s in _iter_string_consts(node)
+        ):
+            self._add(R_SENS_PY, node)
+
     # -- internals ---------------------------------------------------------
     def _dotted(self, func: ast.expr) -> str | None:
         """Resolve a call target to a canonical dotted name, applying import aliases."""
@@ -409,6 +448,31 @@ class _CallVisitor(ast.NodeVisitor):
         line_start = getattr(node, "lineno", 1)
         line_end = getattr(node, "end_lineno", line_start) or line_start
         return self.file.evidence_for_lines(line_start, line_end)
+
+
+def _is_path_consumer(name: str) -> bool:
+    """True if a string argument to ``name`` is used as a path/command/URL (not metadata)."""
+    if name in _PATH_CONSUMER_NAMES or name in SHELL_CALLS or _is_network_call(name):
+        return True
+    if name.endswith(FS_READ_SUFFIXES) or name.endswith(FS_WRITE_SUFFIXES):
+        return True
+    return name.startswith(_PATH_CONSUMER_PREFIXES)
+
+
+def _iter_string_consts(node: ast.Call):
+    """Yield string-constant values among a call's positional/keyword args (recursing lists)."""
+    for arg in node.args:
+        yield from _strings_in(arg)
+    for kw in node.keywords:
+        yield from _strings_in(kw.value)
+
+
+def _strings_in(expr: ast.expr):
+    if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
+        yield expr.value
+    elif isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+        for element in expr.elts:
+            yield from _strings_in(element)
 
 
 def _shell_true(node: ast.Call) -> bool:

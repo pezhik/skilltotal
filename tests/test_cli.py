@@ -29,7 +29,9 @@ def test_scan_json_output(capsys):
     out = capsys.readouterr().out
     assert code == EXIT_OK
     data = json.loads(out)
-    assert data["risk_level"] == "critical"
+    # Sensitive-path access (.js) + network egress -> ST-COMBO-EXFIL (critical risky) + the
+    # sensitive-path finding => high. Plain capabilities (shell/install/fs) no longer score.
+    assert data["risk_level"] == "high"
 
 
 def test_scan_output_file(tmp_path: Path, capsys):
@@ -116,7 +118,7 @@ def test_rules_list_text(capsys):
     out = capsys.readouterr().out
     assert code == EXIT_OK
     assert "ST-SHELL-PY" in out
-    assert "ST-COMBO-FS-NET" in out
+    assert "ST-COMBO-EXFIL" in out
 
 
 def test_rules_list_json(capsys):

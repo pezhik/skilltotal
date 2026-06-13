@@ -90,6 +90,10 @@ class SensitivePathScanner(Scanner):
             ),
             capability=Capability.FILESYSTEM_READ,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
+            # A real reference is a path value (open("~/.ssh/id_rsa")); the same token inside a
+            # .py string/comment is a detector's own pattern literal or a doc example (e.g. this
+            # scanner defines `id_rsa`). Demote those so a security tool does not flag itself.
+            code_context="strings_and_comments",
             pattern=_STRONG_PATHS,
         ),
         # Listed for `rules list`; bare secret words are routed to needs_review.
@@ -106,9 +110,12 @@ class SensitivePathScanner(Scanner):
 
     def scan(self, index: FileIndex) -> ScanResult:
         strong_rule = self.rules[0]
+        needs_review: list[NeedsReview] = []
 
-        # Collect evidence from the strong path indicators (any file) plus the bare ".env"
-        # token (excluding benign doc/ignore files), de-duplicated by location.
+        # Strong, path-like credential locations (~/.ssh, id_rsa, .aws/credentials, …) are the
+        # scored finding. The bare ".env" file token is NOT: legitimate apps load a local .env
+        # constantly (dotenv), so a `.env` reference + network would otherwise flag almost every
+        # web app as a credential-exfiltration path. It is surfaced for review instead.
         seen_ev: set[tuple[str, int, int]] = set()
         evidence: list[Evidence] = []
         for _f, _m, ev in index.search(_STRONG_PATHS):
@@ -116,15 +123,33 @@ class SensitivePathScanner(Scanner):
             if key not in seen_ev:
                 seen_ev.add(key)
                 evidence.append(ev)
-        for _f, _m, ev in index.search(_ENV_FILE):
-            if _suppresses_env(ev.file):
-                continue
-            key = (ev.file, ev.line_start, ev.line_end)
-            if key not in seen_ev:
-                seen_ev.add(key)
-                evidence.append(ev)
             if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
                 break
+
+        env_files: list[str] = []
+        env_seen: set[str] = set()
+        for _f, _m, ev in index.search(_ENV_FILE):
+            if _suppresses_env(ev.file) or ev.file in env_seen:
+                continue
+            env_seen.add(ev.file)
+            env_files.append(ev.file)
+        if env_files:
+            shown = ", ".join(env_files[:_SENS_WORD_EXAMPLES])
+            more = len(env_files) - _SENS_WORD_EXAMPLES
+            if more > 0:
+                shown += f", and {more} more"
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Local .env file reference ({len(env_files)})",
+                    reason=(
+                        f"A bare '.env' file is referenced in {len(env_files)} file(s); "
+                        f"commonly benign (dotenv config), so flagged for review not scored: "
+                        f"{shown}."
+                    ),
+                    file=env_files[0],
+                )
+            )
 
         evidence = evidence[:MAX_EVIDENCE_PER_FINDING]
         findings: list[Finding] = []
@@ -167,7 +192,6 @@ class SensitivePathScanner(Scanner):
             if ev.file not in files:
                 files.append(ev.file)
 
-        needs_review: list[NeedsReview] = []
         if seen:
             shown = ", ".join(files[:_SENS_WORD_EXAMPLES])
             more = len(files) - _SENS_WORD_EXAMPLES

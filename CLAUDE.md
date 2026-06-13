@@ -107,11 +107,20 @@ collector.py → file_index.py → scanners/* → capabilities.py + scoring.py �
   accepted findings; `engine.analyze_directory(..., suppress=set)` drops them before scoring.
 - **`sarif.py`** — renders SARIF 2.1.0 (one result per evidence; severity → level +
   `security-severity`). Driven off the same `rules.get_rules()` registry as `rules list`.
-- **`scoring.py`** — score = `min(100, Σ severity weight)` (one finding per rule, so score
-  reflects distinct risks, not match counts). Severity weights and risk-level bands live on
-  the `Severity`/`RiskLevel` enums in `models.py`. The **filesystem + network ⇒ critical**
-  rule is a *synthesized finding* (`ST-COMBO-FS-NET`) with merged evidence, added in
-  `engine.py` after capabilities are computed.
+- **`scoring.py`** — score = `min(100, Σ severity weight of malicious_indicator +
+  risky_construct findings)` (one finding per rule). **`capability` findings contribute 0** —
+  capability is not risk; they are still reported (findings + chips) but never push the score
+  up. Severity weights and risk-level bands live on the `Severity`/`RiskLevel` enums in
+  `models.py`. The **sensitive-data + network ⇒ critical** rule is a *synthesized
+  risky_construct finding* (`ST-COMBO-EXFIL`) with merged evidence, added in `engine.py` after
+  capabilities are computed; it is sensitivity-gated (`ST-SENS-PATH`/`ST-SECRET-EMBEDDED` +
+  network), so plain filesystem+network does not flag.
+- **Evidence-context demotion** — besides test code (`_split_test_evidence`), `engine.py` also
+  demotes evidence that is not executed/agent-facing behavior to `needs_review`:
+  `_split_doc_evidence` (human-facing docs/prose via `file_index.is_doc_path`; AI-instruction
+  surfaces like `SKILL.md`/manifests stay in scope) and `_split_code_context_evidence` (matches
+  inside Python string-literals/comments, per each rule's `RuleSpec.code_context`). This is why
+  a security scanner does not flag its own pattern literals or a README's example attack.
 
 ## Conventions
 

@@ -4,6 +4,55 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.8.0]
+
+### Added
+- **Large-repository protection.** Git sources are size-bounded before/during clone: a GitHub
+  API pre-check rejects oversized repos instantly, and a host-agnostic watchdog aborts a clone
+  whose working tree grows past the cap (`SKILLTOTAL_MAX_CLONE_MB`, default 200) — no more hangs
+  or OOM on huge repos.
+- **Smart git URL parsing.** Browser URLs are understood: a branch/tag, a subfolder
+  (`/tree/<ref>/<path>`), a file (`/blob/<ref>/<file>` → its folder), or a specific commit
+  (`/commit/<sha>`) are scanned directly; non-code pages (`/issues`, `/pull`, …) are reduced to
+  the repository root (default branch) with a note in the report.
+- **`ST-SENS-PATH-PY` (AST).** Credential-location access in Python is detected structurally —
+  a sensitive path passed to a filesystem/process/network call — so real reads are caught while
+  a detector's own pattern literals are not (see RULES_CHANGELOG).
+
+### Security
+- **Hidden/deceptive Unicode neutralized in displayed snippets (Trojan-Source).** Evidence shown
+  to a human renders bidi overrides, zero-width/format chars, Unicode tag chars and control chars
+  as visible `<U+XXXX>` tokens, so a scanned repo can't visually spoof the reviewed code.
+- **Package-name validation is ASCII-only.** Prevents non-ASCII input from passing validation and
+  being reflected back via a registry error.
+
+### Changed
+- **Capability is no longer scored as risk.** `risk_score` now sums only `malicious_indicator`
+  and `risky_construct` findings; neutral `capability` findings (shell / filesystem / network)
+  are shown but contribute 0. A legitimate-but-powerful component (including SkillTotal's own
+  engine) is no longer pushed into the red by what it *can* do — capabilities stay visible as
+  findings + chips, but the score and verdict reflect actual risk. (ruleset 9)
+- **Exfiltration signal is now sensitivity-gated.** The old `ST-COMBO-FS-NET` (any filesystem +
+  network ⇒ critical) is replaced by **`ST-COMBO-EXFIL`**: a critical `risky_construct` raised
+  only when *sensitive-data access* (a credential-location reference or an embedded secret) is
+  combined with network egress. Plain "reads files + uses network" no longer flags.
+- Verdict copy: a clean component that still has real capabilities now reads
+  *"No malicious indicators — review capabilities before installing"* instead of
+  *"No significant risks found"*.
+
+### Fixed
+- **A security scanner no longer flags itself (or other security tools / docs) as malicious.**
+  Two new evidence-demotion gates (mirroring the existing test-code gate) move matches that are
+  not executed/agent-facing behavior to `needs_review` so they never drive the score or verdict:
+  - **Documentation/prose** (README, CHANGELOG, LICENSE, `docs/`, `*.egg-info/PKG-INFO`,
+    ignore-files) — a pattern described in prose isn't the behavior. AI-instruction surfaces
+    (`SKILL.md`, `AGENTS.md`, manifests, …) are explicitly kept in scope.
+  - **Python string-literals / comments** — a detector matching its own regex literals or a
+    docstring example is not behavior (`ST-OBF-DECODE-EXEC`, `ST-MCP-TOOL-POISONING`,
+    `ST-PROMPT-INJECTION`, `ST-SENS-PATH`: string+comment; `ST-EXPOSE-*`: comment only).
+- Bare `.env` file references are routed to `needs_review` (legitimate dotenv usage is ubiquitous)
+  instead of being a scored sensitive-path finding.
+
 ## [0.7.4]
 
 ### Fixed

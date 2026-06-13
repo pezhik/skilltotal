@@ -34,6 +34,9 @@ class ExposureScanner(PatternScanner):
             ),
             capability=None,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
+            # Real binds/debug flags are value-strings (host="0.0.0.0", run(debug=True)); the FP
+            # is the same text in a `#` comment/example. Demote comment matches only — keep values.
+            code_context="comments",
             suffixes=CODE_SUFFIXES,
             pattern=alternation(
                 # A quoted 0.0.0.0 literal in code is, in practice, always a bind address
@@ -60,6 +63,9 @@ class ExposureScanner(PatternScanner):
             ),
             capability=None,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
+            # Real binds/debug flags are value-strings (host="0.0.0.0", run(debug=True)); the FP
+            # is the same text in a `#` comment/example. Demote comment matches only — keep values.
+            code_context="comments",
             suffixes=CODE_SUFFIXES,
             pattern=alternation(
                 r"\.run\([^)]*\bdebug\s*=\s*True",          # Flask app.run(debug=True)

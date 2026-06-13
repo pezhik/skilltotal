@@ -196,6 +196,10 @@ class McpScanner(Scanner):
             ),
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # Real poisoning lives in JSON-manifest tool descriptions (offset has no .py span,
+            # so it is kept). The same phrases inside a .py string/comment are this scanner's
+            # own _POISONING literals or a docstring describing them — demote those.
+            code_context="strings_and_comments",
         ),
         # Listed for `rules list`; routed to needs_review (NOT scored). Steering the agent
         # between tools ("use X instead", "do not use the Y tool") is a real shadowing vector

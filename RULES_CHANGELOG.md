@@ -4,6 +4,43 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 9 (engine 0.8.0)
+
+Two themes: **stop the scanner from flagging non-executed context** (its own pattern literals,
+prose, docs) and **stop scoring neutral capability as risk**. Driven by a self-scan that
+verdicted SkillTotal's own repo "malicious" (100/100) — a false-positive class shared by any
+security tool, docs-heavy repo, or README that shows an example attack.
+
+- **Code-context demotion (new).** A regex match inside a Python string literal or comment is a
+  pattern literal / docstring example, not behavior. Per a rule's `code_context` policy, such
+  `.py` matches are demoted to `needs_review`:
+  - `strings_and_comments`: `ST-OBF-DECODE-EXEC`, `ST-MCP-TOOL-POISONING`, `ST-PROMPT-INJECTION`,
+    `ST-SENS-PATH` (real positives are code calls / JSON-manifest text / instruction files /
+    path values — never a `.py` pattern-literal).
+  - `comments`: `ST-EXPOSE-BIND`, `ST-EXPOSE-DEBUG` (real positives are value-strings like
+    `host="0.0.0.0"`; the FP is the same token in a `#` comment).
+- **Documentation/prose demotion (new).** Findings whose evidence is only in human-facing docs
+  (README/CHANGELOG/LICENSE/`docs/`/`*.egg-info`/ignore-files) → `needs_review`. AI-instruction
+  surfaces (`SKILL.md`, `AGENTS.md`, `.cursorrules`, MCP manifests, …) are explicitly excluded,
+  so a real injection there still fires.
+- **`ST-COMBO-FS-NET` → `ST-COMBO-EXFIL`.** The combination finding is now sensitivity-gated:
+  critical `risky_construct` only when sensitive-data access (`ST-SENS-PATH` / `ST-SECRET-EMBEDDED`)
+  co-occurs with network egress. Plain filesystem + network no longer synthesizes a critical.
+- **Bare `.env`** moved out of the scored `ST-SENS-PATH` finding into `needs_review` (dotenv is
+  ubiquitous in legitimate apps; `.env` + network would otherwise flag most web apps as exfil).
+- **`ST-SENS-PATH-PY` (new, AST).** For Python, sensitive-path access is now detected
+  structurally: a credential location (`~/.ssh`, `~/.aws/credentials`, `id_rsa`, …) passed to a
+  filesystem / process / network call (`open`, `os.path.expanduser`, `subprocess`, `requests`, …)
+  is a scored `risky_construct`, and feeds `ST-COMBO-EXFIL`. Because it matches by call argument,
+  it catches real credential reads (`open(expanduser("~/.ssh/id_rsa"))`) while the regex
+  `ST-SENS-PATH` (demoted in `.py` strings/comments) no longer flags a detector's own pattern
+  literals or docstrings. The regex rule still covers non-Python files (`.js`, manifests, docs/
+  instruction surfaces).
+- **Scoring:** `capability` findings contribute 0 to `risk_score` (malicious + risky only). No
+  detection rule was removed; malicious-indicator detection is unchanged, so genuine malware
+  (obfuscated exec, prompt injection, tool poisoning, hidden unicode, credential+egress) still
+  scores and verdicts as before.
+
 ## ruleset 8 (engine 0.7.4)
 
 False-positive recalibration after scanning 37 real MCP servers (the labeled corpus was

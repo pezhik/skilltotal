@@ -27,8 +27,12 @@ def test_npm_shell_install_network_fs(malicious_npm):
 
 def test_py_shell_dynamic_obfuscation_network(malicious_py):
     ids = _finding_ids(malicious_py)
+    # ST-SENS-PATH is intentionally absent here: the credential path is a .py string literal,
+    # which the code-context gate demotes to needs_review (a security tool must not match its own
+    # pattern literals). The real malicious indicator (ST-OBF-DECODE-EXEC, actual code) stays.
     assert {"ST-SHELL-PY", "ST-DYN-PY", "ST-OBF-DECODE-EXEC", "ST-NET-PY",
-            "ST-FS-PY-READ", "ST-SENS-PATH", "ST-INSTALL-PY"} <= ids
+            "ST-FS-PY-READ", "ST-INSTALL-PY"} <= ids
+    assert malicious_py.verdict["has_malicious_indicators"] is True
 
 
 def test_mcp_dangerous_and_server_exec(mcp_report):

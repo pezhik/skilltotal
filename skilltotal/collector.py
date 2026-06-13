@@ -16,25 +16,30 @@ import stat
 import subprocess  # nosec B404
 import tarfile
 import tempfile
+import threading
+import time
 import urllib.request
 import zipfile
 from dataclasses import dataclass, replace
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 try:  # Python 3.11+
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
+from skilltotal.file_index import neutralize_hidden
 from skilltotal.models import Component
 
 _GIT_URL_RE = re.compile(r"^(?:https?://|git@|ssh://|git://).+", re.IGNORECASE)
 _NPMJS_URL_RE = re.compile(r"^https?://(?:www\.)?npmjs\.com/package/(@?[\w.-]+(?:/[\w.-]+)?)", re.I)
 _PYPI_URL_RE = re.compile(r"^https?://pypi\.org/project/([\w.-]+)", re.I)
-# Conservative package-name shapes (also block path traversal in specs).
-_NPM_NAME_RE = re.compile(r"^@?[a-z0-9][\w.-]*(?:/[a-z0-9][\w.-]*)?$", re.I)
-_PYPI_NAME_RE = re.compile(r"^[a-z0-9][\w.-]*$", re.I)
+# Conservative package-name shapes (also block path traversal in specs). ASCII-only on purpose
+# (npm/PyPI names are ASCII by spec): `\w` would be Unicode and let e.g. cyrillic pass validation
+# and reach the registry, whose 404 then reflected the raw input back to the user.
+_NPM_NAME_RE = re.compile(r"^@?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)?$", re.I)
+_PYPI_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$", re.I)
 
 _HTTP_TIMEOUT = 60  # seconds for a registry/download request
 _MAX_ARCHIVE_BYTES = 150 * 1024 * 1024  # cap the downloaded archive
@@ -43,10 +48,22 @@ _MAX_EXTRACT_BYTES = 400 * 1024 * 1024  # cap total uncompressed size (decompres
 # request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
 # blocking forever on an interactive credential prompt for a private/typo'd URL.
 _CLONE_TIMEOUT = int(os.environ.get("SKILLTOTAL_CLONE_TIMEOUT", "300"))
+# Reject repositories larger than this (MB). Checked before cloning (GitHub API) and again
+# during the clone (a watchdog kills git if the working tree blows past the cap) so a huge repo
+# can neither hang nor fill the disk / OOM the box. Overridable via env.
+_MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
+_CLONE_POLL_SECONDS = 1.5
+# Web hosts whose browser URLs we understand (branch / subfolder / file / commit links).
+_WEB_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
+_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 
 
 class CollectionError(Exception):
     """Raised when a source cannot be resolved into an analyzable directory."""
+
+
+class SourceTooLargeError(CollectionError):
+    """Raised when a repository exceeds the configured size cap (pre-clone or mid-clone)."""
 
 
 @dataclass
@@ -56,6 +73,9 @@ class SourceContext:
     root: Path
     component: Component
     _tempdir: tempfile.TemporaryDirectory | None = None
+    # Set when a browser URL was normalized to scan something other than what was pasted
+    # (e.g. a /issues link reduced to the repo's default branch); surfaced in the report.
+    note: str | None = None
 
     def __enter__(self) -> SourceContext:
         return self
@@ -163,43 +183,180 @@ def _collect_local(source: str) -> SourceContext:
     return SourceContext(root=root, component=component)
 
 
-def _collect_remote(url: str) -> SourceContext:
-    """Shallow-clone a remote git URL into a temp dir.
+def parse_git_url(url: str) -> tuple[str, str | None, str | None, str | None]:
+    """Resolve a browser/clone URL into ``(clone_url, ref, subpath, note)``.
 
-    Security: the subprocess call is intentional and reviewed — git is resolved from PATH
-    (cross-platform), arguments are passed as a list (never with a shell), and the URL has
-    already been validated by :func:`is_url`. The call below is annotated as a reviewed
-    exception for the static security scan.
+    Understands github/gitlab/bitbucket web URLs — a branch/tag/commit and an optional
+    subfolder or file (``/tree/<ref>/<path>``, ``/blob/<ref>/<file>``, ``/commit/<sha>``). A
+    non-code page (``/issues``, ``/pull``, ``/wiki`` …) is reduced to the repo root and a human
+    ``note`` is returned. Bare git URLs (``*.git``, ``git@``, ssh, or any unrecognized host)
+    pass through unchanged.
+    """
+    s = url.strip()
+    if not s.lower().startswith(("http://", "https://")):
+        return s, None, None, None  # scp/ssh/git: nothing to parse
+    parsed = urlparse(s)
+    host = (parsed.hostname or "").lower()
+    parts = [p for p in parsed.path.split("/") if p]
+    if host not in _WEB_HOSTS or len(parts) < 2:
+        return s, None, None, None  # unknown shape -> let git try the URL as-is
+    owner, repo = parts[0], parts[1]
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    clone_url = f"https://{host}/{owner}/{repo}.git"
+    rest = parts[2:]
+    if host == "gitlab.com" and rest and rest[0] == "-":  # gitlab nests under /-/
+        rest = rest[1:]
+    if not rest:
+        return clone_url, None, None, None
+    kind = rest[0]
+    if kind in ("tree", "blob", "src") and len(rest) >= 2:
+        ref = rest[1]
+        sub = "/".join(rest[2:])
+        if kind == "blob" and sub:  # a file link -> scan the file's folder
+            sub = sub.rsplit("/", 1)[0] if "/" in sub else ""
+        return clone_url, ref, (sub or None), None
+    if kind in ("commit", "commits") and len(rest) >= 2:
+        return clone_url, rest[1], None, None
+    # Anything else (issues, pull, wiki, actions, releases, …) is not source code.
+    note = (
+        f"The link pointed to '/{kind}', which is not source code; "
+        f"scanned the default branch of {owner}/{repo} instead."
+    )
+    return clone_url, None, None, note
+
+
+def _dir_size_bytes(root: Path) -> int:
+    """Total size of regular files under ``root`` (best-effort; races during a clone are fine)."""
+    total = 0
+    for p in root.rglob("*"):
+        try:
+            if p.is_file() and not p.is_symlink():
+                total += p.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _reject_if_too_large(clone_url: str) -> None:
+    """Fast pre-clone size check via the GitHub API; no-op for other hosts or on any API error."""
+    parsed = urlparse(clone_url)
+    if (parsed.hostname or "").lower() != "github.com":
+        return
+    path = parsed.path.removesuffix(".git").strip("/")
+    if path.count("/") != 1:
+        return
+    api = f"https://api.github.com/repos/{path}"
+    try:
+        req = urllib.request.Request(
+            api,
+            headers={"User-Agent": "skilltotal-scanner", "Accept": "application/vnd.github+json"},
+        )
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
+            meta = json.loads(resp.read(_MAX_ARCHIVE_BYTES + 1))
+    except (OSError, ValueError):
+        return  # rate-limited / private / offline -> rely on the mid-clone watchdog
+    size_kb = meta.get("size")
+    if isinstance(size_kb, (int, float)) and size_kb / 1024 > _MAX_CLONE_MB:
+        raise SourceTooLargeError(
+            f"repository is ~{round(size_kb / 1024)} MB, which exceeds the "
+            f"{_MAX_CLONE_MB} MB scan limit ({path})."
+        )
+
+
+def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
+    """Run a git clone/fetch, bounded in time AND in size (watchdog kills it past the cap).
+
+    Security: git is resolved from PATH, arguments are passed as a list (never a shell), and the
+    URL was validated upstream. Reviewed exception for the static security scan.
+    """
+    cap = _MAX_CLONE_MB * 1024 * 1024
+    proc = subprocess.Popen(  # nosec B603 B607
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+    )
+    exceeded = {"hit": False}
+
+    def _watch() -> None:
+        while proc.poll() is None:
+            if dest.exists() and _dir_size_bytes(dest) > cap:
+                exceeded["hit"] = True
+                proc.kill()
+                return
+            time.sleep(_CLONE_POLL_SECONDS)
+
+    watcher = threading.Thread(target=_watch, daemon=True)
+    watcher.start()
+    try:
+        _, stderr = proc.communicate(timeout=_CLONE_TIMEOUT)
+    except subprocess.TimeoutExpired as exc:
+        proc.kill()
+        proc.communicate()
+        raise CollectionError(f"git clone timed out after {_CLONE_TIMEOUT}s for {url}") from exc
+    finally:
+        watcher.join(timeout=2)
+    if exceeded["hit"]:
+        raise SourceTooLargeError(
+            f"repository exceeds the {_MAX_CLONE_MB} MB scan limit (aborted mid-clone): {url}"
+        )
+    if proc.returncode != 0:
+        raise CollectionError(f"git clone failed for {url}: {(stderr or '').strip()}")
+
+
+def _collect_remote(url: str) -> SourceContext:
+    """Resolve a git/browser URL into a local checkout (shallow, size-bounded).
+
+    Parses branch/tag/commit/subfolder links, rejects oversized repositories, and clones only
+    what is needed.
     """
     if shutil.which("git") is None:
-        raise CollectionError(
-            "git is required to analyze remote URLs but was not found on PATH."
-        )
+        raise CollectionError("git is required to analyze remote URLs but was not found on PATH.")
+    clone_url, ref, subpath, note = parse_git_url(url)
+    _reject_if_too_large(clone_url)
+
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     dest = Path(tmp.name) / "repo"
-    # Non-interactive (no credential prompt that could block) and bounded in time.
+    # Non-interactive (no credential prompt that could block) and bounded in time + size.
     clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    is_sha = bool(ref and _SHA_RE.match(ref))
     try:
-        subprocess.run(  # nosec B603 B607
-            ["git", "clone", "--depth", "1", url, str(dest)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=_CLONE_TIMEOUT,
-            env=clone_env,
-        )
-    except subprocess.TimeoutExpired as exc:
+        if ref and not is_sha:  # branch or tag
+            _run_git(["git", "clone", "--depth", "1", "--branch", ref, clone_url, str(dest)],
+                     dest, clone_env, url)
+        else:
+            _run_git(["git", "clone", "--depth", "1", clone_url, str(dest)], dest, clone_env, url)
+            if is_sha:  # fetch + check out the requested commit (GitHub allows reachable SHAs)
+                try:
+                    subprocess.run(  # nosec B603 B607
+                        ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", ref],
+                        check=True, capture_output=True, text=True,
+                        timeout=_CLONE_TIMEOUT, env=clone_env,
+                    )
+                    subprocess.run(  # nosec B603 B607
+                        ["git", "-C", str(dest), "checkout", "--force", ref],
+                        check=True, capture_output=True, text=True, timeout=60, env=clone_env,
+                    )
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+                    tmp.cleanup()
+                    raise CollectionError(f"commit '{ref}' not found in {clone_url}") from exc
+    except CollectionError:
         tmp.cleanup()
-        raise CollectionError(
-            f"git clone timed out after {_CLONE_TIMEOUT}s for {url}"
-        ) from exc
-    except subprocess.CalledProcessError as exc:
-        tmp.cleanup()
-        raise CollectionError(
-            f"git clone failed for {url}: {exc.stderr.strip() or exc}"
-        ) from exc
-    component = detect_component(dest, source=url)
-    return SourceContext(root=dest, component=component, _tempdir=tmp)
+        raise
+
+    root = dest
+    if subpath:
+        candidate = (dest / subpath).resolve()
+        try:
+            candidate.relative_to(dest.resolve())
+        except ValueError:
+            tmp.cleanup()
+            raise CollectionError(f"unsafe subpath in URL: {subpath}") from None
+        if not candidate.is_dir():
+            tmp.cleanup()
+            raise CollectionError(f"path '{subpath}' not found in repository {clone_url}")
+        root = candidate
+
+    component = detect_component(root, source=url)
+    return SourceContext(root=root, component=component, _tempdir=tmp, note=note)
 
 
 # --------------------------------------------------------------- package registries
@@ -367,7 +524,11 @@ def detect_component(root: Path, source: str) -> Component:
     elif ctype == "directory" and _has_ai_artifacts(root):
         ctype = "ai_component"
 
-    return Component(name=name, type=ctype, source=source, version=version)
+    # Name/version come from attacker-controlled manifests; neutralize hidden/bidi chars so a
+    # spoofed name can't deceive in the report header. (source is the user's own input.)
+    return Component(
+        name=neutralize_hidden(name), type=ctype, source=source, version=neutralize_hidden(version)
+    )
 
 
 def _read_package_json(path: Path) -> dict[str, str]:

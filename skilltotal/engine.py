@@ -15,9 +15,10 @@ from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import collect
-from skilltotal.file_index import FileIndex, is_test_path
+from skilltotal.file_index import FileIndex, IndexedFile, is_doc_path, is_test_path
 from skilltotal.models import (
     Component,
+    Evidence,
     Finding,
     NeedsReview,
     Report,
@@ -27,13 +28,18 @@ from skilltotal.models import (
 )
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
-from skilltotal.scoring import combined_fs_network_finding, compute_score, risk_level
+from skilltotal.scoring import compute_score, exfiltration_finding, risk_level
 
 
 def analyze(source: str, *, suppress: set[str] | None = None) -> Report:
     """Resolve ``source`` (path or URL), analyze it, and return a Report."""
     with collect(source) as ctx:
-        return analyze_directory(ctx.root, ctx.component, suppress=suppress)
+        report = analyze_directory(ctx.root, ctx.component, suppress=suppress)
+        if ctx.note:
+            report.needs_review.append(
+                NeedsReview(category="source", title="Scan target normalized", reason=ctx.note)
+            )
+        return report
 
 
 def analyze_directory(
@@ -54,14 +60,25 @@ def analyze_directory(
 
     findings, suppressed_count = apply_suppressions(findings, suppress or set())
 
-    # Demote findings whose evidence comes only from test code to needs_review; test code
-    # is not executed by consumers, so it must not drive capabilities or the score.
+    # Demote evidence that does not represent executed/agent-facing behavior to needs_review
+    # (never scored). Three sibling gates, applied in order:
+    #   1. test code   - not executed by consumers
+    #   2. documentation/prose - READMEs, changelogs, ignore-files: descriptive, not behavior
+    #   3. Python code-context - a pattern that only appears inside a string literal/comment is
+    #      a literal or doc example (e.g. a security scanner's own rule definitions), not behavior
     findings, test_review = _split_test_evidence(findings)
     needs_review.extend(test_review)
+    findings, doc_review = _split_doc_evidence(findings)
+    needs_review.extend(doc_review)
+    findings, code_ctx_review = _split_code_context_evidence(findings, index)
+    needs_review.extend(code_ctx_review)
 
     capabilities = extract_capabilities(findings)
 
-    combo = combined_fs_network_finding(capabilities)
+    # Sensitive-data access (credential paths / embedded secrets) + network egress is the
+    # genuine credential-exfiltration pattern -> synthesized critical risky-construct finding.
+    # (Plain filesystem + network is a neutral capability and is intentionally not flagged.)
+    combo = exfiltration_finding(findings, capabilities)
     if combo is not None:
         findings.append(combo)
 
@@ -86,6 +103,9 @@ def analyze_directory(
 
 # Rule id -> threat class, from the single source of truth (RuleSpec via the registry).
 _THREAT_CLASS_BY_ID = {r.id: r.threat_class for r in get_rules()}
+
+# Rule id -> Python code-context policy, for rules that need string/comment demotion.
+_CODE_CTX_POLICY = {r.id: r.code_context for r in get_rules() if r.code_context != "any"}
 
 
 def _assign_threat_classes(findings: list[Finding]) -> None:
@@ -119,6 +139,11 @@ def _verdict(findings: list[Finding], level) -> dict:
         vlevel, headline = level.value, "High-risk capabilities - review before installing"
     elif level is RiskLevel.MEDIUM:
         vlevel, headline = "medium", "Some risk - review before installing"
+    elif by_class[ThreatClass.CAPABILITY] > 0:
+        # Clean, but powerful: no malicious indicators and no risky constructs, yet the
+        # component has real capabilities (shell/filesystem/network). Acknowledge them instead
+        # of the dismissive "nothing here" so a capable tool reads correctly.
+        vlevel, headline = "low", "No malicious indicators - review capabilities before installing"
     else:
         vlevel, headline = "low", "No significant risks found"
 
@@ -184,6 +209,97 @@ def _split_test_evidence(
                 )
             )
     return kept, review
+
+
+def _finding_with_evidence(finding: Finding, evidence: list[Evidence]) -> Finding:
+    """Return ``finding`` unchanged, or a copy with its evidence narrowed to ``evidence``."""
+    if len(evidence) == len(finding.evidence):
+        return finding
+    return Finding(
+        id=finding.id,
+        severity=finding.severity,
+        category=finding.category,
+        title=finding.title,
+        description=finding.description,
+        evidence=evidence,
+        recommendation=finding.recommendation,
+        threat_class=finding.threat_class,
+    )
+
+
+def _demoted_review(finding: Finding, demoted: list[Evidence], note: str) -> NeedsReview:
+    files = sorted({e.file for e in demoted})
+    return NeedsReview(
+        category=finding.category,
+        title=f"{finding.title} ({note})",
+        reason=(
+            f"{finding.id} matched only in {note} ({', '.join(files[:5])}); "
+            "this context does not represent executed behavior."
+        ),
+        file=files[0],
+        line=next((e.line_start for e in demoted if e.file == files[0]), None),
+    )
+
+
+def _split_doc_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote evidence found only in human-facing documentation/metadata to needs_review.
+
+    READMEs, changelogs, license/notice files, docs/ trees and ignore-files are never executed
+    and are not an agent-instruction surface (those — SKILL.md, manifests — are excluded by
+    ``is_doc_path``), so a pattern that appears only there is descriptive, not behavior.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        prod = [e for e in finding.evidence if not is_doc_path(e.file)]
+        docs = [e for e in finding.evidence if is_doc_path(e.file)]
+        if prod:
+            kept.append(_finding_with_evidence(finding, prod))
+        if docs:
+            review.append(_demoted_review(finding, docs, "documentation only"))
+    return kept, review
+
+
+def _split_code_context_evidence(
+    findings: list[Finding], index: FileIndex
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote regex matches inside a Python string literal/comment, per the rule's policy.
+
+    A behavior/text detector matches its own pattern literals (and docstrings describing them)
+    when scanning analyzer/security source; such `.py` matches are literals/examples, not
+    executed behavior. Non-Python or non-regex (JSON/AST, no ``match_offset``) evidence is kept.
+    """
+    if not _CODE_CTX_POLICY:
+        return findings, []
+    by_path: dict[str, IndexedFile] = {f.relpath: f for f in index.files}
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        policy = _CODE_CTX_POLICY.get(finding.id)
+        if policy is None:
+            kept.append(finding)
+            continue
+        real = [e for e in finding.evidence if not _is_noncode_context(e, policy, by_path)]
+        demoted = [e for e in finding.evidence if _is_noncode_context(e, policy, by_path)]
+        if real:
+            kept.append(_finding_with_evidence(finding, real))
+        if demoted:
+            review.append(
+                _demoted_review(finding, demoted, "non-executable Python context (string/comment)")
+            )
+    return kept, review
+
+
+def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile]) -> bool:
+    """True if evidence ``e`` is a Python string/comment match that ``policy`` demotes."""
+    f = by_path.get(e.file)
+    if f is None or e.match_offset is None or f.suffix not in (".py", ".pyw"):
+        return False
+    if f.in_comment(e.match_offset):
+        return True
+    return policy == "strings_and_comments" and f.in_string(e.match_offset)
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:
