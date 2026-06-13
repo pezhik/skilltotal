@@ -42,6 +42,8 @@ MUST_DETECT = [
     _MALICIOUS / "npm-trapdoor-stealer",        # install-time fs-read + network egress
     _MALICIOUS / "pypi-importtime-stealer",     # import-time decode-and-exec exfil
     _MALICIOUS / "zero-width-injection",        # hidden Unicode ASCII smuggling
+    _MALICIOUS / "pypi-typosquat-dropper",      # OSSF archetype: import-time decode+exec dropper
+    _MALICIOUS / "npm-postinstall-exfil",       # OSSF archetype: postinstall credential exfil
     _FIXTURES / "malicious_npm_pkg",            # npm stealer (steal.js)
     _FIXTURES / "malicious_py_pkg",             # python stealer
     _FIXTURES / "prompt_injection",             # poisoned skill
