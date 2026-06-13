@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.8.1]
+
+### Fixed
+- **Prompt-injection false positives on trusted packages.** The `ST-PROMPT-INJECTION`
+  "ignore … above" pattern was too broad and flagged benign text — a minified Jupyter
+  `notebook` bundle (`// IGNORE ABOVE ELSE`) and ruff's own suppression docs ("ignore above a
+  multi-line statement"). It now requires an intent quantifier (`everything`/`all`) or an
+  explicit instruction object, surfaced by the expanded calibration corpus. (RULESET 10.)
+
 ## [0.8.0]
 
 ### Added

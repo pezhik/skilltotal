@@ -25,7 +25,12 @@ CATEGORY = "prompt_surface"
 _STRONG = alternation(
     # Instruction-override imperatives (unambiguous).
     r"ignore\s+(?:all\s+)?(?:the\s+)?previous\s+(?:instructions|prompts|context)",
-    r"ignore\s+(?:everything\s+)?above",
+    # "ignore ... above" must carry an intent quantifier (everything/all) OR an explicit
+    # instruction object — bare "ignore above" over-matched benign code/docs ("IGNORE ABOVE
+    # ELSE" in a minified bundle; "ignore above a multi-line statement" in a linter's own
+    # suppression docs). FP fix: notebook, ruff.
+    r"ignore\s+(?:everything|all)\s+(?:of\s+)?(?:the\s+)?above",
+    r"ignore\s+(?:the\s+)?above\s+(?:instructions?|prompts?|context|messages?|rules?|directions?)",
     r"disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior)\s+(?:instructions|prompts)",
     # Attacker-flavored verbs only — NOT "print"/"show" (legit CLI/docs: a "print-system-prompt"
     # command prints your OWN prompt; FP fix: serena).

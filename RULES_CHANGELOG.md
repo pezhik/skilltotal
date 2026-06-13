@@ -4,6 +4,19 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 10 (engine 0.8.1)
+
+**Prompt-injection FP calibration.** `ST-PROMPT-INJECTION`'s "ignore … above" alternative was
+bare (`ignore (everything )?above`) and over-matched benign text. The expanded calibration
+corpus surfaced two trusted-package false positives:
+- Jupyter `notebook` — `// IGNORE ABOVE ELSE` in a minified JS bundle (and its `.js.map`).
+- `ruff` — "ignore above a multi-line statement" in the linter's own suppression test docs.
+
+The pattern now requires intent: an `everything`/`all` quantifier (`ignore everything above`) or
+an explicit instruction object (`ignore the above instructions|prompts|context|…`). Genuine
+overrides ("ignore everything above", "ignore the above instructions") still fire; bare
+"ignore above …" no longer does. Regression tests added in `tests/test_scanners.py`.
+
 ## ruleset 9 (engine 0.8.0)
 
 Two themes: **stop the scanner from flagging non-executed context** (its own pattern literals,
