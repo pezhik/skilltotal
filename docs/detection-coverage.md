@@ -9,8 +9,8 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 > **Why fixtures, not the OSSF packages directly:** OSSF stores OSV *metadata only* (hashes,
 > IOCs, advisories) — **no code** — and the packages themselves are pulled from npm/PyPI after
 > detection. So they cannot be fetched and scanned (`CollectionError → skipped`). The reliable,
-> deterministic way to prove coverage is sanitized in-repo fixtures modelled on each archetype.
-> See `../../skilltotal-ops/calibration/README.md`.
+> deterministic way to prove coverage is sanitized in-repo fixtures modelled on each archetype,
+> exercised offline by `tests/test_offline_calibration.py`.
 
 ## Archetype → rules
 
