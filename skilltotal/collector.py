@@ -42,8 +42,15 @@ _NPM_NAME_RE = re.compile(r"^@?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)?$",
 _PYPI_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$", re.I)
 
 _HTTP_TIMEOUT = 60  # seconds for a registry/download request
-_MAX_ARCHIVE_BYTES = 150 * 1024 * 1024  # cap the downloaded archive
-_MAX_EXTRACT_BYTES = 400 * 1024 * 1024  # cap total uncompressed size (decompression-bomb guard)
+# Archive caps (env-overridable so a hosted upload path can tighten them on a small box):
+#   SKILLTOTAL_MAX_ARCHIVE_MB   — max size of the archive itself (downloaded or uploaded)
+#   SKILLTOTAL_MAX_EXTRACT_MB   — max total uncompressed size (decompression-bomb guard)
+#   SKILLTOTAL_MAX_ARCHIVE_MEMBERS — max number of entries (anti "millions of tiny files" DoS)
+_MAX_ARCHIVE_BYTES = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MB", "150")) * 1024 * 1024
+_MAX_EXTRACT_BYTES = int(os.environ.get("SKILLTOTAL_MAX_EXTRACT_MB", "400")) * 1024 * 1024
+_MAX_ARCHIVE_MEMBERS = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", "30000"))
+# Local archive / single-file sources accepted by `scan <path>` (besides a directory).
+_LOCAL_ARCHIVE_EXTS = (".zip", ".tar.gz", ".tgz", ".tar", ".tar.bz2", ".tar.xz")
 # Bound a git clone so a slow/huge remote can't hang the caller (a long-lived server holds a
 # request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
 # blocking forever on an interactive credential prompt for a private/typo'd URL.
@@ -173,14 +180,67 @@ def collect(source: str) -> SourceContext:
     return _collect_local(source)
 
 
+def _is_archive_name(name: str) -> bool:
+    n = name.lower()
+    return any(n.endswith(ext) for ext in _LOCAL_ARCHIVE_EXTS)
+
+
 def _collect_local(source: str) -> SourceContext:
     root = Path(source).expanduser().resolve()
     if not root.exists():
         raise CollectionError(f"Path does not exist: {source}")
-    if not root.is_dir():
-        raise CollectionError(f"Path is not a directory: {source}")
-    component = detect_component(root, source=str(root))
-    return SourceContext(root=root, component=component)
+    if root.is_dir():
+        component = detect_component(root, source=str(root))
+        return SourceContext(root=root, component=component)
+    if root.is_file():
+        # A project archive (zip/tar.gz/…) or a single code file: extract/stage to a temp dir and
+        # scan it with the same engine. The display source is the file name (neutralized), never the
+        # temp path.
+        if _is_archive_name(root.name):
+            return _collect_local_archive(root)
+        return _collect_local_file(root)
+    raise CollectionError(f"Path is not a file or directory: {source}")
+
+
+def _collect_local_archive(path: Path) -> SourceContext:
+    if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+        raise CollectionError("archive is too large")
+    data = path.read_bytes()
+    display = neutralize_hidden(path.name)
+    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    try:
+        extract_dir = Path(tmp.name) / "x"
+        extract_dir.mkdir()
+        if path.name.lower().endswith(".zip"):
+            _safe_extract_zip(data, extract_dir)
+        else:  # .tar.gz / .tgz / .tar / .tar.bz2 / .tar.xz
+            _safe_extract_tar(data, extract_dir)
+        root = _single_root(extract_dir)
+        component = detect_component(root, source=display)
+        if component.type == "directory":
+            component = replace(component, type="project")
+        return SourceContext(root=root, component=component, _tempdir=tmp)
+    except Exception:
+        tmp.cleanup()
+        raise
+
+
+def _collect_local_file(path: Path) -> SourceContext:
+    if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+        raise CollectionError("file is too large")
+    display = neutralize_hidden(path.name)
+    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    try:
+        root = Path(tmp.name)
+        # path.name is a bare filename; we control `root`, so the destination stays inside it.
+        shutil.copy2(path, root / path.name)
+        component = detect_component(root, source=display)
+        if component.type == "directory":
+            component = replace(component, type="project")
+        return SourceContext(root=root, component=component, _tempdir=tmp)
+    except Exception:
+        tmp.cleanup()
+        raise
 
 
 def parse_git_url(url: str) -> tuple[str, str | None, str | None, str | None]:
@@ -402,6 +462,8 @@ def _safe_extract_tar(data: bytes, dest: Path) -> None:
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
         safe, total = [], 0
         for m in tf.getmembers():
+            if len(safe) >= _MAX_ARCHIVE_MEMBERS:
+                raise CollectionError("archive has too many entries")
             if m.issym() or m.islnk():
                 continue  # never extract links (path-escape risk)
             if not _within(dest_resolved, m.name, dest):
@@ -419,6 +481,8 @@ def _safe_extract_zip(data: bytes, dest: Path) -> None:
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         safe, total = [], 0
         for info in zf.infolist():
+            if len(safe) >= _MAX_ARCHIVE_MEMBERS:
+                raise CollectionError("archive has too many entries")
             # zipfile.extractall can create symlinks from the stored unix mode on some platforms.
             if stat.S_ISLNK(info.external_attr >> 16):
                 continue  # never extract symlinks (path-escape risk)
@@ -517,6 +581,13 @@ def detect_component(root: Path, source: str) -> Component:
         meta = _read_pyproject(pyproject) if pyproject.exists() else {}
         name = meta.get("name") or name
         version = meta.get("version") or ""
+
+    # Label common non-Python/Node project shapes so an uploaded project reads better than a bare
+    # "directory" (detection itself is language-agnostic for the cross-cutting rules).
+    elif (root / "go.mod").exists():
+        ctype = "go_project"
+    elif any((root / f).exists() for f in ("pom.xml", "build.gradle", "build.gradle.kts")):
+        ctype = "java_project"
 
     # MCP / AI-component overrides take precedence when their artifacts are present.
     if _has_mcp_manifest(root):

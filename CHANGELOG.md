@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.10.0]
+
+### Added
+- **Scan a project archive or a single file.** `scan <path>` now accepts, besides a directory,
+  a project archive (`.zip`, `.tar.gz`/`.tgz`, `.tar`, `.tar.bz2`, `.tar.xz`) or a single code
+  file — both are staged into a temp directory and analyzed by the same engine, then cleaned up.
+  This brings AI-generated projects that don't live in a public git repo (e.g. a downloaded ZIP)
+  into scope. Reuses the existing safe extractor (zip-slip guard, symlink rejection,
+  decompression-bomb cap) and adds an archive entry-count cap. Project type is labelled
+  (`go_project` / `java_project` / `project`) for the report header.
+- Archive caps are env-overridable so a hosted upload path can tighten them:
+  `SKILLTOTAL_MAX_ARCHIVE_MB`, `SKILLTOTAL_MAX_EXTRACT_MB`, `SKILLTOTAL_MAX_ARCHIVE_MEMBERS`.
+
+No detection-rule changes (RULESET 11 unchanged); detection on the new sources uses the same rules.
+
 ## [0.9.1]
 
 ### Documentation

@@ -66,6 +66,11 @@ skilltotal scan ./path/to/component
 # Scan a remote repository (shallow git clone)
 skilltotal scan https://github.com/owner/repo
 
+# Scan a project archive or a single file (e.g. an AI-generated project downloaded as a ZIP)
+skilltotal scan ./my-project.zip
+skilltotal scan ./app.tar.gz
+skilltotal scan ./suspicious.py
+
 # Scan a package from a registry (latest, or a pinned version)
 skilltotal scan npm:left-pad
 skilltotal scan npm:left-pad@1.3.0
