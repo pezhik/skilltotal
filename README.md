@@ -115,6 +115,16 @@ Suppressed findings are removed before scoring and do not affect the risk score.
 | 1 | Usage / collection error (e.g. path missing, clone failed) |
 | 2 | `--fail-on-high` set and a finding of severity ≥ high was produced |
 
+## Methodology
+
+SkillTotal performs **static** security analysis of AI components — MCP servers, agent
+skills/plugins, npm and PyPI packages, and AI-generated projects/repositories. The engine
+combines capability analysis, dangerous-pattern detection, privilege analysis, supply-chain
+(install-time) analysis, prompt-surface analysis, and data-flow correlation (e.g. secret
+access combined with network egress). Findings are mapped to risk categories and contribute to
+a **0–100 risk score**; capabilities are reported but never inflate the score — capability ≠ risk.
+Nothing is executed and no LLM is called, so results are deterministic and reproducible.
+
 ## What it detects
 
 | Category | Examples |
@@ -128,6 +138,55 @@ Suppressed findings are removed before scoring and do not affect the risk score.
 | Obfuscation | decode-and-execute chains, base64 blobs, hex escaping, minification |
 | MCP risks | manifests, dangerous tools (shell/fs/network/credential), server commands |
 | Prompt surface | "ignore previous instructions", "reveal system prompt", exfiltration phrasing |
+
+### Coverage by component type
+
+What the engine surfaces depends on the surfaces a component actually exposes. **✅** native /
+primary surface · **⚠️** covered when that surface is present in the component · **❌** not
+applicable · **🚧** planned (SkillTotal Cloud).
+
+| Category | MCP | npm | PyPI | AI project |
+|---|---|---|---|---|
+| Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ✅ |
+| Tool poisoning (MCP tool metadata) | ✅ | ❌ | ❌ | ⚠️ |
+| Dangerous capabilities (shell / fs / network) | ✅ | ✅ | ✅ | ⚠️ |
+| Data exfiltration (secret access + egress) | ✅ | ✅ | ✅ | ⚠️ |
+| Secret theft / sensitive-path access | ✅ | ✅ | ✅ | ⚠️ |
+| Dynamic code execution | ✅ | ✅ | ✅ | ⚠️ |
+| Obfuscation (decode-and-execute) | ✅ | ✅ | ✅ | ✅ |
+| Hidden-Unicode smuggling | ✅ | ✅ | ✅ | ✅ |
+| Embedded secrets (hardcoded keys/tokens) | ✅ | ✅ | ✅ | ✅ |
+| Install-time / supply-chain hooks | ⚠️ | ✅ | ✅ | ❌ |
+| Overprivileged / auto-approved tools | ✅ | ❌ | ❌ | ⚠️ |
+| Runtime behavior analysis | 🚧 | 🚧 | 🚧 | 🚧 |
+| Sandbox analysis | 🚧 | 🚧 | 🚧 | 🚧 |
+
+### Typical findings
+
+- An MCP tool can execute arbitrary shell commands
+- A package downloads and runs code from an external URL
+- Access to credential locations (`~/.aws`, `~/.ssh`, `.env`) detected
+- Dynamic code execution (`eval` / `exec`) detected
+- Prompt-injection / instruction-override phrasing in a tool description or skill
+- Sensitive-data access combined with outbound network egress
+- Hardcoded API keys or tokens
+- An MCP server with auto-approved or overprivileged tools
+
+## Out of scope
+
+SkillTotal statically analyzes a **single component's own files**. It does not execute code,
+observe runtime behavior, or assess your environment, deployment, or infrastructure. It is **not**
+a substitute for:
+
+- a penetration test
+- an application-security (app-sec) review
+- an architecture / design review
+- a cloud-security or infrastructure assessment
+- a Kubernetes / container runtime audit
+- a business-logic review
+- a manual code review
+
+Runtime behavior and sandbox analysis are planned for **SkillTotal Cloud** (paid).
 
 ## Output
 

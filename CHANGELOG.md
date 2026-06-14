@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.9.1]
+
+### Documentation
+- **Coverage documentation.** README now states scope explicitly: a per-ecosystem coverage
+  matrix (MCP / npm / PyPI / AI project), a typical-findings list, an out-of-scope section
+  (SkillTotal is static analysis, not a pentest / app-sec / architecture / cloud review), and
+  a one-paragraph methodology statement. No detection-rule or behavior changes (RULESET 11
+  unchanged); the goal is that a reader understands in 30 seconds what the engine does and does
+  not do.
+
 ## [0.9.0]
 
 ### Added
