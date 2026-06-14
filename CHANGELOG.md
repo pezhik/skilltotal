@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.10.1]
+
+### Fixed
+- **UTF-8 BOM no longer breaks manifest parsing.** A leading byte-order mark (common in
+  Windows-authored configs, e.g. a `claude_desktop_config.json`) is now stripped when a file's
+  text is cached. Previously the BOM made the JSON unparseable — so an MCP manifest was missed
+  (no `ST-MCP-*` findings) — and was itself mis-flagged as hidden zero-width Unicode. Line offsets
+  are unaffected (the BOM precedes line 1). No rule changes (RULESET 11).
+
+### Documentation
+- `scan` CLI help / module docstring now reflect all supported sources (local dir, project archive
+  `.zip`/`.tar.gz`/file, git URL, `npm:`/`pypi:` package) and the `inventory` command.
+
 ## [0.10.0]
 
 ### Added

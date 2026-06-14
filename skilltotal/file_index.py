@@ -304,6 +304,12 @@ class FileIndex:
                 stats["skipped_binary"] += 1
                 continue
             text = raw.decode("utf-8", errors="replace")
+            # Strip a leading UTF-8 BOM (common in Windows-authored configs). Left in, it breaks
+            # JSON parsing of manifests (e.g. an MCP config → missed ST-MCP-* findings) and is
+            # mis-flagged as hidden zero-width Unicode. It precedes line 1, so line offsets are
+            # unaffected.
+            if text.startswith("\ufeff"):
+                text = text[1:]
             files.append(
                 IndexedFile(
                     path=path,

@@ -94,6 +94,19 @@ def test_oversize_archive_rejected(tmp_path, monkeypatch):
         collect(src)
 
 
+def test_bom_prefixed_manifest_is_parsed(tmp_path):
+    # A UTF-8 BOM (common in Windows-authored configs) must not break manifest JSON parsing
+    # (→ missed MCP findings) nor be mis-flagged as hidden zero-width Unicode.
+    cfg = '{"mcpServers":{"fs":{"command":"npx","args":["x"],"autoApprove":["read_file"]}}}'
+    p = tmp_path / "claude_desktop_config.json"
+    p.write_bytes(b"\xef\xbb\xbf" + cfg.encode())
+    with collect(str(p)) as ctx:
+        report = analyze_directory(ctx.root, ctx.component)
+    ids = {f.id for f in report.findings}
+    assert "ST-MCP-SERVER-EXEC" in ids
+    assert not any("unicode" in n.title.lower() for n in report.needs_review)
+
+
 def test_project_type_labels(tmp_path):
     go = _write(tmp_path, "g.zip", _zip_bytes({"svc/go.mod": "module svc\n"}))
     with collect(go) as ctx:

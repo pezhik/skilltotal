@@ -1,7 +1,12 @@
 """SkillTotal command-line interface — the only I/O shell around the core engine.
 
 Commands:
-    skilltotal scan <path-or-url> [--json] [--output FILE] [--fail-on-high]
+    skilltotal scan <source> [--json|--sarif] [--output FILE] [--fail-on-high]
+                             [--baseline FILE | --write-baseline FILE]
+        <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
+        file, a git URL, or an npm:<name> / pypi:<name> package spec.
+    skilltotal inventory [--json] [--no-scan] [--project DIR]
+        discover AI components installed on this machine (agent configs / MCP servers), then scan.
     skilltotal rules list [--json]
 
 Exit codes:
@@ -47,8 +52,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"skilltotal {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    scan = sub.add_parser("scan", help="Scan a component (local path or git URL).")
-    scan.add_argument("source", help="Local directory path or git repository URL.")
+    scan = sub.add_parser(
+        "scan",
+        help="Scan a component: a local path/archive/file, a git URL, or an npm:/pypi: package.",
+    )
+    scan.add_argument(
+        "source",
+        help=(
+            "Local directory, project archive (.zip/.tar.gz/.tgz/.tar) or single file, "
+            "git URL, or npm:<name> / pypi:<name>."
+        ),
+    )
     scan.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
     scan.add_argument(
         "--sarif",
