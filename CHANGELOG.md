@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.10.3]
+
+### Documentation
+- Streamlined the open-core model doc (`docs/open-core.md`) and repository contributor notes to
+  focus on the engine and the free/paid boundary. No code, schema, or rule changes (RULESET 11).
+
+### CI
+- Enabled CodeQL code scanning for the public repository (push/PR to `main` + a weekly run).
+
 ## [0.10.2]
 
 ### Documentation
