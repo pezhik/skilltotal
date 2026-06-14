@@ -7,10 +7,11 @@
 
 **AI Component Security Platform — open-source CLI engine.**
 
-SkillTotal statically analyzes AI-related components (skills, plugins, MCP servers, npm /
-Python packages, repositories) to surface supply-chain risks, dangerous capabilities,
-prompt-injection surfaces, and data-exfiltration paths **before** the component is installed
-or trusted.
+SkillTotal statically analyzes AI-related components — agent skills/plugins, MCP servers, npm /
+Python packages, repositories, and **AI-generated projects you upload as an archive or file** — to
+surface supply-chain risks, dangerous capabilities, prompt-injection surfaces, and data-exfiltration
+paths **before** the component is installed or trusted. Point it at a path, a git URL, an
+`npm:` / `pypi:` package, or a project archive (`.zip` / `.tar.gz`) / single file.
 
 **Try it online (no install, no account):** [www.skilltotal.ai](https://www.skilltotal.ai) —
 the website runs this same engine. Prefer the CLI? `pipx install skilltotal` (below).
