@@ -146,6 +146,10 @@ that surface is uncommon for this type — so it is flagged only when the compon
 it (e.g. prompt-injection text inside an npm/PyPI package) · **❌** not applicable to this type ·
 **🚧** planned (SkillTotal Cloud).
 
+Columns are the component types SkillTotal scans. **AI project** = a scanned repository or folder
+— an agent skill/plugin, an AI-generated codebase, or a set of prompts/configs — that is not a
+published npm/PyPI package.
+
 | Category | MCP | npm | PyPI | AI project |
 |---|---|---|---|---|
 | Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ✅ |
