@@ -141,9 +141,10 @@ Nothing is executed and no LLM is called, so results are deterministic and repro
 
 ### Coverage by component type
 
-What the engine surfaces depends on the surfaces a component actually exposes. **✅** native /
-primary surface · **⚠️** covered when that surface is present in the component · **❌** not
-applicable · **🚧** planned (SkillTotal Cloud).
+Legend: **✅** analyzed by default for this component type · **⚠️** the engine detects this, but
+that surface is uncommon for this type — so it is flagged only when the component actually contains
+it (e.g. prompt-injection text inside an npm/PyPI package) · **❌** not applicable to this type ·
+**🚧** planned (SkillTotal Cloud).
 
 | Category | MCP | npm | PyPI | AI project |
 |---|---|---|---|---|
