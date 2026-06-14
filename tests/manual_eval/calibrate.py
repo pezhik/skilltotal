@@ -19,8 +19,8 @@ CSV columns (header required): ``class,ecosystem,source,version,notes``
                  ``vulnerable-lab`` rows keep their softer rule (a risky construct is enough).
 
 This is an *informational* tool (always exits 0). It never changes rules; calibration
-decisions are made by a human. The real labeled dataset lives in the private ops repo;
-this module ships only the harness + a tiny synthetic sample for the unit test.
+decisions are made by a human. The real labeled dataset is maintained separately; this
+module ships only the harness + a tiny synthetic sample for the unit test.
 
 Usage:
     python tests/manual_eval/calibrate.py --dataset <file.csv> [--out <prefix>]

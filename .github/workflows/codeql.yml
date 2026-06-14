@@ -1,16 +1,14 @@
 name: CodeQL
 
-# CodeQL code scanning requires GitHub Advanced Security on PRIVATE repos. While this repo is
-# private, run only on manual dispatch. When it goes public, uncomment the push/PR/schedule
-# triggers below (CodeQL is free for public repos).
+# CodeQL is free for public repositories. Run on every push/PR to main plus a weekly scan.
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
-  #   branches: [main]
-  # schedule:
-  #   - cron: "23 4 * * 1"  # weekly, Monday 04:23 UTC
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1"  # weekly, Monday 04:23 UTC
 
 jobs:
   analyze:

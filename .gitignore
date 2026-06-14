@@ -56,7 +56,7 @@ node_modules/
 package.json
 package-lock.json
 
-# Stray local SQLite DBs from running the web app with the engine on PYTHONPATH
+# Stray local SQLite DBs from local integration runs (not part of the engine)
 _test_web.db
 _dev_web.db
 local_e2e.db

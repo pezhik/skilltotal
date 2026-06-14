@@ -150,17 +150,17 @@ so review Install/Usage before tagging. The version lives ONLY in
 `tests/test_release_hygiene.py` blocks a release with a stale CHANGELOG/README/schema-id;
 update docs in the same commit as the change they describe, not "later".
 
-## Open-core boundary (what belongs here vs the private web app)
+## Open-core boundary (what belongs here vs the hosted product)
 
 This repo is the **open-source engine** (Apache-2.0). It is the full, free, offline,
 zero-dep static analyzer + CLI + **all** detection rules — it answers *what* a component does.
-Paid features live only in the private `skilltotal-web` repo (server-side services on top of
-the engine) and answer *why it matters*. See `docs/open-core.md`.
+Paid features live only in a separate private repository (server-side hosted services on top
+of the engine) and answer *why it matters*. See `docs/open-core.md`.
 
 **Never add to this repo:** LLM prompts / finding-verification pipeline, sandbox orchestration,
 billing, server secrets, private premium datasets, or website code. The optional `skilltotal/
 cloud/` client (thin `login` / `scan --deep` over `urllib`) is the only bridge to the paid API
-and contains no premium logic; it is implemented alongside the website API, not before it.
+and contains no premium logic; it is implemented alongside the hosted API, not before it.
 
 ## Adding a scanner / detection rule
 
