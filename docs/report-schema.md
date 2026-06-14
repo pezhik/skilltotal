@@ -4,7 +4,7 @@ The JSON report (`--json` / `--output`) is the serialization of the core `Report
 It is the stable contract intended for the web and SaaS products.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
-> schema version **1.0**) is the machine-readable source of truth. Consumers should validate
+> schema version **1.3**) is the machine-readable source of truth. Consumers should validate
 > against it. `tests/test_report_schema.py` guards it: any change to the report shape that is
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
