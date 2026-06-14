@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.10.2]
+
+### Documentation
+- Corrected the report-schema doc: `docs/report-schema.md` cited report schema version **1.0**,
+  but the actual contract (`docs/report.schema.json` `$id` and `REPORT_SCHEMA_VERSION`) is **1.3**.
+  Docs-only; no code, schema, or rule changes (RULESET 11).
+
 ## [0.10.1]
 
 ### Fixed
