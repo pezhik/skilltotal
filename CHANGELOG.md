@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.11.0]
+
+### Added
+- **Taint analysis for Python (ruleset 12).** A new intra-procedural data-flow pass flags when a
+  value from an untrusted source (environment, `sys.argv`, `input()`, a network response body, or
+  an MCP tool-handler argument) provably reaches a dangerous sink:
+  - `ST-TAINT-EXEC-PY` — source → `eval` / `exec` / `compile`
+  - `ST-TAINT-SHELL-PY` — source → shell (`os.system` / `os.popen` / `subprocess(..., shell=True)`)
+  - `ST-TAINT-DESERIAL-PY` — source → unsafe deserialization (`pickle` / `marshal` / `yaml.load` / …)
+
+  These are `risky_construct` (high): they upgrade an already-reported capability into a proven
+  risk. Conservative by design (default-deny propagation; `shlex.quote` / `int()` and re-assignment
+  clear taint; no inter-procedural or closure tracking) — calibrated to benign false positives = 0.
+  When taint proves a shell injection it supersedes `ST-CMDI-PY` on the same call (scored once).
+
 ## [0.10.4]
 
 ### Added

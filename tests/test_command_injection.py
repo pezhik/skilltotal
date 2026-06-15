@@ -56,6 +56,13 @@ def test_py_subprocess_dynamic_without_shell_not_cmdi(tmp_path):
     assert "ST-CMDI-PY" not in _py(tmp_path, code)
 
 
+def test_py_cmdi_suppressed_when_taint_shell_fires(tmp_path):
+    # When taint proves an untrusted source reaches the shell, the specific ST-TAINT-SHELL-PY
+    # finding supersedes the weaker ST-CMDI-PY on the same node (scored once).
+    ids = _py(tmp_path, "import os\nos.system(os.getenv('X'))\n")
+    assert "ST-TAINT-SHELL-PY" in ids and "ST-CMDI-PY" not in ids
+
+
 # --- Node: should flag ---------------------------------------------------------------
 def test_node_exec_template_literal(tmp_path):
     code = "const cp=require('child_process');\ncp.exec(`ls ${dir}`);\n"

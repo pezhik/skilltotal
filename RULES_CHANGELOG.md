@@ -4,6 +4,27 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 12 (engine 0.11.0)
+
+**Intra-procedural taint / data-flow for Python (deterministic, no LLM).** Beyond the existing
+"dynamic command" heuristic (`ST-CMDI-PY`), the AST scanner now tracks a value from an untrusted
+SOURCE to a dangerous SINK within a single function body and reports a proven flow.
+
+- Sources (v1, conservative): `os.environ` / `os.getenv` / `os.environ.get`, `sys.argv`,
+  `input()`, a network response body (`requests`/`httpx`/`aiohttp` `.text`/`.content`/`.json()`),
+  and the parameters of an MCP tool handler (a function decorated `@*.tool`).
+- Sinks → finding (`risky_construct`, high): `eval`/`exec`/`compile` (`ST-TAINT-EXEC-PY`); a shell
+  (`os.system`/`os.popen`/`subprocess(..., shell=True)`) (`ST-TAINT-SHELL-PY`); unsafe
+  deserialization (`ST-TAINT-DESERIAL-PY`).
+- Propagation is default-deny: assignments, f-strings, `+`/`%`, `str` methods (`.format`/`.join`/…)
+  and literal containers carry taint; `shlex.quote`/`shlex.join`/`int()`/`float()` and
+  re-assignment to a clean value clear it. Inter-procedural flow, attribute/container aliasing and
+  closures are intentionally NOT tracked (false-positive control). Unparseable files get no taint
+  (already flagged `needs_review`).
+- `ST-TAINT-SHELL-PY` supersedes `ST-CMDI-PY` on the same node (the injection is scored once).
+- The 0-weight capability findings (`ST-DYN-PY`/`ST-SHELL-PY`/`ST-DESERIALIZE-PY`) still fire for
+  the sink itself; taint is the upgrade to a scored risk. Calibrated benign FP = 0.
+
 ## ruleset 11 (engine 0.9.0)
 
 **De-obfuscation pass for instruction surfaces (deterministic, no LLM).** Attackers hide

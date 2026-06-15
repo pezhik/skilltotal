@@ -66,6 +66,23 @@ Note this is **sensitivity-gated**: plain filesystem access plus network is a ne
 combination (legitimate tools read files and use the network) and is *not* flagged — only access
 to *secret* data combined with an egress channel is.
 
+## Taint: untrusted input → dangerous sink (Python)
+
+Beyond raw capability, the Python AST scanner reports a **proven data flow** from an untrusted
+source (environment, `sys.argv`, `input()`, a network response body, or an MCP tool-handler
+argument) to a dangerous sink, as `risky_construct` (high):
+
+- `ST-TAINT-EXEC-PY` — reaches `eval` / `exec` / `compile`
+- `ST-TAINT-SHELL-PY` — reaches a shell (`os.system` / `os.popen` / `subprocess(..., shell=True)`)
+- `ST-TAINT-DESERIAL-PY` — reaches unsafe deserialization
+
+These **upgrade** an already-reported capability (`ST-DYN-PY` / `ST-SHELL-PY` /
+`ST-DESERIALIZE-PY`, weight 0) into a scored risk; the capability finding still appears. This is
+stronger than `ST-CMDI-PY` (which flags any non-constant shell command): when taint proves an
+untrusted source reaches the shell, `ST-TAINT-SHELL-PY` supersedes `ST-CMDI-PY` on that node so the
+injection is scored once. The analysis is conservative (default-deny propagation, sanitizers clear
+taint, no inter-procedural tracking) to keep benign false positives at zero.
+
 ## Evidence-context demotion (what does NOT score)
 
 Matches that are not executed, agent-facing behavior are moved to `needs_review` before scoring,

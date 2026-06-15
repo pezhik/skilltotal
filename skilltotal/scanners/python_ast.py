@@ -86,6 +86,30 @@ _PATH_CONSUMER_NAMES = frozenset(
 )
 _PATH_CONSUMER_PREFIXES = ("os.path.", "shutil.", "pathlib.")
 
+# --- taint analysis (intra-procedural) -----------------------------------------------
+R_TAINT_EXEC = "ST-TAINT-EXEC-PY"
+R_TAINT_SHELL = "ST-TAINT-SHELL-PY"
+R_TAINT_DESERIAL = "ST-TAINT-DESERIAL-PY"
+
+# Untrusted-input SOURCES — conservative, high-confidence set for v1.
+_SOURCE_CALLS = frozenset({"os.getenv", "os.environ.get", "input"})
+_SOURCE_ATTRS = frozenset({"os.environ", "sys.argv"})
+# Attributes exposing a network response body (requests/httpx/aiohttp .text/.content/.json()).
+_NET_BODY_ATTRS = frozenset({"text", "content", "json"})
+# Calls that neutralize taint before a shell/exec sink.
+_SANITIZERS = frozenset({"shlex.quote", "shlex.join", "int", "float"})
+# str methods that carry taint from the receiver or arguments (x.format(...), sep.join(x), ...).
+_STR_TAINT_METHODS = frozenset(
+    {
+        "format", "format_map", "join", "strip", "lstrip", "rstrip",
+        "replace", "lower", "upper", "title", "encode", "decode",
+    }
+)
+# A function decorated with `@*.tool` is treated as an MCP tool handler whose params are
+# agent/attacker-controlled (the decorator's leaf attribute is "tool": mcp.tool/server.tool/...).
+_MCP_TOOL_DECORATOR_LEAF = "tool"
+_COMPOUND_STMTS = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.Try)
+
 
 class PythonAstScanner(Scanner):
     name = "python_ast"
@@ -263,6 +287,64 @@ class PythonAstScanner(Scanner):
             # credential path that merely appears in a string literal / docstring / regex
             # pattern is never flagged here.
         ),
+        RuleSpec(
+            id=R_TAINT_EXEC,
+            category="dynamic_code_execution",
+            severity=Severity.HIGH,
+            title="Untrusted input flows to dynamic code execution",
+            description=(
+                "A value derived from an untrusted source (environment, command-line "
+                "arguments, input(), a network response body, or an MCP tool argument) reaches "
+                "eval / exec / compile. If the source is attacker-controlled this is remote "
+                "code execution."
+            ),
+            recommendation=(
+                "Never evaluate data built from external input. Remove the dynamic execution "
+                "or restrict the input to a trusted, validated allow-list of constants."
+            ),
+            capability=None,  # the exec capability is already covered by ST-DYN-PY
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+        ),
+        RuleSpec(
+            id=R_TAINT_SHELL,
+            category="command_injection",
+            severity=Severity.HIGH,
+            title="Untrusted input flows to a shell command",
+            description=(
+                "A value derived from an untrusted source (environment, command-line "
+                "arguments, input(), a network response body, or an MCP tool argument) is run "
+                "through a shell (os.system / os.popen or subprocess with shell=True). If the "
+                "source is attacker-controlled this is command injection."
+            ),
+            recommendation=(
+                "Pass arguments as a list without shell=True; never build a shell string from "
+                "external input. If a shell is unavoidable, quote every external value with "
+                "shlex.quote."
+            ),
+            capability=None,  # shell capability already covered by ST-SHELL-PY
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+        ),
+        RuleSpec(
+            id=R_TAINT_DESERIAL,
+            category="unsafe_deserialization",
+            severity=Severity.HIGH,
+            title="Untrusted input flows to unsafe deserialization",
+            description=(
+                "A value derived from an untrusted source (environment, command-line "
+                "arguments, input(), a network response body, or an MCP tool argument) is "
+                "passed to a deserializer that can execute arbitrary objects "
+                "(pickle/marshal/dill/jsonpickle, or yaml.load without SafeLoader)."
+            ),
+            recommendation=(
+                "Deserialize untrusted data only with a safe format/loader (JSON, "
+                "yaml.safe_load). Reserve pickle/marshal for data you fully control."
+            ),
+            capability=None,  # already covered by ST-DESERIALIZE-PY
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -309,6 +391,12 @@ class PythonAstScanner(Scanner):
                     )
                 )
 
+            taint = _TaintVisitor(f)
+            taint.analyze(tree)
+            for rid, evidence in taint.hits.items():
+                acc.setdefault(rid, []).extend(evidence)
+
+        _suppress_cmdi_covered_by_taint(acc)
         return ScanResult(findings=self._build_findings(acc), needs_review=needs_review)
 
     # ------------------------------------------------------------------ helpers
@@ -420,18 +508,7 @@ class _CallVisitor(ast.NodeVisitor):
     # -- internals ---------------------------------------------------------
     def _dotted(self, func: ast.expr) -> str | None:
         """Resolve a call target to a canonical dotted name, applying import aliases."""
-        if isinstance(func, ast.Name):
-            return self.from_imports.get(func.id, func.id)
-        if isinstance(func, ast.Attribute):
-            base = self._dotted(func.value)
-            if base is None:
-                return func.attr
-            parts = base.split(".")
-            if parts[0] in self.aliases:
-                parts[0] = self.aliases[parts[0]]
-                base = ".".join(parts)
-            return f"{base}.{func.attr}"
-        return None
+        return _resolve_dotted(func, self.aliases, self.from_imports)
 
     def _add(self, rule_id: str, node: ast.AST) -> None:
         bucket = self.hits.setdefault(rule_id, [])
@@ -448,6 +525,269 @@ class _CallVisitor(ast.NodeVisitor):
         line_start = getattr(node, "lineno", 1)
         line_end = getattr(node, "end_lineno", line_start) or line_start
         return self.file.evidence_for_lines(line_start, line_end)
+
+
+def _resolve_dotted(
+    func: ast.expr, aliases: dict[str, str], from_imports: dict[str, str]
+) -> str | None:
+    """Resolve a call/attribute target to a canonical dotted name, applying import aliases."""
+    if isinstance(func, ast.Name):
+        return from_imports.get(func.id, func.id)
+    if isinstance(func, ast.Attribute):
+        base = _resolve_dotted(func.value, aliases, from_imports)
+        if base is None:
+            return func.attr
+        parts = base.split(".")
+        if parts[0] in aliases:
+            parts[0] = aliases[parts[0]]
+            base = ".".join(parts)
+        return f"{base}.{func.attr}"
+    return None
+
+
+def _first_arg(node: ast.Call) -> ast.expr | None:
+    return node.args[0] if node.args else None
+
+
+def _target_names(target: ast.expr) -> list[str]:
+    if isinstance(target, ast.Name):
+        return [target.id]
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: list[str] = []
+        for elt in target.elts:
+            names.extend(_target_names(elt))
+        return names
+    if isinstance(target, ast.Starred):
+        return _target_names(target.value)
+    return []
+
+
+def _suppress_cmdi_covered_by_taint(acc: dict[str, list[Evidence]]) -> None:
+    """When ST-TAINT-SHELL-PY fires on a call, drop the weaker ST-CMDI-PY evidence on the same
+    node so the same injection is scored once (the more specific taint finding wins)."""
+    taint_shell = acc.get(R_TAINT_SHELL)
+    cmdi = acc.get(R_CMDI)
+    if not taint_shell or not cmdi:
+        return
+    spans = {(e.file, e.line_start, e.line_end) for e in taint_shell}
+    kept = [e for e in cmdi if (e.file, e.line_start, e.line_end) not in spans]
+    if kept:
+        acc[R_CMDI] = kept
+    else:
+        acc.pop(R_CMDI, None)
+
+
+class _TaintVisitor:
+    """Conservative intra-procedural taint: flags an untrusted SOURCE reaching a dangerous SINK
+    within a single function body. Per-function scope, default-deny propagation, sanitizers clear
+    taint. Inter-procedural flow, attribute/container aliasing and closures are intentionally not
+    tracked (false-positive control)."""
+
+    def __init__(self, file: IndexedFile):
+        self.file = file
+        self.hits: dict[str, list[Evidence]] = {}
+        self.aliases: dict[str, str] = {}
+        self.from_imports: dict[str, str] = {}
+
+    def analyze(self, tree: ast.Module) -> None:
+        self._collect_imports(tree)
+        self._walk_scope(tree.body, set())
+
+    # -- imports (resolution only) ----------------------------------------
+    def _collect_imports(self, tree: ast.Module) -> None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    self.aliases[alias.asname or alias.name.split(".")[0]] = alias.name
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    self.from_imports[local] = (
+                        f"{module}.{alias.name}" if module else alias.name
+                    )
+
+    # -- scope walk -------------------------------------------------------
+    def _walk_scope(self, body: list[ast.stmt], tainted: set[str]) -> None:
+        for stmt in body:
+            self._walk_stmt(stmt, tainted)
+
+    def _walk_stmt(self, stmt: ast.stmt, tainted: set[str]) -> None:
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            inner: set[str] = set()
+            self._seed_mcp_params(stmt, inner)
+            self._walk_scope(stmt.body, inner)
+            return
+        if isinstance(stmt, ast.ClassDef):
+            self._walk_scope(stmt.body, set())
+            return
+        if isinstance(stmt, _COMPOUND_STMTS):
+            for expr in self._header_exprs(stmt):
+                self._check_exprs_for_sinks(expr, tainted)
+            for sub in self._child_bodies(stmt):
+                self._walk_scope(sub, tainted)
+            return
+        # Simple statement: a sink in it evaluates with the CURRENT taint, then the target binds.
+        self._check_exprs_for_sinks(stmt, tainted)
+        self._apply_assignment(stmt, tainted)
+
+    def _check_exprs_for_sinks(self, root: ast.AST, tainted: set[str]) -> None:
+        for node in ast.walk(root):
+            if isinstance(node, ast.Call):
+                self._check_sink(node, tainted)
+
+    # -- taint propagation ------------------------------------------------
+    def _apply_assignment(self, stmt: ast.stmt, tainted: set[str]) -> None:
+        if isinstance(stmt, ast.Assign):
+            t = self._is_tainted(stmt.value, tainted)
+            for tgt in stmt.targets:
+                for name in _target_names(tgt):
+                    tainted.add(name) if t else tainted.discard(name)
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            t = self._is_tainted(stmt.value, tainted)
+            for name in _target_names(stmt.target):
+                tainted.add(name) if t else tainted.discard(name)
+        elif isinstance(stmt, ast.AugAssign):
+            if self._is_tainted(stmt.value, tainted) or (
+                isinstance(stmt.target, ast.Name) and stmt.target.id in tainted
+            ):
+                for name in _target_names(stmt.target):
+                    tainted.add(name)
+
+    def _is_tainted(self, expr: ast.expr | None, tainted: set[str]) -> bool:
+        if expr is None:
+            return False
+        if isinstance(expr, ast.Name):
+            return expr.id in tainted
+        if self._is_source_expr(expr):
+            return True
+        if isinstance(expr, ast.JoinedStr):
+            return any(
+                self._is_tainted(v.value, tainted)
+                for v in expr.values
+                if isinstance(v, ast.FormattedValue)
+            )
+        if isinstance(expr, ast.BinOp) and isinstance(expr.op, (ast.Add, ast.Mod)):
+            return self._is_tainted(expr.left, tainted) or self._is_tainted(expr.right, tainted)
+        if isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
+            return any(self._is_tainted(e, tainted) for e in expr.elts)
+        if isinstance(expr, ast.Starred):
+            return self._is_tainted(expr.value, tainted)
+        if isinstance(expr, ast.IfExp):
+            return self._is_tainted(expr.body, tainted) or self._is_tainted(expr.orelse, tainted)
+        if isinstance(expr, ast.Subscript):
+            return self._is_tainted(expr.value, tainted)
+        if isinstance(expr, ast.Call):
+            name = _resolve_dotted(expr.func, self.aliases, self.from_imports)
+            if name in _SANITIZERS:
+                return False
+            if isinstance(expr.func, ast.Attribute) and expr.func.attr in _STR_TAINT_METHODS:
+                if self._is_tainted(expr.func.value, tainted):
+                    return True
+                return any(self._is_tainted(a, tainted) for a in expr.args)
+            return False
+        if isinstance(expr, ast.Attribute):
+            return self._is_tainted(expr.value, tainted)
+        return False
+
+    def _is_source_expr(self, expr: ast.expr) -> bool:
+        if isinstance(expr, ast.Attribute):
+            dotted = _resolve_dotted(expr, self.aliases, self.from_imports)
+            if dotted in _SOURCE_ATTRS:
+                return True
+            return expr.attr in _NET_BODY_ATTRS and self._is_network_result(expr.value)
+        if isinstance(expr, ast.Call):
+            name = _resolve_dotted(expr.func, self.aliases, self.from_imports)
+            if name in _SOURCE_CALLS:
+                return True
+            if (
+                isinstance(expr.func, ast.Attribute)
+                and expr.func.attr in _NET_BODY_ATTRS
+                and self._is_network_result(expr.func.value)
+            ):
+                return True
+        return False
+
+    def _is_network_result(self, expr: ast.expr) -> bool:
+        if isinstance(expr, ast.Call):
+            name = _resolve_dotted(expr.func, self.aliases, self.from_imports)
+            return bool(name) and _is_network_call(name)
+        return False
+
+    # -- sinks ------------------------------------------------------------
+    def _check_sink(self, node: ast.Call, tainted: set[str]) -> None:
+        name = _resolve_dotted(node.func, self.aliases, self.from_imports)
+        if name is None:
+            return
+        if name in DYNAMIC_CALLS:
+            if self._is_tainted(_first_arg(node), tainted):
+                self._add(R_TAINT_EXEC, node)
+        elif name in UNSAFE_DESERIALIZE_CALLS:
+            if self._is_tainted(_first_arg(node), tainted):
+                self._add(R_TAINT_DESERIAL, node)
+        elif name in ("yaml.load", "yaml.load_all") and _yaml_load_is_unsafe(node):
+            if self._is_tainted(_first_arg(node), tainted):
+                self._add(R_TAINT_DESERIAL, node)
+        elif self._is_shell_sink(name, node):
+            if self._is_tainted(_command_arg(node), tainted):
+                self._add(R_TAINT_SHELL, node)
+
+    def _is_shell_sink(self, name: str, node: ast.Call) -> bool:
+        return name in ALWAYS_SHELL_CALLS or (
+            name.startswith("subprocess.") and _shell_true(node)
+        )
+
+    # -- MCP tool handler parameters -------------------------------------
+    def _seed_mcp_params(
+        self, fn: ast.FunctionDef | ast.AsyncFunctionDef, tainted: set[str]
+    ) -> None:
+        if not self._is_mcp_tool(fn):
+            return
+        a = fn.args
+        for arg in [*a.posonlyargs, *a.args, *a.kwonlyargs]:
+            tainted.add(arg.arg)
+        if a.vararg:
+            tainted.add(a.vararg.arg)
+        if a.kwarg:
+            tainted.add(a.kwarg.arg)
+
+    def _is_mcp_tool(self, fn: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+        for dec in fn.decorator_list:
+            target = dec.func if isinstance(dec, ast.Call) else dec
+            dotted = _resolve_dotted(target, self.aliases, self.from_imports)
+            if dotted and dotted.split(".")[-1] == _MCP_TOOL_DECORATOR_LEAF:
+                return True
+        return False
+
+    # -- helpers ----------------------------------------------------------
+    def _header_exprs(self, stmt: ast.stmt) -> list[ast.expr]:
+        if isinstance(stmt, (ast.If, ast.While)):
+            return [stmt.test]
+        if isinstance(stmt, (ast.For, ast.AsyncFor)):
+            return [stmt.iter]
+        if isinstance(stmt, (ast.With, ast.AsyncWith)):
+            return [item.context_expr for item in stmt.items]
+        return []
+
+    def _child_bodies(self, stmt: ast.stmt) -> list[list[ast.stmt]]:
+        bodies: list[list[ast.stmt]] = [list(getattr(stmt, "body", []))]
+        if isinstance(stmt, ast.Try):
+            for handler in stmt.handlers:
+                bodies.append(handler.body)
+            bodies.append(stmt.finalbody)
+        bodies.append(list(getattr(stmt, "orelse", [])))
+        return [b for b in bodies if b]
+
+    def _add(self, rule_id: str, node: ast.AST) -> None:
+        bucket = self.hits.setdefault(rule_id, [])
+        line_start = getattr(node, "lineno", 1)
+        line_end = getattr(node, "end_lineno", line_start) or line_start
+        ev = self.file.evidence_for_lines(line_start, line_end)
+        span = (ev.file, ev.line_start, ev.line_end)
+        if len(bucket) >= MAX_EVIDENCE_PER_FINDING:
+            return
+        if all((e.file, e.line_start, e.line_end) != span for e in bucket):
+            bucket.append(ev)
 
 
 def _is_path_consumer(name: str) -> bool:
