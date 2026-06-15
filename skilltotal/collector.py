@@ -592,6 +592,8 @@ def detect_component(root: Path, source: str) -> Component:
     # MCP / AI-component overrides take precedence when their artifacts are present.
     if _has_mcp_manifest(root):
         ctype = "mcp_server"
+    elif ctype == "directory" and _has_skill_manifest(root):
+        ctype = "agent_skill"  # an Anthropic-style Agent Skill (SKILL.md + bundled scripts)
     elif ctype == "directory" and _has_ai_artifacts(root):
         ctype = "ai_component"
 
@@ -652,6 +654,10 @@ def _has_mcp_manifest(root: Path) -> bool:
             except OSError:
                 pass
     return False
+
+
+def _has_skill_manifest(root: Path) -> bool:
+    return (root / "SKILL.md").exists() or (root / "skill.md").exists()
 
 
 def _has_ai_artifacts(root: Path) -> bool:

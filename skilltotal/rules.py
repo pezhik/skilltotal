@@ -7,6 +7,7 @@ looks for.
 
 from __future__ import annotations
 
+from skilltotal.agent_skill import SKILL_MISMATCH_FINDING_ID
 from skilltotal.models import Severity, ThreatClass
 from skilltotal.scanners import all_rules
 from skilltotal.scanners.base import RuleSpec
@@ -30,9 +31,26 @@ _COMBO_RULE = RuleSpec(
 )
 
 
+# Synthesized in skilltotal.agent_skill (after capabilities), not by a scanner; expose for listing.
+# threat_class must match the finding (RISKY_CONSTRUCT) or it is silently unscored.
+_SKILL_MISMATCH_RULE = RuleSpec(
+    id=SKILL_MISMATCH_FINDING_ID,
+    category="least_privilege",
+    severity=Severity.MEDIUM,
+    title="Skill does more than its declared tools allow",
+    description=(
+        "Raised when an Agent Skill's declared allowed-tools do not cover a dangerous capability "
+        "its bundled code actually exercises (undeclared-capability / least-privilege violation)."
+    ),
+    recommendation="Align allowed-tools with actual behavior, or remove the undeclared capability.",
+    capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+)
+
+
 def get_rules() -> list[RuleSpec]:
-    """All rules, sorted by id, including the synthesized combination rule."""
-    rules = list(all_rules()) + [_COMBO_RULE]
+    """All rules, sorted by id, including the synthesized combination + skill-mismatch rules."""
+    rules = list(all_rules()) + [_COMBO_RULE, _SKILL_MISMATCH_RULE]
     return sorted(rules, key=lambda r: r.id)
 
 

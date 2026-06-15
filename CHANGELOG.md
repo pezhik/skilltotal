@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.12.0]
+
+### Added
+- **First-class Agent Skills + declared-vs-actual capability check (ruleset 13).** A folder with a
+  `SKILL.md` is now detected as an `agent_skill` component. New synthesized finding
+  **`ST-SKILL-CAP-MISMATCH`** (risky_construct, medium): when the skill's `SKILL.md` frontmatter
+  declares an `allowed-tools` allow-list but the bundled code exercises a dangerous capability
+  those tools do not grant (shell, network, filesystem-write, dynamic code, install-time), the
+  engine flags the undeclared-capability / least-privilege violation — deterministically, with
+  evidence pairing the declaration and the offending code. No LLM, no execution.
+
 ## [0.11.0]
 
 ### Added

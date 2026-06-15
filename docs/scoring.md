@@ -83,6 +83,16 @@ untrusted source reaches the shell, `ST-TAINT-SHELL-PY` supersedes `ST-CMDI-PY` 
 injection is scored once. The analysis is conservative (default-deny propagation, sanitizers clear
 taint, no inter-procedural tracking) to keep benign false positives at zero.
 
+## Agent Skill: declared vs actual (least privilege)
+
+For an `agent_skill` component (a folder with a `SKILL.md`), the engine compares the skill's
+declared `allowed-tools` against what its bundled code actually does. If the skill declares a
+non-empty, non-wildcard allow-list but the code exercises a dangerous capability those tools do
+not grant — shell, network, filesystem-write, dynamic code execution, or install-time execution —
+it synthesizes `ST-SKILL-CAP-MISMATCH` (`risky_construct`, medium). `filesystem_read` is not
+checked (benign). This is the deterministic, evidence-anchored counterpart to "the skill does more
+than it claims": no LLM, fires only when there is an explicit declaration to contradict.
+
 ## Evidence-context demotion (what does NOT score)
 
 Matches that are not executed, agent-facing behavior are moved to `needs_review` before scoring,

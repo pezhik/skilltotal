@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 13 (engine 0.12.0)
+
+**Agent Skill: declared-vs-actual capability mismatch (deterministic, no LLM).** A folder with a
+`SKILL.md` is detected as an `agent_skill` component. New synthesized finding
+`ST-SKILL-CAP-MISMATCH` compares the skill's declared `allowed-tools` against the capabilities its
+bundled code actually exhibits.
+
+- Fires only when the root `SKILL.md` declares a non-empty, non-wildcard `allowed-tools` list (an
+  explicit least-privilege claim) AND a dangerous capability is exhibited that none of the declared
+  tools grant.
+- Capability → tool mapping: shell / install-time ← `Bash`; network ← `WebFetch`/`WebSearch`;
+  filesystem write ← `Write`/`Edit`/`NotebookEdit`; dynamic code execution ← (no tool grants it).
+  `filesystem_read` is intentionally not checked (benign / ubiquitous).
+- `risky_construct`, severity medium (conservative start; may rise after calibration on a skills
+  corpus). Evidence pairs the `allowed-tools` line with the offending capability's evidence.
+- Synthesized in `skilltotal/agent_skill.py` after capabilities (mirrors `ST-COMBO-EXFIL`);
+  registered in the rules registry so `rules list` / SARIF include it. Deterministic, component-only.
+
 ## ruleset 12 (engine 0.11.0)
 
 **Intra-procedural taint / data-flow for Python (deterministic, no LLM).** Beyond the existing

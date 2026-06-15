@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__
+from skilltotal.agent_skill import skill_capability_mismatch
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import collect
@@ -81,6 +82,12 @@ def analyze_directory(
     combo = exfiltration_finding(findings, capabilities)
     if combo is not None:
         findings.append(combo)
+
+    # Agent Skill: declared allowed-tools vs. what the bundled code actually does (deterministic
+    # least-privilege / undeclared-capability check). Synthesized here, after capabilities.
+    mismatch = skill_capability_mismatch(component, index, capabilities)
+    if mismatch is not None:
+        findings.append(mismatch)
 
     _assign_threat_classes(findings)
 

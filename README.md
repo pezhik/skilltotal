@@ -209,6 +209,10 @@ published npm/PyPI package.
 - Sensitive-data access combined with outbound network egress
 - Hardcoded API keys or tokens
 - An MCP server with auto-approved or overprivileged tools
+- Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
+  shell — a proven injection path, not just a dangerous API in isolation
+- An **agent skill** does more than its declared `allowed-tools` allow (undeclared capability /
+  least-privilege violation)
 
 ## Out of scope
 
