@@ -14,7 +14,7 @@ from skilltotal.models import Report, Severity
 from skilltotal.rules import get_rules
 
 SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
-INFO_URI = "https://example.com/skilltotal"
+INFO_URI = "https://www.skilltotal.ai"
 
 _LEVEL = {
     Severity.CRITICAL: "error",

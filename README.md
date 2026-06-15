@@ -121,6 +121,33 @@ Suppressed findings are removed before scoring and do not affect the risk score.
 | 1 | Usage / collection error (e.g. path missing, clone failed) |
 | 2 | `--fail-on-high` set and a finding of severity ≥ high was produced |
 
+## CI / GitHub Action
+
+Run SkillTotal in CI and surface findings in your repository's **Security → Code scanning** tab.
+
+```yaml
+# .github/workflows/skilltotal.yml
+name: SkillTotal
+on: [push, pull_request]
+permissions:
+  contents: read
+  security-events: write   # required to upload SARIF to Code Scanning
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pezhik/skilltotal@v0.10.4
+        with:
+          source: .          # a path, a git URL, or an npm:/pypi:<name> spec
+          fail-on: high      # fail the build on a high/critical finding (or 'none')
+```
+
+The action installs the CLI, scans `source`, uploads SARIF (so findings appear inline on pull
+requests and in Code Scanning), and fails the job on a high/critical finding unless
+`fail-on: none`. Pin the engine with `version: 0.10.4`. Prefer plain CLI? It is the same thing:
+`skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
+
 ## Methodology
 
 SkillTotal performs **static** security analysis of AI components — MCP servers, agent

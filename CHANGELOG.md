@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.10.4]
+
+### Added
+- **GitHub Action** (`action.yml`) — run SkillTotal in CI in a few lines: scans a path, git URL,
+  or `npm:`/`pypi:` package, uploads SARIF to GitHub Code Scanning (findings show inline on PRs),
+  and fails the build on a high/critical finding (`fail-on`). Composite action, no Docker image.
+  See the "CI / GitHub Action" section of the README.
+
+### Fixed
+- SARIF `informationUri` / `helpUri` now point to the project site instead of a placeholder URL.
+
+No rule changes (RULESET 11 unchanged).
+
 ## [0.10.3]
 
 ### Documentation

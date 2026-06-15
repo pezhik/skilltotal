@@ -1,0 +1,108 @@
+name: "SkillTotal AI Component Security Scan"
+description: >-
+  Static security scan of AI components (MCP servers, agent skills/plugins, npm/PyPI packages,
+  repos) for supply-chain risk, dangerous capabilities, prompt-injection and exfiltration.
+  Evidence-anchored, deterministic, offline; uploads SARIF to GitHub Code Scanning.
+author: "SkillTotal"
+branding:
+  icon: "shield"
+  color: "purple"
+
+inputs:
+  source:
+    description: "What to scan: a path in the repo (default '.'), a git URL, or an npm:/pypi:<name> spec."
+    required: false
+    default: "."
+  version:
+    description: "Pin the skilltotal PyPI version (e.g. 0.10.4). Empty installs the latest release."
+    required: false
+    default: ""
+  fail-on:
+    description: "Fail the job when a finding is this severity or higher: 'high' or 'none'."
+    required: false
+    default: "high"
+  upload-sarif:
+    description: "Upload SARIF to GitHub Code Scanning (job needs 'security-events: write')."
+    required: false
+    default: "true"
+  baseline:
+    description: "Optional path to a baseline file to suppress accepted findings."
+    required: false
+    default: ""
+  sarif-file:
+    description: "Where to write the SARIF report."
+    required: false
+    default: "skilltotal.sarif"
+
+outputs:
+  sarif-file:
+    description: "Path to the generated SARIF report."
+    value: ${{ inputs.sarif-file }}
+  risk-score:
+    description: "Risk score, 0-100."
+    value: ${{ steps.scan.outputs.risk-score }}
+  risk-level:
+    description: "Risk level: low / medium / high / critical."
+    value: ${{ steps.scan.outputs.risk-level }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install SkillTotal
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          python -m pip install --upgrade "skilltotal==${{ inputs.version }}"
+        else
+          python -m pip install --upgrade skilltotal
+        fi
+
+    - name: Scan
+      id: scan
+      shell: bash
+      run: |
+        set -o pipefail
+        BASE=()
+        if [ -n "${{ inputs.baseline }}" ]; then BASE+=(--baseline "${{ inputs.baseline }}"); fi
+
+        # SARIF report for Code Scanning (not gated, so the upload always has a file).
+        skilltotal scan "${{ inputs.source }}" --sarif --output "${{ inputs.sarif-file }}" "${BASE[@]}" || true
+
+        # JSON run drives the outputs AND the gate. --output is written before the gate exits,
+        # so the JSON file exists even when the gate trips. Capture the exit code, don't abort here.
+        GATE=()
+        if [ "${{ inputs.fail-on }}" = "high" ]; then GATE+=(--fail-on-high); fi
+        skilltotal scan "${{ inputs.source }}" --json --output skilltotal.json "${BASE[@]}" "${GATE[@]}"
+        GATE_EXIT=$?
+
+        # Parse risk via stdlib in one process (never pipe python -> python on any host).
+        SCORE=$(python -c "import json;print(json.load(open('skilltotal.json')).get('risk_score',''))" 2>/dev/null || echo "")
+        LEVEL=$(python -c "import json;print(json.load(open('skilltotal.json')).get('risk_level',''))" 2>/dev/null || echo "")
+        echo "risk-score=$SCORE" >> "$GITHUB_OUTPUT"
+        echo "risk-level=$LEVEL" >> "$GITHUB_OUTPUT"
+        echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '${{ inputs.source }}'"
+
+        # 2 = a high/critical finding under --fail-on-high; 1 = collection error. Both should fail
+        # the build, but only after the SARIF upload step runs (which is why we defer the failure).
+        echo "gate-exit=$GATE_EXIT" >> "$GITHUB_OUTPUT"
+
+    - name: Upload SARIF to Code Scanning
+      if: ${{ always() && inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+
+    - name: Enforce gate
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        EXIT="${{ steps.scan.outputs.gate-exit }}"
+        if [ "$EXIT" != "0" ]; then
+          echo "::error::SkillTotal gate failed (exit $EXIT). See the Code Scanning results."
+          exit "$EXIT"
+        fi

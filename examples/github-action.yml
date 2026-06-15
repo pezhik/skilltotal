@@ -1,0 +1,21 @@
+# Example: run SkillTotal on every push and pull request, and surface findings in the
+# repository's Security -> Code scanning tab. Copy this to .github/workflows/skilltotal.yml.
+name: SkillTotal
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  security-events: write   # required for the SARIF upload to Code Scanning
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pezhik/skilltotal@v0.10.4
+        with:
+          source: .            # a path in the repo, a git URL, or an npm:/pypi:<name> spec
+          fail-on: high        # fail the build on a high/critical finding; use 'none' to report only
+          # version: 0.10.4    # pin the engine for reproducible CI (optional)
+          # baseline: .skilltotal-baseline.json   # suppress accepted findings (optional)
