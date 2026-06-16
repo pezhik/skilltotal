@@ -76,6 +76,9 @@ R_FS_READ = "ST-FS-PY-READ"
 R_FS_WRITE = "ST-FS-PY-WRITE"
 R_NET = "ST-NET-PY"
 R_DYN = "ST-DYN-PY"
+# Deserialize-and-execute: exec/eval/compile(pickle|marshal|dill|jsonpickle.load[s](...)). The
+# serializer variant of ST-OBF-DECODE-EXEC; Python-specific because it needs alias resolution.
+R_DECODE_EXEC_PY = "ST-OBF-DECODE-EXEC-PY"
 R_SENS_PY = "ST-SENS-PATH-PY"
 
 # Calls that *use* a path/command/URL — a sensitive path passed here is a real read/exec/send,
@@ -267,6 +270,31 @@ class PythonAstScanner(Scanner):
             ),
         ),
         RuleSpec(
+            id=R_DECODE_EXEC_PY,
+            category="obfuscation",
+            severity=Severity.HIGH,
+            title="Deserialize-and-execute (obfuscated execution)",
+            description=(
+                "A value is deserialized with pickle/marshal/dill/jsonpickle and immediately "
+                "executed (e.g. exec(marshal.loads(...))). Deserializing then executing data "
+                "hides behavior from review and is a common second-stage dropper; if the data "
+                "is untrusted this is arbitrary code execution."
+            ),
+            recommendation=(
+                "Decode/deserialize the payload manually and inspect what it does before "
+                "trusting this component. Never exec/eval the result of pickle/marshal/dill on "
+                "data you do not fully control."
+            ),
+            capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            suffixes=PY_SUFFIXES,
+            # AST-anchored; the regex is only the fallback for files that fail to parse.
+            pattern=alternation(
+                r"(?:eval|exec|compile)\s*\(\s*(?:c?[Pp]ickle|_pickle|dill|marshal)\.loads?\s*\(",
+                r"(?:eval|exec|compile)\s*\(\s*jsonpickle\.(?:decode|loads)\s*\(",
+            ),
+        ),
+        RuleSpec(
             id=R_SENS_PY,
             category="sensitive_path",
             severity=Severity.HIGH,
@@ -443,6 +471,9 @@ class _CallVisitor(ast.NodeVisitor):
         self.dynamic_imports: list[Evidence] = []  # __import__ / importlib.import_module
         self.aliases: dict[str, str] = {}  # local name -> top-level module
         self.from_imports: dict[str, str] = {}  # local name -> module.attr
+        # ids of deserialize calls nested directly inside an exec/eval/compile (decode-and-execute),
+        # so the weaker ST-DESERIALIZE-PY is not also raised on the same node (scored once).
+        self._decode_exec_inner: set[int] = set()
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import) -> None:
@@ -479,11 +510,18 @@ class _CallVisitor(ast.NodeVisitor):
             if _is_command_injection(name, node):
                 self._add(R_CMDI, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:
-            self._add(R_DESERIAL, node)
+            # Skip if this call is the payload of an enclosing exec/eval/compile — that's the
+            # malicious decode-and-execute, already raised as ST-OBF-DECODE-EXEC-PY.
+            if id(node) not in self._decode_exec_inner:
+                self._add(R_DESERIAL, node)
         elif name in ("yaml.load", "yaml.load_all") and _yaml_load_is_unsafe(node):
             self._add(R_DESERIAL, node)
         elif name in DYNAMIC_CALLS:
             self._add(R_DYN, node)
+            inner = self._decode_exec_inner_call(node)
+            if inner is not None:
+                self._decode_exec_inner.add(id(inner))
+                self._add(R_DECODE_EXEC_PY, node)
         elif name in DYNAMIC_IMPORT_CALLS:
             self._add_dynamic_import(node)
         elif name == "open":
@@ -504,6 +542,19 @@ class _CallVisitor(ast.NodeVisitor):
             _STRONG_PATHS.search(s) for s in _iter_string_consts(node)
         ):
             self._add(R_SENS_PY, node)
+
+    def _decode_exec_inner_call(self, node: ast.Call) -> ast.Call | None:
+        """If ``node`` is exec/eval/compile(<deserialize>(<non-literal>)), return the inner
+        deserialize call (the decode-and-execute payload); otherwise None."""
+        arg = _first_arg(node)
+        if not isinstance(arg, ast.Call):
+            return None
+        inner = _resolve_dotted(arg.func, self.aliases, self.from_imports)
+        if inner not in UNSAFE_DESERIALIZE_CALLS:
+            return None
+        if not _has_nonliteral_arg(arg):
+            return None  # a constant payload is not a dropper (false-positive guard)
+        return arg
 
     # -- internals ---------------------------------------------------------
     def _dotted(self, func: ast.expr) -> str | None:
@@ -547,6 +598,11 @@ def _resolve_dotted(
 
 def _first_arg(node: ast.Call) -> ast.expr | None:
     return node.args[0] if node.args else None
+
+
+def _has_nonliteral_arg(call: ast.Call) -> bool:
+    """True if the call has at least one positional argument that is not a bare literal."""
+    return any(not isinstance(a, ast.Constant) for a in call.args)
 
 
 def _target_names(target: ast.expr) -> list[str]:

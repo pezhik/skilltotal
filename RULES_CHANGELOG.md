@@ -4,6 +4,26 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 14 (engine 0.13.0)
+
+**Deserialize-and-execute (deterministic, no LLM).** New malicious-indicator rule
+`ST-OBF-DECODE-EXEC-PY` closes the documented gap where a remote `exec(marshal.loads(<remote>))` /
+`exec(pickle.loads(...))` dropper scored only *low* (`ST-DESERIALIZE-PY` risky_construct +
+`ST-DYN-PY` capability, no malicious indicator).
+
+- Fires when a dynamic-exec call (`eval`/`exec`/`compile`) has, as its first positional argument,
+  a call resolving to an unsafe deserializer (`pickle`/`cPickle`/`_pickle`/`dill`/`marshal`
+  `.load`/`.loads`, or `jsonpickle.decode`/`.loads`) **and** that deserialize call's argument is
+  non-literal (a constant payload is not a dropper — false-positive guard).
+- `malicious_indicator`, severity high, capability `dynamic_code_execution` — same treatment as the
+  language-agnostic `ST-OBF-DECODE-EXEC` (which only covered base64/hex/codecs decode chains).
+- AST-based and alias-aware (`import marshal as m` → `m.loads`, `from pickle import loads`); the
+  RuleSpec also carries a regex so files that fail `ast.parse` still flag via the fallback.
+- On the same call node it supersedes the weaker `ST-DESERIALIZE-PY` (dropped via an id() set in
+  `_CallVisitor`), so the construct is scored once; the capability `ST-DYN-PY` is left as-is.
+- Lives in `skilltotal/scanners/python_ast.py` (alias resolution needs the AST scanner).
+  Calibrated benign FP = 0. Fixture `tests/manual_eval/malicious/py-marshal-loader/`.
+
 ## ruleset 13 (engine 0.12.0)
 
 **Agent Skill: declared-vs-actual capability mismatch (deterministic, no LLM).** A folder with a

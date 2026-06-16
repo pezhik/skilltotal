@@ -20,7 +20,8 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Import-time / second-stage download-and-execute** | `ST-OBF-DECODE-EXEC` (malicious), `ST-DYN-PY`/`ST-DYN-NODE`, `ST-NET-PY`/`ST-NET-NODE` | `pypi-typosquat-dropper`, `pypi-importtime-stealer` |
 | **Credential / secret exfiltration** (read `~/.aws`, `~/.ssh`, `.env` → POST) | `ST-COMBO-EXFIL` (critical), `ST-SENS-PATH`/`ST-SENS-PATH-PY`, `ST-SECRET-EMBEDDED`, `ST-FS-*-READ` + `ST-NET-*` | `npm-postinstall-exfil`, `npm-trapdoor-stealer` |
 | **Obfuscation** (base64/hex/codecs decode → exec) | `ST-OBF-DECODE-EXEC` (malicious); heuristics `ST-OBF-BASE64-BLOB`/`ST-OBF-HEX`/`ST-OBF-MINIFIED` (needs_review) | `pypi-importtime-stealer` |
-| **Unsafe deserialization** (pickle/marshal/dill loader) | `ST-DESERIALIZE-PY` | *(gap — see below)* |
+| **Unsafe deserialization** (pickle/marshal/dill loader) | `ST-DESERIALIZE-PY` | `py-marshal-loader` |
+| **Deserialize-and-execute dropper** (`exec(marshal.loads(<remote>))`) | `ST-OBF-DECODE-EXEC-PY` (malicious) | `py-marshal-loader` |
 | **Shell / command execution & injection** | `ST-SHELL-PY`/`ST-SHELL-NODE`, `ST-CMDI-PY`/`ST-CMDI-NODE` | `pypi-typosquat-dropper` |
 | **Hidden-Unicode / Trojan-Source instruction smuggling** | `ST-HIDDEN-UNICODE` (malicious); `ST-HIDDEN-UNICODE-AMBIG` (needs_review) | `zero-width-injection` |
 | **Prompt injection / instruction override** | `ST-PROMPT-INJECTION` (malicious); `ST-PROMPT-WEAK` (needs_review) | `agent-instruction-override` |
@@ -32,13 +33,12 @@ risk; `capability` rules are informational (they never push the score up — cap
 
 ## Known gaps (candidate rule improvements)
 
-- **`exec(marshal.loads(<remote>))` / `exec(pickle.loads(...))`** — a remote-deserialize-then-exec
-  dropper currently scores **low**: `ST-DESERIALIZE-PY` (risky_construct) + `ST-DYN-PY`
-  (capability) fire, but neither is a `malicious_indicator` and the pair doesn't reach the
-  high band. `ST-OBF-DECODE-EXEC` only matches base64/hex/codecs decode chains, not marshal/
-  pickle. Extending the decode-and-execute indicator to cover `exec(marshal.loads(...))` /
-  `exec(pickle.loads(...))` would close this (a deliberate ruleset change — bump
-  `RULESET_VERSION`, add fixture `py-marshal-loader`, calibrate FP=0).
+- **`exec(marshal.loads(<remote>))` / `exec(pickle.loads(...))`** — CLOSED (ruleset 14): the
+  remote-deserialize-then-exec dropper used to score only *low* (`ST-DESERIALIZE-PY` +
+  `ST-DYN-PY`, no malicious indicator). The new `ST-OBF-DECODE-EXEC-PY` malicious-indicator rule
+  (AST-based, alias-aware, non-literal-payload guard) now flags `exec`/`eval`/`compile` of a
+  `pickle`/`marshal`/`dill`/`jsonpickle` load and supersedes `ST-DESERIALIZE-PY` on the same node.
+  Fixture `py-marshal-loader`; calibrated benign FP = 0.
 - **Obfuscated natural-language injection** — CLOSED (ruleset 11): instruction-override and
   tool-poisoning phrases hidden behind homoglyphs, full-width, diacritics, or zero-width-in-word
   are now de-obfuscated before matching (`skilltotal.text_normalize`). Still out of scope for the

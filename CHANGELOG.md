@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.13.0]
+
+### Added
+- **Deserialize-and-execute detection (ruleset 14).** New malicious-indicator rule
+  **`ST-OBF-DECODE-EXEC-PY`** flags `exec` / `eval` / `compile(pickle | marshal | dill |
+  jsonpickle .load[s](...))` — the serializer variant of the existing `ST-OBF-DECODE-EXEC`
+  decode-and-execute indicator, and a common second-stage dropper. AST-based and alias-aware
+  (resolves `import marshal as m` / `from pickle import loads`); fires only when the deserialized
+  payload is non-literal (a constant payload is not a dropper). On the same node it supersedes the
+  weaker `ST-DESERIALIZE-PY` so the construct is scored once. Closes the documented gap in
+  `docs/detection-coverage.md`; deterministic, no execution, no LLM.
+
 ## [0.12.0]
 
 ### Added

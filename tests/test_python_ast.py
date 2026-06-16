@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from skilltotal.file_index import FileIndex
+from skilltotal.models import ThreatClass
 from skilltotal.scanners.python_ast import PythonAstScanner
 
 
@@ -68,6 +69,71 @@ def test_dynamic_calls(tmp_path: Path):
     code = "eval('1+1')\nexec('x=2')\n"
     _result, ids = _scan(tmp_path, code)
     assert "ST-DYN-PY" in ids
+
+
+# --- deserialize-and-execute (ST-OBF-DECODE-EXEC-PY) ---------------------------------
+
+def test_exec_marshal_loads_is_malicious_decode_exec(tmp_path: Path):
+    code = "import marshal\ndata = fetch()\nexec(marshal.loads(data))\n"
+    result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" in ids
+    finding = next(f for f in result.findings if f.id == "ST-OBF-DECODE-EXEC-PY")
+    assert finding.threat_class == ThreatClass.MALICIOUS_INDICATOR
+    assert finding.evidence and finding.evidence[0].line_start == 3
+
+
+def test_decode_exec_resolves_import_alias(tmp_path: Path):
+    code = "import pickle as p\nexec(p.loads(blob))\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" in ids
+
+
+def test_decode_exec_resolves_from_import(tmp_path: Path):
+    code = "from marshal import loads\nexec(loads(blob))\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" in ids
+
+
+def test_decode_exec_supersedes_deserialize_on_same_node(tmp_path: Path):
+    # The construct is scored once (malicious decode-exec), not malicious + risky on one line.
+    code = "import marshal\nexec(marshal.loads(data))\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" in ids
+    assert "ST-DESERIALIZE-PY" not in ids
+
+
+def test_standalone_deserialize_still_flags(tmp_path: Path):
+    # A bare pickle.loads (no exec wrapper) is still the risky-construct deserialize finding.
+    code = "import pickle\nobj = pickle.loads(data)\nuse(obj)\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-DESERIALIZE-PY" in ids
+    assert "ST-OBF-DECODE-EXEC-PY" not in ids
+
+
+def test_deserialize_without_exec_is_not_decode_exec(tmp_path: Path):
+    code = "import marshal\ndata = marshal.loads(buf)\nprint(data)\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" not in ids
+
+
+def test_exec_without_deserialize_is_not_decode_exec(tmp_path: Path):
+    code = "exec(compile(src, '<s>', 'exec'))\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" not in ids
+
+
+def test_exec_of_safe_loader_is_not_decode_exec(tmp_path: Path):
+    # json.loads is not an unsafe deserializer -> not the decode-exec archetype.
+    code = "import json\nexec(json.loads(s))\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" not in ids
+
+
+def test_exec_of_literal_payload_is_not_decode_exec(tmp_path: Path):
+    # A constant payload is not a dropper; the non-literal guard keeps this out.
+    code = "import marshal\nexec(marshal.loads(b'\\x00\\x00'))\n"
+    _result, ids = _scan(tmp_path, code)
+    assert "ST-OBF-DECODE-EXEC-PY" not in ids
 
 
 def test_syntax_error_falls_back_to_regex_and_flags_review(tmp_path: Path):
