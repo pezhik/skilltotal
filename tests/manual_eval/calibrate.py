@@ -35,6 +35,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from skilltotal import engine
+from skilltotal.agent_skill import SKILL_MISMATCH_FINDING_ID
 from skilltotal.collector import CollectionError, detect_component
 
 # Expected-class -> what counts as a correct outcome.
@@ -61,6 +62,7 @@ class RowResult:
     capabilities: int | None = None
     needs_review: int | None = None
     risk_level: str | None = None
+    skill_mismatch: bool | None = None  # ST-SKILL-CAP-MISMATCH fired (declared vs actual)
     passed: bool | None = None  # outcome vs expectation (None when skipped)
     detail: str = ""
 
@@ -144,6 +146,7 @@ def run_row(cls: str, source: str, version: str, expected: str = "") -> RowResul
         needs_review=len(report.needs_review),
         risk_level=report.risk_level.value,
     )
+    res.skill_mismatch = any(f.id == SKILL_MISMATCH_FINDING_ID for f in report.findings)
     res.passed = _judge(
         cls, res.has_malicious, res.risk_level, res.risky_constructs, res.capabilities, expected
     )
@@ -155,7 +158,11 @@ def summarize(results: list[RowResult]) -> dict:
     benign = [r for r in ok if r.cls == BENIGN]
     detect = [r for r in ok if r.cls in DETECT_CLASSES]
     labs = [r for r in ok if r.cls in LAB_CLASSES]
-    benign_fp = [r for r in benign if r.has_malicious]
+    benign_skill_mismatch = [r for r in benign if r.skill_mismatch]
+    # A curated benign skill that trips the declared-vs-actual rule (ST-SKILL-CAP-MISMATCH) is a
+    # regression / false positive for us — fold it into the gated benign-FP metric. Non-skill
+    # benign packages never produce this finding, so existing rows are unaffected.
+    benign_fp = [r for r in benign if r.has_malicious or r.skill_mismatch]
     noisy = [r.needs_review for r in ok if r.needs_review is not None]
     return {
         "rows_total": len(results),
@@ -164,6 +171,7 @@ def summarize(results: list[RowResult]) -> dict:
         "errors": sum(1 for r in results if r.status == "error"),
         "benign_scanned": len(benign),
         "benign_false_positives": len(benign_fp),
+        "benign_skill_mismatch": len(benign_skill_mismatch),
         "detect_scanned": len(detect),
         "detect_detected": sum(1 for r in detect if r.passed),
         "labs_scanned": len(labs),
@@ -181,6 +189,8 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
         f"skipped {summary['skipped']}, errors {summary['errors']})",
         f"- benign false positives: **{summary['benign_false_positives']}** / "
         f"{summary['benign_scanned']} scanned",
+        f"- benign skill-mismatch (ST-SKILL-CAP-MISMATCH on benign skills): "
+        f"{summary.get('benign_skill_mismatch', 0)}",
         f"- malicious/compromised detected: {summary['detect_detected']} / "
         f"{summary['detect_scanned']} scanned",
         f"- vulnerable-labs flagged: {summary['labs_flagged']} / {summary['labs_scanned']}",
