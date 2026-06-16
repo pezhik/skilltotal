@@ -27,6 +27,10 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Prompt injection / instruction override** | `ST-PROMPT-INJECTION` (malicious); `ST-PROMPT-WEAK` (needs_review) | `agent-instruction-override` |
 | **MCP tool poisoning** (agent-directed instructions in tool metadata) | `ST-MCP-TOOL-POISONING` (malicious); `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-TOOL-SHADOWING` | `mcp-tool-poisoning` |
 | **Network/debug exposure** | `ST-EXPOSE-BIND`, `ST-EXPOSE-DEBUG` | — |
+| **Shell decode-and-execute / remote pipe-to-shell** (`… base64 -d \| bash`, `curl \| bash`) | `ST-OBF-DECODE-EXEC-SH` (malicious), `ST-SHELL-PIPE-EXEC` | `sh-base64-exec` |
+| **Analysis evasion** (password-protected archive bundled in a component) | `ST-ENCRYPTED-ARCHIVE` | — |
+| **Instruction-driven exfiltration** (lethal trifecta: injection + file read + egress) | `ST-FLOW-TRIFECTA` | — |
+| **Stacked malicious indicators** (deception + payload in one component) | `ST-CONVERGENCE` | — |
 
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
 risk; `capability` rules are informational (they never push the score up — capability ≠ risk).

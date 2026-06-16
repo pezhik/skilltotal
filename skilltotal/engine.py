@@ -8,6 +8,8 @@ expected to import :func:`analyze_directory` (pure, no process I/O) directly; th
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,13 +31,31 @@ from skilltotal.models import (
 )
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
-from skilltotal.scoring import compute_score, exfiltration_finding, risk_level
+from skilltotal.scoring import (
+    compute_score,
+    convergence_finding,
+    exfiltration_finding,
+    risk_level,
+    trifecta_finding,
+)
 
 
-def analyze(source: str, *, suppress: set[str] | None = None) -> Report:
+def analyze(
+    source: str,
+    *,
+    suppress: set[str] | None = None,
+    ignore_rules: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
+) -> Report:
     """Resolve ``source`` (path or URL), analyze it, and return a Report."""
     with collect(source) as ctx:
-        report = analyze_directory(ctx.root, ctx.component, suppress=suppress)
+        report = analyze_directory(
+            ctx.root,
+            ctx.component,
+            suppress=suppress,
+            ignore_rules=ignore_rules,
+            exclude=exclude,
+        )
         if ctx.note:
             report.needs_review.append(
                 NeedsReview(category="source", title="Scan target normalized", reason=ctx.note)
@@ -44,13 +64,19 @@ def analyze(source: str, *, suppress: set[str] | None = None) -> Report:
 
 
 def analyze_directory(
-    root: Path, component: Component, *, suppress: set[str] | None = None
+    root: Path,
+    component: Component,
+    *,
+    suppress: set[str] | None = None,
+    ignore_rules: Iterable[str] | None = None,
+    exclude: Iterable[str] | None = None,
 ) -> Report:
     """Analyze an already-local component directory. Pure: no stdout, no exit.
 
     ``suppress`` is an optional set of baseline fingerprints to drop before scoring.
+    ``ignore_rules`` drops whole rule ids; ``exclude`` is a list of path globs to skip.
     """
-    index = FileIndex.build(Path(root))
+    index = FileIndex.build(Path(root), exclude=exclude)
 
     findings: list[Finding] = []
     needs_review: list[NeedsReview] = []
@@ -60,6 +86,11 @@ def analyze_directory(
         needs_review.extend(result.needs_review)
 
     findings, suppressed_count = apply_suppressions(findings, suppress or set())
+    ignore_set = {r for r in ignore_rules} if ignore_rules else set()
+    if ignore_set:
+        # Drop early so ignored base findings don't feed the synthesized rules below.
+        findings = [f for f in findings if f.id not in ignore_set]
+    findings = _apply_inline_ignores(findings, index)
 
     # Demote evidence that does not represent executed/agent-facing behavior to needs_review
     # (never scored). Three sibling gates, applied in order:
@@ -83,13 +114,29 @@ def analyze_directory(
     if combo is not None:
         findings.append(combo)
 
+    # Lethal-trifecta flow: untrusted-instruction surface + file access + network egress.
+    # Suppressed when the credential-specific combo already fired (covers the same concern).
+    trifecta = trifecta_finding(findings, capabilities, combo_fired=combo is not None)
+    if trifecta is not None:
+        findings.append(trifecta)
+
     # Agent Skill: declared allowed-tools vs. what the bundled code actually does (deterministic
     # least-privilege / undeclared-capability check). Synthesized here, after capabilities.
     mismatch = skill_capability_mismatch(component, index, capabilities)
     if mismatch is not None:
         findings.append(mismatch)
 
+    if ignore_set:
+        # Drop again after synthesis so ignored synthesized ids (e.g. ST-COMBO-EXFIL) are honored.
+        findings = [f for f in findings if f.id not in ignore_set]
+
     _assign_threat_classes(findings)
+
+    # Convergence runs last: it counts the now-classified malicious indicators. A non-empty result
+    # is already classified (RISKY_CONSTRUCT) on construction, so it needs no re-projection.
+    convergence = convergence_finding(findings)
+    if convergence is not None and convergence.id not in ignore_set:
+        findings.append(convergence)
 
     score = compute_score(findings)
     level = risk_level(score)
@@ -178,6 +225,39 @@ def _verdict_reasons(findings: list[Finding], limit: int = 3) -> list[str]:
         if len(reasons) >= limit:
             break
     return reasons
+
+
+# Inline suppression marker: `# skilltotal:ignore` or `# skilltotal:ignore[ST-X, ST-Y]`
+# (any comment syntax — #, //, <!-- -->). A bare marker ignores any rule on that line.
+_INLINE_IGNORE_RE = re.compile(r"skilltotal:\s*ignore(?:\[([^\]]*)\])?", re.IGNORECASE)
+
+
+def _apply_inline_ignores(findings: list[Finding], index: FileIndex) -> list[Finding]:
+    """Drop evidence whose source line (or the line above) carries a skilltotal:ignore marker."""
+    by_path = {f.relpath: f for f in index.files}
+    kept: list[Finding] = []
+    for finding in findings:
+        remaining = [e for e in finding.evidence if not _line_ignores(e, finding.id, by_path)]
+        if remaining:
+            kept.append(_finding_with_evidence(finding, remaining))
+    return kept
+
+
+def _line_ignores(evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFile]) -> bool:
+    f = by_path.get(evidence.file)
+    if f is None:
+        return False
+    for line_no in (evidence.line_start, evidence.line_start - 1):
+        m = _INLINE_IGNORE_RE.search(f.line_text(line_no))
+        if m is None:
+            continue
+        ids = m.group(1)
+        if not ids:  # bare marker -> ignore whatever rule matched here
+            return True
+        wanted = {x.strip().upper() for x in ids.replace(";", ",").split(",") if x.strip()}
+        if rule_id.upper() in wanted:
+            return True
+    return False
 
 
 def _split_test_evidence(

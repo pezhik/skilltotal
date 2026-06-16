@@ -114,7 +114,13 @@ collector.py → file_index.py → scanners/* → capabilities.py + scoring.py �
   `models.py`. The **sensitive-data + network ⇒ critical** rule is a *synthesized
   risky_construct finding* (`ST-COMBO-EXFIL`) with merged evidence, added in `engine.py` after
   capabilities are computed; it is sensitivity-gated (`ST-SENS-PATH`/`ST-SECRET-EMBEDDED` +
-  network), so plain filesystem+network does not flag.
+  network), so plain filesystem+network does not flag. Three more synthesized findings live in
+  `scoring.py` and are added in `engine.py`: `ST-FLOW-TRIFECTA` (lethal trifecta — a real
+  `ST-PROMPT-INJECTION` + filesystem-read + network egress; suppressed when `ST-COMBO-EXFIL`
+  fired) and `ST-CONVERGENCE` (≥2 distinct malicious-indicator findings co-occur; computed
+  *after* `_assign_threat_classes` so classes are final). All synthesized rules are registered in
+  `rules.py` with a matching `threat_class` (else `_assign_threat_classes` silently un-scores
+  them).
 - **Evidence-context demotion** — besides test code (`_split_test_evidence`), `engine.py` also
   demotes evidence that is not executed/agent-facing behavior to `needs_review`:
   `_split_doc_evidence` (human-facing docs/prose via `file_index.is_doc_path`; AI-instruction

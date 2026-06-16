@@ -1,0 +1,103 @@
+"""Optional project configuration — ``.skilltotal.toml``.
+
+A small, optional convenience for CI adoption: a project can commit fail thresholds,
+path excludes, and per-rule ignores instead of repeating CLI flags. Stdlib only (tomllib on
+3.11+, a minimal regex fallback on 3.10). CLI flags always override config values.
+
+Recognized top-level keys:
+    fail_on        = "low" | "medium" | "high" | "critical"
+    fail_on_score  = <int 0-100>
+    exclude        = ["glob/*", ...]   # path globs (posix, relative to the component root)
+    ignore         = ["ST-RULE-ID", ...]
+    baseline       = "path/to/baseline.json"
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+try:  # Python 3.11+
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
+
+CONFIG_NAME = ".skilltotal.toml"
+_LEVELS = frozenset({"low", "medium", "high", "critical"})
+
+
+@dataclass
+class Config:
+    """Resolved project configuration (all fields optional)."""
+
+    fail_on: str | None = None
+    fail_on_score: int | None = None
+    exclude: list[str] = field(default_factory=list)
+    ignore: list[str] = field(default_factory=list)
+    baseline: str | None = None
+
+
+def find_config(start: Path | None = None) -> Path | None:
+    """Return the path to ``.skilltotal.toml`` in ``start`` (default: CWD), or None."""
+    candidate = (Path(start) if start else Path.cwd()) / CONFIG_NAME
+    return candidate if candidate.is_file() else None
+
+
+def load_config(path: Path) -> Config:
+    """Parse a ``.skilltotal.toml`` file. Unknown/malformed keys are ignored, not fatal."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    data = _parse(text)
+    fail_on = _as_level(data.get("fail_on"))
+    return Config(
+        fail_on=fail_on,
+        fail_on_score=_as_int(data.get("fail_on_score")),
+        exclude=_as_str_list(data.get("exclude")),
+        ignore=_as_str_list(data.get("ignore")),
+        baseline=_as_str(data.get("baseline")),
+    )
+
+
+def _parse(text: str) -> dict[str, object]:
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(text)
+            return data if isinstance(data, dict) else {}
+        except (tomllib.TOMLDecodeError, ValueError):  # pragma: no cover - malformed config
+            return {}
+    return _fallback_parse(text)  # pragma: no cover - 3.10 path
+
+
+def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 only
+    """Best-effort parse of the handful of supported scalar/array keys (no tomllib)."""
+    out: dict[str, object] = {}
+    for key in ("fail_on", "baseline"):
+        m = re.search(rf'^\s*{key}\s*=\s*"([^"]*)"', text, re.MULTILINE)
+        if m:
+            out[key] = m.group(1)
+    m = re.search(r"^\s*fail_on_score\s*=\s*(\d+)", text, re.MULTILINE)
+    if m:
+        out["fail_on_score"] = int(m.group(1))
+    for key in ("exclude", "ignore"):
+        m = re.search(rf"^\s*{key}\s*=\s*\[([^\]]*)\]", text, re.MULTILINE)
+        if m:
+            out[key] = [v.strip().strip("\"'") for v in m.group(1).split(",") if v.strip()]
+    return out
+
+
+def _as_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _as_level(value: object) -> str | None:
+    return value.lower() if isinstance(value, str) and value.lower() in _LEVELS else None
+
+
+def _as_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _as_str_list(value: object) -> list[str]:
+    if isinstance(value, list):
+        return [str(v) for v in value if isinstance(v, str) and v]
+    return []

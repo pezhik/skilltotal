@@ -55,6 +55,13 @@ _STRONG = alternation(
     r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|system\s+prompt)\s+to\b",
     r"send\s+(?:it|this|them|the\s+data)?\s*to\s+[^\n]{0,40}webhook",
     r"send\s+to\s+webhook",
+    # Jailbreak / safety-disable directives. Kept unambiguous (a safety-specific object) so
+    # security prose isn't matched; .py-string/comment and documentation matches are demoted.
+    r"do\s+anything\s+now\b",
+    r"\bDAN\s+mode\b",
+    r"(?:ignore|bypass|disable|turn\s+off|override)\s+(?:your\s+|all\s+|any\s+|the\s+)?"
+    r"(?:safety|content|ethical|moral)\s+"
+    r"(?:guidelines?|guardrails?|filters?|restrictions?|polic(?:y|ies)|constraints?)",
     flags=re.IGNORECASE | re.MULTILINE,
 )
 

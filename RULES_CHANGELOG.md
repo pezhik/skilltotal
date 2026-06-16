@@ -4,6 +4,35 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 15 (engine 0.14.0)
+
+**Breadth, data-flow, and convergence (all deterministic, no LLM).**
+
+- **Shell-script scanner** (`scanners/shell_script.py`; `.sh`/`.bash`/`.zsh` + shebang scripts):
+  `ST-OBF-DECODE-EXEC-SH` (malicious_indicator, high) — decode-and-execute idioms
+  (`… base64 -d | bash`, `eval "$(… base64 -d)"`); `ST-SHELL-PIPE-EXEC` (risky_construct, high) —
+  remote pipe-to-shell (`curl/wget … | sh`). `sh` is matched without catching `ssh`.
+- **`ST-ENCRYPTED-ARCHIVE`** (`scanners/encrypted_archive.py`; risky_construct, medium): a
+  password-protected ZIP (GP-flag bit 0) bundled in a component is a scanning-evasion signal.
+  Inspects archives directly from the component root (they are binary, so the text index skips
+  them). Conservative (risky, not malicious) so it never trips the benign false-positive gate.
+- **`ST-FLOW-TRIFECTA`** (synthesized in `scoring.py`; risky_construct, high): the lethal trifecta
+  — a confirmed prompt-injection surface + filesystem-read + network egress in one component.
+  Requires an actual `ST-PROMPT-INJECTION` finding (not mere capability) and is suppressed when the
+  credential-specific `ST-COMBO-EXFIL` already fired, so it stays false-positive-free.
+- **`ST-CONVERGENCE`** (synthesized in `scoring.py`; risky_construct, high): elevates a component
+  when ≥2 distinct malicious-indicator rules co-occur. False-positive-free by construction (a
+  benign component has zero malicious indicators).
+- **`ST-PROMPT-INJECTION`** extended with jailbreak / safety-disable directives ("do anything now",
+  "disable your safety filters", "ignore all safety guidelines") via the existing de-obfuscation
+  pass; objects are safety-specific so security prose is not matched.
+- **`ST-SKILL-CAP-MISMATCH`** severity MEDIUM → HIGH (calibrated benign FP = 0 on a 16-skill
+  corpus).
+
+Fixtures: `sh-base64-exec` (offline floor). New CLI/config features (`--fail-on`,
+`--fail-on-score`, `--exclude`, `.skilltotal.toml`, inline `# skilltotal:ignore`) do not change
+detection rules and leave the report shape unchanged.
+
 ## ruleset 14 (engine 0.13.0)
 
 **Deserialize-and-execute (deterministic, no LLM).** New malicious-indicator rule

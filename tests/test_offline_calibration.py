@@ -45,6 +45,7 @@ MUST_DETECT = [
     _MALICIOUS / "pypi-typosquat-dropper",      # OSSF archetype: import-time decode+exec dropper
     _MALICIOUS / "npm-postinstall-exfil",       # OSSF archetype: postinstall credential exfil
     _MALICIOUS / "py-marshal-loader",           # remote deserialize-and-exec dropper (marshal)
+    _MALICIOUS / "sh-base64-exec",              # shell decode-and-execute + remote pipe-to-shell
     _FIXTURES / "malicious_npm_pkg",            # npm stealer (steal.js)
     _FIXTURES / "malicious_py_pkg",             # python stealer
     _FIXTURES / "prompt_injection",             # poisoned skill

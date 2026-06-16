@@ -139,7 +139,7 @@ def skill_capability_mismatch(
 
     return Finding(
         id=SKILL_MISMATCH_FINDING_ID,
-        severity=Severity.MEDIUM,
+        severity=Severity.HIGH,
         category="least_privilege",
         title="Skill does more than its declared tools allow",
         description=(

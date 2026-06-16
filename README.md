@@ -87,8 +87,13 @@ skilltotal scan ./component --sarif --output report.sarif
 # Write the report to a file (SARIF if --sarif, else JSON)
 skilltotal scan ./component --output report.json
 
-# CI gate: exit code 2 if any finding is high or critical
-skilltotal scan ./component --fail-on-high
+# CI gate: exit code 2 by severity level or by risk score
+skilltotal scan ./component --fail-on-high             # alias for --fail-on high
+skilltotal scan ./component --fail-on medium
+skilltotal scan ./component --fail-on-score 50
+
+# Skip paths (repeatable; combined with the config file's `exclude`)
+skilltotal scan ./component --exclude "vendor/*" --exclude "*.min.js"
 
 # Baseline: snapshot current findings, then suppress them on later scans
 skilltotal scan ./component --write-baseline .skilltotal-baseline.json
@@ -111,6 +116,20 @@ skilltotal rules list --json
 `(rule id, file, code snippet)` — independent of line numbers, so it survives edits.
 Suppressed findings are removed before scoring and do not affect the risk score.
 
+**Project config** (optional) — commit a `.skilltotal.toml` instead of repeating flags
+(CLI flags override it):
+
+```toml
+fail_on = "high"           # low | medium | high | critical
+fail_on_score = 50         # or gate on the 0-100 risk score
+exclude = ["vendor/*", "*.min.js"]
+ignore = ["ST-NET-PY"]     # rule ids to drop
+baseline = ".skilltotal-baseline.json"
+```
+
+Suppress a single finding inline with a `# skilltotal:ignore` (or `# skilltotal:ignore[ST-ID]`)
+comment on its line.
+
 `python -m skilltotal ...` works identically to the `skilltotal` console script.
 
 ### Exit codes
@@ -119,7 +138,7 @@ Suppressed findings are removed before scoring and do not affect the risk score.
 |------|---------|
 | 0 | Success |
 | 1 | Usage / collection error (e.g. path missing, clone failed) |
-| 2 | `--fail-on-high` set and a finding of severity ≥ high was produced |
+| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, or `--fail-on-score`) |
 
 ## CI / GitHub Action
 

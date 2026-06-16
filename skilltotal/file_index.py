@@ -10,6 +10,7 @@ match. Centralizing traversal here means every scanner inherits identical, safe 
 from __future__ import annotations
 
 import bisect
+import fnmatch
 import io
 import re
 import tokenize
@@ -18,6 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from skilltotal.models import Evidence
+
+
+def _matches_any(relpath: str, patterns: tuple[str, ...]) -> bool:
+    """True if a posix relpath matches any glob (matched against the full path and basename)."""
+    name = relpath.rsplit("/", 1)[-1]
+    return any(fnmatch.fnmatch(relpath, p) or fnmatch.fnmatch(name, p) for p in patterns)
 
 # Directories that never contain the component's own first-party source.
 SKIP_DIRS: frozenset[str] = frozenset(
@@ -231,6 +238,12 @@ class IndexedFile:
         )
         return self.text[start:end].rstrip("\n").rstrip("\r")
 
+    def line_text(self, line_no: int) -> str:
+        """Return the text of 1-based ``line_no`` (empty string if out of range)."""
+        if 1 <= line_no <= len(self._line_starts):
+            return self._line_text(line_no)
+        return ""
+
     def evidence_for_span(self, start_offset: int, end_offset: int) -> Evidence:
         """Build Evidence covering the source span [start_offset, end_offset)."""
         line_start = self.line_of_offset(start_offset)
@@ -282,12 +295,13 @@ class FileIndex:
 
     # ------------------------------------------------------------------ build
     @classmethod
-    def build(cls, root: Path) -> FileIndex:
+    def build(cls, root: Path, *, exclude: Iterable[str] | None = None) -> FileIndex:
         root = Path(root).resolve()
         files: list[IndexedFile] = []
         stats = {"indexed": 0, "skipped_binary": 0, "skipped_large": 0, "total_seen": 0}
+        excludes = tuple(exclude or ())
 
-        for path in cls._walk(root):
+        for path in cls._walk(root, excludes):
             stats["total_seen"] += 1
             try:
                 size = path.stat().st_size
@@ -324,11 +338,14 @@ class FileIndex:
         return cls(root, files, stats)
 
     @staticmethod
-    def _walk(root: Path) -> Iterator[Path]:
+    def _walk(root: Path, exclude: tuple[str, ...] = ()) -> Iterator[Path]:
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
-            if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+            rel = path.relative_to(root)
+            if any(part in SKIP_DIRS for part in rel.parts):
+                continue
+            if exclude and _matches_any(rel.as_posix(), exclude):
                 continue
             yield path
 

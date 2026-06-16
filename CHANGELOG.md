@@ -4,6 +4,32 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.14.0]
+
+### Added
+- **CI/DX hardening.** New scan options: `--fail-on <low|medium|high|critical>` and
+  `--fail-on-score <N>` (a configurable gate; `--fail-on-high` stays as an alias), `--exclude
+  <glob>` to skip paths, and an optional project config file **`.skilltotal.toml`** (`fail_on`,
+  `fail_on_score`, `exclude`, `ignore`, `baseline`; CLI flags override). Inline
+  **`# skilltotal:ignore[ST-ID]`** suppresses a finding on its line. Report shape is unchanged.
+- **Shell-script detection (ruleset 15).** New scanner for `.sh`/`.bash`/`.zsh` and shebang
+  scripts: **`ST-OBF-DECODE-EXEC-SH`** (malicious — `… base64 -d | bash`, `eval "$(… base64 -d)"`)
+  and **`ST-SHELL-PIPE-EXEC`** (risky — remote `curl … | bash`).
+- **Encrypted-archive evasion signal.** **`ST-ENCRYPTED-ARCHIVE`** (risky) flags a
+  password-protected ZIP bundled in a component — contents can't be statically reviewed.
+- **Lethal-trifecta flow.** **`ST-FLOW-TRIFECTA`** (risky) fires when a prompt-injection surface
+  coincides with file-read and network egress — the combination an injected instruction needs to
+  exfiltrate data. Gated to require a real injection finding and suppressed when the
+  credential-specific `ST-COMBO-EXFIL` already fired.
+- **Malicious-indicator convergence.** **`ST-CONVERGENCE`** (risky) elevates a component when two
+  or more distinct malicious indicators co-occur (deception + payload).
+
+### Changed
+- `ST-PROMPT-INJECTION` now also matches jailbreak / safety-disable directives ("do anything now",
+  "disable your safety filters", "ignore all safety guidelines").
+- `ST-SKILL-CAP-MISMATCH` severity raised MEDIUM → HIGH (calibrated benign FP = 0 on a 16-skill
+  corpus).
+
 ## [0.13.0]
 
 ### Added

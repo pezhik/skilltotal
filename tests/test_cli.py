@@ -130,6 +130,49 @@ def test_rules_list_json(capsys):
     assert "ST-MCP-DANGEROUS-TOOL" in ids
 
 
+def test_fail_on_level_critical_triggers(capsys):
+    code = main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--fail-on", "critical"])
+    capsys.readouterr()
+    assert code == EXIT_FAIL_ON_HIGH  # ST-COMBO-EXFIL is a critical finding
+
+
+def test_fail_on_score_triggers(capsys):
+    code = main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--fail-on-score", "1"])
+    capsys.readouterr()
+    assert code == EXIT_FAIL_ON_HIGH
+
+
+def test_fail_on_score_high_threshold_passes(capsys):
+    code = main(["scan", str(FIXTURES / "clean_pkg"), "--fail-on-score", "50"])
+    capsys.readouterr()
+    assert code == EXIT_OK
+
+
+def test_exclude_flag_drops_findings(capsys):
+    # Excluding the stealer .js removes the sensitive-path + network egress -> no exfil combo.
+    main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--exclude", "*.js", "--json"])
+    out = capsys.readouterr().out
+    data = json.loads(out)
+    assert data["risk_level"] == "low"
+
+
+def test_config_drives_gate(tmp_path: Path, capsys):
+    cfg = tmp_path / ".skilltotal.toml"
+    cfg.write_text('fail_on = "high"\n', encoding="utf-8")
+    code = main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--config", str(cfg)])
+    capsys.readouterr()
+    assert code == EXIT_FAIL_ON_HIGH
+
+
+def test_config_ignore_rule(tmp_path: Path, capsys):
+    cfg = tmp_path / ".skilltotal.toml"
+    cfg.write_text('ignore = ["ST-COMBO-EXFIL"]\n', encoding="utf-8")
+    main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--config", str(cfg), "--json"])
+    out = capsys.readouterr().out
+    ids = {f["id"] for f in json.loads(out)["findings"]}
+    assert "ST-COMBO-EXFIL" not in ids
+
+
 def test_no_command_errors():
     with pytest.raises(SystemExit):
         main([])

@@ -1,10 +1,15 @@
 """SkillTotal command-line interface — the only I/O shell around the core engine.
 
 Commands:
-    skilltotal scan <source> [--json|--sarif] [--output FILE] [--fail-on-high]
+    skilltotal scan <source> [--json|--sarif] [--output FILE]
+                             [--fail-on LEVEL | --fail-on-high] [--fail-on-score N]
+                             [--exclude GLOB ...] [--config FILE]
                              [--baseline FILE | --write-baseline FILE]
         <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
         file, a git URL, or an npm:<name> / pypi:<name> package spec.
+        Optional project config: .skilltotal.toml (fail_on, fail_on_score, exclude, ignore,
+        baseline). CLI flags override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a
+        finding on its line.
     skilltotal inventory [--json] [--no-scan] [--project DIR]
         discover AI components installed on this machine (agent configs / MCP servers), then scan.
     skilltotal rules list [--json]
@@ -25,6 +30,7 @@ from pathlib import Path
 from skilltotal import __version__
 from skilltotal.baseline import build_baseline, load_baseline
 from skilltotal.collector import CollectionError
+from skilltotal.config import Config, find_config, load_config
 from skilltotal.engine import analyze
 from skilltotal.inventory import discover
 from skilltotal.models import Severity
@@ -87,7 +93,31 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on-high",
         action="store_true",
-        help="Exit with code 2 if any finding is high or critical.",
+        help="Exit with code 2 if any finding is high or critical (alias for --fail-on high).",
+    )
+    scan.add_argument(
+        "--fail-on",
+        metavar="LEVEL",
+        choices=["low", "medium", "high", "critical"],
+        help="Exit with code 2 if any finding is at or above LEVEL severity.",
+    )
+    scan.add_argument(
+        "--fail-on-score",
+        metavar="N",
+        type=int,
+        help="Exit with code 2 if the risk score is >= N (0-100).",
+    )
+    scan.add_argument(
+        "--exclude",
+        metavar="GLOB",
+        action="append",
+        default=[],
+        help="Skip files matching GLOB (repeatable). Combined with config 'exclude'.",
+    )
+    scan.add_argument(
+        "--config",
+        metavar="FILE",
+        help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
     )
 
     inv = sub.add_parser(
@@ -125,16 +155,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+
+    baseline_path = args.baseline or config.baseline
     suppress: set[str] = set()
-    if args.baseline:
+    if baseline_path:
         try:
-            suppress = load_baseline(args.baseline)
+            suppress = load_baseline(baseline_path)
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"error: cannot read baseline {args.baseline}: {exc}", file=sys.stderr)
+            print(f"error: cannot read baseline {baseline_path}: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
+    exclude = [*config.exclude, *args.exclude]
     try:
-        report = analyze(args.source, suppress=suppress)
+        report = analyze(
+            args.source, suppress=suppress, ignore_rules=config.ignore, exclude=exclude
+        )
     except CollectionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
@@ -165,7 +201,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         Path(args.output).write_text(structured, encoding="utf-8")
         print(f"Report written to {args.output}", file=sys.stderr)
 
-    if args.fail_on_high and _has_high(report):
+    level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
+    score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
+    if _fails_gate(report, level, score):
         return EXIT_FAIL_ON_HIGH
     return EXIT_OK
 
@@ -212,6 +250,24 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_ERROR
 
 
-def _has_high(report) -> bool:
-    threshold = Severity.HIGH.rank
-    return any(f.severity.rank >= threshold for f in report.findings)
+def _load_config(args: argparse.Namespace) -> Config:
+    """Load .skilltotal.toml (explicit --config or auto-discovered); empty config if none."""
+    path = Path(args.config) if args.config else find_config()
+    if path is None:
+        return Config()
+    try:
+        return load_config(path)
+    except OSError as exc:
+        print(f"warning: cannot read config {path}: {exc}", file=sys.stderr)
+        return Config()
+
+
+def _fails_gate(report, level: str | None, score: int | None) -> bool:
+    """True if the report trips the configured CI gate (severity level and/or risk score)."""
+    if level:
+        threshold = Severity[level.upper()].rank
+        if any(f.severity.rank >= threshold for f in report.findings):
+            return True
+    if score is not None and report.risk_score >= score:
+        return True
+    return False

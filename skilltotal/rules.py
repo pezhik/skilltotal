@@ -11,7 +11,11 @@ from skilltotal.agent_skill import SKILL_MISMATCH_FINDING_ID
 from skilltotal.models import Severity, ThreatClass
 from skilltotal.scanners import all_rules
 from skilltotal.scanners.base import RuleSpec
-from skilltotal.scoring import COMBO_FINDING_ID
+from skilltotal.scoring import (
+    COMBO_FINDING_ID,
+    CONVERGENCE_FINDING_ID,
+    TRIFECTA_FINDING_ID,
+)
 
 # The combination rule is synthesized in scoring, not by a scanner; expose it for listing.
 # Its threat_class must match the synthesized finding (RISKY_CONSTRUCT): _assign_threat_classes
@@ -36,7 +40,7 @@ _COMBO_RULE = RuleSpec(
 _SKILL_MISMATCH_RULE = RuleSpec(
     id=SKILL_MISMATCH_FINDING_ID,
     category="least_privilege",
-    severity=Severity.MEDIUM,
+    severity=Severity.HIGH,
     title="Skill does more than its declared tools allow",
     description=(
         "Raised when an Agent Skill's declared allowed-tools do not cover a dangerous capability "
@@ -48,9 +52,46 @@ _SKILL_MISMATCH_RULE = RuleSpec(
 )
 
 
+# Lethal-trifecta flow, synthesized in scoring (after capabilities). threat_class must match.
+_TRIFECTA_RULE = RuleSpec(
+    id=TRIFECTA_FINDING_ID,
+    category="exfiltration_path",
+    severity=Severity.HIGH,
+    title="Untrusted-instruction surface with file access and network egress",
+    description=(
+        "Raised when a component combines a prompt-injection surface with the ability to read "
+        "files and reach the network — the 'lethal trifecta' for instruction-driven exfiltration."
+    ),
+    recommendation="Remove the injectable surface or constrain untrusted-input-driven I/O.",
+    capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+)
+
+
+# Malicious-indicator convergence, synthesized in scoring (after threat-class assignment).
+_CONVERGENCE_RULE = RuleSpec(
+    id=CONVERGENCE_FINDING_ID,
+    category="malware_convergence",
+    severity=Severity.HIGH,
+    title="Multiple malicious indicators in one component",
+    description=(
+        "Raised when two or more distinct malicious indicators co-occur in one component, which "
+        "sharply raises confidence that the component is malicious."
+    ),
+    recommendation="Treat the component as malicious; review each contributing indicator.",
+    capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+)
+
+
 def get_rules() -> list[RuleSpec]:
     """All rules, sorted by id, including the synthesized combination + skill-mismatch rules."""
-    rules = list(all_rules()) + [_COMBO_RULE, _SKILL_MISMATCH_RULE]
+    rules = list(all_rules()) + [
+        _COMBO_RULE,
+        _SKILL_MISMATCH_RULE,
+        _TRIFECTA_RULE,
+        _CONVERGENCE_RULE,
+    ]
     return sorted(rules, key=lambda r: r.id)
 
 
