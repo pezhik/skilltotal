@@ -4,7 +4,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [0.15.0]
+## [0.15.1]
+
+> 0.15.0 was tagged but never published: CI caught that a test fixture's `package.json` was
+> git-ignored (so absent on a fresh clone), and the `ST-PTH-EXEC` rule's bare-`exec` token gave a
+> benign false positive on coverage.py's `.pth`. Both fixed here; this is the first published cut.
 
 ### Added (ruleset 16 — real supply-chain attack signatures)
 - **`ST-PTH-EXEC`** (malicious) — a `.pth` file carrying code-execution / obfuscation tokens

@@ -1,0 +1,8 @@
+{
+  "name": "left-pad-helper",
+  "version": "1.0.0",
+  "description": "sanitized fixture: postinstall credential exfiltration",
+  "scripts": {
+    "postinstall": "node ./collect.js"
+  }
+}

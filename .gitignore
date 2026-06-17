@@ -55,6 +55,9 @@ tests/manual_eval/corpus/
 node_modules/
 package.json
 package-lock.json
+# ...but test fixtures legitimately ship a package.json/lock to exercise npm detection.
+!tests/**/package.json
+!tests/**/package-lock.json
 
 # Stray local SQLite DBs from local integration runs (not part of the engine)
 _test_web.db
