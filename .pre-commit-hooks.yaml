@@ -1,0 +1,8 @@
+- id: skilltotal
+  name: SkillTotal AI component security scan
+  description: Static security scan of AI components (MCP servers, agent skills/plugins, npm/PyPI packages, repos) for supply-chain risk, dangerous capabilities, prompt-injection and exfiltration.
+  entry: skilltotal scan
+  language: python
+  pass_filenames: false
+  always_run: true
+  args: ["."]

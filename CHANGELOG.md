@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.4]
+
+### Added
+- **pre-commit hook.** `.pre-commit-hooks.yaml` exposes a `skilltotal` hook so any repo can run the
+  scan on commit via [pre-commit](https://pre-commit.com) (`repo: pezhik/skilltotal`, `id:
+  skilltotal`). No engine/detection or report-schema change (ruleset 17).
+
 ## [0.16.3]
 
 ### Docs

@@ -157,7 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.16.3
+      - uses: pezhik/skilltotal@v0.16.4
         with:
           source: .          # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high      # fail the build on a high/critical finding (or 'none')
@@ -167,8 +167,25 @@ The action installs the CLI, scans `source`, uploads SARIF (so findings appear i
 requests and in Code Scanning), and fails the job on a high/critical finding unless
 `fail-on: none`. Pin the action to a released tag (see
 [Releases](https://github.com/pezhik/skilltotal/releases)) and, optionally, pin the engine version
-with the `version:` input (e.g. `version: 0.16.3`). Prefer plain CLI? It is the same thing:
+with the `version:` input (e.g. `version: 0.16.4`). Prefer plain CLI? It is the same thing:
 `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
+
+### Use as a pre-commit hook
+
+Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
+
+```yaml
+# .pre-commit-config.yaml
+repos:
+  - repo: https://github.com/pezhik/skilltotal
+    rev: v0.16.4
+    hooks:
+      - id: skilltotal
+        args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
+```
+
+Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
+on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`).
 
 ## Methodology
 
