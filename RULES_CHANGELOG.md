@@ -4,6 +4,33 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 16 (engine 0.15.0)
+
+**Real-world supply-chain attack signatures + MCP/OWASP coverage (deterministic, no LLM).**
+Driven by recent compromises (auto-exec `.pth` credential stealers, postinstall RATs, MCP backdoors).
+
+- **`ST-PTH-EXEC`** (`scanners/pth_exec.py`; malicious_indicator, high): a `.pth` file containing
+  code-execution / obfuscation tokens (`exec`/`eval`/`compile`/`base64`/`subprocess`/`os.system`/
+  `marshal`/`pickle`/`socket`/network clients). Python executes `.pth` `import` lines at every
+  interpreter startup → stealthy persistence/auto-exec. Keyed only on exec/obfuscation tokens, so
+  editable-install and namespace `.pth` files (bare `import`, finder `.install()`) stay clean.
+- **`ST-SHELL-EVASION`** (`scanners/shell_evasion.py`; risky_construct, high): defense-evasion
+  idioms over script/code files — PowerShell `-ExecutionPolicy Bypass` / `-EncodedCommand` /
+  `-WindowStyle Hidden`, `codesign … --force … --deep`, `nohup … /tmp/…`, `chmod +x … /tmp|/dev/shm`,
+  `IEX (… DownloadString)`. Scoped so `grep -w hidden` / plain `chmod +x` don't match.
+- **`ST-INSTALL-DROPPER`** (synthesized in `scoring.py`; risky_construct, high): an install/build
+  hook (`ST-INSTALL-NPM`/`-NPM-PREPARE`/`-PY`) co-occurring with a decode-and-execute payload
+  (`ST-OBF-DECODE-EXEC`/`-PY`/`-SH`) or credential access (`ST-SENS-PATH`/`-PY`). FP-safe: the hook
+  alone is a neutral capability.
+- **`ST-MCP-OVERBROAD-SCOPE`** (`scanners/mcp.py`; risky_construct, medium): a manifest declaring a
+  wildcard / over-broad permission/scope (`*`, `full_access`, `mail.full_access`, `read_write_all`).
+- **`ST-SENS-PATH`** path set expanded: Docker `config.json`, `~/.azure`, `.git-credentials`,
+  `application_default_credentials.json`, cloud-metadata IP `169.254.169.254`, crypto keystores
+  (`wallet.dat`, `.ethereum/keystore`, `~/.config/solana`) — strengthens `ST-COMBO-EXFIL` recall.
+
+Fixtures: `pypi-pth-backdoor` (offline floor). New CLI/MCP-doc work doesn't change the report shape.
+Calibrated benign FP = 0. `docs/mcp-owasp-mapping.md` documents OWASP MCP coverage + runtime gaps.
+
 ## ruleset 15 (engine 0.14.0)
 
 **Breadth, data-flow, and convergence (all deterministic, no LLM).**

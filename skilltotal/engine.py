@@ -35,6 +35,7 @@ from skilltotal.scoring import (
     compute_score,
     convergence_finding,
     exfiltration_finding,
+    install_dropper_finding,
     risk_level,
     trifecta_finding,
 )
@@ -119,6 +120,11 @@ def analyze_directory(
     trifecta = trifecta_finding(findings, capabilities, combo_fired=combo is not None)
     if trifecta is not None:
         findings.append(trifecta)
+
+    # Install-time dropper: a lifecycle/build hook paired with a decode-exec or credential payload.
+    dropper = install_dropper_finding(findings)
+    if dropper is not None:
+        findings.append(dropper)
 
     # Agent Skill: declared allowed-tools vs. what the bundled code actually does (deterministic
     # least-privilege / undeclared-capability check). Synthesized here, after capabilities.

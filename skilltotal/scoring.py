@@ -32,6 +32,15 @@ _SCORED_CLASSES = frozenset({ThreatClass.MALICIOUS_INDICATOR, ThreatClass.RISKY_
 COMBO_FINDING_ID = "ST-COMBO-EXFIL"
 TRIFECTA_FINDING_ID = "ST-FLOW-TRIFECTA"
 CONVERGENCE_FINDING_ID = "ST-CONVERGENCE"
+INSTALL_DROPPER_FINDING_ID = "ST-INSTALL-DROPPER"
+_INSTALL_HOOK_IDS = frozenset({"ST-INSTALL-NPM", "ST-INSTALL-NPM-PREPARE", "ST-INSTALL-PY"})
+# Payloads that turn an install-time hook into a dropper: decode-and-execute, or credential access.
+_DROPPER_PAYLOAD_IDS = frozenset(
+    {
+        "ST-OBF-DECODE-EXEC", "ST-OBF-DECODE-EXEC-PY", "ST-OBF-DECODE-EXEC-SH",
+        "ST-SENS-PATH", "ST-SENS-PATH-PY",
+    }
+)
 # Findings that represent access to sensitive data (credential locations / embedded secrets).
 # Plain filesystem access is deliberately NOT here — reading ordinary files is a capability,
 # not a risk, so a normal "reads files + uses network" tool is not flagged as exfiltration.
@@ -145,6 +154,42 @@ def trifecta_finding(
         recommendation=(
             "Remove the injectable instruction surface, or constrain the component so untrusted "
             "input cannot drive file reads and outbound network requests."
+        ),
+        threat_class=ThreatClass.RISKY_CONSTRUCT,
+    )
+
+
+def install_dropper_finding(findings: list[Finding]) -> Finding | None:
+    """Synthesize the install-time dropper pattern: an install/build hook paired with a payload.
+
+    Fires when the component runs code at install time (`ST-INSTALL-*`) AND contains a
+    decode-and-execute payload or accesses credential locations — the exact shape behind recent
+    npm/PyPI supply-chain compromises (a postinstall hook that drops/runs an obfuscated second
+    stage or steals secrets). FP-safe: the install hook alone is a neutral capability; this only
+    fires when it co-occurs with an already-suspicious payload.
+    """
+    hooks = [f for f in findings if f.id in _INSTALL_HOOK_IDS]
+    payloads = [f for f in findings if f.id in _DROPPER_PAYLOAD_IDS]
+    if not hooks or not payloads:
+        return None
+    evidence = (
+        _dedupe([e for f in hooks for e in f.evidence])[:2]
+        + _dedupe([e for f in payloads for e in f.evidence])[:3]
+    )
+    return Finding(
+        id=INSTALL_DROPPER_FINDING_ID,
+        severity=Severity.HIGH,
+        category="install_time_execution",
+        title="Install-time hook paired with a dropper payload",
+        description=(
+            "The component executes code at install time (a package lifecycle / build hook) and "
+            "also contains a decode-and-execute payload or accesses credential locations. This is "
+            "the install-time dropper pattern behind recent supply-chain compromises."
+        ),
+        evidence=evidence,
+        recommendation=(
+            "Inspect the install/build hook and the payload it runs; do not install until the "
+            "install-time behavior is understood and trusted."
         ),
         threat_class=ThreatClass.RISKY_CONSTRUCT,
     )

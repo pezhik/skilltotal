@@ -42,6 +42,15 @@ _STRONG_PATHS = alternation(
     r"~/\.kube",
     r"~/\.config/gcloud",
     r"\bid_rsa\b",
+    # Cloud / registry / wallet credential locations seen in real cred-stealers.
+    r"\.docker/config\.json",
+    r"~/\.azure",
+    r"\.git-credentials",
+    r"application_default_credentials\.json",
+    r"169\.254\.169\.254",  # cloud instance-metadata endpoint (SSRF / token theft)
+    r"\bwallet\.dat\b",
+    r"\.ethereum/keystore",
+    r"~/\.config/solana",
     flags=re.IGNORECASE,
 )
 

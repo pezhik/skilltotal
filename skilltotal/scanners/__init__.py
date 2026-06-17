@@ -18,9 +18,11 @@ from skilltotal.scanners.mcp import McpScanner
 from skilltotal.scanners.network import NetworkScanner
 from skilltotal.scanners.obfuscation import ObfuscationScanner
 from skilltotal.scanners.prompt_surface import PromptSurfaceScanner
+from skilltotal.scanners.pth_exec import PthExecScanner
 from skilltotal.scanners.python_ast import PythonAstScanner
 from skilltotal.scanners.secrets import SecretsScanner
 from skilltotal.scanners.sensitive_paths import SensitivePathScanner
+from skilltotal.scanners.shell_evasion import ShellEvasionScanner
 from skilltotal.scanners.shell_exec import ShellExecScanner
 from skilltotal.scanners.shell_script import ShellScriptScanner
 
@@ -28,12 +30,14 @@ SCANNERS: list[Scanner] = [
     PythonAstScanner(),
     ShellExecScanner(),
     ShellScriptScanner(),
+    ShellEvasionScanner(),
     FilesystemScanner(),
     SensitivePathScanner(),
     NetworkScanner(),
     InstallScriptsScanner(),
     DynamicCodeScanner(),
     ObfuscationScanner(),
+    PthExecScanner(),
     McpScanner(),
     PromptSurfaceScanner(),
     InvisibleUnicodeScanner(),

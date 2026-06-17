@@ -14,6 +14,7 @@ from skilltotal.scanners.base import RuleSpec
 from skilltotal.scoring import (
     COMBO_FINDING_ID,
     CONVERGENCE_FINDING_ID,
+    INSTALL_DROPPER_FINDING_ID,
     TRIFECTA_FINDING_ID,
 )
 
@@ -84,6 +85,22 @@ _CONVERGENCE_RULE = RuleSpec(
 )
 
 
+# Install-time dropper, synthesized in scoring (after capabilities). threat_class must match.
+_INSTALL_DROPPER_RULE = RuleSpec(
+    id=INSTALL_DROPPER_FINDING_ID,
+    category="install_time_execution",
+    severity=Severity.HIGH,
+    title="Install-time hook paired with a dropper payload",
+    description=(
+        "Raised when an install/build hook co-occurs with a decode-and-execute payload or "
+        "credential access — the install-time dropper pattern behind supply-chain compromises."
+    ),
+    recommendation="Inspect the install hook and its payload; do not install until understood.",
+    capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+)
+
+
 def get_rules() -> list[RuleSpec]:
     """All rules, sorted by id, including the synthesized combination + skill-mismatch rules."""
     rules = list(all_rules()) + [
@@ -91,6 +108,7 @@ def get_rules() -> list[RuleSpec]:
         _SKILL_MISMATCH_RULE,
         _TRIFECTA_RULE,
         _CONVERGENCE_RULE,
+        _INSTALL_DROPPER_RULE,
     ]
     return sorted(rules, key=lambda r: r.id)
 

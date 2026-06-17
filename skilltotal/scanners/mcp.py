@@ -106,6 +106,34 @@ _SHADOWING = alternation(
 # tool calls removes the human confirmation gate for everything the server exposes.
 _AUTO_APPROVE_KEYS = ("autoApprove", "alwaysAllow")
 
+# Permission/scope declarations and the over-broad values that violate least privilege (cf. the
+# Postmark mail-full-access lesson). Conservative literal set so narrow scopes are not flagged.
+_SCOPE_KEYS = frozenset({"scopes", "scope", "permissions", "permission", "oauth_scopes",
+                         "oauthscopes", "access"})
+_BROAD_SCOPE = re.compile(
+    r"^\*$|[.*]\*|\*[.*]|\bfull[_.\-]?access\b|\bread[_\-]?write[_\-]?all\b|"
+    r"\bwrite[_\-]?all\b|\ball[_\-]?access\b",
+    re.IGNORECASE,
+)
+
+
+def _iter_scope_values(data: object):
+    """Yield (key, value) for any permission/scope-bearing key anywhere in a manifest."""
+    if isinstance(data, dict):
+        for k, v in data.items():
+            if isinstance(k, str) and k.lower() in _SCOPE_KEYS:
+                yield k, v
+            yield from _iter_scope_values(v)
+    elif isinstance(data, list):
+        for item in data:
+            yield from _iter_scope_values(item)
+
+
+def _is_broad_scope(value: object) -> bool:
+    """True if a scope value (string or list of strings) is a wildcard / over-broad grant."""
+    items = value if isinstance(value, list) else [value]
+    return any(isinstance(s, str) and bool(_BROAD_SCOPE.search(s)) for s in items)
+
 # Source-level signals that an MCP tool surface exists.
 _CODE_SURFACE = re.compile(
     r"@(?:mcp|server|app)\.tool\b|FastMCP\s*\(|\bnew\s+Server\s*\(|\.registerTool\s*\(|"
@@ -224,6 +252,24 @@ class McpScanner(Scanner):
             capability=None,
         ),
         RuleSpec(
+            id="ST-MCP-OVERBROAD-SCOPE",
+            category=CATEGORY,
+            severity=Severity.MEDIUM,
+            title="MCP server requests over-broad permissions/scope",
+            description=(
+                "An MCP manifest declares a wildcard or over-broad permission/scope "
+                "(e.g. '*', 'full_access', 'mail.full_access', 'read_write_all'). Over-broad "
+                "scopes violate least privilege and widen the blast radius if the server is "
+                "compromised."
+            ),
+            recommendation=(
+                "Request the narrowest scopes the server needs (e.g. read-only instead of full "
+                "access); avoid wildcard permissions."
+            ),
+            capability=None,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+        ),
+        RuleSpec(
             id="ST-MCP-AUTO-APPROVE",
             category=CATEGORY,
             severity=Severity.MEDIUM,
@@ -249,6 +295,7 @@ class McpScanner(Scanner):
         poisoning: list[Evidence] = []
         shadowing: list[Evidence] = []
         auto_approve: list[Evidence] = []
+        overbroad_scope: list[Evidence] = []
         needs_review: list[NeedsReview] = []
         dangerous_categories: set[str] = set()
 
@@ -271,7 +318,7 @@ class McpScanner(Scanner):
 
             self._analyze_json(
                 f, data, is_manifest_name, detected, dangerous, server_exec,
-                poisoning, shadowing, auto_approve, dangerous_categories,
+                poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
             )
 
         # Source-level tool definitions (Python / JS decorators & SDK calls).
@@ -329,6 +376,8 @@ class McpScanner(Scanner):
             )
         if auto_approve:
             findings.append(self._finding("ST-MCP-AUTO-APPROVE", auto_approve))
+        if overbroad_scope:
+            findings.append(self._finding("ST-MCP-OVERBROAD-SCOPE", overbroad_scope))
         if detected:
             findings.append(self._finding("ST-MCP-DETECTED", detected))
 
@@ -383,10 +432,17 @@ class McpScanner(Scanner):
     # -------------------------------------------------------------- internals
     def _analyze_json(
         self, f, data, is_manifest_name, detected, dangerous, server_exec,
-        poisoning, shadowing, auto_approve, dangerous_categories,
+        poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
     ) -> None:
         if not isinstance(data, dict):
             return
+
+        # Over-broad permission/scope declarations anywhere in the manifest.
+        for key, value in _iter_scope_values(data):
+            if _is_broad_scope(value) and len(overbroad_scope) < MAX_EVIDENCE_PER_FINDING:
+                ev = _evidence_for(f, f'"{key}"')
+                if ev:
+                    overbroad_scope.append(ev)
 
         servers = data.get("mcpServers")
         if isinstance(servers, dict):

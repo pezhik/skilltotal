@@ -4,6 +4,28 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.15.0]
+
+### Added (ruleset 16 — real supply-chain attack signatures)
+- **`ST-PTH-EXEC`** (malicious) — a `.pth` file carrying code-execution / obfuscation tokens
+  (exec/eval/base64/subprocess/…). Python runs `.pth` import lines at every interpreter startup,
+  so this is a stealthy auto-exec persistence vector; editable/namespace `.pth` files stay clean.
+- **`ST-SHELL-EVASION`** (risky) — defense-evasion command idioms: PowerShell
+  `-ExecutionPolicy Bypass` / `-EncodedCommand` / hidden window, macOS `codesign --force --deep`,
+  and launching a payload from a world-writable temp dir.
+- **`ST-INSTALL-DROPPER`** (risky, synthesized) — an install/build hook (`ST-INSTALL-*`) paired
+  with a decode-and-execute payload or credential access — the install-time dropper shape behind
+  recent npm/PyPI compromises.
+- **`ST-MCP-OVERBROAD-SCOPE`** (risky) — an MCP manifest declaring a wildcard or over-broad
+  permission/scope (`*`, `full_access`, `read_write_all`).
+- Expanded credential-path detection (`ST-SENS-PATH`): Docker `config.json`, `~/.azure`,
+  `.git-credentials`, `application_default_credentials.json`, cloud-metadata IP `169.254.169.254`,
+  and crypto-wallet keystores.
+
+### Docs
+- `docs/mcp-owasp-mapping.md` — maps SkillTotal's checks to the OWASP MCP Security Cheat Sheet,
+  naming the runtime controls a static engine cannot cover (linked from the README).
+
 ## [0.14.0]
 
 ### Added

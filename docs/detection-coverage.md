@@ -31,6 +31,10 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Analysis evasion** (password-protected archive bundled in a component) | `ST-ENCRYPTED-ARCHIVE` | — |
 | **Instruction-driven exfiltration** (lethal trifecta: injection + file read + egress) | `ST-FLOW-TRIFECTA` | — |
 | **Stacked malicious indicators** (deception + payload in one component) | `ST-CONVERGENCE` | — |
+| **`.pth` startup persistence** (auto-exec on interpreter start) | `ST-PTH-EXEC` (malicious) | `pypi-pth-backdoor` |
+| **Defense-evasion idioms** (PS bypass/-enc, codesign, run-from-temp) | `ST-SHELL-EVASION` | — |
+| **Install-time dropper** (lifecycle hook + decode-exec / credential payload) | `ST-INSTALL-DROPPER` | `npm-postinstall-exfil` |
+| **Over-broad MCP scope** (wildcard / full-access permission) | `ST-MCP-OVERBROAD-SCOPE` | — |
 
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
 risk; `capability` rules are informational (they never push the score up — capability ≠ risk).

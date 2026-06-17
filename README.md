@@ -256,6 +256,9 @@ A normalized report containing the component identity, a **risk score (0–100)*
 evidence-backed), **findings**, **needs_review**, and **metadata**. See
 [docs/report-schema.md](docs/report-schema.md) and [docs/scoring.md](docs/scoring.md).
 
+For MCP servers, [docs/mcp-owasp-mapping.md](docs/mcp-owasp-mapping.md) maps SkillTotal's checks
+to the OWASP MCP Security Cheat Sheet (and names the runtime controls a static engine can't cover).
+
 ## Architecture
 
 The package under `skilltotal/` (except `cli.py`) is a pure, side-effect-free library so the
