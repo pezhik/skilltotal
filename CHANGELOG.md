@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.2]
+
+### Docs
+- Shortened the `action.yml` `description` to ≤125 chars (GitHub Marketplace requirement) and
+  bumped the README Action pin example. No engine/detection or report-schema change (ruleset 17).
+
 ## [0.16.1]
 
 ### Docs

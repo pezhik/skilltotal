@@ -1,8 +1,6 @@
 name: "SkillTotal AI Component Security Scan"
-description: >-
-  Static security scan of AI components (MCP servers, agent skills/plugins, npm/PyPI packages,
-  repos) for supply-chain risk, dangerous capabilities, prompt-injection and exfiltration.
-  Evidence-anchored, deterministic, offline; uploads SARIF to GitHub Code Scanning.
+# GitHub Marketplace requires description <= 125 chars; the full pitch lives in the README.
+description: "Static security scan for AI components (MCP, agent skills, npm/PyPI, repos) - SARIF, deterministic, offline."
 author: "SkillTotal"
 branding:
   icon: "shield"
@@ -14,7 +12,7 @@ inputs:
     required: false
     default: "."
   version:
-    description: "Pin the skilltotal PyPI version (e.g. 0.16.1). Empty installs the latest release."
+    description: "Pin the skilltotal PyPI version (e.g. 0.16.2). Empty installs the latest release."
     required: false
     default: ""
   fail-on:
