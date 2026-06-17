@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.3]
+
+### Docs
+- Added a "GitHub Marketplace" badge to the README and bumped the Action pin example. No
+  engine/detection or report-schema change (ruleset 17).
+
 ## [0.16.2]
 
 ### Docs

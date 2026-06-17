@@ -4,6 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/skilltotal)](https://pypi.org/project/skilltotal/)
 [![License](https://img.shields.io/pypi/l/skilltotal)](LICENSE)
 [![CI](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml/badge.svg)](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml)
+[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-SkillTotal-2ea44f?logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/skilltotal-ai-component-security-scan)
 
 **AI Component Security Platform — open-source CLI engine.**
 
@@ -156,7 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.16.2
+      - uses: pezhik/skilltotal@v0.16.3
         with:
           source: .          # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high      # fail the build on a high/critical finding (or 'none')
@@ -166,7 +167,7 @@ The action installs the CLI, scans `source`, uploads SARIF (so findings appear i
 requests and in Code Scanning), and fails the job on a high/critical finding unless
 `fail-on: none`. Pin the action to a released tag (see
 [Releases](https://github.com/pezhik/skilltotal/releases)) and, optionally, pin the engine version
-with the `version:` input (e.g. `version: 0.16.2`). Prefer plain CLI? It is the same thing:
+with the `version:` input (e.g. `version: 0.16.3`). Prefer plain CLI? It is the same thing:
 `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
 
 ## Methodology
