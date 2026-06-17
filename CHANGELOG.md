@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.1]
+
+### Docs
+- Refreshed the GitHub Action usage in the README (pin example) and the `action.yml` `version`
+  input example to a current release. No engine/detection or report-schema changes (ruleset 17).
+
 ## [0.16.0]
 
 ### Added (ruleset 17 — e-mail/SMTP exfiltration channel)

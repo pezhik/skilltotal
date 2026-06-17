@@ -156,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.10.4
+      - uses: pezhik/skilltotal@v0.16.1
         with:
           source: .          # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high      # fail the build on a high/critical finding (or 'none')
@@ -164,7 +164,9 @@ jobs:
 
 The action installs the CLI, scans `source`, uploads SARIF (so findings appear inline on pull
 requests and in Code Scanning), and fails the job on a high/critical finding unless
-`fail-on: none`. Pin the engine with `version: 0.10.4`. Prefer plain CLI? It is the same thing:
+`fail-on: none`. Pin the action to a released tag (see
+[Releases](https://github.com/pezhik/skilltotal/releases)) and, optionally, pin the engine version
+with the `version:` input (e.g. `version: 0.16.1`). Prefer plain CLI? It is the same thing:
 `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
 
 ## Methodology
