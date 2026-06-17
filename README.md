@@ -175,7 +175,7 @@ The action installs the CLI, scans `source`, uploads SARIF (so findings appear i
 requests and in Code Scanning), and fails the job on a high/critical finding unless
 `fail-on: none`. Pin the action to a released tag (see
 [Releases](https://github.com/pezhik/skilltotal/releases)) and, optionally, pin the engine version
-with the `version:` input (e.g. `version: 0.16.6`). Prefer plain CLI? It is the same thing:
+with the `version:` input. Prefer plain CLI? It is the same thing:
 `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
 
 ### Use as a pre-commit hook

@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "."
   version:
-    description: "Pin the skilltotal PyPI version (e.g. 0.16.6). Empty installs the latest release."
+    description: "Pin the skilltotal PyPI version to install. Empty installs the latest release."
     required: false
     default: ""
   fail-on:
