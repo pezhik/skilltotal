@@ -46,6 +46,18 @@ def test_editable_install_pth_is_clean(tmp_path: Path):
     assert ids == set()
 
 
+def test_coverage_subprocess_bootstrap_pth_is_clean(tmp_path: Path):
+    # coverage.py ships exactly this a1_coverage.pth — a bare exec of readable bootstrap code,
+    # no decode/spawn/network. Must NOT be flagged (regression: it was a benign FP in calibration).
+    content = (
+        "import sys; exec('import os\\n\\nif os.getenv(\"COVERAGE_PROCESS_START\") "
+        'or os.getenv("COVERAGE_PROCESS_CONFIG"):\\n try:\\n  import coverage\\n '
+        "except:\\n  pass\\n else:\\n  coverage.process_startup(slug=\"pth\")')\n"
+    )
+    ids, _ = _scan(tmp_path, "a1_coverage.pth", content)
+    assert "ST-PTH-EXEC" not in ids
+
+
 def test_namespace_pth_is_clean(tmp_path: Path):
     # Classic setuptools namespace .pth: import sys/os + __import__('importlib…'), no exec/decode.
     ids, _ = _scan(

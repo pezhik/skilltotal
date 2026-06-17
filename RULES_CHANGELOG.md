@@ -9,11 +9,13 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 **Real-world supply-chain attack signatures + MCP/OWASP coverage (deterministic, no LLM).**
 Driven by recent compromises (auto-exec `.pth` credential stealers, postinstall RATs, MCP backdoors).
 
-- **`ST-PTH-EXEC`** (`scanners/pth_exec.py`; malicious_indicator, high): a `.pth` file containing
-  code-execution / obfuscation tokens (`exec`/`eval`/`compile`/`base64`/`subprocess`/`os.system`/
-  `marshal`/`pickle`/`socket`/network clients). Python executes `.pth` `import` lines at every
-  interpreter startup → stealthy persistence/auto-exec. Keyed only on exec/obfuscation tokens, so
-  editable-install and namespace `.pth` files (bare `import`, finder `.install()`) stay clean.
+- **`ST-PTH-EXEC`** (`scanners/pth_exec.py`; malicious_indicator, high): a `.pth` file that
+  decodes / deserializes / spawns / networks (`base64`/`b64decode`/`bytes.fromhex`/`codecs.decode`/
+  `subprocess`/`os.system`/`os.popen`/`marshal`/`pickle`/`socket`/`urllib.request`/`requests.`).
+  Python executes `.pth` `import` lines at every interpreter startup → stealthy persistence/auto-exec.
+  A bare `exec`/`eval` is intentionally NOT flagged: coverage.py's subprocess bootstrap legitimately
+  does `exec('… coverage.process_startup() …')` (calibration FP). Editable-install / namespace
+  `.pth` files (bare `import`, finder `.install()`) also stay clean.
 - **`ST-SHELL-EVASION`** (`scanners/shell_evasion.py`; risky_construct, high): defense-evasion
   idioms over script/code files — PowerShell `-ExecutionPolicy Bypass` / `-EncodedCommand` /
   `-WindowStyle Hidden`, `codesign … --force … --deep`, `nohup … /tmp/…`, `chmod +x … /tmp|/dev/shm`,
