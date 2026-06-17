@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.0]
+
+### Added (ruleset 17 — e-mail/SMTP exfiltration channel)
+- **E-mail is now recognized as network egress.** `smtplib` (Python) and `nodemailer` /
+  `.sendMail()` / `@sendgrid/mail` / AWS SES `SendEmailCommand` / `mailgun` (Node) count toward
+  `NETWORK_EGRESS`, so `ST-COMBO-EXFIL` and `ST-FLOW-TRIFECTA` now fire when a component reads
+  sensitive data and **e-mails it out** (previously invisible — only HTTP egress was detected).
+- **`ST-EMAIL-BCC-EXFIL`** (risky) — flags a hardcoded string-literal `bcc`/`cc` recipient in
+  email-sending code (a constant BCC silently copies all outgoing mail to a fixed address — the
+  mail-backdoor pattern). Scoped to email-sending files; dynamic recipients are not flagged.
+
+After this release the free static engine is feature-complete; further value (interpretation,
+runtime/sandbox, dependency CVEs, prioritization) is delivered by SkillTotal Cloud.
+
 ## [0.15.1]
 
 > 0.15.0 was tagged but never published: CI caught that a test fixture's `package.json` was

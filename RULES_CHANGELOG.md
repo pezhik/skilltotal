@@ -4,6 +4,26 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 17 (engine 0.16.0)
+
+**E-mail/SMTP exfiltration channel (deterministic, no LLM).** Closes the gap where a component
+that reads secrets and e-mails them out was invisible to the exfiltration combos (egress was
+HTTP-only). Motivated by the Postmark MCP BCC-exfil backdoor.
+
+- **E-mail-send → `NETWORK_EGRESS`.** Python (`scanners/python_ast.py`): `smtplib` added to
+  `NETWORK_HEADS` + `ST-NET-PY` regex. Node (`scanners/network.py`): `ST-NET-NODE` extended with
+  `nodemailer`, `.sendMail(`, `@sendgrid/mail`, `SendEmailCommand` (AWS SES v3), `mailgun`.
+  `ST-COMBO-EXFIL` / `ST-FLOW-TRIFECTA` consume `NETWORK_EGRESS`, so they now fire on email exfil
+  with no further change. FP-safe: email-send alone stays a 0-weight capability; it only elevates
+  combined with sensitive-data access.
+- **`ST-EMAIL-BCC-EXFIL`** (`scanners/email_exfil.py`; risky_construct, medium): in a file that
+  sends email, a `bcc`/`cc` field assigned a hardcoded string-literal address (e.g.
+  `bcc: "phan@giftshop.club"`). Catches the Postmark-style constant-BCC backdoor even with no
+  credential read. Dynamic recipients (`bcc: userInput`) and a bcc literal in a non-email file are
+  not flagged.
+
+Fixture: `py-email-stealer` (reads `~/.aws` + `smtplib` → `ST-COMBO-EXFIL` via email; offline floor).
+
 ## ruleset 16 (engine 0.15.0)
 
 **Real-world supply-chain attack signatures + MCP/OWASP coverage (deterministic, no LLM).**

@@ -47,6 +47,7 @@ MUST_DETECT = [
     _MALICIOUS / "py-marshal-loader",           # remote deserialize-and-exec dropper (marshal)
     _MALICIOUS / "sh-base64-exec",              # shell decode-and-execute + remote pipe-to-shell
     _MALICIOUS / "pypi-pth-backdoor",           # .pth startup-persistence auto-exec backdoor
+    _MALICIOUS / "py-email-stealer",            # reads ~/.aws + exfiltrates via SMTP (email egress)
     _FIXTURES / "malicious_npm_pkg",            # npm stealer (steal.js)
     _FIXTURES / "malicious_py_pkg",             # python stealer
     _FIXTURES / "prompt_injection",             # poisoned skill

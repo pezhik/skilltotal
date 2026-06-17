@@ -52,7 +52,8 @@ DYNAMIC_IMPORT_CALLS = frozenset({"__import__", "importlib.import_module"})
 FS_READ_SUFFIXES = ("read_text", "read_bytes")
 FS_WRITE_SUFFIXES = ("write_text", "write_bytes")
 FS_WRITE_PREFIXES = ("shutil.copy", "shutil.move", "shutil.rmtree", "os.remove", "os.unlink")
-NETWORK_HEADS = frozenset({"requests", "aiohttp", "httpx"})
+# smtplib included: e-mail is an egress channel too (read a secret + e-mail it out is exfil).
+NETWORK_HEADS = frozenset({"requests", "aiohttp", "httpx", "smtplib"})
 WRITE_MODE_CHARS = frozenset("wax+")
 
 # Calls that always run through a shell (so a dynamic command is injectable).
@@ -228,8 +229,8 @@ class PythonAstScanner(Scanner):
             severity=Severity.MEDIUM,
             title="Python network egress",
             description=(
-                "Python HTTP/network client usage was detected "
-                "(requests / urllib / aiohttp / http.client)."
+                "Python HTTP/network/email client usage was detected "
+                "(requests / urllib / aiohttp / http.client / smtplib)."
             ),
             recommendation=(
                 "Confirm the destination hosts are expected and that no sensitive data "
@@ -245,6 +246,8 @@ class PythonAstScanner(Scanner):
                 r"\burllib\.request\b",
                 r"\bimport\s+aiohttp\b",
                 r"\bimport\s+http\.client\b",
+                r"\bimport\s+smtplib\b",
+                r"\bsmtplib\.",
                 flags=re.MULTILINE,
             ),
         ),

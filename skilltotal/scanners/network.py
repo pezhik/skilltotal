@@ -25,8 +25,8 @@ class NetworkScanner(PatternScanner):
             severity=Severity.MEDIUM,
             title="Node.js network egress",
             description=(
-                "Node.js HTTP/network client usage was detected "
-                "(fetch / axios / http.request / https.request)."
+                "Node.js HTTP/network/email client usage was detected "
+                "(fetch / axios / http.request / https.request / nodemailer / SendGrid / SES)."
             ),
             recommendation=(
                 "Confirm the destination hosts are expected and that no sensitive data "
@@ -41,6 +41,12 @@ class NetworkScanner(PatternScanner):
                 r"\bhttps?\.get\s*\(",
                 r"require\(\s*['\"]node:?https?['\"]\s*\)",
                 r"from\s+['\"]node:?https?['\"]",
+                # E-mail is an egress channel too (e.g. the Postmark MCP BCC-exfil backdoor).
+                r"\bnodemailer\b",
+                r"\.sendMail\s*\(",
+                r"@sendgrid/mail",
+                r"\bSendEmailCommand\b",
+                r"\bmailgun\b",
                 flags=re.MULTILINE,
             ),
         ),

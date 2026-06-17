@@ -35,6 +35,8 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Defense-evasion idioms** (PS bypass/-enc, codesign, run-from-temp) | `ST-SHELL-EVASION` | — |
 | **Install-time dropper** (lifecycle hook + decode-exec / credential payload) | `ST-INSTALL-DROPPER` | `npm-postinstall-exfil` |
 | **Over-broad MCP scope** (wildcard / full-access permission) | `ST-MCP-OVERBROAD-SCOPE` | — |
+| **E-mail/SMTP credential exfiltration** (read secret → e-mail it out) | `ST-COMBO-EXFIL` via smtplib/nodemailer egress | `py-email-stealer` |
+| **Mail backdoor** (hardcoded BCC/CC copies outgoing mail) | `ST-EMAIL-BCC-EXFIL` | — |
 
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
 risk; `capability` rules are informational (they never push the score up — capability ≠ risk).
