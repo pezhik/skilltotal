@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "."
   version:
-    description: "Pin the skilltotal PyPI version (e.g. 0.16.4). Empty installs the latest release."
+    description: "Pin the skilltotal PyPI version (e.g. 0.16.5). Empty installs the latest release."
     required: false
     default: ""
   fail-on:
@@ -47,7 +47,7 @@ runs:
   using: "composite"
   steps:
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
       with:
         python-version: "3.12"
 
@@ -91,7 +91,7 @@ runs:
 
     - name: Upload SARIF to Code Scanning
       if: ${{ always() && inputs.upload-sarif == 'true' }}
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@dd903d2e4f5405488e5ef1422510ee31c8b32357 # v3
       with:
         sarif_file: ${{ inputs.sarif-file }}
 

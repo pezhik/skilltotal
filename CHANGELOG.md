@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.5]
+
+### Security / supply-chain hardening (CI only — engine unchanged, ruleset 17)
+- **All GitHub Actions pinned to full commit SHA** (with a version comment) across CI, CodeQL,
+  Release, and the composite `action.yml` — removes the mutable-tag supply-chain risk.
+- **Least-privilege `permissions:`** declared at the top of every workflow.
+- **OpenSSF Scorecard** workflow + README badge (weekly supply-chain posture check, published to
+  Code Scanning and the OpenSSF registry).
+- **Dependabot** for the `github-actions` ecosystem, so pinned SHAs are auto-updated (keeps pinning
+  current without going stale).
+
 ## [0.16.4]
 
 ### Added

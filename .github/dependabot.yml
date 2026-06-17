@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Keep the SHA-pinned GitHub Actions current (auto-PRs bumps), so pinning stays secure
+  # without going stale. Also satisfies the OpenSSF Scorecard "Dependency-Update-Tool" check.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"

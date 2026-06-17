@@ -5,6 +5,7 @@
 [![License](https://img.shields.io/pypi/l/skilltotal)](LICENSE)
 [![CI](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml/badge.svg)](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml)
 [![GitHub Marketplace](https://img.shields.io/badge/Marketplace-SkillTotal-2ea44f?logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/skilltotal-ai-component-security-scan)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/pezhik/skilltotal/badge)](https://scorecard.dev/viewer/?uri=github.com/pezhik/skilltotal)
 
 **AI Component Security Platform — open-source CLI engine.**
 
@@ -157,7 +158,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.16.4
+      - uses: pezhik/skilltotal@v0.16.5
         with:
           source: .          # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high      # fail the build on a high/critical finding (or 'none')
@@ -167,7 +168,7 @@ The action installs the CLI, scans `source`, uploads SARIF (so findings appear i
 requests and in Code Scanning), and fails the job on a high/critical finding unless
 `fail-on: none`. Pin the action to a released tag (see
 [Releases](https://github.com/pezhik/skilltotal/releases)) and, optionally, pin the engine version
-with the `version:` input (e.g. `version: 0.16.4`). Prefer plain CLI? It is the same thing:
+with the `version:` input (e.g. `version: 0.16.5`). Prefer plain CLI? It is the same thing:
 `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
 
 ### Use as a pre-commit hook
@@ -178,7 +179,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.16.4
+    rev: v0.16.5
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding

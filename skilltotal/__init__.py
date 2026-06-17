@@ -22,7 +22,7 @@ from skilltotal.models import (
 # REPORT_SCHEMA_VERSION: shape of Report.to_dict(); bumps only on schema changes.
 # RULESET_VERSION: integer counter of the detection ruleset; bumps when rules change, so a
 #   consumer knows when re-scanning old reports may surface new findings.
-__version__ = "0.16.4"
+__version__ = "0.16.5"
 ENGINE_VERSION = __version__
 REPORT_SCHEMA_VERSION = "1.3"
 RULESET_VERSION = 17
