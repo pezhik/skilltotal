@@ -43,6 +43,16 @@ def test_config_invalid_level_is_dropped(tmp_path: Path):
     assert load_config(p).fail_on is None
 
 
+def test_config_with_utf8_bom_is_parsed(tmp_path: Path):
+    # Windows editors / PowerShell often write a UTF-8 BOM. tomllib rejects a BOM, so without
+    # utf-8-sig the whole config is silently dropped — which would disable a configured CI gate.
+    p = tmp_path / ".skilltotal.toml"
+    p.write_bytes(b"\xef\xbb\xbf" + b'fail_on = "high"\nfail_on_score = 30\n')
+    c = load_config(p)
+    assert c.fail_on == "high"
+    assert c.fail_on_score == 30
+
+
 # --- rule-id ignore -----------------------------------------------------------------
 
 def test_ignore_rules_drops_whole_rule(tmp_path: Path):

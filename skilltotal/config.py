@@ -46,7 +46,9 @@ def find_config(start: Path | None = None) -> Path | None:
 
 def load_config(path: Path) -> Config:
     """Parse a ``.skilltotal.toml`` file. Unknown/malformed keys are ignored, not fatal."""
-    text = Path(path).read_text(encoding="utf-8", errors="replace")
+    # utf-8-sig strips a leading BOM if present (Windows editors / PowerShell often add one);
+    # tomllib rejects a BOM, which would otherwise silently void the whole config (fail-open).
+    text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
     data = _parse(text)
     fail_on = _as_level(data.get("fail_on"))
     return Config(

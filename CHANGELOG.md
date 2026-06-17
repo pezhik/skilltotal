@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.16.6]
+
+### Fixed
+- **`.skilltotal.toml` with a UTF-8 BOM is now parsed** instead of being silently ignored. The
+  config loader reads with `utf-8-sig`, so a leading BOM (commonly added by Windows editors and
+  PowerShell) no longer voids the config — which previously could silently disable a configured CI
+  gate (fail-open). No engine/detection or report-schema change (ruleset 17).
+
 ## [0.16.5]
 
 ### Security / supply-chain hardening (CI only — engine unchanged, ruleset 17)
