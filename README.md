@@ -142,6 +142,13 @@ comment on its line.
 | 1 | Usage / collection error (e.g. path missing, clone failed) |
 | 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, or `--fail-on-score`) |
 
+> **Gate semantics:** `--fail-on`/`--fail-on-high` trip on the **severity of any single finding**,
+> not the aggregate `risk_score`. A component can report `risk_level: low` (score 0) and still fail
+> the gate if it has a high-severity finding — including a powerful *capability* (e.g. shell or
+> network access), which is reported but never scored as malicious. To gate on the score instead,
+> use `--fail-on-score`; to accept known findings, use a baseline or an inline
+> `# skilltotal:ignore[ST-ID]`.
+
 ## CI / GitHub Action
 
 Run SkillTotal in CI and surface findings in your repository's **Security → Code scanning** tab.
