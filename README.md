@@ -30,6 +30,9 @@ files inside the component.
 
 - **100% local & offline** — the component's code **never leaves your machine**. No account,
   no API token, no cloud upload (unlike cloud scanners that send your components to a backend).
+- **Safe to point at untrusted components** — the engine analyzes without ever running them on
+  your machine. (Optional dynamic analysis is a separate paid service that runs only in our
+  isolated sandbox, with your consent.)
 - **Zero runtime dependencies**, pure Python stdlib — auditable and easy to vendor/air-gap.
 - **Deterministic** — regex + AST, no LLM in the static engine; the same input always yields
   the same report.
