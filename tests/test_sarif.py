@@ -54,3 +54,23 @@ def test_sarif_rule_descriptor_has_security_severity():
 def test_sarif_clean_has_no_results():
     data = json.loads(render_sarif(_report("clean_pkg")))
     assert data["runs"][0]["results"] == []
+
+
+def test_sarif_owasp_taxonomy_present():
+    data = json.loads(render_sarif(_report("malicious_py_pkg")))
+    run = data["runs"][0]
+    taxa = run["taxonomies"]
+    assert len(taxa) == 1
+    comp = taxa[0]
+    assert comp["name"] == "OWASP Agentic Skills Top 10"
+    ids = [t["id"] for t in comp["taxa"]]
+    assert ids == [f"AST{n:02d}" for n in range(1, 11)]
+    guid = comp["guid"]
+    # a mapped rule (decode-and-execute -> AST01) links to the taxonomy by guid
+    rules = {r["id"]: r for r in run["tool"]["driver"]["rules"]}
+    rel = rules["ST-OBF-DECODE-EXEC"]["relationships"]
+    assert rel[0]["target"]["id"] == "AST01"
+    assert rel[0]["target"]["toolComponent"]["guid"] == guid
+    assert "AST01" in rules["ST-OBF-DECODE-EXEC"]["properties"]["tags"]
+    # an unmapped capability rule carries no relationships
+    assert "relationships" not in rules["ST-FS-PY-READ"]

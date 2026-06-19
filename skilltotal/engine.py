@@ -29,6 +29,7 @@ from skilltotal.models import (
     Severity,
     ThreatClass,
 )
+from skilltotal.owasp import owasp_for
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
 from skilltotal.scoring import (
@@ -144,6 +145,10 @@ def analyze_directory(
     if convergence is not None and convergence.id not in ignore_set:
         findings.append(convergence)
 
+    # Attach OWASP Agentic Skills Top 10 categories last, once every finding (incl. synthesized
+    # ones) is present. Pure metadata projection — never affects the score.
+    _assign_owasp(findings)
+
     score = compute_score(findings)
     level = risk_level(score)
 
@@ -172,6 +177,12 @@ def _assign_threat_classes(findings: list[Finding]) -> None:
     """Project each rule's declared threat_class onto its findings (one chokepoint)."""
     for f in findings:
         f.threat_class = _THREAT_CLASS_BY_ID.get(f.id, f.threat_class)
+
+
+def _assign_owasp(findings: list[Finding]) -> None:
+    """Project each rule's OWASP Agentic Skills Top 10 categories onto its findings."""
+    for f in findings:
+        f.owasp = owasp_for(f.id)
 
 
 def _verdict(findings: list[Finding], level) -> dict:
@@ -317,6 +328,7 @@ def _finding_with_evidence(finding: Finding, evidence: list[Evidence]) -> Findin
         evidence=evidence,
         recommendation=finding.recommendation,
         threat_class=finding.threat_class,
+        owasp=finding.owasp,
     )
 
 

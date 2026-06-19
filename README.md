@@ -287,8 +287,12 @@ A normalized report containing the component identity, a **risk score (0–100)*
 evidence-backed), **findings**, **needs_review**, and **metadata**. See
 [docs/report-schema.md](docs/report-schema.md) and [docs/scoring.md](docs/scoring.md).
 
-For MCP servers, [docs/mcp-owasp-mapping.md](docs/mcp-owasp-mapping.md) maps SkillTotal's checks
-to the OWASP MCP Security Cheat Sheet (and names the runtime controls a static engine can't cover).
+Every finding also carries its **OWASP Agentic Skills Top 10** category ids (`owasp`), emitted in
+both the JSON report and SARIF (native `taxonomies`/`relationships`);
+[docs/owasp-agentic-skills-mapping.md](docs/owasp-agentic-skills-mapping.md) explains the coverage
+(AST01–AST05) and the honest gaps. For MCP servers,
+[docs/mcp-owasp-mapping.md](docs/mcp-owasp-mapping.md) maps SkillTotal's checks to the OWASP MCP
+Security Cheat Sheet (and names the runtime controls a static engine can't cover).
 
 ## Architecture
 

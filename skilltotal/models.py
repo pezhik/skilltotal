@@ -140,6 +140,9 @@ class Finding:
     recommendation: str
     # Projected from the rule's RuleSpec by the engine; defaults to capability.
     threat_class: ThreatClass = ThreatClass.CAPABILITY
+    # OWASP Agentic Skills Top 10 category ids (e.g. ("AST04",)); projected by the engine.
+    # Empty when the rule has no honest fit in that taxonomy. Never affects the score.
+    owasp: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         # Hard invariant: a confirmed finding cannot exist without evidence.
@@ -159,6 +162,7 @@ class Finding:
             "evidence": [e.to_dict() for e in self.evidence],
             "recommendation": self.recommendation,
             "threat_class": self.threat_class.value,
+            "owasp": list(self.owasp),
         }
 
 

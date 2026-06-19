@@ -4,6 +4,16 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 18 (engine 0.17.0)
+
+**OWASP Agentic Skills Top 10 mapping (metadata only — no detection change).** Each rule id is
+mapped to its OWASP Agentic Skills Top 10 category/categories (`skilltotal/owasp.py`,
+`OWASP_BY_RULE`), projected onto findings as `Finding.owasp` and emitted in SARIF taxonomies. No
+detection logic, scoring, or rule pattern changed; the bump signals that stored reports can be
+re-read to pick up the new taxonomy field. Coverage maps to AST01–AST05 where statically honest;
+AST06–AST10 (runtime/governance) and classic code-level findings (CMDI/taint/raw capabilities) are
+intentionally unmapped (empty), never forced. See `docs/owasp-agentic-skills-mapping.md`.
+
 ## ruleset 17 (engine 0.16.0)
 
 **E-mail/SMTP exfiltration channel (deterministic, no LLM).** Closes the gap where a component

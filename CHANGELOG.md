@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.17.0]
+
+### Added
+- **OWASP Agentic Skills Top 10 mapping.** Every finding now carries machine-readable `owasp`
+  category ids (e.g. `["AST04"]`) in the JSON report, and SARIF output emits the taxonomy as
+  native `taxonomies` + per-rule `relationships`. Deterministic projection over the rule registry
+  (`skilltotal/owasp.py`); no execution, no LLM. Findings with no honest static fit (raw
+  capabilities, classic code-level vulns) carry an empty list rather than a forced category — see
+  `docs/owasp-agentic-skills-mapping.md`. Report schema **1.4** (adds `finding.owasp`); ruleset 18.
+
 ## [0.16.6]
 
 ### Fixed

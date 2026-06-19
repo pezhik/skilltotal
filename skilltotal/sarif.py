@@ -11,10 +11,17 @@ import json
 
 from skilltotal import __version__
 from skilltotal.models import Report, Severity
+from skilltotal.owasp import OWASP_TAXONOMY, owasp_for
 from skilltotal.rules import get_rules
 
 SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 INFO_URI = "https://www.skilltotal.ai"
+
+# Stable guid for the OWASP taxonomy ToolComponent so rule relationships can reference it
+# (SARIF links relationships to a taxonomy by guid). Fixed literal — deterministic output.
+_OWASP_GUID = "3a8c1e94-7b2d-4f6a-9c1e-0d5b2a7f4e10"
+_OWASP_NAME = "OWASP Agentic Skills Top 10"
+_OWASP_URI = "https://owasp.org/www-project-agentic-skills-top-10/"
 
 _LEVEL = {
     Severity.CRITICAL: "error",
@@ -50,6 +57,7 @@ def _sarif_doc(report: Report) -> dict:
                         "rules": _rule_descriptors(),
                     }
                 },
+                "taxonomies": _taxonomies(),
                 "results": _results(report),
                 "properties": {
                     "risk_score": report.risk_score,
@@ -61,24 +69,65 @@ def _sarif_doc(report: Report) -> dict:
     }
 
 
+def _taxonomies() -> list[dict]:
+    """The OWASP Agentic Skills Top 10 as a SARIF taxonomy (all 10 categories as taxa)."""
+    return [
+        {
+            "name": _OWASP_NAME,
+            "guid": _OWASP_GUID,
+            "version": "1.0",
+            "organization": "OWASP",
+            "informationUri": _OWASP_URI,
+            "shortDescription": {"text": "OWASP Agentic Skills Top 10 (2026)"},
+            "isComprehensive": True,
+            "taxa": [
+                {
+                    "id": cat.id,
+                    "name": cat.title,
+                    "helpUri": cat.url,
+                    "shortDescription": {"text": cat.title},
+                }
+                for cat in OWASP_TAXONOMY
+            ],
+        }
+    ]
+
+
+def _owasp_relationships(rule_id: str) -> list[dict]:
+    """SARIF relationships linking a rule to its OWASP Agentic Skills Top 10 taxa."""
+    return [
+        {
+            "target": {
+                "id": cat_id,
+                "toolComponent": {"name": _OWASP_NAME, "guid": _OWASP_GUID},
+            },
+            "kinds": ["relevant"],
+        }
+        for cat_id in owasp_for(rule_id)
+    ]
+
+
 def _rule_descriptors() -> list[dict]:
     descriptors = []
     for rule in get_rules():
-        descriptors.append(
-            {
-                "id": rule.id,
-                "name": rule.title,
-                "shortDescription": {"text": rule.title},
-                "fullDescription": {"text": rule.description},
-                "helpUri": INFO_URI,
-                "defaultConfiguration": {"level": _LEVEL[rule.severity]},
-                "properties": {
-                    "security-severity": _SECURITY_SEVERITY[rule.severity],
-                    "category": rule.category,
-                    "tags": [rule.category],
-                },
-            }
-        )
+        owasp_ids = owasp_for(rule.id)
+        descriptor = {
+            "id": rule.id,
+            "name": rule.title,
+            "shortDescription": {"text": rule.title},
+            "fullDescription": {"text": rule.description},
+            "helpUri": INFO_URI,
+            "defaultConfiguration": {"level": _LEVEL[rule.severity]},
+            "properties": {
+                "security-severity": _SECURITY_SEVERITY[rule.severity],
+                "category": rule.category,
+                "tags": [rule.category, *owasp_ids],
+            },
+        }
+        relationships = _owasp_relationships(rule.id)
+        if relationships:
+            descriptor["relationships"] = relationships
+        descriptors.append(descriptor)
     return descriptors
 
 
