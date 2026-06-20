@@ -173,6 +173,10 @@ def to_markdown(agg: dict) -> str:
         "python tests/manual_eval/corpus_report.py  # default manifest: report_manifest.csv",
         "```",
         "",
+        "The manifest auto-grows from the official MCP registry (append-only, with resolvability "
+        "and public-hygiene gates and a per-run cap), so the corpus expands over time without "
+        "manual curation.",
+        "",
         "Unreachable/private components are skipped (listed in the JSON), never silently dropped; "
         "results characterize the manifest, not a claim of statistical representativeness.",
         "",

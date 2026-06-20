@@ -72,6 +72,14 @@ def test_markdown_render_has_sections(tmp_path):
     assert "## Reproduce" in md
 
 
+def test_reproduce_note_mentions_autogrow(tmp_path):
+    rows = [[str(FIXTURES / "sh-base64-exec"), "skill", "skill", "b64"]]
+    manifest = _manifest(tmp_path, rows)
+    results = [cr.scan_row(*r) for r in cr.load_manifest(manifest)]
+    md = cr.to_markdown(cr.aggregate(results, "abc123"))
+    assert "auto-grows from the official MCP registry" in md
+
+
 def test_cli_writes_json_and_md(tmp_path):
     rows = [[str(FIXTURES / "sh-base64-exec"), "skill", "skill", "b64"]]
     manifest = _manifest(tmp_path, rows)
