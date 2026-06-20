@@ -63,3 +63,6 @@ package-lock.json
 _test_web.db
 _dev_web.db
 local_e2e.db
+
+# Local-only superpowers planning docs (specs/plans) — must never reach the public repo.
+docs/superpowers/
