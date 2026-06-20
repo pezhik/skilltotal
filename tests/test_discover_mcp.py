@@ -68,13 +68,13 @@ def test_normalize_skips_when_no_usable_coordinate():
 # --- hygiene + dedup -------------------------------------------------------------------------
 
 
-def test_hygiene_rejects_forbidden_token():
-    bad_path = dm.Candidate("https://github.com/x/Yandex.Disk", "git", "mcp", "y")
-    bad_token = dm.Candidate("npm:x", "npm", "mcp", "12345678:ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
-    good = dm.Candidate("npm:safe", "npm", "mcp", "safe")
-    assert not dm.hygiene_ok(bad_path)
-    assert not dm.hygiene_ok(bad_token)
-    assert dm.hygiene_ok(good)
+def test_hygiene_allowlist_accepts_clean_and_rejects_malformed():
+    assert dm.hygiene_ok(dm.Candidate("npm:safe-pkg", "npm", "mcp", "safe"))
+    assert dm.hygiene_ok(dm.Candidate("pypi:safe_pkg", "pypi", "mcp", "safe"))
+    assert dm.hygiene_ok(dm.Candidate("npm:@scope/pkg", "npm", "mcp", "pkg"))
+    assert dm.hygiene_ok(dm.Candidate("https://github.com/owner/repo", "git", "mcp", "repo"))
+    assert not dm.hygiene_ok(dm.Candidate("npm:bad name", "npm", "mcp", "bad"))  # whitespace
+    assert not dm.hygiene_ok(dm.Candidate("file:///etc/passwd", "git", "mcp", "x"))
 
 
 def test_dedup_filters_existing_and_within_run():
@@ -136,7 +136,7 @@ def test_select_new_drops_unresolvable():
 
 
 def test_select_new_excludes_existing_and_unhygienic():
-    cands = [_c("a"), dm.Candidate("npm:Yandex.Disk", "npm", "mcp", "bad"), _c("dup")]
+    cands = [_c("a"), dm.Candidate("npm:bad name", "npm", "mcp", "bad"), _c("dup")]
     chosen = dm.select_new(
         cands,
         {"npm:dup"},

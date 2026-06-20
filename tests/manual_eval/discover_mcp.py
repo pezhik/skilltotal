@@ -27,20 +27,14 @@ from skilltotal.collector import CollectionError
 REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0/servers"
 MANIFEST_DEFAULT = "tests/manual_eval/report_manifest.csv"
 
-# Same set deploy.ps1 / corpus-report-refresh.ps1 enforce on the public engine repo. We never write
-# a manifest row whose source/name matches any of these.
-_HYGIENE = [
-    re.compile(p)
-    for p in (
-        r"skilltotal-ops",
-        r"skilltotal-web",
-        r"pezhemskiid",
-        r"Yandex\.Disk",
-        r"C:\\Users",
-        r"/c/Users/",
-        r"[0-9]{8,10}:[A-Za-z0-9_-]{35}",
-    )
-]
+# Positive allowlist: accept only clean, expected source shapes — an npm/pypi coordinate or a
+# github URL. The official MCP registry yields exactly these; anything else (local paths, odd
+# characters, whitespace) is rejected before it can reach the public manifest. An allowlist avoids
+# enumerating any private/denylisted token in this public file; the authoritative public-hygiene
+# grep runs in the ops publish step (over the committed manifest, before push).
+_SAFE_SOURCE = re.compile(
+    r"^(?:npm:[A-Za-z0-9._@/-]+|pypi:[A-Za-z0-9._-]+|https://github\.com/[A-Za-z0-9._/-]+)$"
+)
 _SLUG_STRIP = re.compile(r"[^a-z0-9._-]")
 
 
@@ -86,9 +80,12 @@ def normalize_entry(item: dict) -> Candidate | None:
 
 
 def hygiene_ok(cand: Candidate) -> bool:
-    """False if the candidate's source or name matches any public-hygiene pattern."""
-    blob = f"{cand.source} {cand.name}"
-    return not any(p.search(blob) for p in _HYGIENE)
+    """True only for a clean, expected source shape (npm/pypi coordinate or github URL).
+
+    A positive allowlist: local paths, whitespace, and unexpected characters are rejected before a
+    candidate can reach the public manifest.
+    """
+    return bool(_SAFE_SOURCE.match(cand.source))
 
 
 def dedup(cands: list[Candidate], existing_sources: set[str]) -> list[Candidate]:
