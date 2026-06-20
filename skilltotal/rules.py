@@ -17,6 +17,7 @@ from skilltotal.scoring import (
     INSTALL_DROPPER_FINDING_ID,
     TRIFECTA_FINDING_ID,
 )
+from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID
 
 # The combination rule is synthesized in scoring, not by a scanner; expose it for listing.
 # Its threat_class must match the synthesized finding (RISKY_CONSTRUCT): _assign_threat_classes
@@ -85,6 +86,23 @@ _CONVERGENCE_RULE = RuleSpec(
 )
 
 
+# Package-name typosquatting, synthesized in skilltotal.typosquatting (off component identity).
+# threat_class must match the finding (RISKY_CONSTRUCT) or it is silently unscored.
+_TYPOSQUAT_RULE = RuleSpec(
+    id=TYPOSQUAT_FINDING_ID,
+    category="supply_chain",
+    severity=Severity.HIGH,
+    title="Package name closely resembles a popular package (possible typosquatting)",
+    description=(
+        "Raised when an npm/PyPI package name is one or two character edits from a well-known "
+        "popular package — the classic typosquatting / name-confusion supply-chain vector."
+    ),
+    recommendation="Confirm the package name, publisher, and repository are the ones you intend.",
+    capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+)
+
+
 # Install-time dropper, synthesized in scoring (after capabilities). threat_class must match.
 _INSTALL_DROPPER_RULE = RuleSpec(
     id=INSTALL_DROPPER_FINDING_ID,
@@ -106,6 +124,7 @@ def get_rules() -> list[RuleSpec]:
     rules = list(all_rules()) + [
         _COMBO_RULE,
         _SKILL_MISMATCH_RULE,
+        _TYPOSQUAT_RULE,
         _TRIFECTA_RULE,
         _CONVERGENCE_RULE,
         _INSTALL_DROPPER_RULE,

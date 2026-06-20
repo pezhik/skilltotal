@@ -4,6 +4,21 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 19 (engine 0.18.0)
+
+**Package-name typosquatting (deterministic, no LLM).** Closes the one named parity gap from the
+competitive analysis: a package whose name impersonates a popular one.
+
+- **`ST-TYPOSQUAT`** (`skilltotal/typosquatting.py`; risky_construct, high): an npm/PyPI component
+  whose (canonicalized) name is 1–2 Levenshtein edits from a curated set of widely-used packages
+  (~100 per ecosystem), e.g. `loddash`/`lodash`, `reqests`/`requests`. Synthesized in `engine.py`
+  off component identity (not file content), with evidence anchored to the `name` field in
+  `package.json`/`pyproject.toml`/`setup.py` so the no-finding-without-evidence invariant holds.
+  Maps to **AST02** (Supply Chain Compromise). FP-safe by construction: exact matches, scoped npm
+  names (`@scope/…`), and names shorter than 5 chars are never flagged, and distance-2 matches
+  require length ≥ 6. The curated popular-name lists are refreshed alongside this ruleset version.
+  Tests: `tests/test_typosquatting.py`.
+
 ## ruleset 18 (engine 0.17.0)
 
 **OWASP Agentic Skills Top 10 mapping (metadata only — no detection change).** Each rule id is

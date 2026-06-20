@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.18.0]
+
+### Added
+- **Package-name typosquatting detection (`ST-TYPOSQUAT`).** Flags an npm/PyPI package whose name
+  is one or two character edits from a well-known popular package — the classic supply-chain
+  name-confusion attack (`lodash` → `loddash`). Deterministic, stdlib-only, no LLM; a synthesized
+  finding keyed off component identity with evidence anchored to the manifest `name` declaration
+  (`skilltotal/typosquatting.py`). Conservative (exact matches, scoped names, and short names are
+  never flagged) so it holds false positives at zero on benign corpora. Maps to OWASP **AST02**
+  (Supply Chain Compromise). Ruleset **19**.
+- **GitHub Action: optional pull-request comment.** A new `comment-on-pr` input posts (and updates
+  in place) a single sticky summary comment — risk level, score, findings, capabilities — on pull
+  requests. Off by default; needs `pull-requests: write`. SARIF upload to Code Scanning is unchanged.
+- **README: "Add a status badge"** section pointing to the per-report badge snippet.
+
 ## [0.17.0]
 
 ### Added

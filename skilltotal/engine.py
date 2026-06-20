@@ -40,6 +40,7 @@ from skilltotal.scoring import (
     risk_level,
     trifecta_finding,
 )
+from skilltotal.typosquatting import package_name_typosquatting
 
 
 def analyze(
@@ -132,6 +133,12 @@ def analyze_directory(
     mismatch = skill_capability_mismatch(component, index, capabilities)
     if mismatch is not None:
         findings.append(mismatch)
+
+    # Supply chain: npm/PyPI package name one or two edits from a popular package (typosquatting).
+    # Synthesized here off component identity; deterministic, evidence-anchored to the manifest.
+    typosquat = package_name_typosquatting(component, index)
+    if typosquat is not None:
+        findings.append(typosquat)
 
     if ignore_set:
         # Drop again after synthesis so ignored synthesized ids (e.g. ST-COMBO-EXFIL) are honored.

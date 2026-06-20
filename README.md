@@ -163,6 +163,7 @@ on: [push, pull_request]
 permissions:
   contents: read
   security-events: write   # required to upload SARIF to Code Scanning
+  pull-requests: write     # required only for comment-on-pr (optional)
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -170,13 +171,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: pezhik/skilltotal@v0.17.0
         with:
-          source: .          # a path, a git URL, or an npm:/pypi:<name> spec
-          fail-on: high      # fail the build on a high/critical finding (or 'none')
+          source: .             # a path, a git URL, or an npm:/pypi:<name> spec
+          fail-on: high         # fail the build on a high/critical finding (or 'none')
+          comment-on-pr: 'true' # post a sticky summary comment on pull requests (optional)
 ```
 
 The action installs the CLI, scans `source`, uploads SARIF (so findings appear inline on pull
 requests and in Code Scanning), and fails the job on a high/critical finding unless
-`fail-on: none`. Pin the action to a released tag (see
+`fail-on: none`. On pull requests, `comment-on-pr: 'true'` posts a single summary comment (risk
+level, score, findings, capabilities) and updates it in place on later runs — it needs
+`pull-requests: write` and is off by default. Pin the action to a released tag (see
 [Releases](https://github.com/pezhik/skilltotal/releases)) and, optionally, pin the engine version
 with the `version:` input. Prefer plain CLI? It is the same thing:
 `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
@@ -197,6 +201,18 @@ repos:
 
 Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
 on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`).
+
+### Add a status badge
+
+Scan a component on [skilltotal.ai](https://www.skilltotal.ai) and each report offers an
+**"Add this badge"** snippet — a small SVG that always reflects the component's latest scan and
+links back to the full report. Drop it in your README so visitors see the risk at a glance:
+
+```markdown
+[![SkillTotal](https://www.skilltotal.ai/…/badge?source=npm:your-package)](https://www.skilltotal.ai)
+```
+
+Copy the exact, ready-to-paste markdown from the report page — it fills in the badge URL for you.
 
 ## Methodology
 

@@ -23,6 +23,10 @@ inputs:
     description: "Upload SARIF to GitHub Code Scanning (job needs 'security-events: write')."
     required: false
     default: "true"
+  comment-on-pr:
+    description: "Post a summary comment on pull requests (job needs 'pull-requests: write')."
+    required: false
+    default: "false"
   baseline:
     description: "Optional path to a baseline file to suppress accepted findings."
     required: false
@@ -94,6 +98,45 @@ runs:
       uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
       with:
         sarif_file: ${{ inputs.sarif-file }}
+
+    - name: Comment on PR
+      if: ${{ always() && github.event_name == 'pull_request' && inputs.comment-on-pr == 'true' }}
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          const fs = require('fs');
+          const MARKER = '<!-- skilltotal-report -->';
+          let report;
+          try {
+            report = JSON.parse(fs.readFileSync('skilltotal.json', 'utf8'));
+          } catch (e) {
+            core.info('No skilltotal.json to comment from: ' + e.message);
+            return;
+          }
+          const level = report.risk_level || 'unknown';
+          const score = report.risk_score ?? '?';
+          const findings = (report.findings || []).length;
+          const caps = Object.keys(report.capabilities || {});
+          const icon = ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🟢' })[level] || '⚪';
+          const body = [
+            MARKER,
+            '## ' + icon + ' SkillTotal — AI component security scan',
+            '',
+            '**Risk:** ' + level.toUpperCase() + ' (' + score + '/100) · **Findings:** ' + findings,
+            caps.length ? '**Capabilities:** ' + caps.join(', ') : '_No notable capabilities detected._',
+            '',
+            'Detailed results are in the **Security → Code scanning** tab (SARIF). ' +
+              'Deterministic static analysis — [SkillTotal](https://www.skilltotal.ai).',
+          ].join('\n');
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          const comments = await github.rest.issues.listComments({ owner, repo, issue_number });
+          const existing = comments.data.find((c) => c.body && c.body.includes(MARKER));
+          if (existing) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
 
     - name: Enforce gate
       if: ${{ always() }}
