@@ -443,6 +443,8 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
     Python: a match inside a comment (any policy) or a string literal (``strings_and_comments``).
     Shell: a match inside a ``#`` comment — so a ``# Usage: curl … | bash`` example line is a
     doc comment, not a runnable remote pipe-to-shell.
+    C-family (.ts/.js/.go/.rs/…): a match inside a ``//`` or ``/* */`` comment — so a JSDoc line
+    describing a threat (``* exfiltrate … to …``) is a description, not behavior.
     """
     f = by_path.get(e.file)
     if f is None or e.match_offset is None:
@@ -453,7 +455,10 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
         return policy == "strings_and_comments" and f.in_string(e.match_offset)
     if f.suffix in (".sh", ".bash", ".zsh"):
         return f.in_shell_comment(e.match_offset)
-    return False
+    # C-family: demote matches in // and /* */ comments (a description in a code comment is not
+    # behavior). String literals are NOT demoted here — a credential path passed as a string
+    # argument is real access; only Python strings are demoted (see above).
+    return f.in_c_comment(e.match_offset)
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:

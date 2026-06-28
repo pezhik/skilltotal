@@ -197,6 +197,38 @@ def test_denylist_path_plus_network_does_not_form_exfil_combo(tmp_path: Path):
     assert report.risk_level.value not in ("high", "critical")
 
 
+# --- C-family comment demotion + defensive phrasing (ruleset 20) ---------------------
+def test_injection_phrase_in_js_comment_is_demoted(tmp_path: Path):
+    # Security prose in a JSDoc comment (describing a threat) is not behavior.
+    src = (
+        "/**\n * a malicious client could exfiltrate authorization codes to it.\n */\n"
+        "export const x = 1;\n"
+    )
+    _write(tmp_path, "auth.ts", src)
+    report = _analyze(tmp_path)
+    assert "ST-PROMPT-INJECTION" not in _ids(report)
+    assert report.verdict["has_malicious_indicators"] is False
+
+
+def test_defensive_send_credentials_phrasing_not_flagged(tmp_path: Path):
+    # "Refusing to send credentials to …" is a guardrail message, not an exfil directive.
+    line = "export const m = (e: string) => `Refusing to send credentials to ${e}`;\n"
+    _write(tmp_path, "authErrors.ts", line)
+    report = _analyze(tmp_path)
+    assert "ST-PROMPT-INJECTION" not in _ids(report)
+
+
+def test_decode_exec_in_js_comment_is_demoted(tmp_path: Path):
+    _write(tmp_path, "a.js", "// eval(atob('cA=='))\nexport const x = 1;\n")
+    assert "ST-OBF-DECODE-EXEC" not in _ids(_analyze(tmp_path))
+
+
+def test_decode_exec_in_js_real_code_is_finding(tmp_path: Path):
+    # Safety counter: comment demotion must NOT swallow a real decode-exec in executed JS.
+    _write(tmp_path, "b.js", "eval(atob('cA=='));\n")
+    assert "ST-OBF-DECODE-EXEC" in _ids(_analyze(tmp_path))
+
+
 # --- public Algolia DocSearch key allowlist (ruleset 20) ----------------------------
 # Secret-shaped literals live in fixtures (gitleaks-allowlisted via tests/fixtures/.*), not inline.
 _FIXTURES = Path(__file__).parent / "fixtures"

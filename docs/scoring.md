@@ -107,7 +107,8 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … (`is_data_corpus_path`). A
   prompt-injection string in an eval dataset is a detector test vector, not behavior. Restricted to
   non-code suffixes, so a real payload shipped as code in such a directory is still scanned/scored.
-- **Python string literals / comments, and shell `#` comments** — a behavior/text detector matching
+- **Python string literals / comments, shell `#` comments, and C-family `//` `/* */` comments**
+  (`.ts`/`.js`/`.go`/`.rs`/…) — a behavior/text detector matching
   its own regex literal or a docstring example is not behavior; a `# Usage: curl … | bash` line is a
   doc comment, not a runnable pipe-to-shell. Governed per-rule by `code_context`
   (`strings_and_comments` for decode-exec / tool-poisoning / prompt-injection / sensitive-path;

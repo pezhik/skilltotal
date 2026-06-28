@@ -50,7 +50,7 @@ _STRONG = alternation(
     # specs (FP: exa bundles the MCP spec: "clients MUST NOT send tokens to the MCP server").
     # Best-effort negation guard for plain prose (markdown emphasis can still defeat a fixed-width
     # lookbehind, which is why the ambiguous "tokens" target is dropped rather than relied upon).
-    r"(?<!not )(?<!never )(?<!n't )(?<!cannot )"
+    r"(?<!not )(?<!never )(?<!n't )(?<!cannot )(?<!refuse to )(?<!refuses to )(?<!refusing to )"
     r"send\s+(?:the\s+)?(?:credentials|secrets|api[\s_-]?keys?|passwords?|"
     r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|system\s+prompt)\s+to\b",
     r"send\s+(?:it|this|them|the\s+data)?\s*to\s+[^\n]{0,40}webhook",

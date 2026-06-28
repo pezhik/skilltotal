@@ -21,6 +21,12 @@ benign tool `malicious`). Each is fixed by demoting evidence in a non-behavioral
   (`IndexedFile.in_shell_comment`, `_is_noncode_context`); `ST-SHELL-PIPE-EXEC` set to
   `code_context="comments"`. A `# Usage: curl … | bash` install instruction is no longer a runnable
   remote pipe-to-shell.
+- **C-family comment demotion + defensive phrasing.** Code-context demotion also covers `//` and
+  `/* */` comments in C-family files (`.ts/.js/.go/.rs/…`, `IndexedFile.in_c_comment`), so security
+  prose in a code/JSDoc comment (e.g. `* exfiltrate authorization codes to it`) is a description,
+  not behavior. Strings are NOT demoted there (real access is a string argument). `ST-PROMPT-INJECTION`
+  also gained negative-lookbehinds for defensive phrasing (`refuse/refusing/refuses to send
+  credentials to …`). Fixes the official MCP TypeScript SDK being mislabeled `malicious`.
 - **Sensitive-path denylist/guardrail context.** `sensitive_paths.py` routes a strong credential
   path to `needs_review` when it appears in a denylist/guardrail context: a `policy`/`guard`/
   `security`/`sandbox`/`denylist` token in any path segment *or filename* (so `net_guard.rs`,

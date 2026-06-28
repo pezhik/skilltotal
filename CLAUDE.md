@@ -128,7 +128,8 @@ collector.py → file_index.py → scanners/* → capabilities.py + scoring.py �
   data/eval/benchmark corpora via `file_index.is_data_corpus_path` — a corpus *data* file like
   `eval_datasets/poisoning.yaml`, restricted to non-code suffixes so a real code payload there is
   still scanned); and `_split_code_context_evidence` (matches inside Python string-literals/comments,
-  or shell `#` comments, per each rule's `RuleSpec.code_context`). This is why a security scanner does
+  shell `#` comments, or C-family `//` `/* */` comments (.ts/.js/.go/.rs/…), per each rule's
+  `RuleSpec.code_context`). This is why a security scanner does
   not flag its own pattern literals, a README's example attack, a `# Usage: curl|bash` comment, or a
   prompt-injection sample shipped as an eval test vector. `sensitive_paths.py` and `secrets.py`
   additionally route denylist/guardrail credential paths and public Algolia DocSearch keys to

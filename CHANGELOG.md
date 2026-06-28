@@ -15,7 +15,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
   **comment** (`# Usage: curl … | bash`); (3) credential paths in a **denylist/guardrail** (a policy
   that protects `~/.ssh`/`id_rsa`, not access to it — also clears the spurious exfil combo it fed);
   (4) public **Algolia DocSearch** search keys (read-only, safe to embed); (5) command-injection in
-  **compound test trees** (`cli-e2e-tests/`). No detection was removed; report schema unchanged.
+  **compound test trees** (`cli-e2e-tests/`); (6) security prose in **C-family code/JSDoc comments**
+  (`.ts`/`.js`/`.go`/`.rs`) plus defensive "refuse to send credentials to …" phrasing — which had
+  mislabeled the official MCP TypeScript SDK as `malicious`. No detection was removed; report schema
+  unchanged.
 
 ## [0.18.0]
 

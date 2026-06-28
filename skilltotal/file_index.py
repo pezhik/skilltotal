@@ -173,6 +173,59 @@ def _offset_in_spans(spans: list[tuple[int, int]] | None, offset: int) -> bool:
     return False
 
 
+# C-family languages whose `//` and `/* */` comments are demotable code-context (a pattern that
+# only appears in a comment is a doc/description, not executed behavior). String literals are NOT
+# demoted for these (unlike Python) — a credential path passed as a string argument is real access.
+_C_FAMILY_SUFFIXES: frozenset[str] = frozenset(
+    {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".c", ".cc", ".cpp",
+     ".h", ".hpp"}
+)
+
+
+def _c_comment_spans(text: str) -> list[tuple[int, int]]:
+    """Char-spans of ``//`` line and ``/* */`` block comments in C-family source.
+
+    String-aware (skips ``'…'``/``"…"``/`` `…` `` with backslash escapes) so a ``//`` or ``/*``
+    inside a string literal is not mistaken for a comment. Best-effort and stdlib-only; template
+    ``${…}`` interpolation is treated as opaque string content (worst case: no demotion).
+    """
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ("'", '"', "`"):
+            quote = c
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if c == "/" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt == "/":
+                start = i
+                i += 2
+                while i < n and text[i] != "\n":
+                    i += 1
+                spans.append((start, i))
+                continue
+            if nxt == "*":
+                start = i
+                i += 2
+                while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                    i += 1
+                i = min(n, i + 2)
+                spans.append((start, i))
+                continue
+        i += 1
+    return spans
+
+
 def _unquoted_hash_index(line: str) -> int | None:
     """Index of the first shell comment ``#`` in ``line``, or None.
 
@@ -239,6 +292,10 @@ class IndexedFile:
     _comment_spans: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
     # Lazily-computed char-spans of shell (#) comments, for non-Python code-context demotion.
     _sh_comment_spans: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    # Lazily-computed char-spans of C-family (// and /* */) comments.
+    _c_comment_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
 
@@ -310,6 +367,22 @@ class IndexedFile:
         """True if ``offset`` falls inside a shell ``#`` comment (shell files only)."""
         self._ensure_sh_comment_spans()
         return _offset_in_spans(self._sh_comment_spans, offset)
+
+    def _ensure_c_comment_spans(self) -> None:
+        """Record C-family (// and /* */) comment char-spans once, for C-family files only."""
+        if self._c_comment_spans_cache is not None:
+            return
+        self._c_comment_spans_cache = (
+            _c_comment_spans(self.text) if self.suffix in _C_FAMILY_SUFFIXES else []
+        )
+
+    def in_c_comment(self, offset: int) -> bool:
+        """True if ``offset`` falls inside a C-family ``//`` or ``/* */`` comment.
+
+        Returns False for non-C-family files, so callers can invoke it unconditionally.
+        """
+        self._ensure_c_comment_spans()
+        return _offset_in_spans(self._c_comment_spans_cache, offset)
 
     def line_of_offset(self, offset: int) -> int:
         """Return the 1-based line number containing ``offset``."""
