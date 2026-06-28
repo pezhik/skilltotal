@@ -61,6 +61,17 @@ def test_aggregate_shape_and_counts(tmp_path):
     assert agg["owasp"]["AST01"]["count"] >= 1
 
 
+def test_components_omit_per_project_verdicts(tmp_path):
+    # The published JSON must list manifest identity + scan status only — never a per-project
+    # risk verdict (risk_level / has_malicious / rules), so we don't label a named third party.
+    rows = [[str(FIXTURES / "npm-trapdoor-stealer"), "npm", "npm", "trapdoor"]]
+    results = [cr.scan_row(*r) for r in cr.load_manifest(_manifest(tmp_path, rows))]
+    comp = cr.aggregate(results, "abc123")["components"][0]
+    assert set(comp) == {"source", "type", "name", "status", "detail"}
+    for verdict_field in ("risk_level", "has_malicious", "owasp", "capabilities", "rule_ids"):
+        assert verdict_field not in comp
+
+
 def test_markdown_render_has_sections(tmp_path):
     rows = [[str(FIXTURES / "sh-base64-exec"), "skill", "skill", "b64"]]
     manifest = _manifest(tmp_path, rows)

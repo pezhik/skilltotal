@@ -14,7 +14,7 @@ import hashlib
 import json
 import time
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -113,7 +113,15 @@ def aggregate(results: list[CompResult], manifest_sha: str) -> dict:
         "capabilities": {cap: {"count": c, "pct": pct(c)} for cap, c in sorted(cap_counts.items())},
         "top_rules": [{"id": rid, "count": c} for rid, c in rule_counts.most_common(15)],
         "by_type": by_type,
-        "components": [asdict(r) for r in results],
+        # Per-component rows carry the manifest identity + scan STATUS only — deliberately NOT a
+        # per-project risk verdict (risk_level / has_malicious / rules). The report characterizes
+        # the corpus in aggregate; it must never publish a risk label against a named third-party
+        # project, where a false positive would be reputationally costly to them and to us.
+        "components": [
+            {"source": r.source, "type": r.type, "name": r.name, "status": r.status,
+             "detail": r.detail}
+            for r in results
+        ],
     }
 
 
@@ -179,6 +187,10 @@ def to_markdown(agg: dict) -> str:
         "",
         "Unreachable/private components are skipped (listed in the JSON), never silently dropped; "
         "results characterize the manifest, not a claim of statistical representativeness.",
+        "",
+        "This report is aggregate-only. The JSON lists each component's source and scan status but "
+        "**not** a per-component risk verdict, so it never publishes a risk label against a named "
+        "third-party project — scan any component yourself with the command above.",
         "",
     ]
     return "\n".join(lines)
