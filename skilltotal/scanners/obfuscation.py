@@ -23,13 +23,17 @@ from skilltotal.scanners.base import (
 
 CATEGORY = "obfuscation"
 
+# The optional ``\w+\.`` prefix tolerates a module alias (``import base64 as b`` ->
+# ``b.b64decode``); a method literally named ``b64decode`` is essentially always base64.
 _DECODE_EXEC = alternation(
-    r"exec\s*\(\s*(?:base64\.)?b64decode",
-    r"eval\s*\(\s*(?:base64\.)?b64decode",
+    r"exec\s*\(\s*(?:\w+\.)?b64decode",
+    r"eval\s*\(\s*(?:\w+\.)?b64decode",
     r"exec\s*\(\s*bytes\.fromhex",
     r"eval\s*\(\s*bytes\.fromhex",
     r"exec\s*\(\s*codecs\.decode",
     r"eval\s*\(\s*atob\s*\(",
+    # Indirect eval to dodge a literal ``eval(`` token: ``(0, eval)(atob(...))``.
+    r"\(\s*0\s*,\s*eval\s*\)\s*\(\s*(?:atob|Buffer\.from)\s*\(",
     r"Function\s*\(\s*atob\s*\(",
     r"eval\s*\(\s*Buffer\.from\s*\([^)]*['\"]base64['\"]",
 )

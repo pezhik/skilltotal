@@ -546,6 +546,23 @@ class _CallVisitor(ast.NodeVisitor):
         ):
             self._add(R_SENS_PY, node)
 
+    def visit_BinOp(self, node: ast.BinOp) -> None:
+        # A credential path built by string concatenation — e.g.
+        # ``os.path.expanduser('~') + '/.aws/credentials'`` or ``os.environ['HOME'] + '/.ssh/...'``
+        # — evades the literal-arg check above (the path is never a single open() argument). Flag a
+        # strong credential-path string literal used as an operand of ``+``. A bare literal, a list
+        # element, or a comparison is NOT a BinOp, so the denylist/guardrail cases stay clean.
+        if isinstance(node.op, ast.Add):
+            for operand in (node.left, node.right):
+                if (
+                    isinstance(operand, ast.Constant)
+                    and isinstance(operand.value, str)
+                    and _STRONG_PATHS.search(operand.value)
+                ):
+                    self._add(R_SENS_PY, node)
+                    break
+        self.generic_visit(node)
+
     def _decode_exec_inner_call(self, node: ast.Call) -> ast.Call | None:
         """If ``node`` is exec/eval/compile(<deserialize>(<non-literal>)), return the inner
         deserialize call (the decode-and-execute payload); otherwise None."""

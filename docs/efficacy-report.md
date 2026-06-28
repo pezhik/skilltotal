@@ -1,8 +1,8 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.21.0 · ruleset 22 · offline corpus.
+Engine 0.22.0 · ruleset 23 · offline corpus.
 
-- **recall: 100.0%** (22/22 malicious samples flagged)
+- **recall: 100.0%** (25/25 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/12 benign samples wrongly flagged)
 
 ## Recall by OWASP class
@@ -35,7 +35,7 @@ Engine 0.21.0 · ruleset 22 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 3 | 3 | 5 | 2 |
+| AST01 | 3 | 4 | 7 | 2 |
 | AST02 | 0 | 2 | 2 | 0 |
 | AST04 | 3 | 0 | 0 | 0 |
 | AST05 | 0 | 0 | 2 | 0 |

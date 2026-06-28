@@ -4,7 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [0.21.0]
+## [0.22.0]
+
+### Changed
+- **Evasion hardening (ruleset 23): three real detector bypasses closed, FP-safe.** Surfaced by the
+  new efficacy benchmark's evasion variants:
+  - **base64 module-alias decode-exec** — `import base64 as b; exec(b.b64decode(remote))` now fires
+    `ST-OBF-DECODE-EXEC` (the decode-exec regex tolerates an alias prefix before `b64decode`).
+  - **indirect eval** — `(0, eval)(atob(remote))` (and `Buffer.from`) now fires `ST-OBF-DECODE-EXEC`.
+  - **concatenation-built credential paths** — `os.path.expanduser('~') + '/.aws/credentials'` /
+    `os.environ['HOME'] + '/.ssh/id_rsa'` now fire `ST-SENS-PATH-PY` (AST `BinOp` check), so the
+    credential-exfil combo (`ST-COMBO-EXFIL`) is no longer evaded by building the path in pieces.
+  Denylist/guardrail and literal-payload false-positive guards are preserved; the full FP floor and
+  benign corpus stay at zero false positives. New positive evasion samples added to the corpus.
 
 ### Added
 - **Detection-efficacy benchmark (recall / precision) + continuous gate.** A labeled offline corpus
@@ -15,6 +27,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
   alongside the existing smoke floor. Results are published in `docs/efficacy-report.md`; the
   honest language-coverage boundary (Python/Node/shell semantic vs. deferred Go/Rust/Java/Ruby/PHP)
   is documented in `docs/language-scope.md`. Test/doc tooling only — no detection or ruleset change.
+
+## [0.21.0]
 
 ### Changed
 - **FP calibration (ruleset 22): credential-shaped strings in inline Rust unit tests are no longer

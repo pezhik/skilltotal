@@ -4,6 +4,30 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 23 (engine 0.22.0)
+
+**Evasion hardening — three detector bypasses closed, FP-safe.** The new detection-efficacy
+benchmark (`tests/eval_corpus/` + `tests/manual_eval/efficacy.py`) probes realistic evasion variants
+with non-literal payloads; three genuine misses were found and fixed (each verified to keep the FP
+floor and benign corpus at zero false positives):
+
+- **base64 module-alias decode-exec.** `import base64 as b; exec(b.b64decode(<remote>))` evaded the
+  decode-exec regex, which required a literal `base64.` prefix or a bare `b64decode`. The
+  `_DECODE_EXEC` pattern in `obfuscation.py` now accepts an optional `\w+\.` alias prefix before
+  `b64decode` (a method literally named `b64decode` is essentially always base64). `from base64
+  import b64decode`, hex (`bytes.fromhex`) and `codecs.decode` forms already detected.
+- **indirect eval.** `(0, eval)(atob(<remote>))` / `(0, eval)(Buffer.from(...))` dodged the literal
+  `eval(` token; a new `_DECODE_EXEC` alternative matches the `(0, eval)(decode(` idiom.
+- **concatenation-built credential paths.** `os.path.expanduser('~') + '/.aws/credentials'` and
+  `os.environ['HOME'] + '/.ssh/id_rsa'` never appear as a single `open()` argument, so the AST
+  sensitive-path rule (literal-arg only) missed them and the credential-exfil combo did not fire. A
+  new `visit_BinOp` in `python_ast.py` flags a strong credential-path string literal used as an
+  operand of `+` → `ST-SENS-PATH-PY`, restoring `ST-COMBO-EXFIL`. A bare literal, a list element, or
+  a comparison is not a `BinOp`, so the ruleset-20 denylist/guardrail FP fix is preserved.
+
+Tests: `tests/eval_corpus/positive/AST01/{decode-exec,credential-exfil}/*evasion*`, gated by
+`tests/test_efficacy_floor.py` (recall 100%, FP 0).
+
 ## ruleset 22 (engine 0.21.0)
 
 **Inline Rust test code is demoted, like path-based test code (no detection removed).** Rust unit
