@@ -70,6 +70,7 @@ MUST_NOT_BE_ELEVATED = [
     _FIXTURES / "fp_algolia_key",     # public Algolia DocSearch search key
     _FIXTURES / "fp_e2e_tests",       # command-injection only in an e2e test tree
     _FIXTURES / "fp_mcp_sdk_comments",  # security prose in .ts comments / a defensive error string
+    _FIXTURES / "fp_rust_inline_test_secret",  # fake key only in inline #[cfg(test)] Rust code
 ]
 
 

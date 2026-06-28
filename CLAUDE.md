@@ -102,7 +102,12 @@ collector.py → file_index.py → scanners/* → capabilities.py + scoring.py �
 - **Test-code demotion** — `engine._split_test_evidence` (using `file_index.is_test_path`)
   moves evidence found only in test code (`__tests__/`, `*.test.*`, `tests/`, `conftest.py`,
   …) into `needs_review`, so test code never drives capabilities or the score. Findings with
-  both prod and test evidence keep only the prod evidence.
+  both prod and test evidence keep only the prod evidence. It also catches **inline Rust unit
+  tests** (`IndexedFile.in_rust_test`): code under `#[cfg(test)]`/`#[test]` lives in a normal
+  `.rs` source path `is_test_path` can't see, yet compiles only for `cargo test` and never ships,
+  so a fake key/path there is a fixture (`_rust_test_spans` masks comments/strings/char-literals
+  before brace-matching; `#[cfg(not(test))]` is left as prod). This runs before synthesis, so a
+  test-only secret/path can't feed `ST-COMBO-EXFIL`.
 - **`baseline.py`** — fingerprints `(rule id, file, snippet)` (line-independent) to suppress
   accepted findings; `engine.analyze_directory(..., suppress=set)` drops them before scoring.
 - **`sarif.py`** — renders SARIF 2.1.0 (one result per evidence; severity → level +

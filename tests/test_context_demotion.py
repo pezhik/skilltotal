@@ -272,6 +272,85 @@ def test_cmd_injection_in_shipped_src_is_finding(tmp_path: Path):
     assert "ST-CMDI-NODE" in _ids(report)
 
 
+# --- inline Rust test demotion (#[cfg(test)] / #[test]) (ruleset 22) ----------------
+# Rust unit tests live in the same .rs file as production code; their fake credentials must not
+# be scored. Sensitive paths are plain strings (no real token), so these can stay inline; the
+# embedded-secret cases live in fixtures (gitleaks-allowlisted under tests/fixtures/).
+_RUST_SENS = "/home/u/.ssh/id_rsa"
+
+
+def test_rust_inline_test_sens_path_is_demoted(tmp_path: Path):
+    src = (
+        "pub fn render(s: &str) -> String { s.to_string() }\n"
+        "#[cfg(test)]\nmod tests {\n"
+        "    #[test]\n    fn formats_error() {\n"
+        f'        let _p = "{_RUST_SENS}";\n'
+        "    }\n}\n"
+    )
+    _write(tmp_path, "src/errors.rs", src)
+    report = _analyze(tmp_path)
+    assert "ST-SENS-PATH" not in _ids(report)
+    assert any("test code" in n.reason for n in report.needs_review)
+
+
+def test_rust_prod_sens_path_is_finding(tmp_path: Path):
+    # Counter: the same path in production code (no test attribute) must still be flagged.
+    src = f'pub fn go() {{ let _d = std::fs::read("{_RUST_SENS}"); }}\n'
+    _write(tmp_path, "src/loader.rs", src)
+    report = _analyze(tmp_path)
+    assert "ST-SENS-PATH" in _ids(report)
+
+
+def test_rust_cfg_not_test_sens_path_is_finding(tmp_path: Path):
+    # #[cfg(not(test))] marks code compiled when NOT testing -> production -> must stay flagged.
+    src = f'#[cfg(not(test))]\npub fn go() {{ let _d = std::fs::read("{_RUST_SENS}"); }}\n'
+    _write(tmp_path, "src/prod.rs", src)
+    report = _analyze(tmp_path)
+    assert "ST-SENS-PATH" in _ids(report)
+
+
+def test_rust_prod_code_after_test_block_still_scored(tmp_path: Path):
+    # Guard against runaway brace-matching swallowing production code after a test module.
+    src = (
+        "#[cfg(test)]\nmod tests {\n    #[test]\n    fn t() { let _x = \"{ noise }\"; }\n}\n"
+        f'pub fn go() {{ let _d = std::fs::read("{_RUST_SENS}"); }}\n'
+    )
+    _write(tmp_path, "src/mix.rs", src)
+    report = _analyze(tmp_path)
+    assert "ST-SENS-PATH" in _ids(report)
+
+
+def test_rust_test_spans_handles_lifetimes_and_string_braces():
+    from skilltotal.file_index import _rust_test_spans
+
+    text = (
+        "fn prod<'a>(x: &'a str) -> &'a str { x }\n"
+        '#[test]\nfn t() {\n    let s = "a { b } c";\n    let p = "/x/.ssh/id_rsa";\n}\n'
+        'fn after() { let q = "/x/.ssh/id_rsa"; }\n'
+    )
+    spans = _rust_test_spans(text)
+    assert len(spans) == 1  # only the #[test] fn; lifetimes and string braces must not skew it
+    start, end = spans[0]
+    assert text[start:end].startswith("#[test]")
+    assert "fn after" not in text[start:end]
+
+
+def test_rust_inline_test_secret_fixture_not_elevated():
+    # Mirror of the tandem FP: fake `sk-` keys in inline #[cfg(test)] code + production network
+    # egress must not score a secret, must not synthesize the exfil combo, must not be elevated.
+    report = _analyze_fixture("fp_rust_inline_test_secret")
+    assert "ST-SECRET-EMBEDDED" not in _ids(report)
+    assert "ST-COMBO-EXFIL" not in _ids(report)
+    assert report.risk_level.value not in ("high", "critical")
+    assert report.verdict["has_malicious_indicators"] is False
+
+
+def test_rust_prod_secret_still_flagged():
+    # Counter: a hardcoded secret in production Rust code stays a scored finding.
+    report = _analyze_fixture("fp_rust_prod_secret")
+    assert "ST-SECRET-EMBEDDED" in _ids(report)
+
+
 # --- self-scan: the shipped engine package must not verdict itself malicious --------
 def test_engine_package_self_scan_not_malicious():
     import skilltotal

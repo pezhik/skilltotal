@@ -109,7 +109,7 @@ def analyze_directory(
     #      a sample attack is a detector test vector, not behavior (code there is still scored)
     #   4. Python/shell code-context - a pattern that only appears inside a string literal/comment
     #      is a literal or doc example (e.g. a scanner's own rule definitions), not behavior
-    findings, test_review = _split_test_evidence(findings)
+    findings, test_review = _split_test_evidence(findings, index)
     needs_review.extend(test_review)
     findings, doc_review = _split_doc_evidence(findings)
     needs_review.extend(doc_review)
@@ -294,15 +294,32 @@ def _line_ignores(evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFi
     return False
 
 
+def _is_test_evidence(evidence: Evidence, by_path: dict[str, IndexedFile]) -> bool:
+    """True if evidence is in test code — by path (test dirs/suffixes) or inline Rust tests.
+
+    Rust unit tests live in the same .rs file as production code under `#[cfg(test)]` / `#[test]`,
+    which the path-based ``is_test_path`` cannot see. That gated code is not compiled into the
+    shipped artifact, so a credential there is a fixture, not behavior — demote it like any test.
+    """
+    if is_test_path(evidence.file):
+        return True
+    if evidence.match_offset is None:
+        return False
+    f = by_path.get(evidence.file)
+    return f is not None and f.in_rust_test(evidence.match_offset)
+
+
 def _split_test_evidence(
     findings: list[Finding],
+    index: FileIndex,
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Keep only non-test evidence on findings; summarize test-only matches as review."""
+    by_path = {f.relpath: f for f in index.files}
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
-        prod = [e for e in finding.evidence if not is_test_path(e.file)]
-        test = [e for e in finding.evidence if is_test_path(e.file)]
+        prod = [e for e in finding.evidence if not _is_test_evidence(e, by_path)]
+        test = [e for e in finding.evidence if _is_test_evidence(e, by_path)]
         if prod:
             if len(prod) != len(finding.evidence):
                 finding = Finding(

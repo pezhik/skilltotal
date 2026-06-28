@@ -57,7 +57,8 @@ Everything under `skilltotal/` is a pure library — no `print`, no `sys.exit` �
    obfuscation, prompt surface) add custom parsing. One finding per rule aggregates all
    matches as capped evidence.
 4. **Normalize** (`engine`): baseline suppression drops accepted fingerprints; test-only
-   evidence (`is_test_path`) is demoted to `needs_review`. Both happen *before* capabilities
+   evidence (`is_test_path`, plus inline Rust `#[cfg(test)]`/`#[test]` blocks via
+   `in_rust_test`) is demoted to `needs_review`. Both happen *before* capabilities
    and scoring, so neither test code nor suppressed findings affect the result.
 5. **Capabilities** (`capabilities.py`): a pure projection over findings — each `RuleSpec`
    declares the `Capability` it implies, so capabilities are regrouped finding-evidence.

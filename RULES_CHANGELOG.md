@@ -4,6 +4,28 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 22 (engine 0.21.0)
+
+**Inline Rust test code is demoted, like path-based test code (no detection removed).** Rust unit
+tests are written in the same `.rs` file as production code, gated by `#[cfg(test)]` (on a module)
+or `#[test]` (on a function). That code compiles only under `cargo test` and is never part of the
+shipped artifact, so a credential-shaped string there — a fake `sk-…`/`xoxb-…` key, a
+`~/.ssh/id_rsa` path — is a fixture, not behavior. The path-based `is_test_path` cannot see it
+(the file is a normal source path). New `file_index.py` helpers locate those spans
+(`_rust_test_spans`, exposed as `IndexedFile.in_rust_test`), masking comments / strings / char
+literals first so braces and the word `test` inside them do not skew matching; `#[cfg(not(test))]`
+(code compiled when *not* testing) is deliberately not matched. `engine.py::_split_test_evidence`
+now treats evidence inside those spans as test evidence and routes it to `needs_review`, before
+capability extraction and the synthesized combos. Consequence on the trusted corpus: **tandem**
+drops from `critical` (90) to `medium` — its `ST-SECRET-EMBEDDED` and the resulting
+`ST-COMBO-EXFIL` came entirely from fake keys in `#[test]` functions (redaction/keystore/slack
+tests) — and **codescene** drops from `high` (70) to `low` — its `ST-SENS-PATH` + `ST-COMBO-EXFIL`
+came from a fake `"secret token=abc123 …/.ssh/id_rsa"` string inside a `#[test]` error-formatting
+test. Genuine secrets/paths in production Rust still fire (counter-fixtures + offline floor).
+Also fixed: `ST-SECRET-EMBEDDED` evidence now keeps its match offset through snippet redaction, so
+the string/comment and inline-test demotion gates can locate embedded secrets. Tests:
+`tests/test_context_demotion.py`, fixtures `fp_rust_inline_test_secret` / `fp_rust_prod_secret`.
+
 ## ruleset 21 (engine 0.20.0)
 
 **Cloud instance-metadata endpoints no longer feed the exfiltration combo.** A reference to a

@@ -226,6 +226,134 @@ def _c_comment_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+# Rust unit tests live INLINE in the same .rs file as production code (gated by `#[cfg(test)]`
+# on a module or `#[test]` on a function), unlike the separate test directories is_test_path
+# recognizes. That gated code is compiled only for `cargo test` and never shipped to consumers,
+# so a credential-looking string there is a test fixture, not behavior. We locate those spans so
+# the engine can demote evidence inside them exactly as it demotes path-based test code.
+# `#[cfg(not(test))]` (code compiled when NOT testing) is deliberately NOT matched.
+_RUST_TEST_FN_ATTR = r"#\[\s*(?:[A-Za-z_]\w*\s*::\s*)*test\s*\]"
+_RUST_CFG_TEST_ATTR = r"#!?\[\s*cfg\s*\(\s*(?:all\s*\(|any\s*\()?\s*test\b"
+_RUST_TEST_MARKER = re.compile(f"{_RUST_TEST_FN_ATTR}|{_RUST_CFG_TEST_ATTR}")
+_RUST_BLOCK_ITEM = re.compile(r"\b(?:fn|mod)\b")
+_RUST_MARKER_LOOKAHEAD = 400  # max chars from a test attribute to its block body `{`
+
+
+def _rust_code_mask(text: str) -> str:
+    """Return ``text`` with comment / string / char-literal regions blanked to spaces.
+
+    Length and newlines are preserved so offsets stay identical to the original. Blanking the
+    non-code regions lets :func:`_rust_test_spans` count ``{``/``}`` and find attribute markers
+    without being fooled by braces — or the word ``test`` — inside strings or comments. Handles
+    ``//`` and (nesting) ``/* */`` comments, ``"…"`` and raw ``r#"…"#`` strings, and char/byte
+    literals, while leaving Rust lifetimes (``'a``) untouched. Best-effort, stdlib-only.
+    """
+    out = list(text)
+    i, n = 0, len(text)
+
+    def blank(a: int, b: int) -> None:
+        for p in range(a, b):
+            if out[p] != "\n":
+                out[p] = " "
+
+    while i < n:
+        c = text[i]
+        if c == "/" and i + 1 < n and text[i + 1] == "/":  # line comment
+            j = i
+            while j < n and text[j] != "\n":
+                j += 1
+            blank(i, j)
+            i = j
+            continue
+        if c == "/" and i + 1 < n and text[i + 1] == "*":  # block comment (Rust nests)
+            depth, j = 1, i + 2
+            while j < n and depth > 0:
+                if text[j] == "/" and j + 1 < n and text[j + 1] == "*":
+                    depth += 1
+                    j += 2
+                    continue
+                if text[j] == "*" and j + 1 < n and text[j + 1] == "/":
+                    depth -= 1
+                    j += 2
+                    continue
+                j += 1
+            blank(i, j)
+            i = j
+            continue
+        if c == "r" and i + 1 < n and text[i + 1] in ('"', "#"):  # raw string r#"…"#
+            j, hashes = i + 1, 0
+            while j < n and text[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and text[j] == '"':
+                close = '"' + "#" * hashes
+                end = text.find(close, j + 1)
+                end = n if end == -1 else end + len(close)
+                blank(i, end)
+                i = end
+                continue
+        if c == '"':  # normal / byte string
+            j = i + 1
+            while j < n:
+                if text[j] == "\\":
+                    j += 2
+                    continue
+                if text[j] == '"':
+                    j += 1
+                    break
+                j += 1
+            blank(i, j)
+            i = j
+            continue
+        if c == "'":  # char literal ('x', '\n', '\u{..}') -> blank; lifetime ('a) -> keep
+            if i + 1 < n and text[i + 1] == "\\":
+                j = i + 2
+                while j < n and text[j] not in ("'", "\n"):
+                    j += 1
+                if j < n and text[j] == "'":
+                    j += 1
+                blank(i, j)
+                i = j
+                continue
+            if i + 2 < n and text[i + 2] == "'":
+                blank(i, i + 3)
+                i += 3
+                continue
+            i += 1
+            continue
+        i += 1
+    return "".join(out)
+
+
+def _match_brace(masked: str, open_pos: int) -> int:
+    """Index just past the ``}`` matching the ``{`` at ``masked[open_pos]`` (len on imbalance)."""
+    depth, i, n = 0, open_pos, len(masked)
+    while i < n:
+        ch = masked[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _rust_test_spans(text: str) -> list[tuple[int, int]]:
+    """Char-spans of inline Rust test code (``#[cfg(test)] mod`` / ``#[test] fn`` blocks)."""
+    masked = _rust_code_mask(text)
+    spans: list[tuple[int, int]] = []
+    for m in _RUST_TEST_MARKER.finditer(masked):
+        brace = masked.find("{", m.end(), m.end() + _RUST_MARKER_LOOKAHEAD)
+        if brace == -1:
+            continue
+        if not _RUST_BLOCK_ITEM.search(masked, m.end(), brace):
+            continue  # attribute on a non-block item (use/const) -> no body to demote
+        spans.append((m.start(), _match_brace(masked, brace)))
+    return spans
+
+
 def _unquoted_hash_index(line: str) -> int | None:
     """Index of the first shell comment ``#`` in ``line``, or None.
 
@@ -296,6 +424,10 @@ class IndexedFile:
     )
     # Lazily-computed char-spans of C-family (// and /* */) comments.
     _c_comment_spans_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    # Lazily-computed char-spans of inline Rust test code (#[cfg(test)] / #[test] blocks).
+    _rust_test_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
 
@@ -383,6 +515,22 @@ class IndexedFile:
         """
         self._ensure_c_comment_spans()
         return _offset_in_spans(self._c_comment_spans_cache, offset)
+
+    def _ensure_rust_test_spans(self) -> None:
+        """Record inline Rust test-block char-spans once, for ``.rs`` files only."""
+        if self._rust_test_spans_cache is not None:
+            return
+        self._rust_test_spans_cache = (
+            _rust_test_spans(self.text) if self.suffix == ".rs" else []
+        )
+
+    def in_rust_test(self, offset: int) -> bool:
+        """True if ``offset`` falls inside inline Rust test code (#[cfg(test)] / #[test]).
+
+        Returns False for non-Rust files, so callers can invoke it unconditionally.
+        """
+        self._ensure_rust_test_spans()
+        return _offset_in_spans(self._rust_test_spans_cache, offset)
 
     def line_of_offset(self, offset: int) -> int:
         """Return the 1-based line number containing ``offset``."""

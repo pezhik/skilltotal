@@ -4,6 +4,25 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.21.0]
+
+### Changed
+- **FP calibration (ruleset 22): credential-shaped strings in inline Rust unit tests are no longer
+  scored.** Rust unit tests live in the same `.rs` file as production code, gated by
+  `#[cfg(test)]` / `#[test]`; that code is compiled only for `cargo test` and never shipped to
+  consumers, so a fake `sk-…` / `xoxb-…` key or `~/.ssh/id_rsa` path there is a test fixture, not
+  behavior. The engine now demotes evidence inside inline Rust test blocks to `needs_review`
+  exactly as it already demotes path-based test code (`__tests__/`, `*.test.*`). This fixes two
+  known false positives on real projects — **tandem** (`malicious` already cleared, was still
+  `critical`/90 from `ST-SECRET-EMBEDDED` + `ST-COMBO-EXFIL` over `#[test]` fixtures → now
+  `medium`) and **codescene** (`high`/70 from a `#[test]` error-message fixture → now `low`).
+  Production secrets in non-test Rust code, and `#[cfg(not(test))]` code, still fire.
+
+### Fixed
+- `ST-SECRET-EMBEDDED` evidence dropped its internal match offset during snippet redaction, so
+  embedded secrets were invisible to the string/comment and inline-test demotion gates. The offset
+  is now preserved (only the displayed snippet is redacted).
+
 ## [0.20.0]
 
 ### Added

@@ -171,5 +171,8 @@ class SecretsScanner(Scanner):
                 line_start=ev.line_start,
                 line_end=ev.line_end,
                 snippet=_redact(ev.snippet, value),
+                # Preserve the match offset (only the snippet is redacted) so code-context and
+                # inline-test demotion can locate this secret within the source.
+                match_offset=ev.match_offset,
             )
         )
