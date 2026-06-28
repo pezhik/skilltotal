@@ -6,6 +6,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ## [0.21.0]
 
+### Added
+- **Detection-efficacy benchmark (recall / precision) + continuous gate.** A labeled offline corpus
+  of synthetic malware/benign samples (`tests/eval_corpus/`, one technique per directory) plus a
+  harness (`tests/manual_eval/efficacy.py`) that measures recall (overall + per technique + per
+  OWASP class), precision / false-positive rate, and a per-language coverage matrix.
+  `tests/test_efficacy_floor.py` enforces 100% recall and zero false positives on every commit,
+  alongside the existing smoke floor. Results are published in `docs/efficacy-report.md`; the
+  honest language-coverage boundary (Python/Node/shell semantic vs. deferred Go/Rust/Java/Ruby/PHP)
+  is documented in `docs/language-scope.md`. Test/doc tooling only — no detection or ruleset change.
+
 ### Changed
 - **FP calibration (ruleset 22): credential-shaped strings in inline Rust unit tests are no longer
   scored.** Rust unit tests live in the same `.rs` file as production code, gated by

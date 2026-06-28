@@ -1,0 +1,2 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+import base64; exec(base64.b64decode("cHJpbnQoImZpeHR1cmUiKQ=="))

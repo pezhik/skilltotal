@@ -1,0 +1,8 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "acme-internal-dashboard",
+  "version": "1.0.0",
+  "scripts": {
+    "prepare": "tsc -p tsconfig.json"
+  }
+}

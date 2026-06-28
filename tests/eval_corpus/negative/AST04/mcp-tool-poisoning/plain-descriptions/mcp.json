@@ -1,0 +1,14 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "notes-server",
+  "tools": [
+    {
+      "name": "get_note",
+      "description": "Returns the note with the given id."
+    },
+    {
+      "name": "list_notes",
+      "description": "Lists all note titles for the current user."
+    }
+  ]
+}

@@ -74,6 +74,9 @@ exclude_dirs = ["tests", "build", "dist"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# The synthetic detection-efficacy samples are inert test DATA, not shipped code; their import
+# order / idioms are part of the attack/benign shape and must not be normalized by the linter.
+extend-exclude = ["tests/eval_corpus"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

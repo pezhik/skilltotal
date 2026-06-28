@@ -41,6 +41,20 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
 risk; `capability` rules are informational (they never push the score up — capability ≠ risk).
 
+## Measured efficacy (recall / precision)
+
+Coverage above is also **measured**, not just asserted. `tests/eval_corpus/` holds a labeled
+offline corpus of synthetic samples — `positive/` (malware that must be flagged) and `negative/`
+(benign look-alikes that must stay clean) — one technique per directory. The harness
+`tests/manual_eval/efficacy.py` runs the static engine over it and computes recall (overall + per
+technique + per OWASP class), precision / false-positive rate, and a per-language coverage matrix;
+`tests/test_efficacy_floor.py` enforces **100% recall** and **zero false positives** on every
+commit (alongside the smoke floor in `tests/test_offline_calibration.py`). The current numbers and
+the coverage matrix are published in `docs/efficacy-report.md`.
+
+Detection depth varies by language (Python AST + Node/TS/shell regex + cross-language signals; Go/
+Rust/Java/Ruby/PHP semantic exec/network/deser is a documented gap). See `docs/language-scope.md`.
+
 ## Known gaps (candidate rule improvements)
 
 - **`exec(marshal.loads(<remote>))` / `exec(pickle.loads(...))`** — CLOSED (ruleset 14): the

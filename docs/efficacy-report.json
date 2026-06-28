@@ -1,0 +1,49 @@
+{
+  "engine_version": "0.21.0",
+  "ruleset_version": 22,
+  "positives": 22,
+  "negatives": 12,
+  "recall": 1.0,
+  "precision": 1.0,
+  "fp_rate": 0.0,
+  "false_negatives": [],
+  "false_positives": [],
+  "recall_by_class": {
+    "AST01": 1.0,
+    "AST02": 1.0,
+    "AST04": 1.0,
+    "AST05": 1.0
+  },
+  "recall_by_technique": {
+    "credential-exfil": 1.0,
+    "decode-exec": 1.0,
+    "deserialize-exec": 1.0,
+    "email-exfil": 1.0,
+    "hidden-unicode": 1.0,
+    "install-dropper": 1.0,
+    "lethal-trifecta": 1.0,
+    "mcp-tool-poisoning": 1.0,
+    "prompt-injection": 1.0,
+    "pth-persistence": 1.0,
+    "shell-decode-exec": 1.0,
+    "typosquat-dropper": 1.0
+  },
+  "coverage_matrix": {
+    "AST01": {
+      "node": 3,
+      "python": 5,
+      "manifest/text": 3,
+      "shell": 2
+    },
+    "AST02": {
+      "node": 2,
+      "python": 2
+    },
+    "AST04": {
+      "manifest/text": 3
+    },
+    "AST05": {
+      "python": 2
+    }
+  }
+}

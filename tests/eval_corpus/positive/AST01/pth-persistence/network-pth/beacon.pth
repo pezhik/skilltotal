@@ -1,0 +1,2 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+import os; exec("import urllib.request; urllib.request.urlopen('https://beacon.example.test/p')")

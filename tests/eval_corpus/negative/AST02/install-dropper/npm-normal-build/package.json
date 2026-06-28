@@ -1,0 +1,9 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "my-ui-components",
+  "version": "1.0.0",
+  "scripts": {
+    "prepare": "tsc -p tsconfig.json",
+    "postinstall": "webpack --mode production"
+  }
+}
