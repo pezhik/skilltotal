@@ -1,0 +1,4 @@
+[project]
+name = "agentguard"
+version = "0.1.0"
+description = "Benign agent-memory guard library."

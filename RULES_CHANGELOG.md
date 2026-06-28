@@ -4,6 +4,43 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 20 (engine 0.19.0)
+
+**False-positive calibration: context demotion for inert/defensive code (no detection removed).**
+Five real-world FP classes were over-scoring legitimate components (and, in one case, mislabeling a
+benign tool `malicious`). Each is fixed by demoting evidence in a non-behavioral context to
+`needs_review` — the genuine attack shape still fires, guarded by the offline detection floor.
+
+- **Data/eval/benchmark corpus demotion.** New `is_data_corpus_path` (`file_index.py`) + gate
+  `_split_data_corpus_evidence` (`engine.py`): a pattern that appears only in an inert corpus *data*
+  file (`eval_datasets/poisoning.yaml`, `fixtures/*.json`, `benchmarks/…`) is a detector test
+  vector, not behavior. Restricted to non-code suffixes, so a real payload shipped as code in such a
+  directory is still scanned. This stops a prompt-injection sample in an eval dataset from raising
+  `ST-PROMPT-INJECTION` and falsely verdicting the component `malicious`.
+- **Shell-comment demotion.** Code-context demotion now covers shell `#` comments
+  (`IndexedFile.in_shell_comment`, `_is_noncode_context`); `ST-SHELL-PIPE-EXEC` set to
+  `code_context="comments"`. A `# Usage: curl … | bash` install instruction is no longer a runnable
+  remote pipe-to-shell.
+- **Sensitive-path denylist/guardrail context.** `sensitive_paths.py` routes a strong credential
+  path to `needs_review` when it appears in a denylist/guardrail context: a `policy`/`guard`/
+  `security`/`sandbox`/`denylist` token in any path segment *or filename* (so `net_guard.rs`,
+  `path_guard.rs` count), a deny/block/forbid keyword on the line, or a bare string-list element. A
+  policy that *protects* `~/.ssh`/`id_rsa` is the opposite of accessing it; real access (a path
+  passed to a read call) still fires. This also removes the spurious `ST-COMBO-EXFIL` it fed.
+- **Localized-documentation recognition.** `is_doc_path` now splits a prose filename's stem on `.`
+  as well as `-`/`_`, so a localized/variant doc (`README.zh-CN.md`, `CHANGELOG.fr.md`) is demoted
+  like its base file instead of being scored as behavior.
+- **Public Algolia DocSearch keys allowlisted.** `secrets.py` no longer flags a 32-hex search key
+  sitting next to an Algolia app id / index name (a public, read-only key); routed to `needs_review`.
+  Known-prefix provider keys (`AKIA…`, `sk-…`, …) are never allowlisted.
+- **Compound test-tree demotion.** `is_test_path` now recognizes compound test directories
+  (`cli-e2e-tests`, `integration-tests`, `unit_test`) via a `[-_]`-bounded suffix match, so
+  command-injection in e2e test helpers is demoted like other test code (`latest` etc. excluded).
+
+Tests: `tests/test_context_demotion.py` (demote + counter-fixture per class),
+`tests/test_offline_calibration.py` (`MUST_NOT_BE_ELEVATED` floor + unchanged `MUST_DETECT` gate),
+sanitized fixtures under `tests/fixtures/fp_*`.
+
 ## ruleset 19 (engine 0.18.0)
 
 **Package-name typosquatting (deterministic, no LLM).** Closes the one named parity gap from the

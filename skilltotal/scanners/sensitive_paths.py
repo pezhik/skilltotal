@@ -77,6 +77,42 @@ def _suppresses_env(relpath: str) -> bool:
     return suffix in _DOC_SUFFIXES
 
 
+# A guardrail/denylist that PROTECTS a credential location is the opposite of accessing it: a
+# security tool's policy listing `id_rsa`/`.ssh` as paths to deny is a defensive artifact, not an
+# exfiltration precursor. Such matches are routed to needs_review so they neither score nor feed
+# the credential-exfiltration combo. Real access (a path passed to open()/readFileSync()) is a
+# function argument — not a guard segment, keyword, or bare list element — so it still fires.
+_GUARD_PATH_SEGMENTS = frozenset(
+    {"policy", "policies", "guard", "guards", "denylist", "allowlist", "blocklist", "blocklists",
+     "sandbox", "permission", "permissions", "security", "acl"}
+)
+_GUARD_KEYWORDS = re.compile(
+    r"(?i)\b(?:deny|denied|denylist|block|blocked|blocklist|forbid|forbidden|exclude|excluded|"
+    r"reject|protect|protected|sensitive|redact|sanitize|allowlist)\b"
+)
+# A bare string-literal list element: only a quoted string + optional `.to_string()`/`.into()`
+# and a trailing comma (e.g. `"id_rsa".to_string(),`, `"**/.ssh/*",`). Declarative data, not a call.
+_BARE_LIST_ELEMENT = re.compile(r"""^\s*["'][^"']*["']\s*(?:\.\w+\(\))?\s*,?\s*$""")
+
+
+def _guard_segment(relpath: str) -> bool:
+    # Tokenize each path segment on `._-` so guard code is recognized whether it's a directory
+    # (policies/) or a filename (net_guard.rs, path_guard.rs, denylist.go).
+    for part in relpath.lower().split("/"):
+        if any(tok in _GUARD_PATH_SEGMENTS for tok in re.split(r"[._-]", part)):
+            return True
+    return False
+
+
+def _is_guardlist_context(relpath: str, line_text: str) -> bool:
+    """True if a sensitive-path match is a defensive denylist/guardrail mention, not access."""
+    return (
+        _guard_segment(relpath)
+        or bool(_GUARD_KEYWORDS.search(line_text))
+        or bool(_BARE_LIST_ELEMENT.match(line_text))
+    )
+
+
 _WEAK = re.compile(r"\b(?:credentials|secrets)\b", re.IGNORECASE)
 _SENS_WORD_EXAMPLES = 8
 
@@ -127,13 +163,37 @@ class SensitivePathScanner(Scanner):
         # web app as a credential-exfiltration path. It is surfaced for review instead.
         seen_ev: set[tuple[str, int, int]] = set()
         evidence: list[Evidence] = []
-        for _f, _m, ev in index.search(_STRONG_PATHS):
+        guard_files: list[str] = []
+        for f, _m, ev in index.search(_STRONG_PATHS):
             key = (ev.file, ev.line_start, ev.line_end)
-            if key not in seen_ev:
-                seen_ev.add(key)
-                evidence.append(ev)
+            if key in seen_ev:
+                continue
+            seen_ev.add(key)
+            if _is_guardlist_context(ev.file, f.line_text(ev.line_start)):
+                if ev.file not in guard_files:
+                    guard_files.append(ev.file)
+                continue
+            evidence.append(ev)
             if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
                 break
+
+        if guard_files:
+            shown = ", ".join(guard_files[:_SENS_WORD_EXAMPLES])
+            more = len(guard_files) - _SENS_WORD_EXAMPLES
+            if more > 0:
+                shown += f", and {more} more"
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Credential path in a denylist/guardrail ({len(guard_files)})",
+                    reason=(
+                        f"A credential location is referenced in a denylist/guardrail context "
+                        f"in {len(guard_files)} file(s) (a policy that PROTECTS the path, not "
+                        f"access to it); flagged for review, not scored: {shown}."
+                    ),
+                    file=guard_files[0],
+                )
+            )
 
         env_files: list[str] = []
         env_seen: set[str] = set()

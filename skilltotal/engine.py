@@ -18,7 +18,13 @@ from skilltotal.agent_skill import skill_capability_mismatch
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import collect
-from skilltotal.file_index import FileIndex, IndexedFile, is_doc_path, is_test_path
+from skilltotal.file_index import (
+    FileIndex,
+    IndexedFile,
+    is_data_corpus_path,
+    is_doc_path,
+    is_test_path,
+)
 from skilltotal.models import (
     Component,
     Evidence,
@@ -96,15 +102,19 @@ def analyze_directory(
     findings = _apply_inline_ignores(findings, index)
 
     # Demote evidence that does not represent executed/agent-facing behavior to needs_review
-    # (never scored). Three sibling gates, applied in order:
+    # (never scored). Sibling gates, applied in order:
     #   1. test code   - not executed by consumers
     #   2. documentation/prose - READMEs, changelogs, ignore-files: descriptive, not behavior
-    #   3. Python code-context - a pattern that only appears inside a string literal/comment is
-    #      a literal or doc example (e.g. a security scanner's own rule definitions), not behavior
+    #   3. data/eval corpus - inert reference data (eval_datasets/poisoning.yaml, fixtures/*.json):
+    #      a sample attack is a detector test vector, not behavior (code there is still scored)
+    #   4. Python/shell code-context - a pattern that only appears inside a string literal/comment
+    #      is a literal or doc example (e.g. a scanner's own rule definitions), not behavior
     findings, test_review = _split_test_evidence(findings)
     needs_review.extend(test_review)
     findings, doc_review = _split_doc_evidence(findings)
     needs_review.extend(doc_review)
+    findings, corpus_review = _split_data_corpus_evidence(findings)
+    needs_review.extend(corpus_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
 
@@ -374,6 +384,29 @@ def _split_doc_evidence(
     return kept, review
 
 
+def _split_data_corpus_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote evidence found only in inert data/eval/benchmark corpus files to needs_review.
+
+    A pattern that appears only in reference data — a prompt-injection string in
+    ``eval_datasets/poisoning.yaml``, a credential path in ``fixtures/sample.json`` — is a
+    detector test vector or sample, not the component's executed behavior or agent-instruction
+    surface. ``is_data_corpus_path`` is restricted to non-code files, so a real payload shipped
+    as code in such a directory is still scanned and scored.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        prod = [e for e in finding.evidence if not is_data_corpus_path(e.file)]
+        corpus = [e for e in finding.evidence if is_data_corpus_path(e.file)]
+        if prod:
+            kept.append(_finding_with_evidence(finding, prod))
+        if corpus:
+            review.append(_demoted_review(finding, corpus, "data/eval corpus only"))
+    return kept, review
+
+
 def _split_code_context_evidence(
     findings: list[Finding], index: FileIndex
 ) -> tuple[list[Finding], list[NeedsReview]]:
@@ -399,19 +432,28 @@ def _split_code_context_evidence(
             kept.append(_finding_with_evidence(finding, real))
         if demoted:
             review.append(
-                _demoted_review(finding, demoted, "non-executable Python context (string/comment)")
+                _demoted_review(finding, demoted, "a non-executable string/comment context")
             )
     return kept, review
 
 
 def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile]) -> bool:
-    """True if evidence ``e`` is a Python string/comment match that ``policy`` demotes."""
+    """True if evidence ``e`` is a non-executable string/comment match that ``policy`` demotes.
+
+    Python: a match inside a comment (any policy) or a string literal (``strings_and_comments``).
+    Shell: a match inside a ``#`` comment — so a ``# Usage: curl … | bash`` example line is a
+    doc comment, not a runnable remote pipe-to-shell.
+    """
     f = by_path.get(e.file)
-    if f is None or e.match_offset is None or f.suffix not in (".py", ".pyw"):
+    if f is None or e.match_offset is None:
         return False
-    if f.in_comment(e.match_offset):
-        return True
-    return policy == "strings_and_comments" and f.in_string(e.match_offset)
+    if f.suffix in (".py", ".pyw"):
+        if f.in_comment(e.match_offset):
+            return True
+        return policy == "strings_and_comments" and f.in_string(e.match_offset)
+    if f.suffix in (".sh", ".bash", ".zsh"):
+        return f.in_shell_comment(e.match_offset)
+    return False
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:
