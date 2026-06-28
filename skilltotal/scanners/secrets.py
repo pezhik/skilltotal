@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Evidence, Finding, Severity, ThreatClass
+from skilltotal.models import Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, RuleSpec, Scanner, ScanResult
 
 CATEGORY = "secret_exposure"
@@ -56,6 +56,18 @@ def _looks_like_placeholder(value: str) -> bool:
     return len(set(value)) <= 4
 
 
+# Algolia DocSearch search-only keys are public by design (shipped in client-side docs search)
+# and are not a leak. They are 32 lowercase-hex chars and always sit next to an Algolia app id /
+# index name. Recognising that shape avoids flagging every docs site as carrying an embedded secret.
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+_DOCSEARCH_CTX = re.compile(r"(?i)algolia|docsearch|app[_-]?id|index[_-]?name")
+
+
+def _is_public_docsearch_key(value: str, context: str) -> bool:
+    """True if ``value`` is a public Algolia DocSearch search key (read-only, safe to embed)."""
+    return bool(_HEX32.match(value)) and bool(_DOCSEARCH_CTX.search(context))
+
+
 def _has_mixed_charset(value: str) -> bool:
     return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
 
@@ -93,6 +105,7 @@ class SecretsScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
         seen: set[tuple[str, int]] = set()
+        docsearch_files: list[str] = []
 
         for f in index.files:
             for _label, pattern, grp in _KNOWN:
@@ -104,6 +117,11 @@ class SecretsScanner(Scanner):
             for m in _GENERIC.finditer(f.text):
                 value = m.group(1)
                 if _looks_like_placeholder(value) or not _has_mixed_charset(value):
+                    continue
+                window = f.text[max(0, m.start() - 200) : m.end() + 200]
+                if _is_public_docsearch_key(value, window):
+                    if f.relpath not in docsearch_files:
+                        docsearch_files.append(f.relpath)
                     continue
                 self._add(f, m, value, evidence, seen)
 
@@ -122,7 +140,23 @@ class SecretsScanner(Scanner):
                     threat_class=rule.threat_class,
                 )
             )
-        return ScanResult(findings=findings)
+
+        needs_review: list[NeedsReview] = []
+        if docsearch_files:
+            shown = ", ".join(docsearch_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Public DocSearch search key ({len(docsearch_files)})",
+                    reason=(
+                        "A 32-hex key next to an Algolia app id / index name is a public "
+                        "DocSearch search-only key (read-only, safe to embed), not a leaked "
+                        f"secret; flagged for review, not scored: {shown}."
+                    ),
+                    file=docsearch_files[0],
+                )
+            )
+        return ScanResult(findings=findings, needs_review=needs_review)
 
     @staticmethod
     def _add(f, m, value, evidence: list[Evidence], seen: set[tuple[str, int]]) -> None:

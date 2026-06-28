@@ -52,15 +52,59 @@ SKIP_DIRS: frozenset[str] = frozenset(
 _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
     {"test", "tests", "__tests__", "__mocks__", "spec", "specs", "e2e"}
 )
+# A compound segment that still names a test tree: cli-e2e-tests, integration-tests, unit_test,
+# api-spec. The `[-_]` boundary keeps ordinary words out (e.g. "latest" is not a test dir).
+_TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)")
 _TEST_FILE_RE = re.compile(r"\.test\.|\.spec\.|^test_|_test\.|^conftest\.py$")
 
 
 def is_test_path(relpath: str) -> bool:
     """True if ``relpath`` looks like test code (not executed by consumers)."""
     parts = relpath.lower().split("/")
-    if any(part in _TEST_DIR_SEGMENTS for part in parts[:-1]):
-        return True
+    for part in parts[:-1]:
+        if part in _TEST_DIR_SEGMENTS or _TEST_SEGMENT_RE.fullmatch(part):
+            return True
     return bool(_TEST_FILE_RE.search(parts[-1]))
+
+
+# Data / evaluation / benchmark corpora: reference data, not the component's executed behavior
+# or its agent-instruction surface. A prompt-injection string in eval_datasets/poisoning.yaml is
+# a *test vector for a detector*, not behavior — analogous to test code, so its evidence is
+# demoted to NeedsReview. Restricted to non-code data files so a real payload dropped as code in
+# such a directory is still scanned and scored (see ``is_data_corpus_path``).
+_DATA_CORPUS_SEGMENTS: frozenset[str] = frozenset(
+    {
+        "fixtures", "fixture", "testdata", "test-data", "test_data",
+        "eval", "evals", "eval_datasets", "eval-datasets", "evaluation", "evaluations",
+        "benchmark", "benchmarks", "datasets", "dataset",
+        "golden", "goldens", "snapshots", "__snapshots__", "corpus", "corpora",
+    }
+)
+# Executable code suffixes. Evidence in these is NEVER treated as inert corpus data, even inside
+# a corpus directory — a real payload must not hide under fixtures/ or eval_datasets/.
+_CODE_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".py", ".pyw", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".sh", ".bash", ".zsh",
+        ".rb", ".go", ".rs", ".java", ".php", ".pl", ".lua", ".ps1", ".bat", ".cmd",
+        ".c", ".cpp", ".cc", ".h", ".hpp",
+    }
+)
+
+
+def is_data_corpus_path(relpath: str) -> bool:
+    """True if ``relpath`` is an inert data/eval/benchmark corpus file (not executed code).
+
+    Requires BOTH a corpus directory segment AND a non-code file suffix, so reference data
+    (``.yaml``/``.json``/``.jsonl``/``.csv``/``.md`` …) is demoted while any executable code in
+    the same tree is still scanned and scored.
+    """
+    parts = relpath.lower().split("/")
+    if not any(part in _DATA_CORPUS_SEGMENTS for part in parts[:-1]):
+        return False
+    name = parts[-1]
+    dot = name.rfind(".")
+    suffix = name[dot:] if dot > 0 else ""
+    return suffix not in _CODE_SUFFIXES
 
 
 # Human-facing documentation / metadata: prose and ignore-files that are never executed and
@@ -108,7 +152,9 @@ def is_doc_path(relpath: str) -> bool:
     if suffix not in _PROSE_SUFFIXES:
         return False
     stem = name[: name.rindex(".")] if suffix else name
-    return any(word in _DOC_KEYWORDS for word in re.split(r"[_-]", stem))
+    # Split on `.` too so a localized/variant doc keeps its keyword: README.zh-CN.md ->
+    # ["readme","zh","cn"], CHANGELOG.fr.md -> ["changelog","fr"].
+    return any(word in _DOC_KEYWORDS for word in re.split(r"[._-]", stem))
 
 
 # Token types that count as "inside a string" for code-context demotion (f-string parts are
@@ -125,6 +171,24 @@ def _offset_in_spans(spans: list[tuple[int, int]] | None, offset: int) -> bool:
         if start <= offset < end:
             return True
     return False
+
+
+def _unquoted_hash_index(line: str) -> int | None:
+    """Index of the first shell comment ``#`` in ``line``, or None.
+
+    A ``#`` starts a comment only when it is unquoted and at the start of the line or preceded by
+    whitespace (``echo "a # b"`` and ``x=a#b`` are not comments). Single-line tracking is enough
+    for evidence demotion; heredocs/line-continuations are out of scope (worst case: no demotion).
+    """
+    in_single = in_double = False
+    for i, ch in enumerate(line):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "#" and not in_single and not in_double and (i == 0 or line[i - 1] in " \t"):
+            return i
+    return None
 
 
 # Hidden / deceptive code points neutralized in DISPLAYED snippets (Trojan-Source defense): a
@@ -173,6 +237,10 @@ class IndexedFile:
     # Lazily-computed char-spans of Python string literals / comments (None = not yet computed).
     _str_spans: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
     _comment_spans: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
+    # Lazily-computed char-spans of shell (#) comments, for non-Python code-context demotion.
+    _sh_comment_spans: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     @property
     def name(self) -> str:
@@ -223,6 +291,25 @@ class IndexedFile:
         """True if ``offset`` falls inside a Python comment (Python files only)."""
         self._ensure_code_spans()
         return _offset_in_spans(self._comment_spans, offset)
+
+    def _ensure_sh_comment_spans(self) -> None:
+        """Record shell (#) comment char-spans once, for ``.sh``/``.bash``/``.zsh`` files."""
+        if self._sh_comment_spans is not None:
+            return
+        spans: list[tuple[int, int]] = []
+        if self.suffix in (".sh", ".bash", ".zsh"):
+            offset = 0
+            for line in self.text.splitlines(keepends=True):
+                hash_idx = _unquoted_hash_index(line)
+                if hash_idx is not None:
+                    spans.append((offset + hash_idx, offset + len(line)))
+                offset += len(line)
+        self._sh_comment_spans = spans
+
+    def in_shell_comment(self, offset: int) -> bool:
+        """True if ``offset`` falls inside a shell ``#`` comment (shell files only)."""
+        self._ensure_sh_comment_spans()
+        return _offset_in_spans(self._sh_comment_spans, offset)
 
     def line_of_offset(self, offset: int) -> int:
         """Return the 1-based line number containing ``offset``."""

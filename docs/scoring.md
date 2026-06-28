@@ -98,14 +98,24 @@ than it claims": no LLM, fires only when there is an explicit declaration to con
 Matches that are not executed, agent-facing behavior are moved to `needs_review` before scoring,
 so the engine does not flag descriptions of attacks or its own detection patterns:
 
-- **Test code** — `tests/`, `*.test.*`, `conftest.py`, … (not run by consumers).
+- **Test code** — `tests/`, `*.test.*`, `conftest.py`, compound test trees (`cli-e2e-tests/`,
+  `integration-tests/`), … (not run by consumers).
 - **Documentation / prose** — `README`, `CHANGELOG`, `LICENSE`, `docs/`, `*.egg-info/PKG-INFO`,
   ignore-files. AI-instruction surfaces (`SKILL.md`, `AGENTS.md`, MCP manifests, `.cursorrules`)
   are **kept in scope** — a real injection lives there.
-- **Python string literals / comments** — a behavior/text detector matching its own regex
-  literal or a docstring example is not behavior. Governed per-rule by `code_context`
+- **Data / eval / benchmark corpora** — inert reference *data* files under `eval_datasets/`,
+  `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … (`is_data_corpus_path`). A
+  prompt-injection string in an eval dataset is a detector test vector, not behavior. Restricted to
+  non-code suffixes, so a real payload shipped as code in such a directory is still scanned/scored.
+- **Python string literals / comments, and shell `#` comments** — a behavior/text detector matching
+  its own regex literal or a docstring example is not behavior; a `# Usage: curl … | bash` line is a
+  doc comment, not a runnable pipe-to-shell. Governed per-rule by `code_context`
   (`strings_and_comments` for decode-exec / tool-poisoning / prompt-injection / sensitive-path;
-  `comments` for the network-exposure rules, whose real positives are value-strings).
+  `comments` for the network-exposure rules and shell pipe-to-shell, whose real positives are
+  value-strings / real commands).
+- **Denylist / guardrail credential paths and public DocSearch keys** — demoted at the scanner level
+  (`sensitive_paths.py`, `secrets.py`): a policy that *protects* `~/.ssh`/`id_rsa` is not access to
+  it, and an Algolia DocSearch search key sitting next to an app id / index name is public/read-only.
 
 ## `needs_review` and the score
 

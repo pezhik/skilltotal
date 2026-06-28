@@ -124,9 +124,15 @@ collector.py → file_index.py → scanners/* → capabilities.py + scoring.py �
 - **Evidence-context demotion** — besides test code (`_split_test_evidence`), `engine.py` also
   demotes evidence that is not executed/agent-facing behavior to `needs_review`:
   `_split_doc_evidence` (human-facing docs/prose via `file_index.is_doc_path`; AI-instruction
-  surfaces like `SKILL.md`/manifests stay in scope) and `_split_code_context_evidence` (matches
-  inside Python string-literals/comments, per each rule's `RuleSpec.code_context`). This is why
-  a security scanner does not flag its own pattern literals or a README's example attack.
+  surfaces like `SKILL.md`/manifests stay in scope); `_split_data_corpus_evidence` (inert
+  data/eval/benchmark corpora via `file_index.is_data_corpus_path` — a corpus *data* file like
+  `eval_datasets/poisoning.yaml`, restricted to non-code suffixes so a real code payload there is
+  still scanned); and `_split_code_context_evidence` (matches inside Python string-literals/comments,
+  or shell `#` comments, per each rule's `RuleSpec.code_context`). This is why a security scanner does
+  not flag its own pattern literals, a README's example attack, a `# Usage: curl|bash` comment, or a
+  prompt-injection sample shipped as an eval test vector. `sensitive_paths.py` and `secrets.py`
+  additionally route denylist/guardrail credential paths and public Algolia DocSearch keys to
+  `needs_review` at the scanner level.
 
 ## Conventions
 

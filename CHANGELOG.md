@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.19.0]
+
+### Changed
+- **False-positive calibration (ruleset 20).** Five real-world FP classes that over-scored
+  legitimate components are fixed by demoting non-behavioral evidence to `needs_review`, with the
+  genuine attack shape still detected (guarded by the offline detection floor): (1) prompt-injection
+  strings inside eval/benchmark **data corpora** (a detector test vector, not behavior — this also
+  stops a benign tool being mislabeled `malicious`); (2) remote pipe-to-shell inside a shell `#`
+  **comment** (`# Usage: curl … | bash`); (3) credential paths in a **denylist/guardrail** (a policy
+  that protects `~/.ssh`/`id_rsa`, not access to it — also clears the spurious exfil combo it fed);
+  (4) public **Algolia DocSearch** search keys (read-only, safe to embed); (5) command-injection in
+  **compound test trees** (`cli-e2e-tests/`). No detection was removed; report schema unchanged.
+
 ## [0.18.0]
 
 ### Added

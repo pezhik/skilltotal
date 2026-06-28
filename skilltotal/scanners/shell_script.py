@@ -74,6 +74,9 @@ class ShellScriptScanner(Scanner):
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
             suffixes=SHELL_SUFFIXES,
+            # A `# Usage: curl … | bash` line documents the install command; it is a comment, not
+            # a runnable pipe-to-shell. Demote matches inside shell comments (engine code-context).
+            code_context="comments",
             pattern=alternation(
                 rf"(?:curl|wget)\b[^\n]*{_TO_SHELL}",
             ),
