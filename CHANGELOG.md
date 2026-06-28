@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.20.0]
+
+### Added
+- **First-class Hugging Face URL support.** The collector now parses `huggingface.co` browser
+  URLs — models (`hf.co/<org>/<name>`), datasets and spaces (`.../datasets/…`, `.../spaces/…`),
+  and deep-links (`/tree`, `/blob`, `/resolve` at a branch/tag + optional subfolder) — into the
+  right clone URL + ref + subpath, matching the existing GitHub/GitLab/Bitbucket handling. Bare
+  repo URLs already cloned via the generic git path; this makes deep-links and dataset/space
+  prefixes work too. No detection change (ruleset 20 unchanged); source-resolution only.
+
+### Changed
+- Test coverage: `parse_git_url` now has explicit cases for GitLab, Bitbucket, and Hugging Face
+  (models/datasets/spaces + tree/blob/resolve), confirming the homepage's claimed source support.
+
 ## [0.19.0]
 
 ### Changed

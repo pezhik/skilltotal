@@ -58,6 +58,50 @@ def test_gitlab_tree():
     assert clone == "https://gitlab.com/grp/proj.git" and ref == "main" and sub == "lib"
 
 
+def test_bitbucket_repo_root_and_src():
+    assert parse_git_url("https://bitbucket.org/team/repo") == (
+        "https://bitbucket.org/team/repo.git", None, None, None
+    )
+    clone, ref, sub, note = parse_git_url("https://bitbucket.org/team/repo/src/main/lib")
+    assert clone == "https://bitbucket.org/team/repo.git" and ref == "main" and sub == "lib"
+
+
+# --- Hugging Face (models, datasets, spaces; bare + browser deep-links) -------
+def test_huggingface_model_root():
+    # A bare HF model URL clones from the path as-is (no .git suffix).
+    assert parse_git_url("https://huggingface.co/openai-community/gpt2") == (
+        "https://huggingface.co/openai-community/gpt2", None, None, None
+    )
+
+
+def test_huggingface_model_tree_subpath():
+    clone, ref, sub, note = parse_git_url("https://huggingface.co/org/model/tree/main/onnx")
+    assert clone == "https://huggingface.co/org/model" and ref == "main" and sub == "onnx"
+
+
+def test_huggingface_blob_file_scans_its_folder():
+    clone, ref, sub, note = parse_git_url(
+        "https://huggingface.co/org/model/blob/main/configs/cfg.json"
+    )
+    assert clone == "https://huggingface.co/org/model" and ref == "main" and sub == "configs"
+
+
+def test_huggingface_resolve_raw_file():
+    clone, ref, sub, note = parse_git_url("https://huggingface.co/org/model/resolve/main/cfg.json")
+    assert clone == "https://huggingface.co/org/model" and ref == "main" and sub is None
+
+
+def test_huggingface_dataset_and_space_keep_prefix():
+    assert parse_git_url("https://huggingface.co/datasets/org/ds") == (
+        "https://huggingface.co/datasets/org/ds", None, None, None
+    )
+    clone, ref, sub, _ = parse_git_url("https://huggingface.co/datasets/org/ds/tree/main/data")
+    assert clone == "https://huggingface.co/datasets/org/ds" and ref == "main" and sub == "data"
+    assert parse_git_url("https://huggingface.co/spaces/org/app")[0] == (
+        "https://huggingface.co/spaces/org/app"
+    )
+
+
 def test_ssh_and_bare_urls_pass_through():
     assert parse_git_url("git@github.com:owner/repo.git")[0] == "git@github.com:owner/repo.git"
     assert parse_git_url("https://example.com/x/y")[0] == "https://example.com/x/y"

@@ -61,8 +61,13 @@ _CLONE_TIMEOUT = int(os.environ.get("SKILLTOTAL_CLONE_TIMEOUT", "300"))
 _MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
 _CLONE_POLL_SECONDS = 1.5
 # Web hosts whose browser URLs we understand (branch / subfolder / file / commit links).
-_WEB_HOSTS = ("github.com", "gitlab.com", "bitbucket.org")
+_WEB_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "huggingface.co")
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+# Hugging Face repo-type prefixes: a model is `hf.co/<org>/<name>`, but datasets and spaces nest
+# under `hf.co/datasets/<org>/<name>` and `hf.co/spaces/<org>/<name>`.
+_HF_REPO_PREFIXES = ("datasets", "spaces")
+# HF browser ref kinds: tree (dir), blob (file), resolve (raw file).
+_HF_REF_KINDS = ("tree", "blob", "resolve")
 
 
 class CollectionError(Exception):
@@ -243,11 +248,41 @@ def _collect_local_file(path: Path) -> SourceContext:
         raise
 
 
+def _parse_hf_url(host: str, parts: list[str]) -> tuple[str, str | None, str | None, str | None]:
+    """Resolve a Hugging Face browser/clone URL into ``(clone_url, ref, subpath, note)``.
+
+    Models clone from ``hf.co/<org>/<name>``; datasets/spaces nest under a type prefix
+    (``hf.co/datasets/<org>/<name>``). Browser deep-links use ``/tree`` (dir), ``/blob`` and
+    ``/resolve`` (file). The clone URL has no ``.git`` suffix (HF serves git at the bare path).
+    """
+    if parts[0] in _HF_REPO_PREFIXES:
+        if len(parts) < 3:
+            return f"https://{host}/{'/'.join(parts)}", None, None, None  # incomplete -> as-is
+        repo_id, rest = "/".join(parts[:3]), parts[3:]
+    else:
+        repo_id, rest = "/".join(parts[:2]), parts[2:]
+    clone_url = f"https://{host}/{repo_id}"
+    if not rest:
+        return clone_url, None, None, None
+    kind = rest[0]
+    if kind in _HF_REF_KINDS and len(rest) >= 2:
+        ref, sub = rest[1], "/".join(rest[2:])
+        if kind in ("blob", "resolve") and sub:  # a file link -> scan the file's folder
+            sub = sub.rsplit("/", 1)[0] if "/" in sub else ""
+        return clone_url, ref, (sub or None), None
+    note = (
+        f"The link pointed to '/{kind}', which is not source code; "
+        f"scanned the default branch of {repo_id} instead."
+    )
+    return clone_url, None, None, note
+
+
 def parse_git_url(url: str) -> tuple[str, str | None, str | None, str | None]:
     """Resolve a browser/clone URL into ``(clone_url, ref, subpath, note)``.
 
-    Understands github/gitlab/bitbucket web URLs — a branch/tag/commit and an optional
-    subfolder or file (``/tree/<ref>/<path>``, ``/blob/<ref>/<file>``, ``/commit/<sha>``). A
+    Understands github/gitlab/bitbucket/Hugging-Face web URLs — a branch/tag/commit and an
+    optional subfolder or file (``/tree/<ref>/<path>``, ``/blob/<ref>/<file>``, ``/commit/<sha>``;
+    HF also ``/resolve/<ref>/<file>`` and the ``datasets/``/``spaces/`` repo prefixes). A
     non-code page (``/issues``, ``/pull``, ``/wiki`` …) is reduced to the repo root and a human
     ``note`` is returned. Bare git URLs (``*.git``, ``git@``, ssh, or any unrecognized host)
     pass through unchanged.
@@ -260,6 +295,8 @@ def parse_git_url(url: str) -> tuple[str, str | None, str | None, str | None]:
     parts = [p for p in parsed.path.split("/") if p]
     if host not in _WEB_HOSTS or len(parts) < 2:
         return s, None, None, None  # unknown shape -> let git try the URL as-is
+    if host == "huggingface.co":
+        return _parse_hf_url(host, parts)
     owner, repo = parts[0], parts[1]
     if repo.endswith(".git"):
         repo = repo[:-4]
