@@ -15,6 +15,8 @@ painted as an exfiltration path.
 
 from __future__ import annotations
 
+import re
+
 from skilltotal.models import (
     Capability,
     Evidence,
@@ -25,6 +27,16 @@ from skilltotal.models import (
 )
 
 SCORE_CAP = 100
+
+# Cloud instance-metadata endpoints. Reaching one IS itself a network call (a token is fetched
+# over HTTP), not a local credential-file read — and it is the legitimate managed-identity auth
+# path used by Azure/AWS/GCP SDKs. So a metadata-endpoint reference must NOT be counted as the
+# "read a secret from disk" side of the exfiltration combo (that double-counts one fetch and
+# mislabels normal cloud auth as a credential-exfiltration path). It still fires as its own
+# sensitive-path finding (an SSRF / token-theft surface worth reviewing).
+_CLOUD_METADATA_RE = re.compile(
+    r"169\.254\.169\.254|metadata\.google\.internal|metadata\.google\b", re.IGNORECASE
+)
 
 # Only these threat classes contribute to the risk score; CAPABILITY is informational.
 _SCORED_CLASSES = frozenset({ThreatClass.MALICIOUS_INDICATOR, ThreatClass.RISKY_CONSTRUCT})
@@ -87,7 +99,11 @@ def exfiltration_finding(
     contributing findings/capabilities so the "no finding without evidence" invariant holds.
     """
     sens_evidence: list[Evidence] = [
-        e for f in findings if f.id in _SENSITIVE_DATA_IDS for e in f.evidence
+        e
+        for f in findings
+        if f.id in _SENSITIVE_DATA_IDS
+        for e in f.evidence
+        if not _CLOUD_METADATA_RE.search(e.snippet)  # metadata fetch is network, not a secret read
     ]
     net_evidence = capabilities.get(Capability.NETWORK_EGRESS, [])
 

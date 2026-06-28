@@ -25,7 +25,7 @@ from skilltotal.models import (
 __version__ = "0.20.0"
 ENGINE_VERSION = __version__
 REPORT_SCHEMA_VERSION = "1.4"
-RULESET_VERSION = 20
+RULESET_VERSION = 21
 
 __all__ = [
     "__version__",

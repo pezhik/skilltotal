@@ -12,9 +12,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
   and deep-links (`/tree`, `/blob`, `/resolve` at a branch/tag + optional subfolder) — into the
   right clone URL + ref + subpath, matching the existing GitHub/GitLab/Bitbucket handling. Bare
   repo URLs already cloned via the generic git path; this makes deep-links and dataset/space
-  prefixes work too. No detection change (ruleset 20 unchanged); source-resolution only.
+  prefixes work too. Source-resolution only.
 
 ### Changed
+- **FP calibration (ruleset 21): cloud metadata endpoints no longer trigger the exfiltration
+  combo.** A reference to `169.254.169.254` / `metadata.google.internal` is a network token-fetch
+  (legitimate Azure/AWS/GCP managed-identity auth), not a local secret read, so it no longer
+  counts as the sensitive-data side of `ST-COMBO-EXFIL` — fixing the official `openai` npm SDK
+  (and similar cloud SDKs) being scored `high` / "credential-exfiltration path". The endpoint is
+  still reported as an SSRF/token-theft surface (`ST-SENS-PATH`); a real credential-file read plus
+  network still fires the combo.
 - Test coverage: `parse_git_url` now has explicit cases for GitLab, Bitbucket, and Hugging Face
   (models/datasets/spaces + tree/blob/resolve), confirming the homepage's claimed source support.
 

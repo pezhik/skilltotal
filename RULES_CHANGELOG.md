@@ -4,6 +4,19 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 21 (engine 0.20.0)
+
+**Cloud instance-metadata endpoints no longer feed the exfiltration combo.** A reference to a
+cloud metadata endpoint (`169.254.169.254`, `metadata.google.internal`) is itself a *network*
+call that fetches a token — the legitimate managed-identity auth path used by Azure/AWS/GCP SDKs
+— not a local credential-file read. Counting it as the "read a secret" side of `ST-COMBO-EXFIL`
+double-counted one fetch and mislabeled normal cloud auth as a credential-exfiltration path
+(e.g. the official `openai` npm SDK's Azure workload-identity auth read as `high` / exfil).
+`scoring.py::exfiltration_finding` now excludes metadata-endpoint evidence from the sensitive-data
+side; the endpoint still fires as its own `ST-SENS-PATH` finding (an SSRF / token-theft surface),
+and a genuine credential-FILE read (`~/.ssh`, `.aws/credentials`) plus network still synthesizes
+the combo. Test: `tests/test_flow_and_convergence.py`.
+
 ## ruleset 20 (engine 0.19.0)
 
 **False-positive calibration: context demotion for inert/defensive code (no detection removed).**
