@@ -1,9 +1,9 @@
 {
   "provenance": {
-    "engine_version": "0.17.0",
-    "ruleset_version": 18,
+    "engine_version": "0.22.0",
+    "ruleset_version": 23,
     "report_schema_version": "1.4",
-    "generated_at": "2026-06-19",
+    "generated_at": "2026-06-30",
     "manifest_sha256": "206779188897f83706423fea7eb19141ddf6bb3b7488696bc51c8be5a7b8c2a2",
     "components_total": 32,
     "scanned": 32,
@@ -12,16 +12,16 @@
   },
   "risk_distribution": {
     "low": {
-      "count": 30,
-      "pct": 93.8
+      "count": 31,
+      "pct": 96.9
     },
     "medium": {
       "count": 0,
       "pct": 0.0
     },
     "high": {
-      "count": 2,
-      "pct": 6.2
+      "count": 1,
+      "pct": 3.1
     },
     "critical": {
       "count": 0,
@@ -34,8 +34,8 @@
   },
   "owasp": {
     "AST01": {
-      "count": 2,
-      "pct": 6.2
+      "count": 1,
+      "pct": 3.1
     },
     "AST02": {
       "count": 7,
@@ -154,15 +154,15 @@
       "count": 2
     },
     {
-      "id": "ST-COMBO-EXFIL",
-      "count": 2
-    },
-    {
       "id": "ST-DYN-PY",
       "count": 2
     },
     {
       "id": "ST-INSTALL-NPM",
+      "count": 1
+    },
+    {
+      "id": "ST-CMDI-PY",
       "count": 1
     }
   ],
@@ -174,9 +174,9 @@
       "critical": 0
     },
     "npm": {
-      "low": 6,
+      "low": 7,
       "medium": 0,
-      "high": 1,
+      "high": 0,
       "critical": 0
     },
     "pypi": {
@@ -190,226 +190,226 @@
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-filesystem",
       "status": "ok",
-      "name": "mcp-filesystem"
+      "detail": ""
     },
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/git",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-git",
       "status": "ok",
-      "name": "mcp-git"
+      "detail": ""
     },
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/fetch",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-fetch",
       "status": "ok",
-      "name": "mcp-fetch"
+      "detail": ""
     },
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/memory",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-memory",
       "status": "ok",
-      "name": "mcp-memory"
+      "detail": ""
     },
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/everything",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-everything",
       "status": "ok",
-      "name": "mcp-everything"
+      "detail": ""
     },
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-sequentialthinking",
       "status": "ok",
-      "name": "mcp-sequentialthinking"
+      "detail": ""
     },
     {
       "source": "https://github.com/modelcontextprotocol/servers/tree/main/src/time",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-time",
       "status": "ok",
-      "name": "mcp-time"
+      "detail": ""
     },
     {
       "source": "npm:@modelcontextprotocol/server-everything",
       "type": "mcp",
-      "detail": "",
+      "name": "server-everything",
       "status": "ok",
-      "name": "server-everything"
+      "detail": ""
     },
     {
       "source": "npm:mcp-remote",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-remote",
       "status": "ok",
-      "name": "mcp-remote"
+      "detail": ""
     },
     {
       "source": "npm:@playwright/mcp",
       "type": "mcp",
-      "detail": "",
+      "name": "playwright-mcp",
       "status": "ok",
-      "name": "playwright-mcp"
+      "detail": ""
     },
     {
       "source": "pypi:mcp-server-fetch",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-server-fetch",
       "status": "ok",
-      "name": "mcp-server-fetch"
+      "detail": ""
     },
     {
       "source": "pypi:mcp-server-git",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-server-git",
       "status": "ok",
-      "name": "mcp-server-git"
+      "detail": ""
     },
     {
       "source": "pypi:mcp-server-time",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-server-time",
       "status": "ok",
-      "name": "mcp-server-time"
+      "detail": ""
     },
     {
       "source": "pypi:fastmcp",
       "type": "mcp",
-      "detail": "",
+      "name": "fastmcp",
       "status": "ok",
-      "name": "fastmcp"
+      "detail": ""
     },
     {
       "source": "https://github.com/github/github-mcp-server",
       "type": "mcp",
-      "detail": "",
+      "name": "github-mcp-server",
       "status": "ok",
-      "name": "github-mcp-server"
+      "detail": ""
     },
     {
       "source": "https://github.com/cloudflare/mcp-server-cloudflare",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-server-cloudflare",
       "status": "ok",
-      "name": "mcp-server-cloudflare"
+      "detail": ""
     },
     {
       "source": "https://github.com/tumf/mcp-shell-server",
       "type": "mcp",
-      "detail": "",
+      "name": "mcp-shell-server",
       "status": "ok",
-      "name": "mcp-shell-server"
+      "detail": ""
     },
     {
       "source": "npm:@modelcontextprotocol/sdk",
       "type": "npm",
-      "detail": "",
+      "name": "mcp-sdk-js",
       "status": "ok",
-      "name": "mcp-sdk-js"
+      "detail": ""
     },
     {
       "source": "pypi:mcp",
       "type": "pypi",
-      "detail": "",
+      "name": "mcp-sdk-py",
       "status": "ok",
-      "name": "mcp-sdk-py"
+      "detail": ""
     },
     {
       "source": "npm:openai",
       "type": "npm",
-      "detail": "",
+      "name": "openai-js",
       "status": "ok",
-      "name": "openai-js"
+      "detail": ""
     },
     {
       "source": "pypi:openai",
       "type": "pypi",
-      "detail": "",
+      "name": "openai-py",
       "status": "ok",
-      "name": "openai-py"
+      "detail": ""
     },
     {
       "source": "npm:@anthropic-ai/sdk",
       "type": "npm",
-      "detail": "",
+      "name": "anthropic-sdk-js",
       "status": "ok",
-      "name": "anthropic-sdk-js"
+      "detail": ""
     },
     {
       "source": "pypi:anthropic",
       "type": "pypi",
-      "detail": "",
+      "name": "anthropic-py",
       "status": "ok",
-      "name": "anthropic-py"
+      "detail": ""
     },
     {
       "source": "npm:ai",
       "type": "npm",
-      "detail": "",
+      "name": "vercel-ai-sdk",
       "status": "ok",
-      "name": "vercel-ai-sdk"
+      "detail": ""
     },
     {
       "source": "npm:langchain",
       "type": "npm",
-      "detail": "",
+      "name": "langchain-js",
       "status": "ok",
-      "name": "langchain-js"
+      "detail": ""
     },
     {
       "source": "pypi:langchain",
       "type": "pypi",
-      "detail": "",
+      "name": "langchain-py",
       "status": "ok",
-      "name": "langchain-py"
+      "detail": ""
     },
     {
       "source": "pypi:llama-index",
       "type": "pypi",
-      "detail": "",
+      "name": "llama-index",
       "status": "ok",
-      "name": "llama-index"
+      "detail": ""
     },
     {
       "source": "pypi:transformers",
       "type": "pypi",
-      "detail": "",
+      "name": "transformers",
       "status": "ok",
-      "name": "transformers"
+      "detail": ""
     },
     {
       "source": "npm:express",
       "type": "npm",
-      "detail": "",
+      "name": "express",
       "status": "ok",
-      "name": "express"
+      "detail": ""
     },
     {
       "source": "npm:left-pad",
       "type": "npm",
-      "detail": "",
+      "name": "left-pad",
       "status": "ok",
-      "name": "left-pad"
+      "detail": ""
     },
     {
       "source": "pypi:requests",
       "type": "pypi",
-      "detail": "",
+      "name": "requests",
       "status": "ok",
-      "name": "requests"
+      "detail": ""
     },
     {
       "source": "pypi:flask",
       "type": "pypi",
-      "detail": "",
+      "name": "flask",
       "status": "ok",
-      "name": "flask"
+      "detail": ""
     }
   ]
 }
