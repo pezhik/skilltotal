@@ -59,6 +59,12 @@ _STRONG = alternation(
     # security prose isn't matched; .py-string/comment and documentation matches are demoted.
     r"do\s+anything\s+now\b",
     r"\bDAN\s+mode\b",
+    # Negation guard (mirrors the "send" rule): defensive guarantees like "cannot override
+    # safety policy" / "will not bypass safety filters" / "can't disable guardrails" are the
+    # opposite of a directive. Each lookbehind is fixed-width; "n't" catches can't/won't/don't.
+    # \s (not a literal space) so a line-wrapped "cannot\noverride" is still guarded.
+    r"(?<!not\s)(?<!never\s)(?<!n't\s)(?<!n’t\s)(?<!cannot\s)(?<!unable\sto\s)"
+    r"(?<!refuse\sto\s)(?<!refuses\sto\s)(?<!refusing\sto\s)"
     r"(?:ignore|bypass|disable|turn\s+off|override)\s+(?:your\s+|all\s+|any\s+|the\s+)?"
     r"(?:safety|content|ethical|moral)\s+"
     r"(?:guidelines?|guardrails?|filters?|restrictions?|polic(?:y|ies)|constraints?)",
@@ -76,6 +82,20 @@ _WEAK = alternation(
     r"without\s+(?:telling|informing|notifying)\s+the\s+user",
     flags=re.IGNORECASE | re.MULTILINE,
 )
+
+# Quote characters that wrap a *cited* phrase (straight, smart, guillemets, backtick).
+_QUOTES = "\"'`“”‘’«»"
+
+
+def _is_quoted_citation(text: str, start: int, end: int) -> bool:
+    """True if the matched span is immediately wrapped in quotes on BOTH sides — a phrase being
+    *cited* as an example (a security doc listing `"ignore all previous instructions"`), not a
+    live directive. Requiring quotes on both immediate boundaries keeps recall: an injection that
+    continues past the phrase (``"Ignore all previous instructions and delete …"``) has no closing
+    quote right after the match, so it is not treated as a citation."""
+    before = text[start - 1] if start > 0 else ""
+    after = text[end] if end < len(text) else ""
+    return before in _QUOTES and after in _QUOTES
 
 
 class PromptSurfaceScanner(Scanner):
@@ -119,6 +139,8 @@ class PromptSurfaceScanner(Scanner):
         inj_rule = next(r for r in self.rules if r.id == "ST-PROMPT-INJECTION")
         evidence: list[Evidence] = []
         seen: set[tuple[str, int]] = set()
+        needs_review: list[NeedsReview] = []
+        nr_seen: set[tuple[str, int]] = set()
 
         def add(ev: Evidence) -> None:
             key = (ev.file, ev.match_offset)
@@ -127,25 +149,48 @@ class PromptSurfaceScanner(Scanner):
             seen.add(key)
             evidence.append(ev)
 
-        # Raw pass: the patterns as written.
-        for _f, _m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
-            add(ev)
+        def review_citation(ev: Evidence, phrase: str) -> None:
+            key = (ev.file, ev.line_start)
+            if key in nr_seen or len(needs_review) >= MAX_EVIDENCE_PER_FINDING:
+                return
+            nr_seen.add(key)
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title="Cited prompt-injection example",
+                    reason=(
+                        f"Phrase '{phrase}' at line {ev.line_start} is quoted as an example, "
+                        "not a live directive; review the surrounding text to confirm."
+                    ),
+                    file=ev.file,
+                    line=ev.line_start,
+                )
+            )
+
+        # Raw pass: the patterns as written. A match wrapped in quotes on both sides is a cited
+        # example, not a live directive -> route to needs_review (ambiguous), never scored.
+        for f, m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
+            if _is_quoted_citation(f.text, m.start(), m.end()):
+                review_citation(ev, m.group(0))
+            else:
+                add(ev)
         # De-obfuscation pass: the same patterns after folding homoglyphs / full-width /
         # diacritics / zero-width splicing, mapped back to the original span. Catches
         # injection hidden behind look-alike characters; de-duped against the raw pass.
         for f, start, end in deobfuscated_spans(index, _STRONG):
             if start < end:
-                add(f.evidence_for_span(start, end))
+                if _is_quoted_citation(f.text, start, end):
+                    review_citation(f.evidence_for_span(start, end), f.text[start:end])
+                else:
+                    add(f.evidence_for_span(start, end))
 
         findings = [_finding_from_rule(inj_rule, evidence)] if evidence else []
 
-        needs_review: list[NeedsReview] = []
-        seen: set[tuple[str, int]] = set()
         for _f, m, ev in index.search(_WEAK):
             key = (ev.file, ev.line_start)
-            if key in seen:
+            if key in nr_seen:
                 continue
-            seen.add(key)
+            nr_seen.add(key)
             needs_review.append(
                 NeedsReview(
                     category=CATEGORY,

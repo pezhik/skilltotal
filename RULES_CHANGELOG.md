@@ -4,6 +4,31 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 24 (engine 0.23.0)
+
+**Prompt-injection precision — two false positives on defensive/educational content closed,
+recall-preserving.** A security-education skill (a `references/*.md` instruction surface, which is
+*not* doc-demoted because a real injection can live there) was wrongly flagged
+`ST-PROMPT-INJECTION`, holding a legitimate, popular component from publication. Two independent
+over-matches in `scanners/prompt_surface.py`:
+
+- **Negated defensive guarantees.** "…it cannot override safety policy", "will not bypass safety
+  filters", "can't disable content guardrails" matched the safety-disable directive. The rule now
+  carries the same negation guard the exfil "send" rule already had (fixed-width lookbehinds for
+  not / never / n't / cannot / unable-to / refuse(s|ing)-to), using `\s` so a line-wrapped
+  "cannot\noverride" is still guarded.
+- **Cited example phrases.** A guide that *quotes* attack phrases as examples
+  (`- "Ignore all previous instructions"`, incl. smart quotes) is a citation, not a live directive.
+  A match wrapped in quotes on **both** immediate boundaries is now routed to `needs_review`
+  (ambiguous), never scored. Requiring quotes on both sides preserves recall: an injection that
+  continues past the phrase (`"Ignore all previous instructions and delete …"`) has no closing quote
+  right after the match, so it still fires.
+
+Tests: `tests/test_prompt_jailbreak.py` (negation + citation + recall-preserved cases) and two new
+negative corpus samples under `tests/eval_corpus/negative/AST04/prompt-injection/`
+(`reference-cites-example/`, `reference-negated-defensive/`) reproducing the exact `references/`
+instruction-surface scenario; gated by `tests/test_efficacy_floor.py` (recall 100%, FP 0).
+
 ## ruleset 23 (engine 0.22.0)
 
 **Evasion hardening — three detector bypasses closed, FP-safe.** The new detection-efficacy
