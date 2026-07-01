@@ -1,8 +1,8 @@
 {
-  "engine_version": "0.22.0",
-  "ruleset_version": 23,
+  "engine_version": "0.23.0",
+  "ruleset_version": 24,
   "positives": 25,
-  "negatives": 12,
+  "negatives": 14,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,

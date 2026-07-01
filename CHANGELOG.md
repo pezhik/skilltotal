@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.23.0]
+
+### Changed
+- **Prompt-injection precision (ruleset 24): two false positives on defensive/educational content
+  closed, recall-preserving.** A security-education skill was wrongly flagged `ST-PROMPT-INJECTION`
+  on its `references/*.md` (an instruction surface, not doc-demoted), holding a legitimate component
+  from publication. Fixed in `scanners/prompt_surface.py`: (1) a negation guard on the safety-disable
+  rule so defensive guarantees ("cannot override safety policy", "will not bypass safety filters",
+  "can't disable guardrails") no longer match; (2) a phrase wrapped in quotes on both sides is
+  treated as a cited example → `needs_review`, never scored (`"Ignore all previous instructions"`).
+  Recall preserved: a live directive that continues past the phrase, or an unquoted directive, still
+  fires. New unit tests + two negative corpus samples; FP floor and benign corpus stay at zero.
+
 ## [0.22.0]
 
 ### Changed
