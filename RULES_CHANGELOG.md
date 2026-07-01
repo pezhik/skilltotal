@@ -4,6 +4,28 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 25 (engine 0.24.0)
+
+**Two false positives on defensive/security content closed, recall-preserving.** A more reliable
+publish-gate (retry) surfaced two legitimate components wrongly elevated:
+
+- **PEM format marker mistaken for a leaked key** (`scanners/secrets.py`). A string constant holding
+  `-----BEGIN PRIVATE KEY-----` (auth code assembling/parsing a PEM for an OAuth exchange, e.g.
+  `const pemHeader = '-----BEGIN PRIVATE KEY-----'`) was flagged `ST-SECRET-EMBEDDED` and drove
+  `ST-COMBO-EXFIL`. The "Private key block" pattern now requires actual base64 key **material** after
+  the marker (≥40 base64 chars, allowing up to 8 separator chars for a newline / `\n` escape / quote),
+  so a bare marker constant no longer flags. A real multi-line key still fires. FP: `@ai-sdk/google-vertex`.
+- **Credential path cited in a markdown example** (`scanners/sensitive_paths.py`). A security guide
+  listing paths to detect inside markdown inline-code spans (`` `write to ~/.ssh` ``,
+  `` `read .aws/credentials` ``) matched `ST-SENS-PATH` and drove `ST-COMBO-EXFIL`. A strong-path match
+  inside a markdown inline-code span (backtick-delimited, `.md`/`.mdx`/`.markdown` only) is now routed
+  to `needs_review` as a cited example. Scoped to markdown — in code a backtick is a JS template
+  literal (real path usage) and still fires; a bare path in `.md` prose still fires. FP: `claude-blog`.
+
+Tests: `tests/test_secrets.py` (PEM header constant vs real key), `tests/test_sensitive_paths_extra.py`
+(markdown-cited vs bare-prose vs code-template), and negative corpus samples under
+`tests/eval_corpus/negative/AST01/credential-exfil/` (`pem-header-marker`, `markdown-cited-paths`).
+
 ## ruleset 24 (engine 0.23.0)
 
 **Prompt-injection precision — two false positives on defensive/educational content closed,

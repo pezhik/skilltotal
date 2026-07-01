@@ -113,6 +113,24 @@ def _is_guardlist_context(relpath: str, line_text: str) -> bool:
     )
 
 
+# Markdown files where an inline-code span (`...`) is a *cited example*, not path access. A security
+# guide that lists `write to ~/.ssh` / `store credentials` as patterns to detect is describing the
+# threat, not performing it. Scoped to markdown ONLY — in code, a backtick is a JS template literal
+# (`~/.ssh/${x}`) which IS real path usage, so it must still fire there.
+_MD_SUFFIXES = frozenset({".md", ".mdx", ".markdown"})
+
+
+def _cited_in_markdown_code(relpath: str, line_text: str, matched: str) -> bool:
+    """True if ``matched`` falls inside a markdown inline-code span on this line. Splitting on the
+    backtick delimiter, odd-indexed segments are inside `` `...` `` spans."""
+    name = relpath.lower().rsplit("/", 1)[-1]
+    dot = name.rfind(".")
+    if (name[dot:] if dot > 0 else "") not in _MD_SUFFIXES:
+        return False
+    segments = line_text.split("`")
+    return any(matched in segments[i] for i in range(1, len(segments), 2))
+
+
 _WEAK = re.compile(r"\b(?:credentials|secrets)\b", re.IGNORECASE)
 _SENS_WORD_EXAMPLES = 8
 
@@ -164,14 +182,20 @@ class SensitivePathScanner(Scanner):
         seen_ev: set[tuple[str, int, int]] = set()
         evidence: list[Evidence] = []
         guard_files: list[str] = []
+        cited_files: list[str] = []
         for f, _m, ev in index.search(_STRONG_PATHS):
             key = (ev.file, ev.line_start, ev.line_end)
             if key in seen_ev:
                 continue
             seen_ev.add(key)
-            if _is_guardlist_context(ev.file, f.line_text(ev.line_start)):
+            line_text = f.line_text(ev.line_start)
+            if _is_guardlist_context(ev.file, line_text):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
+                continue
+            if _cited_in_markdown_code(ev.file, line_text, _m.group(0)):
+                if ev.file not in cited_files:
+                    cited_files.append(ev.file)
                 continue
             evidence.append(ev)
             if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
@@ -192,6 +216,24 @@ class SensitivePathScanner(Scanner):
                         f"access to it); flagged for review, not scored: {shown}."
                     ),
                     file=guard_files[0],
+                )
+            )
+
+        if cited_files:
+            shown = ", ".join(cited_files[:_SENS_WORD_EXAMPLES])
+            more = len(cited_files) - _SENS_WORD_EXAMPLES
+            if more > 0:
+                shown += f", and {more} more"
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Credential path cited in markdown example ({len(cited_files)})",
+                    reason=(
+                        f"A credential location appears inside a markdown inline-code example in "
+                        f"{len(cited_files)} file(s) (a security doc describing the path, not "
+                        f"accessing it); flagged for review, not scored: {shown}."
+                    ),
+                    file=cited_files[0],
                 )
             )
 

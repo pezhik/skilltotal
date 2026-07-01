@@ -33,8 +33,22 @@ def test_aws_key_detected_and_redacted(tmp_path):
 
 
 def test_private_key_block_detected(tmp_path):
-    res = _scan(tmp_path, "id_rsa", "-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n")
+    # A real leaked key: BEGIN marker followed by actual base64 key material.
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDabcdefghijkl"
+    res = _scan(tmp_path, "id_rsa", f"-----BEGIN OPENSSH PRIVATE KEY-----\n{body}\n")
     assert _finding(res) is not None
+
+
+def test_pem_header_constant_not_flagged(tmp_path):
+    # A PEM format *marker* held as a string constant (auth code assembling/parsing a PEM) is not
+    # a leaked key — the secret is the base64 body, which is absent here. FP: @ai-sdk/google-vertex.
+    res = _scan(
+        tmp_path,
+        "auth.ts",
+        "const pemHeader = '-----BEGIN PRIVATE KEY-----';\n"
+        "const pemFooter = '-----END PRIVATE KEY-----';\n",
+    )
+    assert _finding(res) is None
 
 
 def test_generic_secret_assignment_detected(tmp_path):

@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.24.0]
+
+### Changed
+- **Prompt-injection/secret precision (ruleset 25): two more FPs on defensive/security content
+  closed, recall-preserving.** (1) A `-----BEGIN PRIVATE KEY-----` format marker held as a string
+  constant (auth code building a PEM, e.g. `@ai-sdk/google-vertex`) no longer flags
+  `ST-SECRET-EMBEDDED` — the pattern now requires actual base64 key material after the marker; a real
+  multi-line key still fires. (2) A credential path cited inside a markdown inline-code span in a
+  security guide (`` `write to ~/.ssh` ``, e.g. `claude-blog`) is routed to `needs_review` instead of
+  `ST-SENS-PATH` — scoped to markdown, so a JS template literal in code and a bare path in prose still
+  fire. Both removed spurious `ST-COMBO-EXFIL` escalations. New unit tests + negative corpus samples;
+  FP floor and benign corpus stay at zero.
+
 ## [0.23.0]
 
 ### Changed

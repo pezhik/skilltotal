@@ -29,8 +29,16 @@ _KNOWN: list[tuple[str, re.Pattern[str], int]] = [
     ("Google API key", re.compile(r"\b(AIza[0-9A-Za-z_\-]{35})\b"), 1),
     ("Stripe live key", re.compile(r"\b([sr]k_live_[A-Za-z0-9]{24,})\b"), 1),
     (
+        # Require actual key MATERIAL after the marker, not the bare header. A lone
+        # `-----BEGIN PRIVATE KEY-----` string constant is a PEM *format marker* used by auth code
+        # to assemble/parse a key (e.g. `const pemHeader = '-----BEGIN PRIVATE KEY-----'`), not a
+        # leaked key — the secret is the base64 body. Up to 8 non-base64 chars (newline, quote,
+        # `\n` escape) may separate the marker from the body.
         "Private key block",
-        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
+        re.compile(
+            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+            r"[^A-Za-z0-9+/]{0,8}[A-Za-z0-9+/]{40,}"
+        ),
         0,
     ),
 ]
