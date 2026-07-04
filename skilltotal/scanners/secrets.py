@@ -107,6 +107,10 @@ class SecretsScanner(Scanner):
             ),
             capability=None,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
+            # A secret inside a comment is commented-out example code, not a live shipped
+            # credential (e.g. ragflow's `#     OAuthConfig(client_secret="…")`). Real embedded
+            # secrets are in code / value-strings, which are NOT demoted, so recall is preserved.
+            code_context="comments",
         ),
     ]
 

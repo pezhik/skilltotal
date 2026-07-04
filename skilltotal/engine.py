@@ -457,11 +457,14 @@ def _split_code_context_evidence(
 def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile]) -> bool:
     """True if evidence ``e`` is a non-executable string/comment match that ``policy`` demotes.
 
-    Python: a match inside a comment (any policy) or a string literal (``strings_and_comments``).
+    Python: a match inside a comment (any policy) or a string literal
+    (``strings_and_comments``/``strings_and_comments_all``).
     Shell: a match inside a ``#`` comment — so a ``# Usage: curl … | bash`` example line is a
     doc comment, not a runnable remote pipe-to-shell.
     C-family (.ts/.js/.go/.rs/…): a match inside a ``//`` or ``/* */`` comment — so a JSDoc line
-    describing a threat (``* exfiltrate … to …``) is a description, not behavior.
+    describing a threat (``* exfiltrate … to …``) is a description, not behavior. Under the
+    ``strings_and_comments_all`` policy, C-family string literals are demoted too (a
+    prompt-injection phrase held in a value-string is a pattern definition, not a live directive).
     """
     f = by_path.get(e.file)
     if f is None or e.match_offset is None:
@@ -469,13 +472,19 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
     if f.suffix in (".py", ".pyw"):
         if f.in_comment(e.match_offset):
             return True
-        return policy == "strings_and_comments" and f.in_string(e.match_offset)
+        return (
+            policy in ("strings_and_comments", "strings_and_comments_all")
+            and f.in_string(e.match_offset)
+        )
     if f.suffix in (".sh", ".bash", ".zsh"):
         return f.in_shell_comment(e.match_offset)
     # C-family: demote matches in // and /* */ comments (a description in a code comment is not
-    # behavior). String literals are NOT demoted here — a credential path passed as a string
-    # argument is real access; only Python strings are demoted (see above).
-    return f.in_c_comment(e.match_offset)
+    # behavior). String literals are demoted ONLY for the strings_and_comments_all policy
+    # (ST-PROMPT-INJECTION); for every other rule a credential path passed as a string argument is
+    # real access, so its C-family strings are kept.
+    if f.in_c_comment(e.match_offset):
+        return True
+    return policy == "strings_and_comments_all" and f.in_c_string(e.match_offset)
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:

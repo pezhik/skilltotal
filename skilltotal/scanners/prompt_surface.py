@@ -117,10 +117,13 @@ class PromptSurfaceScanner(Scanner):
             ),
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
-            # Real injection lives in instruction surfaces (SKILL.md, manifests) or prose, not
-            # in Python value-strings; a match inside a .py string/comment is this scanner's own
-            # pattern literal or a docstring describing the patterns.
-            code_context="strings_and_comments",
+            # Real injection lives in instruction surfaces (SKILL.md, manifests) or prose, not in
+            # value-strings. A match inside a Python string/comment — or a C-family (.go/.js/.ts/
+            # .rs/…) string/comment — is this scanner's own pattern literal or another security
+            # tool's pattern definition/description (e.g. ragflow's
+            # `Description: "prompt injection: ignore previous instructions"`), not a live
+            # directive.
+            code_context="strings_and_comments_all",
             pattern=_STRONG,
         ),
         # Listed for `rules list`; routed to needs_review, never a confirmed finding.

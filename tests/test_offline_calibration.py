@@ -71,6 +71,7 @@ MUST_NOT_BE_ELEVATED = [
     _FIXTURES / "fp_e2e_tests",       # command-injection only in an e2e test tree
     _FIXTURES / "fp_mcp_sdk_comments",  # security prose in .ts comments / a defensive error string
     _FIXTURES / "fp_rust_inline_test_secret",  # fake key only in inline #[cfg(test)] Rust code
+    _FIXTURES / "fp_go_pattern_defs",  # injection phrases only in a Go security tool's pattern data
 ]
 
 

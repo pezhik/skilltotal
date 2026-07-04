@@ -175,7 +175,10 @@ def _offset_in_spans(spans: list[tuple[int, int]] | None, offset: int) -> bool:
 
 # C-family languages whose `//` and `/* */` comments are demotable code-context (a pattern that
 # only appears in a comment is a doc/description, not executed behavior). String literals are NOT
-# demoted for these (unlike Python) — a credential path passed as a string argument is real access.
+# demoted for these by default (unlike Python) — a credential path passed as a string argument is
+# real access. A rule may opt into demoting C-family string literals too, via the
+# ``strings_and_comments_all`` code-context policy (used by ST-PROMPT-INJECTION: an injection phrase
+# inside a Go/JS/Rust value-string is a pattern definition/description, not a live directive).
 _C_FAMILY_SUFFIXES: frozenset[str] = frozenset(
     {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".c", ".cc", ".cpp",
      ".h", ".hpp"}
@@ -221,6 +224,51 @@ def _c_comment_spans(text: str) -> list[tuple[int, int]]:
                     i += 1
                 i = min(n, i + 2)
                 spans.append((start, i))
+                continue
+        i += 1
+    return spans
+
+
+def _c_string_spans(text: str) -> list[tuple[int, int]]:
+    """Char-spans of ``'…'``/``"…"``/`` `…` `` string literals in C-family source.
+
+    The mirror image of :func:`_c_comment_spans`: comment-aware (skips ``//`` line and ``/* */``
+    block comments) so a quote inside a comment does not open a bogus string, and it RECORDS the
+    string spans instead of skipping them. Same best-effort escape handling and stdlib-only
+    approach; template ``${…}`` interpolation is treated as opaque string content (worst case: the
+    whole template counts as one string span). Used only by the ``strings_and_comments_all``
+    code-context policy (ST-PROMPT-INJECTION).
+    """
+    spans: list[tuple[int, int]] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in ("'", '"', "`"):
+            quote = c
+            start = i
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            spans.append((start, i))
+            continue
+        if c == "/" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt == "/":
+                i += 2
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+            if nxt == "*":
+                i += 2
+                while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                    i += 1
+                i = min(n, i + 2)
                 continue
         i += 1
     return spans
@@ -426,6 +474,10 @@ class IndexedFile:
     _c_comment_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed char-spans of C-family string literals ('…'/"…"/`…`).
+    _c_string_spans_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
     # Lazily-computed char-spans of inline Rust test code (#[cfg(test)] / #[test] blocks).
     _rust_test_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -515,6 +567,22 @@ class IndexedFile:
         """
         self._ensure_c_comment_spans()
         return _offset_in_spans(self._c_comment_spans_cache, offset)
+
+    def _ensure_c_string_spans(self) -> None:
+        """Record C-family string-literal char-spans once, for C-family files only."""
+        if self._c_string_spans_cache is not None:
+            return
+        self._c_string_spans_cache = (
+            _c_string_spans(self.text) if self.suffix in _C_FAMILY_SUFFIXES else []
+        )
+
+    def in_c_string(self, offset: int) -> bool:
+        """True if ``offset`` falls inside a C-family string literal ('…'/"…"/`…`).
+
+        Returns False for non-C-family files, so callers can invoke it unconditionally.
+        """
+        self._ensure_c_string_spans()
+        return _offset_in_spans(self._c_string_spans_cache, offset)
 
     def _ensure_rust_test_spans(self) -> None:
         """Record inline Rust test-block char-spans once, for ``.rs`` files only."""

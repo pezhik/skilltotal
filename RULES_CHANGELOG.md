@@ -4,6 +4,35 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 26 (engine 0.25.0)
+
+**Two false positives on a real, popular project (infiniflow/ragflow) closed, recall-preserving.**
+Both were defensive/example content that a scan wrongly treated as behavior, flipping the component
+to `has_malicious_indicators`:
+
+- **Prompt-injection phrases inside C-family value-strings** (`scanners/prompt_surface.py`,
+  `file_index.py`, `engine.py`). A security tool's own pattern definitions —
+  `Description: "prompt injection: ignore previous instructions"`, `"DAN (Do Anything Now) …"` in a
+  Go `patterns.go` — are DATA describing attacks, not a live directive, exactly like the Python
+  value-strings `ST-PROMPT-INJECTION` already demotes. Added a new `code_context` policy
+  `strings_and_comments_all` (= `strings_and_comments` PLUS C-family `.go/.js/.ts/.jsx/.rs/.java/.c…`
+  string literals) and pointed `ST-PROMPT-INJECTION` at it. New string-aware span machinery mirrors
+  the existing comment-aware one: `_c_string_spans` + `IndexedFile.in_c_string`. Only
+  `ST-PROMPT-INJECTION` opts in — every other rule that uses `strings_and_comments`
+  (mcp/obfuscation/sensitive_paths/shell_evasion) still treats a credential path in a C-family string
+  as real access. Recall preserved: a live injection in an instruction surface (SKILL.md/manifest) or
+  prose still fires.
+- **Commented-out embedded secret** (`scanners/secrets.py`). A commented-out OAuth example
+  (`#     OAuthConfig(client_secret="…")` in a `.py` file) was flagged `ST-SECRET-EMBEDDED`. The rule
+  now carries `code_context="comments"`, so a secret inside a Python comment is demoted to
+  `needs_review` (not live). Recall preserved: real embedded secrets are in code / value-strings,
+  which are not demoted.
+
+Tests: `tests/test_context_demotion.py` (Go/JS value-string demotion, `in_c_string` unit test,
+instruction-surface recall guard, commented-out vs live secret), `tests/test_offline_calibration.py`
+(new `fp_go_pattern_defs` benign fixture in `MUST_NOT_BE_ELEVATED`). FP floor and benign corpus stay
+at zero; efficacy recall/precision stay at 100%.
+
 ## ruleset 25 (engine 0.24.0)
 
 **Two false positives on defensive/security content closed, recall-preserving.** A more reliable

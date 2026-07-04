@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.25.0]
+
+### Changed
+- **Prompt-injection/secret precision (ruleset 26): two FPs on a real popular project
+  (infiniflow/ragflow) closed, recall-preserving.** (1) Prompt-injection phrases held in C-family
+  value-strings — a security tool's own pattern table (`Description: "prompt injection: ignore
+  previous instructions"`, `"DAN (Do Anything Now) …"` in a Go file) — no longer flag
+  `ST-PROMPT-INJECTION`. A new `code_context` policy `strings_and_comments_all` demotes matches inside
+  Go/JS/TS/Rust/… string literals (new `IndexedFile.in_c_string` machinery), opted into only by
+  `ST-PROMPT-INJECTION`; every other rule still treats a credential path in a C-family string as real
+  access. (2) A commented-out secret in a Python comment (`#     OAuthConfig(client_secret="…")`) no
+  longer flags `ST-SECRET-EMBEDDED` — the rule now uses `code_context="comments"`. Recall preserved:
+  a live injection in an instruction surface / prose and a real embedded secret in code still fire.
+  New unit tests + a benign `fp_go_pattern_defs` fixture; FP floor and efficacy (100%/100%) stay green.
+
 ## [0.24.0]
 
 ### Changed

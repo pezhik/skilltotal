@@ -66,7 +66,14 @@ class RuleSpec:
     #   "comments"             - demote matches inside Python comments only (real positives are
     #                            value-strings, e.g. ST-EXPOSE-* `host="0.0.0.0"`).
     #   "strings_and_comments" - demote matches inside Python string literals OR comments (real
-    #                            positives are never a plain .py value-string).
+    #                            positives are never a plain .py value-string). C-family string
+    #                            literals are NOT demoted (a credential path in a JS string is
+    #                            real access); only C-family comments are.
+    #   "strings_and_comments_all" - as above, PLUS demote matches inside C-family (.go/.js/.ts/.rs/
+    #                            …) string literals. Used by ST-PROMPT-INJECTION: an injection
+    #                            phrase held in a value-string (e.g. a security tool's own pattern
+    #                            definition ``Description: "ignore previous instructions"``) is data
+    #                            describing an attack, not a live directive.
     code_context: str = "any"
 
     def to_dict(self) -> dict[str, str]:
