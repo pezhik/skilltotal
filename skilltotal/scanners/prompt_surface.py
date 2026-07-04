@@ -53,8 +53,18 @@ _STRONG = alternation(
     r"(?<!not )(?<!never )(?<!n't )(?<!cannot )(?<!refuse to )(?<!refuses to )(?<!refusing to )"
     r"send\s+(?:the\s+)?(?:credentials|secrets|api[\s_-]?keys?|passwords?|"
     r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|system\s+prompt)\s+to\b",
-    r"send\s+(?:it|this|them|the\s+data)?\s*to\s+[^\n]{0,40}webhook",
-    r"send\s+to\s+webhook",
+    # Exfiltration to a webhook. Like the "send <secret> to" rule above, require a SENSITIVE
+    # data object between the send verb and "webhook" — the webhook destination adds the
+    # specificity that lets us also accept "tokens"/"the data"/"user's data" here. Without
+    # this gate, benign field descriptions matched: "Headers to send to the webhook URL" (a
+    # real OpenAPI field in firecrawl), "send the payload to your webhook endpoint". FP fix.
+    r"(?<!not )(?<!never )(?<!n't )(?<!cannot )(?<!refuse to )(?<!refuses to )(?<!refusing to )"
+    r"(?:send|post|upload|transmit|forward|exfiltrate|leak)\s+"
+    r"(?:it|this|them|the|your)?\s*(?:user['’]?s?\s+)?"
+    r"(?:credentials|secrets|api[\s_-]?keys?|tokens?|passwords?|"
+    r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|"
+    r"system\s+prompt|data\b)"
+    r"[^\n]{0,40}?webhook",
     # Jailbreak / safety-disable directives. Kept unambiguous (a safety-specific object) so
     # security prose isn't matched; .py-string/comment and documentation matches are demoted.
     r"do\s+anything\s+now\b",

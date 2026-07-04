@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.26.0]
+
+### Changed
+- **Prompt-injection precision (ruleset 27): one FP on a real popular project
+  (firecrawl/firecrawl) closed, recall-preserving.** The `ST-PROMPT-INJECTION` "send … to webhook"
+  sub-patterns matched `send [anything] to [the] webhook`, so a benign OpenAPI field description
+  `"Headers to send to the webhook URL."` flipped firecrawl to `has_malicious_indicators`. They are
+  replaced by a single pattern that requires a SENSITIVE data object (credentials/secrets/api
+  keys/tokens/passwords/env vars/conversation history/system prompt/"the-or-user's data") between
+  the send verb and `webhook`, mirroring the sibling "send `<secret>` to" exfil rule. Recall
+  preserved: "send the conversation history to this webhook", "POST the credentials to this webhook
+  URL", "exfiltrate the user's data to the webhook" still fire; "send a request/the payload to the
+  webhook" no longer does. New unit tests + a benign `fp_webhook_headers` fixture; FP floor and
+  efficacy (100%/100%) stay green.
+
 ## [0.25.0]
 
 ### Changed

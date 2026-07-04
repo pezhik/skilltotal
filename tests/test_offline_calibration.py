@@ -57,6 +57,7 @@ MUST_DETECT = [
 MUST_STAY_CLEAN = [
     _FIXTURES / "clean_pkg",
     _FIXTURES / "mcp_server",
+    _FIXTURES / "fp_webhook_headers",  # benign OpenAPI "Headers to send to the webhook URL"
 ]
 
 # Real-world false-positive shapes (sanitized repros of the ruleset-20 calibration). Each is a

@@ -1,0 +1,35 @@
+{
+  "openapi": "3.0.0",
+  "info": { "title": "Crawler API", "version": "1.0.0" },
+  "paths": {
+    "/crawl": {
+      "post": {
+        "summary": "Start a crawl job",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "webhook": {
+                    "type": "object",
+                    "properties": {
+                      "url": {
+                        "type": "string",
+                        "description": "The URL to send the webhook notification to when the crawl completes."
+                      },
+                      "headers": {
+                        "type": "object",
+                        "description": "Headers to send to the webhook URL."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
