@@ -4,6 +4,25 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.28.0]
+
+### Added
+- **`skilltotal mcp` — run the engine as an MCP server (stdio).** Agents can vet a
+  component *before* installing it: register `{"command": "skilltotal", "args": ["mcp"]}`
+  in any MCP client (Claude Code/Desktop, Cursor, Windsurf, ...). Tools: `scan_component`
+  (full report for a path / git / `npm:` / `pypi:` source), `diff_components` (upgrade
+  review), `list_rules`. Newline-delimited JSON-RPC 2.0, implemented stdlib-only (the
+  zero-dependency invariant holds); scans stay 100% local. Stdio is reconfigured to UTF-8
+  on Windows, whose legacy-codepage consoles would otherwise mojibake non-ASCII snippets.
+- **`skilltotal guard` — install-time allow/block decision.** `skilltotal guard <source>`
+  exits 2 on block, so it chains before an install (`skilltotal guard npm:x && ...`).
+  Malicious indicators always block; scored risk at/above `--block-on`
+  (`malicious`|`high`|`medium`, default `high`) blocks; **capability findings alone never
+  block**, so a legitimate MCP server with shell/network access passes and the guard stays
+  quiet enough to leave enabled everywhere. `skilltotal guard --installed` sweeps every AI
+  component installed on the machine (inventory discovery) and blocks if any fails. New
+  pure module `skilltotal.guard` (`evaluate` → `GuardDecision`).
+
 ## [0.27.0]
 
 ### Added
