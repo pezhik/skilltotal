@@ -136,6 +136,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="FILE",
         help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
     )
+    scan.add_argument(
+        "--provenance",
+        action="store_true",
+        help=(
+            "Also fetch registry metadata for npm:/pypi: sources and report provenance "
+            "signals (recently published, deprecated/yanked, no recent releases, no "
+            "repository link) as needs_review entries. Opt-in; never affects the score."
+        ),
+    )
 
     diff = sub.add_parser(
         "diff",
@@ -291,6 +300,24 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     except CollectionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
+
+    if args.provenance:
+        # Provenance is deliberately a CLI-layer add-on: the engine stays component-only,
+        # and registry metadata lands in needs_review, which never affects the score.
+        from skilltotal.provenance import ProvenanceError, collect_provenance
+
+        try:
+            signals = collect_provenance(args.source)
+        except ProvenanceError as exc:
+            print(f"warning: {exc}", file=sys.stderr)
+        else:
+            report.needs_review.extend(signals)
+            report.metadata["provenance_checked"] = True
+            if not signals and not args.source.strip().lower().startswith(("npm:", "pypi:")):
+                print(
+                    "warning: --provenance only applies to npm:/pypi: sources",
+                    file=sys.stderr,
+                )
 
     if args.write_baseline:
         doc = build_baseline(report.findings)

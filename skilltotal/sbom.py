@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from skilltotal import __version__
+from skilltotal.collector import npm_package_spec, pypi_package_spec
 
 _PROPERTY_KEYS = (
     ("host", "skilltotal:host"),
@@ -78,32 +79,17 @@ def purl_from_source(source: str | None) -> str | None:
     """Derive a package URL from an ``npm:``/``pypi:`` source spec; None otherwise."""
     if not source:
         return None
-    if source.startswith("npm:"):
-        spec = source[4:]
-        name, version = _split_npm_spec(spec)
+    normalized = source.strip().lower()
+    if normalized.startswith("npm:"):
+        name, version = npm_package_spec(source)
         if not name:
             return None
         # purl encodes the npm scope marker: pkg:npm/%40scope/name@version
         name = name.replace("@", "%40", 1) if name.startswith("@") else name
         return f"pkg:npm/{name}@{version}" if version else f"pkg:npm/{name}"
-    if source.startswith("pypi:"):
-        spec = source[5:]
-        name, _, version = spec.partition("==")
+    if normalized.startswith("pypi:"):
+        name, version = pypi_package_spec(source)
         if not name:
             return None
         return f"pkg:pypi/{name}@{version}" if version else f"pkg:pypi/{name}"
     return None
-
-
-def _split_npm_spec(spec: str) -> tuple[str, str]:
-    """``name[@version]`` where a leading ``@`` belongs to the scope, not the version."""
-    if spec.startswith("@"):
-        scope_and_rest = spec[1:]
-        if "@" in scope_and_rest:
-            name, _, version = scope_and_rest.rpartition("@")
-            return "@" + name, version
-        return spec, ""
-    if "@" in spec:
-        name, _, version = spec.rpartition("@")
-        return name, version
-    return spec, ""

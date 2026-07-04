@@ -100,6 +100,9 @@ skilltotal scan ./component --fail-on-score 50
 # Skip paths (repeatable; combined with the config file's `exclude`)
 skilltotal scan ./component --exclude "vendor/*" --exclude "*.min.js"
 
+# Opt-in provenance for npm:/pypi: sources (registry metadata -> needs_review, never scored)
+skilltotal scan npm:some-lib --provenance
+
 # Baseline: snapshot current findings, then suppress them on later scans
 skilltotal scan ./component --write-baseline .skilltotal-baseline.json
 skilltotal scan ./component --baseline .skilltotal-baseline.json --fail-on-high
@@ -149,6 +152,12 @@ Malicious indicators always block; scored risk at/above `--block-on` blocks;
 passes, so the guard stays quiet enough to leave enabled everywhere (unlike a raw
 `--fail-on high` gate, which would trip on most of the ecosystem's honest capability
 findings).
+
+**Provenance** (`--provenance`, opt-in) adds registry-metadata signals for `npm:` /
+`pypi:` sources: *recently published*, *deprecated / yanked*, *no recent releases*, *no
+repository link*. Metadata is context about a component, not component content — so these
+signals go to `needs_review` and **never** affect the score or verdict, and the default
+scan stays 100% component-only and offline.
 
 **Project config** (optional) — commit a `.skilltotal.toml` instead of repeating flags
 (CLI flags override it):
