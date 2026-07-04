@@ -112,6 +112,11 @@ skilltotal diff old-report.json new-report.json
 # CI gate: fail (exit 2) if the new version INTRODUCES a high/critical finding
 skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4 --fail-on-new high
 
+# Pre-install guard: allow/block decision (exit 2 on block) you can chain before installing
+skilltotal guard npm:some-mcp-server && claude mcp add some-mcp-server -- npx some-mcp-server
+skilltotal guard --installed            # check every AI component already on this machine
+skilltotal guard npm:x --block-on malicious   # block only on malicious indicators
+
 # Inventory: discover AI components already installed on this machine and scan them
 # (reads agent configs for Claude Desktop/Code, Cursor, Windsurf, VS Code, Gemini, and
 #  local skills; derives an npm:/pypi:/local source per MCP server and runs the engine)
@@ -135,6 +140,13 @@ not noise), capability changes, and the risk-score delta. `--fail-on-new LEVEL` 
 on risk the new version *introduces* — existing accepted findings never trip it, so it fits
 upgrade reviews ("is 1.2.4 riskier than the 1.2.3 we already vetted?") without a baseline
 file.
+
+**Guard** is the install-time answer to "should I trust this component right now?".
+Malicious indicators always block; scored risk at/above `--block-on` blocks;
+**capabilities alone never block** — a legitimate MCP server with shell/network access
+passes, so the guard stays quiet enough to leave enabled everywhere (unlike a raw
+`--fail-on high` gate, which would trip on most of the ecosystem's honest capability
+findings).
 
 **Project config** (optional) — commit a `.skilltotal.toml` instead of repeating flags
 (CLI flags override it):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 
 from skilltotal.diff import DiffReport
+from skilltotal.guard import GuardDecision
 from skilltotal.models import Report
 from skilltotal.scanners.base import RuleSpec
 
@@ -137,6 +138,48 @@ def _diff_side(side: dict) -> str:
         f"{c.get('name', '?')}{version} ({c.get('type', '?')})  "
         f"risk {side.get('risk_score', 0)}/100 {str(side.get('risk_level', '')).upper()}"
     )
+
+
+def render_guard_json(source: str, report: dict, decision: GuardDecision) -> str:
+    return json.dumps(
+        {
+            "source": source,
+            **decision.to_dict(),
+            "risk_score": report.get("risk_score", 0),
+            "risk_level": report.get("risk_level", ""),
+            "verdict": report.get("verdict", {}),
+            "capabilities": sorted(report.get("capabilities", {})),
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+def render_guard_text(source: str, report: dict, decision: GuardDecision) -> str:
+    c = report.get("component", {})
+    verdict = report.get("verdict") or {}
+    version = f" {c['version']}" if c.get("version") else ""
+    lines = [
+        "SkillTotal Guard",
+        "=" * 16,
+        f"Source    : {source}",
+        f"Component : {c.get('name', '?')}{version} ({c.get('type', '?')})",
+        f"Risk      : {report.get('risk_score', 0)}/100 "
+        f"{str(report.get('risk_level', '')).upper()}",
+    ]
+    if verdict.get("headline"):
+        lines.append(f"Verdict   : {verdict['headline']}")
+    caps = sorted(report.get("capabilities", {}))
+    if caps:
+        lines.append(f"Capabilities: {', '.join(caps)}")
+    lines.append("")
+    lines.append(f"Decision  : {'ALLOW' if decision.allow else 'BLOCK'}")
+    for reason in decision.reasons:
+        lines.append(f"{_INDENT}- {reason}")
+    if not decision.allow:
+        lines.append("")
+        lines.append(f"Inspect the full report: skilltotal scan {source}")
+    return "\n".join(lines) + "\n"
 
 
 def render_inventory_json(items: list[dict]) -> str:

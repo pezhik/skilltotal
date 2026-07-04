@@ -14,6 +14,10 @@ Commands:
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
         evidence-level changes, and capability changes.
+    skilltotal guard <source> [--block-on malicious|high|medium] [--json]
+    skilltotal guard --installed [--project DIR] [--block-on ...] [--json]
+        pre-install allow/block decision (exit 2 on block): malicious indicators always
+        block; scored risk at/above the block level blocks; capabilities alone never do.
     skilltotal inventory [--json] [--no-scan] [--project DIR]
         discover AI components installed on this machine (agent configs / MCP servers), then scan.
     skilltotal rules list [--json]
@@ -40,11 +44,14 @@ from skilltotal.collector import CollectionError
 from skilltotal.config import Config, find_config, load_config
 from skilltotal.diff import diff_reports, max_new_severity
 from skilltotal.engine import analyze
+from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
 from skilltotal.inventory import discover
 from skilltotal.models import Severity
 from skilltotal.report import (
     render_diff_json,
     render_diff_text,
+    render_guard_json,
+    render_guard_text,
     render_inventory_json,
     render_inventory_text,
     render_json,
@@ -173,6 +180,41 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
     )
 
+    guard = sub.add_parser(
+        "guard",
+        help=(
+            "Pre-install check: allow/block decision for a component "
+            "(chain it before installing, e.g. `skilltotal guard npm:x && ...`)."
+        ),
+    )
+    guard.add_argument(
+        "source",
+        nargs="?",
+        help="Component to check (same sources as `scan`). Omit with --installed.",
+    )
+    guard.add_argument(
+        "--installed",
+        action="store_true",
+        help="Check every AI component installed on this machine instead of one source.",
+    )
+    guard.add_argument(
+        "--project",
+        metavar="DIR",
+        help="With --installed: also check project-local agent configs in DIR.",
+    )
+    guard.add_argument(
+        "--block-on",
+        metavar="LEVEL",
+        choices=list(BLOCK_LEVELS),
+        default=DEFAULT_BLOCK_LEVEL,
+        help=(
+            "What blocks (exit 2): 'malicious' = only malicious indicators; "
+            "'high' (default) = also risk level high/critical; 'medium' = also medium. "
+            "Capabilities alone never block."
+        ),
+    )
+    guard.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
+
     inv = sub.add_parser(
         "inventory",
         help="Discover AI components installed on this machine and scan them.",
@@ -209,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_scan(args)
     if args.command == "diff":
         return _cmd_diff(args)
+    if args.command == "guard":
+        return _cmd_guard(args)
     if args.command == "inventory":
         return _cmd_inventory(args)
     if args.command == "rules":
@@ -316,6 +360,70 @@ def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
         # like any other single-file source.
     report = analyze(source, ignore_rules=config.ignored_rules(), exclude=exclude)
     return report.to_dict()
+
+
+def _cmd_guard(args: argparse.Namespace) -> int:
+    if args.installed == bool(args.source):
+        print("error: pass a source to check, or --installed (not both)", file=sys.stderr)
+        return EXIT_ERROR
+    if args.installed:
+        return _guard_installed(args)
+
+    try:
+        report = analyze(args.source).to_dict()
+    except CollectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    decision = evaluate(report, args.block_on)
+    if args.json:
+        print(render_guard_json(args.source, report, decision))
+    else:
+        print(render_guard_text(args.source, report, decision))
+    return EXIT_OK if decision.allow else EXIT_FAIL_ON_HIGH
+
+
+def _guard_installed(args: argparse.Namespace) -> int:
+    """Guard every installed AI component; block if any of them blocks."""
+    components = discover(project=Path(args.project) if args.project else None)
+    items: list[dict] = []
+    blocked: list[str] = []
+    for c in components:
+        item: dict = {"host": c.host, "name": c.name, "kind": c.kind, "source": c.source}
+        if not (c.scannable and c.source):
+            item["decision"] = "not scanned"
+            item["note"] = c.note
+            items.append(item)
+            continue
+        try:
+            report = analyze(c.source).to_dict()
+        except Exception as exc:  # noqa: BLE001 - one bad item must not abort the sweep
+            item["decision"] = "error"
+            item["note"] = str(exc)
+            items.append(item)
+            continue
+        decision = evaluate(report, args.block_on)
+        item["decision"] = "allow" if decision.allow else "block"
+        item["risk_level"] = report.get("risk_level", "")
+        item["reasons"] = decision.reasons
+        if not decision.allow:
+            blocked.append(c.name)
+        items.append(item)
+
+    if args.json:
+        print(render_inventory_json(items))
+    else:
+        for it in items:
+            marker = {"allow": "ok", "block": "BLOCK"}.get(it["decision"], it["decision"])
+            risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
+            print(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
+            for reason in it.get("reasons", []):
+                print(f"      - {reason}")
+        print()
+        if blocked:
+            print(f"BLOCK: {len(blocked)} component(s) failed the guard: {', '.join(blocked)}")
+        else:
+            print(f"ALLOW: all {len(items)} component(s) passed the guard.")
+    return EXIT_FAIL_ON_HIGH if blocked else EXIT_OK
 
 
 def _cmd_inventory(args: argparse.Namespace) -> int:
