@@ -225,6 +225,21 @@ repos:
 Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
 on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`).
 
+### Use as an MCP server
+
+Let your agent check a component *before* installing it. `skilltotal mcp` runs the engine
+as a stdio MCP server (stdlib-only, still zero dependencies) — register it in Claude
+Code/Desktop, Cursor, Windsurf, or any MCP client:
+
+```json
+{ "mcpServers": { "skilltotal": { "command": "skilltotal", "args": ["mcp"] } } }
+```
+
+Tools exposed: `scan_component` (full report for a path / git URL / `npm:` / `pypi:`
+source), `diff_components` (upgrade review: what changed between two versions), and
+`list_rules`. Scans run locally with the same never-execute static engine — the component's
+code is not uploaded anywhere.
+
 ### Add a status badge
 
 Scan a component on [skilltotal.ai](https://www.skilltotal.ai) and each report offers an

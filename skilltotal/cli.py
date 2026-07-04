@@ -17,6 +17,9 @@ Commands:
     skilltotal inventory [--json] [--no-scan] [--project DIR]
         discover AI components installed on this machine (agent configs / MCP servers), then scan.
     skilltotal rules list [--json]
+    skilltotal mcp
+        run SkillTotal as an MCP server on stdio, so agents can scan components before
+        installing them (register: {"command": "skilltotal", "args": ["mcp"]}).
 
 Exit codes:
     0  success
@@ -187,6 +190,14 @@ def build_parser() -> argparse.ArgumentParser:
     rules_list = rules_sub.add_parser("list", help="List all detection rules.")
     rules_list.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
 
+    sub.add_parser(
+        "mcp",
+        help=(
+            "Run SkillTotal as an MCP server on stdio (tools: scan_component, "
+            "diff_components, list_rules)."
+        ),
+    )
+
     return parser
 
 
@@ -202,6 +213,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_inventory(args)
     if args.command == "rules":
         return _cmd_rules(args)
+    if args.command == "mcp":
+        return _cmd_mcp()
     parser.error("unknown command")  # pragma: no cover
     return EXIT_ERROR
 
@@ -333,6 +346,20 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
         print(render_inventory_json(items))
     else:
         print(render_inventory_text(items))
+    return EXIT_OK
+
+
+def _cmd_mcp() -> int:
+    from skilltotal.mcp_server import serve
+
+    # The MCP stdio transport is UTF-8, but Windows consoles default to a legacy codepage
+    # (e.g. cp1251), which would mojibake any non-ASCII snippet in a report and crash the
+    # client's decoder. newline="\n" keeps the transport's one-message-per-LF framing free
+    # of CRLF translation.
+    if hasattr(sys.stdin, "reconfigure"):  # real stdio; absent on injected test streams
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8", newline="\n")
+    serve(sys.stdin, sys.stdout)
     return EXIT_OK
 
 
