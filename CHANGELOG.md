@@ -4,6 +4,24 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.27.0]
+
+### Added
+- **`skilltotal diff <old> <new>` — compare two versions of a component.** Each side is any
+  scannable source (path/archive/git/`npm:`/`pypi:`) or a previously saved `--json` report.
+  Reports new / resolved / changed findings, evidence-level additions and removals (matched
+  by the line-independent baseline fingerprint, so pure line shifts are not noise),
+  capability changes, and the risk-score delta. A ruleset-version mismatch between the two
+  reports is surfaced explicitly. `--fail-on-new LEVEL` gates (exit 2) only on risk the new
+  version *introduces*, so upgrade reviews don't need a baseline file. New pure-library
+  module `skilltotal.diff` (`diff_reports`, `DiffReport`, `max_new_severity`).
+- **Per-rule policy actions in `.skilltotal.toml` — `[policy]` table.** Map a rule id to
+  `block` (gate trips whenever the rule fires, even with no `fail_on` configured), `warn`
+  (explicit accept-but-show: reported and scored, but exempt from the `fail_on` severity
+  gate), or `ignore` (suppressed entirely). Gate decisions become reviewable code in the
+  repo instead of dashboard state. Policy ignores also apply to both sides of
+  `skilltotal diff`.
+
 ## [0.26.0]
 
 ### Changed
