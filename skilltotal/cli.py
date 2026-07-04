@@ -8,8 +8,8 @@ Commands:
         <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
         file, a git URL, or an npm:<name> / pypi:<name> package spec.
         Optional project config: .skilltotal.toml (fail_on, fail_on_score, exclude, ignore,
-        baseline). CLI flags override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a
-        finding on its line.
+        baseline, and a per-rule [policy] table with block/warn/ignore actions). CLI flags
+        override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a finding on its line.
     skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
@@ -221,7 +221,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     exclude = [*config.exclude, *args.exclude]
     try:
         report = analyze(
-            args.source, suppress=suppress, ignore_rules=config.ignore, exclude=exclude
+            args.source, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude
         )
     except CollectionError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -255,7 +255,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
     score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
-    if _fails_gate(report, level, score):
+    if _fails_gate(report, level, score, config.policy):
         return EXIT_FAIL_ON_HIGH
     return EXIT_OK
 
@@ -301,7 +301,7 @@ def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
             return data
         # A .json file that is not a saved report (e.g. a bare package.json) is scanned
         # like any other single-file source.
-    report = analyze(source, ignore_rules=config.ignore, exclude=exclude)
+    report = analyze(source, ignore_rules=config.ignored_rules(), exclude=exclude)
     return report.to_dict()
 
 
@@ -359,11 +359,25 @@ def _load_config(args: argparse.Namespace) -> Config:
         return Config()
 
 
-def _fails_gate(report, level: str | None, score: int | None) -> bool:
-    """True if the report trips the configured CI gate (severity level and/or risk score)."""
+def _fails_gate(
+    report, level: str | None, score: int | None, policy: dict[str, str] | None = None
+) -> bool:
+    """True if the report trips the configured CI gate (severity level and/or risk score).
+
+    Per-rule policy actions refine the severity gate: a `block` rule trips it whenever it
+    fires (even with no `fail_on` configured); a `warn` rule is exempt from the severity
+    threshold (explicit accept-but-show). The aggregate `fail_on_score` gate is unaffected —
+    warn findings still count toward the risk score.
+    """
+    policy = policy or {}
+    if any(policy.get(f.id) == "block" for f in report.findings):
+        return True
     if level:
         threshold = Severity[level.upper()].rank
-        if any(f.severity.rank >= threshold for f in report.findings):
+        if any(
+            f.severity.rank >= threshold and policy.get(f.id) != "warn"
+            for f in report.findings
+        ):
             return True
     if score is not None and report.risk_score >= score:
         return True

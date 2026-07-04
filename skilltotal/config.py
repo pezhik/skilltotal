@@ -10,6 +10,16 @@ Recognized top-level keys:
     exclude        = ["glob/*", ...]   # path globs (posix, relative to the component root)
     ignore         = ["ST-RULE-ID", ...]
     baseline       = "path/to/baseline.json"
+
+Per-rule policy (reviewable, lives in the repo — no dashboard or account needed):
+    [policy]
+    "ST-SHELL-PIPE-EXEC" = "block"    # gate trips (exit 2) whenever this rule fires
+    "ST-DYN-PY"          = "warn"     # reported, but exempt from the fail_on severity gate
+    "ST-SENS-WORD"       = "ignore"   # suppressed entirely (same effect as `ignore`)
+
+`block` overrides severity thresholds (it trips even with no `fail_on` configured); `warn`
+is an explicit accept-but-show (the finding stays in the report and still counts toward the
+risk score / `fail_on_score`); unknown actions are dropped, not fatal.
 """
 
 from __future__ import annotations
@@ -25,6 +35,7 @@ except ModuleNotFoundError:  # pragma: no cover
 
 CONFIG_NAME = ".skilltotal.toml"
 _LEVELS = frozenset({"low", "medium", "high", "critical"})
+_POLICY_ACTIONS = frozenset({"block", "warn", "ignore"})
 
 
 @dataclass
@@ -36,6 +47,12 @@ class Config:
     exclude: list[str] = field(default_factory=list)
     ignore: list[str] = field(default_factory=list)
     baseline: str | None = None
+    # Per-rule gate actions: rule id -> "block" | "warn" | "ignore".
+    policy: dict[str, str] = field(default_factory=dict)
+
+    def ignored_rules(self) -> set[str]:
+        """Rule ids suppressed entirely: the `ignore` list plus policy `ignore` entries."""
+        return {*self.ignore, *(r for r, action in self.policy.items() if action == "ignore")}
 
 
 def find_config(start: Path | None = None) -> Path | None:
@@ -57,6 +74,7 @@ def load_config(path: Path) -> Config:
         exclude=_as_str_list(data.get("exclude")),
         ignore=_as_str_list(data.get("ignore")),
         baseline=_as_str(data.get("baseline")),
+        policy=_as_policy(data.get("policy")),
     )
 
 
@@ -84,6 +102,14 @@ def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 
         m = re.search(rf"^\s*{key}\s*=\s*\[([^\]]*)\]", text, re.MULTILINE)
         if m:
             out[key] = [v.strip().strip("\"'") for v in m.group(1).split(",") if v.strip()]
+    m = re.search(r"^\s*\[policy\]\s*$(.*?)(?=^\s*\[|\Z)", text, re.MULTILINE | re.DOTALL)
+    if m:
+        policy: dict[str, object] = {}
+        for line in m.group(1).splitlines():
+            kv = re.match(r"""\s*["']?([\w.-]+)["']?\s*=\s*["']([^"']*)["']""", line)
+            if kv:
+                policy[kv.group(1)] = kv.group(2)
+        out["policy"] = policy
     return out
 
 
@@ -103,3 +129,17 @@ def _as_str_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(v) for v in value if isinstance(v, str) and v]
     return []
+
+
+def _as_policy(value: object) -> dict[str, str]:
+    """Keep only ``rule id -> valid action`` string pairs; drop anything malformed."""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for rule_id, action in value.items():
+        if not (isinstance(rule_id, str) and rule_id and isinstance(action, str)):
+            continue
+        normalized = action.lower()
+        if normalized in _POLICY_ACTIONS:
+            out[rule_id] = normalized
+    return out

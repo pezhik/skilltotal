@@ -145,6 +145,14 @@ fail_on_score = 50         # or gate on the 0-100 risk score
 exclude = ["vendor/*", "*.min.js"]
 ignore = ["ST-NET-PY"]     # rule ids to drop
 baseline = ".skilltotal-baseline.json"
+
+# Per-rule policy: reviewable gate decisions that live in the repo, not in a dashboard.
+[policy]
+"ST-SHELL-PIPE-EXEC" = "block"   # gate trips (exit 2) whenever this rule fires,
+                                 # even with no fail_on configured
+"ST-DYN-PY" = "warn"             # explicit accept-but-show: reported, still counts toward
+                                 # the risk score, but exempt from the fail_on severity gate
+"ST-SENS-WORD" = "ignore"        # suppressed entirely (same effect as `ignore`)
 ```
 
 Suppress a single finding inline with a `# skilltotal:ignore` (or `# skilltotal:ignore[ST-ID]`)
@@ -164,8 +172,8 @@ comment on its line.
 > not the aggregate `risk_score`. A component can report `risk_level: low` (score 0) and still fail
 > the gate if it has a high-severity finding — including a powerful *capability* (e.g. shell or
 > network access), which is reported but never scored as malicious. To gate on the score instead,
-> use `--fail-on-score`; to accept known findings, use a baseline or an inline
-> `# skilltotal:ignore[ST-ID]`.
+> use `--fail-on-score`; to accept known findings, use a baseline, an inline
+> `# skilltotal:ignore[ST-ID]`, or a per-rule `[policy]` action (`block` / `warn` / `ignore`).
 
 ## CI / GitHub Action
 
