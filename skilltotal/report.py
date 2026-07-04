@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 
+from skilltotal.diff import DiffReport
 from skilltotal.models import Report
 from skilltotal.scanners.base import RuleSpec
 
@@ -64,6 +65,78 @@ def render_text(report: Report) -> str:
         lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def render_diff_json(diff: DiffReport) -> str:
+    return json.dumps(diff.to_dict(), indent=2, ensure_ascii=False)
+
+
+def render_diff_text(diff: DiffReport) -> str:
+    lines: list[str] = []
+    lines.append("SkillTotal Diff Report")
+    lines.append("=" * 22)
+    lines.append(f"Old : {_diff_side(diff.old)}")
+    lines.append(f"New : {_diff_side(diff.new)}")
+    lines.append("")
+    lines.append(diff.summary)
+    lines.append("")
+
+    if diff.ruleset_mismatch:
+        lines.append(
+            f"NOTE: reports were produced by different rulesets "
+            f"(old {diff.old.get('ruleset_version')}, new {diff.new.get('ruleset_version')}); "
+            "some finding churn may come from detection changes, not component changes."
+        )
+        lines.append("")
+
+    lines.append(f"New findings ({len(diff.new_findings)}):")
+    if not diff.new_findings:
+        lines.append(f"{_INDENT}(none)")
+    for f in diff.new_findings:
+        lines.append(f"{_INDENT}[{f['severity'].upper()}] {f['id']}  {f['title']}")
+        for e in f.get("evidence", []):
+            lines.append(f"{_INDENT*2}+ {e['file']}:{e['line_start']}-{e['line_end']}")
+            for snippet_line in e.get("snippet", "").splitlines():
+                lines.append(f"{_INDENT*3}{snippet_line}")
+    lines.append("")
+
+    if diff.resolved_findings:
+        lines.append(f"Resolved findings ({len(diff.resolved_findings)}):")
+        for f in diff.resolved_findings:
+            lines.append(f"{_INDENT}[{f['severity'].upper()}] {f['id']}  {f['title']}")
+        lines.append("")
+
+    if diff.changed_findings:
+        lines.append(f"Changed findings ({len(diff.changed_findings)}):")
+        for c in diff.changed_findings:
+            lines.append(
+                f"{_INDENT}[{c['severity'].upper()}] {c['id']}  {c['title']}  "
+                f"(+{len(c['added_evidence'])} / -{len(c['removed_evidence'])} evidence)"
+            )
+            for e in c["added_evidence"]:
+                lines.append(f"{_INDENT*2}+ {e['file']}:{e['line_start']}-{e['line_end']}")
+            for e in c["removed_evidence"]:
+                lines.append(f"{_INDENT*2}- {e['file']}:{e['line_start']}-{e['line_end']}")
+        lines.append("")
+
+    if diff.capabilities_added or diff.capabilities_removed:
+        lines.append("Capability changes:")
+        for cap in diff.capabilities_added:
+            lines.append(f"{_INDENT}+ {cap}")
+        for cap in diff.capabilities_removed:
+            lines.append(f"{_INDENT}- {cap}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _diff_side(side: dict) -> str:
+    c = side.get("component", {})
+    version = f" {c['version']}" if c.get("version") else ""
+    return (
+        f"{c.get('name', '?')}{version} ({c.get('type', '?')})  "
+        f"risk {side.get('risk_score', 0)}/100 {str(side.get('risk_level', '')).upper()}"
+    )
 
 
 def render_inventory_json(items: list[dict]) -> str:

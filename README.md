@@ -104,6 +104,14 @@ skilltotal scan ./component --exclude "vendor/*" --exclude "*.min.js"
 skilltotal scan ./component --write-baseline .skilltotal-baseline.json
 skilltotal scan ./component --baseline .skilltotal-baseline.json --fail-on-high
 
+# Diff two versions of a component: what changed between them?
+# Each side is any scannable source (path/archive/git/npm:/pypi:) or a saved --json report.
+skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4
+skilltotal diff ./old-checkout ./new-checkout --json
+skilltotal diff old-report.json new-report.json
+# CI gate: fail (exit 2) if the new version INTRODUCES a high/critical finding
+skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4 --fail-on-new high
+
 # Inventory: discover AI components already installed on this machine and scan them
 # (reads agent configs for Claude Desktop/Code, Cursor, Windsurf, VS Code, Gemini, and
 #  local skills; derives an npm:/pypi:/local source per MCP server and runs the engine)
@@ -120,6 +128,13 @@ skilltotal rules list --json
 **Baseline** suppresses findings by a stable fingerprint of
 `(rule id, file, code snippet)` — independent of line numbers, so it survives edits.
 Suppressed findings are removed before scoring and do not affect the risk score.
+
+**Diff** reports new / resolved / changed findings, evidence-level additions and removals
+(matched by the same line-independent fingerprint as the baseline, so pure line shifts are
+not noise), capability changes, and the risk-score delta. `--fail-on-new LEVEL` gates only
+on risk the new version *introduces* — existing accepted findings never trip it, so it fits
+upgrade reviews ("is 1.2.4 riskier than the 1.2.3 we already vetted?") without a baseline
+file.
 
 **Project config** (optional) — commit a `.skilltotal.toml` instead of repeating flags
 (CLI flags override it):
@@ -143,7 +158,7 @@ comment on its line.
 |------|---------|
 | 0 | Success |
 | 1 | Usage / collection error (e.g. path missing, clone failed) |
-| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, or `--fail-on-score`) |
+| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score`, or `diff --fail-on-new`) |
 
 > **Gate semantics:** `--fail-on`/`--fail-on-high` trip on the **severity of any single finding**,
 > not the aggregate `risk_score`. A component can report `risk_level: low` (score 0) and still fail

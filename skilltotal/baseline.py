@@ -19,12 +19,21 @@ from pathlib import Path
 from skilltotal.models import Evidence, Finding
 
 
-def fingerprint(rule_id: str, evidence: Evidence) -> str:
-    """Stable, line-independent identifier for one evidence occurrence."""
-    payload = f"{rule_id}|{evidence.file}|{evidence.snippet.strip()}"
+def evidence_fingerprint(rule_id: str, file: str, snippet: str) -> str:
+    """Stable, line-independent identifier for one evidence occurrence.
+
+    Takes raw fields (not an :class:`Evidence`) so serialized reports — where evidence is a
+    plain dict — can be fingerprinted too (used by :mod:`skilltotal.diff`).
+    """
+    payload = f"{rule_id}|{file}|{snippet.strip()}"
     # Not a security hash: just a stable fingerprint for baseline dedup/suppression.
     digest = hashlib.sha1(payload.encode("utf-8"), usedforsecurity=False)
     return digest.hexdigest()[:16]
+
+
+def fingerprint(rule_id: str, evidence: Evidence) -> str:
+    """Stable, line-independent identifier for one evidence occurrence."""
+    return evidence_fingerprint(rule_id, evidence.file, evidence.snippet)
 
 
 def finding_fingerprints(finding: Finding) -> list[str]:

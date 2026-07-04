@@ -10,6 +10,10 @@ Commands:
         Optional project config: .skilltotal.toml (fail_on, fail_on_score, exclude, ignore,
         baseline). CLI flags override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a
         finding on its line.
+    skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
+        compare two versions of a component: each side is any scannable source (as in
+        `scan`) or a previously saved JSON report. Reports new/resolved findings,
+        evidence-level changes, and capability changes.
     skilltotal inventory [--json] [--no-scan] [--project DIR]
         discover AI components installed on this machine (agent configs / MCP servers), then scan.
     skilltotal rules list [--json]
@@ -17,7 +21,7 @@ Commands:
 Exit codes:
     0  success
     1  usage / collection error
-    2  --fail-on-high set and a finding of severity >= high was produced
+    2  a configured gate tripped (scan --fail-on* / diff --fail-on-new)
 """
 
 from __future__ import annotations
@@ -31,10 +35,13 @@ from skilltotal import __version__
 from skilltotal.baseline import build_baseline, load_baseline
 from skilltotal.collector import CollectionError
 from skilltotal.config import Config, find_config, load_config
+from skilltotal.diff import diff_reports, max_new_severity
 from skilltotal.engine import analyze
 from skilltotal.inventory import discover
 from skilltotal.models import Severity
 from skilltotal.report import (
+    render_diff_json,
+    render_diff_text,
     render_inventory_json,
     render_inventory_text,
     render_json,
@@ -120,6 +127,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
     )
 
+    diff = sub.add_parser(
+        "diff",
+        help=(
+            "Compare two versions of a component (any two scan sources, or previously "
+            "saved JSON reports)."
+        ),
+    )
+    diff.add_argument(
+        "old",
+        help="Old side: any scannable source (as in `scan`) or a saved JSON report file.",
+    )
+    diff.add_argument(
+        "new",
+        help="New side: any scannable source (as in `scan`) or a saved JSON report file.",
+    )
+    diff.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
+    diff.add_argument(
+        "--output",
+        metavar="FILE",
+        help="Write the diff report to FILE as JSON.",
+    )
+    diff.add_argument(
+        "--fail-on-new",
+        metavar="LEVEL",
+        choices=["low", "medium", "high", "critical"],
+        help=(
+            "Exit with code 2 if the new version introduces a finding (or new evidence "
+            "on an existing finding) at or above LEVEL severity."
+        ),
+    )
+    diff.add_argument(
+        "--exclude",
+        metavar="GLOB",
+        action="append",
+        default=[],
+        help="Skip files matching GLOB on both sides (repeatable).",
+    )
+    diff.add_argument(
+        "--config",
+        metavar="FILE",
+        help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
+    )
+
     inv = sub.add_parser(
         "inventory",
         help="Discover AI components installed on this machine and scan them.",
@@ -146,6 +196,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "scan":
         return _cmd_scan(args)
+    if args.command == "diff":
+        return _cmd_diff(args)
     if args.command == "inventory":
         return _cmd_inventory(args)
     if args.command == "rules":
@@ -206,6 +258,51 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     if _fails_gate(report, level, score):
         return EXIT_FAIL_ON_HIGH
     return EXIT_OK
+
+
+def _cmd_diff(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    exclude = [*config.exclude, *args.exclude]
+
+    try:
+        old_report = _resolve_diff_side(args.old, config, exclude)
+        new_report = _resolve_diff_side(args.new, config, exclude)
+    except CollectionError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"error: cannot read report: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+    diff = diff_reports(old_report, new_report)
+
+    if args.json:
+        print(render_diff_json(diff))
+    else:
+        print(render_diff_text(diff))
+
+    if args.output:
+        Path(args.output).write_text(render_diff_json(diff), encoding="utf-8")
+        print(f"Diff report written to {args.output}", file=sys.stderr)
+
+    if args.fail_on_new:
+        worst = max_new_severity(diff)
+        if worst is not None and worst.rank >= Severity[args.fail_on_new.upper()].rank:
+            return EXIT_FAIL_ON_HIGH
+    return EXIT_OK
+
+
+def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
+    """Resolve one diff side: a saved JSON report is loaded, anything else is scanned."""
+    path = Path(source)
+    if path.is_file() and path.suffix.lower() == ".json":
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and {"component", "risk_score", "findings"} <= data.keys():
+            return data
+        # A .json file that is not a saved report (e.g. a bare package.json) is scanned
+        # like any other single-file source.
+    report = analyze(source, ignore_rules=config.ignore, exclude=exclude)
+    return report.to_dict()
 
 
 def _cmd_inventory(args: argparse.Namespace) -> int:
