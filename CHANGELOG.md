@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.29.0]
+
+### Added
+- **`skilltotal inventory --sbom` — AI-BOM export.** The installed-component inventory
+  (every MCP server and skill your agent hosts reference) as a standard CycloneDX 1.6 JSON
+  document, ready for Dependency-Track / compliance pipelines. Components carry a `purl`
+  when the source is an `npm:`/`pypi:` spec and the SkillTotal scan verdict as
+  `skilltotal:*` properties (host, kind, risk level/score, verdict). New pure module
+  `skilltotal.sbom`.
+- **`skilltotal scan --provenance` — opt-in registry provenance signals.** For `npm:` /
+  `pypi:` sources: *recently published* (<30 days), *deprecated* (npm) / *yanked* (PyPI),
+  *no recent releases* (>3 years), *no repository link*. Registry metadata is context about
+  a component, not component content, so the component-only invariant holds: opt-in flag,
+  fetched at the CLI layer (never inside the engine), and emitted only as `needs_review` —
+  never findings, never the score, never the verdict. New pure module
+  `skilltotal.provenance`.
+
 ## [0.28.0]
 
 ### Added
