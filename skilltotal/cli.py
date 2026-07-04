@@ -221,6 +221,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inv.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
     inv.add_argument(
+        "--sbom",
+        action="store_true",
+        help=(
+            "Emit the inventory as a CycloneDX 1.6 AI-BOM (JSON) with the scan verdict "
+            "attached as component properties."
+        ),
+    )
+    inv.add_argument(
         "--no-scan", action="store_true", help="Only list discovered components, do not scan."
     )
     inv.add_argument(
@@ -450,7 +458,11 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
                 item["error"] = f"scan failed: {exc}"
         items.append(item)
 
-    if args.json:
+    if args.sbom:
+        from skilltotal.sbom import build_aibom
+
+        print(json.dumps(build_aibom(items), indent=2, ensure_ascii=False))
+    elif args.json:
         print(render_inventory_json(items))
     else:
         print(render_inventory_text(items))

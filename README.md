@@ -124,6 +124,8 @@ skilltotal inventory
 skilltotal inventory --json
 skilltotal inventory --no-scan          # list only, do not scan
 skilltotal inventory --project .        # also include this project's agent configs
+skilltotal inventory --sbom             # AI-BOM: CycloneDX 1.6 JSON of your agent stack,
+                                        # scan verdicts attached as component properties
 
 # List every detection rule
 skilltotal rules list
