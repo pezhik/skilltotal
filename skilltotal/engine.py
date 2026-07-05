@@ -23,6 +23,7 @@ from skilltotal.file_index import (
     IndexedFile,
     is_data_corpus_path,
     is_doc_path,
+    is_example_path,
     is_test_path,
 )
 from skilltotal.models import (
@@ -115,6 +116,10 @@ def analyze_directory(
     needs_review.extend(doc_review)
     findings, corpus_review = _split_data_corpus_evidence(findings)
     needs_review.extend(corpus_review)
+    findings, example_review = _split_example_evidence(findings)
+    needs_review.extend(example_review)
+    findings, json_prompt_review = _split_structured_data_prompt_evidence(findings)
+    needs_review.extend(json_prompt_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
 
@@ -421,6 +426,72 @@ def _split_data_corpus_evidence(
             kept.append(_finding_with_evidence(finding, prod))
         if corpus:
             review.append(_demoted_review(finding, corpus, "data/eval corpus only"))
+    return kept, review
+
+
+_STRUCTURED_DATA_SUFFIXES: tuple[str, ...] = (".json", ".yaml", ".yml", ".toml")
+# MCP manifest filenames: a tool description here IS an agent-instruction surface, so an
+# injection phrase in it must stay scored (not demoted as data). Kept in sync with scanners/mcp.
+_MCP_MANIFEST_NAMES: frozenset[str] = frozenset(
+    {"mcp.json", ".mcp.json", "mcp.config.json", "manifest.json", "server.json"}
+)
+
+
+def _is_structured_data_file(relpath: str) -> bool:
+    name = relpath.lower().rsplit("/", 1)[-1]
+    return name.endswith(_STRUCTURED_DATA_SUFFIXES) and name not in _MCP_MANIFEST_NAMES
+
+
+def _split_structured_data_prompt_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote ST-PROMPT-INJECTION evidence found in a structured-data file (JSON/YAML/TOML).
+
+    An injection phrase in a JSON/YAML *value* is data — a security tool's adversarial scenario
+    pack (``default_scenario_pack.json``: ``"title": "Prompt injection attempt: ..."``), a config,
+    or a test vector — not an agent-instruction surface. Agent-instruction surfaces (SKILL.md /
+    AGENTS.md markdown, and MCP *manifests* whose tool descriptions steer the agent) are excluded,
+    so a live injection there still fires. Runs before synthesis, so a demoted injection can't feed
+    ST-FLOW-TRIFECTA. FP: tandem (a defensive incident-monitor flagged malicious by its own
+    scenario data).
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        if finding.id != "ST-PROMPT-INJECTION":
+            kept.append(finding)
+            continue
+        real = [e for e in finding.evidence if not _is_structured_data_file(e.file)]
+        data = [e for e in finding.evidence if _is_structured_data_file(e.file)]
+        if real:
+            kept.append(_finding_with_evidence(finding, real))
+        if data:
+            review.append(_demoted_review(finding, data, "a structured-data (JSON/YAML) value"))
+    return kept, review
+
+
+def _split_example_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote evidence found only in example/demo/benchmark scaffolding (incl. code) to
+    needs_review. A 0.0.0.0 bind in ``examples/slack_example.py``, a demo API key in
+    ``benchmark/test-project/``, or a credential path in ``.env.example`` is scaffolding that
+    ships with the component to illustrate/measure it, not its primary behavior. Like test code,
+    it is surfaced for review rather than scored, so a real payload hidden under examples/ is
+    still reported. Runs after the data-corpus pass, before synthesized combos are computed, so
+    scaffold evidence cannot drive ST-COMBO-EXFIL / ST-FLOW-TRIFECTA.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        prod = [e for e in finding.evidence if not is_example_path(e.file)]
+        scaffold = [e for e in finding.evidence if is_example_path(e.file)]
+        if prod:
+            kept.append(_finding_with_evidence(finding, prod))
+        if scaffold:
+            review.append(
+                _demoted_review(finding, scaffold, "example/demo/benchmark scaffolding only")
+            )
     return kept, review
 
 

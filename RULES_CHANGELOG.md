@@ -4,6 +4,44 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 29 (engine 0.31.0)
+
+**Four architectural false-positive fixes from a full audit of production reports.** The
+tandem "critical exfil" verdict was only a symptom; the audit found the engine trusted
+evidence in contexts that are not the component's own authored behavior. Each fix lands at
+the demotion layer (before combo synthesis), so scored capability/recall is preserved — the
+offline calibration + efficacy floors stay at 0.
+
+- **Example/demo/benchmark scaffolding demotion (`file_index.is_example_path`, wired in
+  `engine._split_example_evidence`).** Evidence whose path lives under `examples/`, `demo(s)/`,
+  `sample(s)/`, `benchmark(s)/`, or in an env template (`.env.example` / `.sample` / `.template`
+  / `.dist`) is demoted to `needs_review`: it ships as illustration, not runtime behavior. Runs
+  before `ST-COMBO-EXFIL` synthesis, so a demo `expose`+secret can no longer fabricate a critical
+  exfil finding. Production code paths are untouched (recall guard test).
+
+- **Prompt-injection in structured-data values demotion (`engine._split_structured_data_prompt_evidence`).**
+  `ST-PROMPT-INJECTION` evidence located in a `.json` / `.yaml` / `.yml` / `.toml` file is demoted —
+  an injection phrase sitting in a data/scenario/eval blob is inert data, not an agent-facing
+  instruction. **MCP manifests are excluded** (`mcp.json`, `.mcp.json`, `mcp.config.json`,
+  `manifest.json`, `server.json`): a tool description there *is* an instruction surface, so
+  injection in a manifest still scores (recall guard test). `SKILL.md` / prose instruction
+  surfaces are unaffected (not structured data).
+
+- **Over-broad MCP scope gating (`scanners/mcp._is_broad_scope` + `_analyze_json`).**
+  `ST-MCP-OVERBROAD-SCOPE` now (a) only evaluates scope keys when the file is an actual MCP
+  context (manifest name, or a `mcpServers`/`tools` object), and (b) ignores file-path globs
+  (any value containing `/` or `**`). A build-tool config `scope` key (`angular.json`,
+  `greptile.json`) or a path glob (`**/*.ts`, `.github/**`) is no longer misread as a broad
+  permission wildcard. A real wildcard (`"permissions": ["*"]`) in an MCP context still fires.
+
+Net effect on audited projects: `nopua` high→low, `ECC` low/0, `browser-use` scaffold FP
+removed (real findings kept, verdict defensible), `tandem` false critical/malicious → medium /
+not-malicious.
+
+Tests: `tests/test_context_demotion.py` (example/benchmark/env-template demotion + combo guard +
+structured-data injection demotion + SKILL.md/manifest recall guards),
+`tests/test_mcp_scope.py` (non-MCP `scope` key, path-glob, MCP-context recall guard).
+
 ## ruleset 28 (engine 0.30.0)
 
 **Three new detections from external threat research, recall-adding and FP-safe.** All three

@@ -113,6 +113,30 @@ def is_data_corpus_path(relpath: str) -> bool:
     return suffix not in _CODE_SUFFIXES
 
 
+# Example / demo / benchmark scaffolding: code that ships with a component to *illustrate* or
+# *measure* it, not its primary executed behavior. Unlike data corpora (non-code only), this
+# demotes CODE too — an `examples/slack_example.py` binding 0.0.0.0, a `benchmark/test-project/`
+# with a demo API key, a `.env.example` template — so a component isn't scored on its scaffolding.
+# Like test code, the evidence is routed to needs_review (surfaced, not silenced), so a real
+# payload hidden under examples/ is still reported for a human to review, just not auto-scored.
+_EXAMPLE_DIR_SEGMENTS: frozenset[str] = frozenset(
+    {"example", "examples", "demo", "demos", "sample", "samples", "benchmark", "benchmarks"}
+)
+# .env template files (never a live secret store — they document which vars to set).
+_ENV_TEMPLATE_SUFFIXES: tuple[str, ...] = (
+    ".env.example", ".env.sample", ".env.template", ".env.dist", ".env.local.example",
+)
+
+
+def is_example_path(relpath: str) -> bool:
+    """True if ``relpath`` is example/demo/benchmark scaffolding (incl. code) or a .env template."""
+    parts = relpath.lower().split("/")
+    if any(part in _EXAMPLE_DIR_SEGMENTS for part in parts[:-1]):
+        return True
+    name = parts[-1]
+    return name.endswith(_ENV_TEMPLATE_SUFFIXES) or name == ".env.example"
+
+
 # Human-facing documentation / metadata: prose and ignore-files that are never executed and
 # are not an agent-instruction surface. A pattern that appears only here is descriptive (a
 # README showing an example attack, a CHANGELOG entry, a `.gitignore` listing `.env`), not the
