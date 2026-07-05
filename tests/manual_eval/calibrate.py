@@ -17,6 +17,12 @@ CSV columns (header required): ``class,ecosystem,source,version,notes``
                  When present it drives the pass/fail judgement (``allow`` = must not be called
                  malicious; ``detect`` = must be flagged) instead of inferring from ``class``.
                  ``vulnerable-lab`` rows keep their softer rule (a risky construct is enough).
+  - ``expected_findings`` / ``forbidden_findings`` (optional): a ``;``-separated list of rule ids
+                 that MUST fire / MUST NOT fire on this component — a per-finding (TP/FP) golden
+                 set. This catches regressions the verdict-level metrics miss: a false-positive
+                 rule that fires but leaves the component "high, not malicious" passes the
+                 benign-FP gate yet is a real FP. A row with either column set is counted in
+                 ``finding_mismatches``; rows without them are unaffected (back-compat).
 
 This is an *informational* tool (always exits 0). It never changes rules; calibration
 decisions are made by a human. The real labeled dataset is maintained separately; this
@@ -64,7 +70,19 @@ class RowResult:
     risk_level: str | None = None
     skill_mismatch: bool | None = None  # ST-SKILL-CAP-MISMATCH fired (declared vs actual)
     passed: bool | None = None  # outcome vs expectation (None when skipped)
+    # Per-finding golden set (optional): rule ids that MUST fire vs MUST NOT fire on this row.
+    # ``findings_ok`` is None when the row declares no golden labels (most rows), so it never
+    # counts against the finding-mismatch metric.
+    finding_ids: list[str] | None = None  # all scored+capability finding ids on this component
+    missing_findings: list[str] | None = None  # expected_findings that did NOT fire (recall gap)
+    unexpected_findings: list[str] | None = None  # forbidden_findings that DID fire (a false pos)
+    findings_ok: bool | None = None
     detail: str = ""
+
+
+def _split_ids(raw: str) -> list[str]:
+    """Parse a golden rule-id list from one CSV cell (``;`` or ``,`` separated)."""
+    return [tok.strip() for tok in raw.replace(",", ";").split(";") if tok.strip()]
 
 
 def _spec(source: str, version: str) -> str:
@@ -122,7 +140,14 @@ def _analyze_spec(spec: str):
     return engine.analyze(spec)
 
 
-def run_row(cls: str, source: str, version: str, expected: str = "") -> RowResult:
+def run_row(
+    cls: str,
+    source: str,
+    version: str,
+    expected: str = "",
+    expect_findings: list[str] | None = None,
+    forbid_findings: list[str] | None = None,
+) -> RowResult:
     spec = _spec(source, version)
     if not spec:
         return RowResult(cls=cls, source="", status="skipped", detail="no source")
@@ -150,6 +175,17 @@ def run_row(cls: str, source: str, version: str, expected: str = "") -> RowResul
     res.passed = _judge(
         cls, res.has_malicious, res.risk_level, res.risky_constructs, res.capabilities, expected
     )
+    # Per-finding golden check: only when the row declares expected/forbidden rule ids. This is
+    # the TP/FP floor the verdict-level metrics miss — e.g. a rule that fires but leaves the
+    # component "high, not malicious" passes the benign-FP gate yet is still a false positive.
+    expect_findings = expect_findings or []
+    forbid_findings = forbid_findings or []
+    if expect_findings or forbid_findings:
+        ids = {f.id for f in report.findings}
+        res.finding_ids = sorted(ids)
+        res.missing_findings = [rid for rid in expect_findings if rid not in ids]
+        res.unexpected_findings = [rid for rid in forbid_findings if rid in ids]
+        res.findings_ok = not res.missing_findings and not res.unexpected_findings
     return res
 
 
@@ -164,6 +200,10 @@ def summarize(results: list[RowResult]) -> dict:
     # benign packages never produce this finding, so existing rows are unaffected.
     benign_fp = [r for r in benign if r.has_malicious or r.skill_mismatch]
     noisy = [r.needs_review for r in ok if r.needs_review is not None]
+    # Per-finding golden rows (those that declared expected/forbidden rule ids). A mismatch is a
+    # TP/FP regression at rule granularity — a hard gate independent of the verdict-level metric.
+    golden = [r for r in ok if r.findings_ok is not None]
+    finding_mismatches = [r for r in golden if not r.findings_ok]
     return {
         "rows_total": len(results),
         "scanned": len(ok),
@@ -176,6 +216,8 @@ def summarize(results: list[RowResult]) -> dict:
         "detect_detected": sum(1 for r in detect if r.passed),
         "labs_scanned": len(labs),
         "labs_flagged": sum(1 for r in labs if r.passed),
+        "golden_scanned": len(golden),
+        "finding_mismatches": len(finding_mismatches),
         "avg_needs_review": round(sum(noisy) / len(noisy), 2) if noisy else 0.0,
         "max_needs_review": max(noisy) if noisy else 0,
     }
@@ -194,6 +236,8 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
         f"- malicious/compromised detected: {summary['detect_detected']} / "
         f"{summary['detect_scanned']} scanned",
         f"- vulnerable-labs flagged: {summary['labs_flagged']} / {summary['labs_scanned']}",
+        f"- per-finding golden mismatches: **{summary.get('finding_mismatches', 0)}** / "
+        f"{summary.get('golden_scanned', 0)} golden rows",
         f"- needs_review noise: avg {summary['avg_needs_review']}, "
         f"max {summary['max_needs_review']}",
         "",
@@ -207,11 +251,18 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
             f"{'' if r.has_malicious is None else r.has_malicious} | {r.risk_level or '-'} | "
             f"{'' if r.needs_review is None else r.needs_review} | {pass_mark} |"
         )
+    mismatches = [r for r in results if r.findings_ok is False]
+    if mismatches:
+        lines += ["", "## Per-finding golden mismatches", ""]
+        for r in mismatches:
+            miss = ", ".join(r.missing_findings or []) or "-"
+            extra = ", ".join(r.unexpected_findings or []) or "-"
+            lines.append(f"- `{r.source}` — missing (recall): {miss}; unexpected (FP): {extra}")
     return "\n".join(lines) + "\n"
 
 
-def load_rows(path: Path) -> list[tuple[str, str, str, str]]:
-    rows: list[tuple[str, str, str, str]] = []
+def load_rows(path: Path) -> list[tuple[str, str, str, str, list[str], list[str]]]:
+    rows: list[tuple[str, str, str, str, list[str], list[str]]] = []
     with path.open(encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
             rows.append(
@@ -220,13 +271,15 @@ def load_rows(path: Path) -> list[tuple[str, str, str, str]]:
                     (row.get("source") or "").strip(),
                     (row.get("version") or "").strip(),
                     (row.get("expected_result") or "").strip(),
+                    _split_ids(row.get("expected_findings") or ""),
+                    _split_ids(row.get("forbidden_findings") or ""),
                 )
             )
     return rows
 
 
 def calibrate(dataset: Path) -> tuple[list[RowResult], dict]:
-    results = [run_row(c, s, v, exp) for c, s, v, exp in load_rows(dataset)]
+    results = [run_row(c, s, v, exp, ef, ff) for c, s, v, exp, ef, ff in load_rows(dataset)]
     return results, summarize(results)
 
 

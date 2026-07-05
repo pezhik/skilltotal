@@ -103,6 +103,72 @@ def test_calibrate_offline_local_dirs(tmp_path):
     assert any(r.status == "skipped" for r in results)
 
 
+_DECODE_EXEC = "import base64\nexec(base64.b64decode('cHJpbnQoMSk='))\n"
+
+
+def test_golden_forbidden_finding_that_fires_is_a_mismatch(tmp_path):
+    # A forbidden rule that DOES fire = a false positive the verdict-level metric can miss.
+    evil = tmp_path / "evil"
+    _write(evil, "x.py", _DECODE_EXEC)
+    r = calibrate.run_row(
+        "malicious", str(evil), "", forbid_findings=["ST-OBF-DECODE-EXEC"]
+    )
+    assert r.status == "ok" and r.finding_ids  # golden computed
+    assert "ST-OBF-DECODE-EXEC" in r.finding_ids  # sanity: this sample really fires it
+    assert r.findings_ok is False
+    assert r.unexpected_findings == ["ST-OBF-DECODE-EXEC"]
+
+
+def test_golden_expected_finding_present_passes(tmp_path):
+    evil = tmp_path / "evil"
+    _write(evil, "x.py", _DECODE_EXEC)
+    r = calibrate.run_row(
+        "malicious", str(evil), "", expect_findings=["ST-OBF-DECODE-EXEC"]
+    )
+    assert r.findings_ok is True and not r.missing_findings
+
+
+def test_golden_expected_finding_absent_is_recall_gap(tmp_path):
+    benign = tmp_path / "b"
+    _write(benign, "ok.py", "def add(a, b):\n    return a + b\n")
+    r = calibrate.run_row(
+        "benign-baseline", str(benign), "", expect_findings=["ST-OBF-DECODE-EXEC"]
+    )
+    assert r.findings_ok is False
+    assert r.missing_findings == ["ST-OBF-DECODE-EXEC"]
+
+
+def test_golden_no_labels_leaves_findings_ok_none(tmp_path):
+    # Rows without golden labels never participate in the finding-mismatch metric.
+    benign = tmp_path / "b"
+    _write(benign, "ok.py", "x = 1\n")
+    r = calibrate.run_row("benign-baseline", str(benign), "")
+    assert r.findings_ok is None and r.finding_ids is None
+
+
+def test_golden_summary_counts_mismatches_via_csv(tmp_path):
+    evil = tmp_path / "evil"
+    _write(evil, "x.py", _DECODE_EXEC)
+    clean = tmp_path / "clean"
+    _write(clean, "ok.py", "y = 2\n")
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,source,version,expected_result,forbidden_findings,expected_findings\n"
+        # golden FP row: forbid a rule that fires -> 1 mismatch
+        f"benign-baseline,{evil},,allow,ST-OBF-DECODE-EXEC,\n"
+        # golden clean row: forbid a rule that is absent -> ok
+        f"benign-baseline,{clean},,allow,ST-COMBO-EXFIL,\n"
+        # non-golden row: no labels -> not counted
+        f"benign-baseline,{clean},,allow,,\n",
+        encoding="utf-8",
+    )
+    results, summary = calibrate.calibrate(csv_path)
+    assert summary["golden_scanned"] == 2
+    assert summary["finding_mismatches"] == 1
+    md = calibrate.to_markdown(results, summary)
+    assert "Per-finding golden mismatches" in md
+
+
 def test_markdown_renders(tmp_path):
     csv_path = tmp_path / "ds.csv"
     benign = tmp_path / "b"
