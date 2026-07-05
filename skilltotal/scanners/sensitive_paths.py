@@ -93,6 +93,11 @@ _GUARD_KEYWORDS = re.compile(
 # A bare string-literal list element: only a quoted string + optional `.to_string()`/`.into()`
 # and a trailing comma (e.g. `"id_rsa".to_string(),`, `"**/.ssh/*",`). Declarative data, not a call.
 _BARE_LIST_ELEMENT = re.compile(r"""^\s*["'][^"']*["']\s*(?:\.\w+\(\))?\s*,?\s*$""")
+# A bare regex-literal list element: a slash-delimited regex (optional flags) on its own line,
+# e.g. `/id_rsa/,`, `/credentials/i,`, `/\.pem$/,`. A regex literal is a PATTERN that matches
+# against paths, never a path being accessed — so a credential token inside one is a detector's
+# denylist entry (as in a `SENSITIVE_PATHS = [ /id_rsa/, ... ]` array), not exfiltration.
+_BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:[^/\\\n]|\\.)+/[gimsuvy]*\s*,?\s*$")
 
 
 def _guard_segment(relpath: str) -> bool:
@@ -110,6 +115,7 @@ def _is_guardlist_context(relpath: str, line_text: str) -> bool:
         _guard_segment(relpath)
         or bool(_GUARD_KEYWORDS.search(line_text))
         or bool(_BARE_LIST_ELEMENT.match(line_text))
+        or bool(_BARE_REGEX_ELEMENT.match(line_text))
     )
 
 

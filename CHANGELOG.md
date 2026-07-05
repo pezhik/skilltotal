@@ -4,6 +4,24 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.30.0]
+
+### Added
+- **Ruleset 28 — three new detections from external threat research** (see
+  `RULES_CHANGELOG.md`), each validated FP-safe against the offline calibration + efficacy
+  floor: Hugging Face access tokens (`hf_` / `api_org_`) in `ST-SECRET-EMBEDDED`;
+  self-replicating prompt (Morris-II / GenAI worm) and markdown/HTML image data-exfiltration
+  in `ST-PROMPT-INJECTION`. Also fixes a latent citation-detection bug where a prompt-injection
+  directive at the very first/last byte of a file was misread as a cited example and demoted.
+
+### Fixed
+- **Two false positives from a report audit of trusted high-cap projects** (see
+  `RULES_CHANGELOG.md`): vendored dependency trees (`vendor/`, like Go cloud SDKs bundled by
+  `wandb`) are now skipped like `node_modules`, and a security tool's own regex-literal denylist
+  (e.g. `/id_rsa/` in a `SENSITIVE_PATHS` pattern array) is demoted to `needs_review` instead of
+  scored. Effect: `wandb` critical→high, `ECC` critical→low, both driven by code that is not the
+  component's own behavior; recall preserved (real path access still fires).
+
 ## [0.29.0]
 
 ### Added

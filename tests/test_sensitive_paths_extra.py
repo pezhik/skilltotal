@@ -64,3 +64,26 @@ def test_code_backtick_template_still_flags(tmp_path: Path):
     # In CODE (not markdown) a backtick is a JS template literal — real path usage, must still fire.
     res = _scan_named(tmp_path, "read.ts", "const p = `${home}/.ssh/id_rsa`;\n")
     assert any(f.id == "ST-SENS-PATH" for f in res.findings)
+
+
+def test_regex_literal_pattern_element_not_scored(tmp_path: Path):
+    # A security tool's own denylist of regex patterns (as in ECC's governance-capture.js:
+    # `const SENSITIVE_PATHS = [ /\.env/, /credentials/i, /id_rsa/ ]`) is detection data, not
+    # access. A credential token inside a bare regex-literal element is routed to needs_review.
+    res = _scan_named(
+        tmp_path,
+        "governance-capture.js",
+        "const SENSITIVE_PATHS = [\n  /credentials/i,\n  /id_rsa/,\n];\n",
+    )
+    assert not any(f.id == "ST-SENS-PATH" for f in res.findings)
+    assert any("denylist/guardrail" in nr.title for nr in res.needs_review)
+
+
+def test_real_path_access_next_to_regex_still_flags(tmp_path: Path):
+    # The regex-element demotion must be line-scoped: a real access on its own line still fires.
+    res = _scan_named(
+        tmp_path,
+        "mix.js",
+        "const DENY = [ /id_rsa/ ];\nfs.readFileSync(home + '/.ssh/id_rsa');\n",
+    )
+    assert any(f.id == "ST-SENS-PATH" for f in res.findings)

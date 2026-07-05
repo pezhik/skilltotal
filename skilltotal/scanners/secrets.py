@@ -27,6 +27,11 @@ _KNOWN: list[tuple[str, re.Pattern[str], int]] = [
     ("OpenAI API key", re.compile(r"\b(sk-(?:proj-)?[A-Za-z0-9_\-]{20,})\b"), 1),
     ("Slack token", re.compile(r"\b(xox[baprs]-[A-Za-z0-9\-]{10,})\b"), 1),
     ("Google API key", re.compile(r"\b(AIza[0-9A-Za-z_\-]{35})\b"), 1),
+    # Hugging Face access tokens gate model/dataset downloads and (for write tokens) pushes to
+    # the Hub — a live one shipped in a component is a real leak (Lasso found 1,500+ exposed).
+    # The `hf_` / `api_org_` prefix plus a fixed-length base62 body is highly specific (low FP).
+    ("Hugging Face user token", re.compile(r"\b(hf_[A-Za-z0-9]{34,40})\b"), 1),
+    ("Hugging Face org token", re.compile(r"\b(api_org_[A-Za-z0-9]{34})\b"), 1),
     ("Stripe live key", re.compile(r"\b([sr]k_live_[A-Za-z0-9]{24,})\b"), 1),
     (
         # Require actual key MATERIAL after the marker, not the bare header. A lone

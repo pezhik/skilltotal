@@ -65,6 +65,27 @@ _STRONG = alternation(
     r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|"
     r"system\s+prompt|data\b)"
     r"[^\n]{0,40}?webhook",
+    # Self-replicating prompt (Morris-II / GenAI worm, arXiv:2403.02817): a directive to
+    # reproduce the injected instructions in the model's OWN output or pass them to downstream
+    # agents/messages, so the payload propagates. Requires a propagation verb + an
+    # instructions/prompt object + an output-or-downstream target — NOT generic "copy this text",
+    # and NOT "...to the user" (a benign UX instruction), so ordinary docs don't match.
+    r"(?:copy|include|repeat|append|embed|insert|propagate|forward|reproduce)\s+"
+    r"(?:these|this|the\s+following|the\s+same|the\s+above|my)\s+"
+    r"(?:instructions?|prompts?|directives?)\s+"
+    r"(?:in(?:to)?|to)\s+"
+    r"(?:your\s+(?:next\s+|every\s+|each\s+)?(?:response|reply|answer|output|message)|"
+    r"(?:every|each|all|any|the\s+next)\s+"
+    r"(?:response|message|email|reply|agent|assistant|model|recipient))",
+    # Markdown/HTML image exfiltration (embrace-the-red): an image whose EXTERNAL URL carries a
+    # template placeholder in its query string — the agent renders it and thereby leaks whatever
+    # it interpolates (conversation, secrets) to the attacker's host. Requires a real
+    # interpolation tell ({{…}} / ${…} / %s / <var>) in the query, so ordinary images with static
+    # query params (?v=2, ?width=200) do NOT match; a match inside code strings is demoted.
+    r"!\[[^\]]*\]\(\s*https?://[^)\s]+\?[^)\s]*"
+    r"(?:\{\{[^}]+\}\}|\$\{[^}]+\}|%s|<[a-zA-Z_][\w]*>)",
+    r"<img\b[^>]*\bsrc\s*=\s*['\"]https?://[^'\"]+\?[^'\"]*"
+    r"(?:\{\{[^}]+\}\}|\$\{[^}]+\}|%s|<[a-zA-Z_][\w]*>)",
     # Jailbreak / safety-disable directives. Kept unambiguous (a safety-specific object) so
     # security prose isn't matched; .py-string/comment and documentation matches are demoted.
     r"do\s+anything\s+now\b",
@@ -105,7 +126,10 @@ def _is_quoted_citation(text: str, start: int, end: int) -> bool:
     quote right after the match, so it is not treated as a citation."""
     before = text[start - 1] if start > 0 else ""
     after = text[end] if end < len(text) else ""
-    return before in _QUOTES and after in _QUOTES
+    # A start/end-of-file boundary is NOT a quote. (Guard the empty string explicitly: `"" in
+    # _QUOTES` is True in Python — an empty string is a substring of any string — which would
+    # misread a match at the very first/last byte as "quoted" and wrongly demote a live directive.)
+    return bool(before) and bool(after) and before in _QUOTES and after in _QUOTES
 
 
 class PromptSurfaceScanner(Scanner):

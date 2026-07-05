@@ -33,6 +33,12 @@ SKIP_DIRS: frozenset[str] = frozenset(
         ".hg",
         ".svn",
         "node_modules",
+        # Vendored third-party dependency trees (Go modules, PHP Composer, some JS): the
+        # component's OWN authored behavior is what we analyze, not the code of its bundled
+        # dependencies — exactly the reason node_modules is skipped. Without this, a project
+        # that vendors the Go cloud SDKs (e.g. wandb: core/vendor/cloud.google.com, Azure) was
+        # scored on the SDKs' credential-path / header-name-constant code, not its own.
+        "vendor",
         "__pycache__",
         ".venv",
         "venv",

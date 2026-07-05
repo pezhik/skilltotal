@@ -4,6 +4,63 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 28 (engine 0.30.0)
+
+**Three new detections from external threat research, recall-adding and FP-safe.** All three
+were validated against the offline calibration + efficacy floor with zero benign false
+positives.
+
+- **Hugging Face tokens (`scanners/secrets.py`, `ST-SECRET-EMBEDDED`).** Two known-prefix
+  patterns added: user tokens `hf_[A-Za-z0-9]{34,40}` and org tokens `api_org_[A-Za-z0-9]{34}`.
+  A live HF token gates model/dataset access and (write scope) Hub pushes, so a shipped one is
+  a real credential leak. Fixed prefix + fixed-length body is highly specific (low FP); the
+  existing placeholder filter and redaction apply unchanged. Source: Lasso, "1,500+ Hugging
+  Face API tokens exposed".
+
+- **Self-replicating prompt (`scanners/prompt_surface.py`, `ST-PROMPT-INJECTION`).** A new
+  pattern for the Morris-II / GenAI-worm signature — a directive to reproduce the injected
+  instructions in the model's own output or pass them to downstream agents/messages, so the
+  payload propagates. Scoped to a propagation verb + an instructions/prompt object + an
+  output-or-downstream target; ordinary docs ("copy these instructions **to the user**", "…in
+  your README") stay benign. Source: arXiv:2403.02817.
+
+- **Markdown/HTML image exfiltration (`scanners/prompt_surface.py`, `ST-PROMPT-INJECTION`).**
+  Two patterns for an external image URL whose query string carries an interpolation tell
+  (`{{…}}` / `${…}` / `%s` / `<var>`) — the agent renders it and leaks whatever it interpolates
+  to the attacker's host. Static query params (`?v=2`, `?width=200`) do not match. Source:
+  Embrace The Red, plugin data-exfiltration via images.
+
+Also fixes a latent bug in `_is_quoted_citation`: `"" in _QUOTES` is `True` in Python (an
+empty string is a substring of any string), so a match at the very first/last byte of a file
+was misread as a cited example and demoted — a live directive at file start now scores.
+
+Tests: `tests/test_secrets.py` (HF token detect/redact + placeholder),
+`tests/test_prompt_jailbreak.py` (self-replication + markdown-image recall, benign-copy +
+static-query FP guards).
+
+**Two false-positive fixes from a report audit (trusted high-cap projects), recall-preserving.**
+A critical review of the reports across the risk spectrum found two components scored on code
+that is not the component's own behavior:
+
+- **Vendored dependency trees skipped (`file_index.py`, `SKIP_DIRS`).** `vendor` (Go modules,
+  PHP Composer, some JS) is now skipped like `node_modules` — a component's own behavior is what
+  we analyze, not its bundled dependencies. `pypi:wandb` bundles the Go cloud SDKs under
+  `core/vendor/` (cloud.google.com, Azure), whose credential-path references and an
+  `x-amz-session-token` **header-name** constant drove a false `ST-SECRET-EMBEDDED` +
+  `ST-COMBO-EXFIL`. Effect: wandb `critical (100)` → `high (50)` (the residual is wandb's own
+  `~/.kube/config` reference + network, a defensible signal).
+
+- **Regex-literal denylist elements demoted (`scanners/sensitive_paths.py`).** A security tool's
+  own pattern array — e.g. `const SENSITIVE_PATHS = [ /\.env/, /credentials/i, /id_rsa/ ]` in
+  ECC's `governance-capture.js` — is detection data, not access. A credential token inside a bare
+  regex-literal list element now routes to `needs_review` (joining the existing string-literal /
+  guard-keyword / guard-directory demotions). A real access on its own line (`readFileSync(home +
+  '/.ssh/id_rsa')`) still fires. This also cleared the compounded `ST-INSTALL-DROPPER` (its
+  "credential payload" was the demoted pattern). Effect: ECC `critical (80)` → `low (10)`.
+
+Tests: `tests/test_file_index.py` (vendored-tree skip), `tests/test_sensitive_paths_extra.py`
+(regex-element demotion + real-access-still-flags). Offline calibration stays green (FP=0).
+
 ## ruleset 27 (engine 0.26.0)
 
 **One false positive on a real, popular project (firecrawl/firecrawl) closed, recall-preserving.**

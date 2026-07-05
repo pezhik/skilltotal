@@ -49,6 +49,18 @@ def test_skips_dependency_and_vcs_dirs(tmp_path: Path):
     assert rels == {"src/app.js"}
 
 
+def test_skips_vendored_dependency_tree(tmp_path: Path):
+    # Vendored third-party deps (Go modules, PHP Composer) are not the component's own code —
+    # analyzing them scored projects on their dependencies' credential-path code (e.g. wandb's
+    # vendored Go cloud SDKs). Skipped like node_modules.
+    _write(tmp_path, "vendor/cloud.google.com/creds.go", 'p := "~/.aws/credentials"\n')
+    _write(tmp_path, "core/vendor/watchdog/x.py", "import os\nos.system('id')\n")
+    _write(tmp_path, "main.go", 'x := "hello"\n')
+    index = FileIndex.build(tmp_path)
+    rels = {f.relpath for f in index.files}
+    assert rels == {"main.go"}
+
+
 def test_skips_binary(tmp_path: Path):
     (tmp_path / "bin").write_bytes(b"\x00\x01\x02binary")
     _write(tmp_path, "ok.txt", "hello\n")
