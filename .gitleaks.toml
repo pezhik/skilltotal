@@ -1,22 +1,48 @@
 # gitleaks configuration for the SkillTotal engine repo.
 #
-# This repo IS a secret scanner, so its own tests deliberately contain fake, non-functional
-# secrets as detection inputs (e.g. tests/test_secrets.py: a dummy "AKIA…" AWS key, a fake
-# "ghp_…" GitHub token, a placeholder OpenSSH private key). Those are not real credentials.
-# We allowlist the test/fixture paths so gitleaks doesn't flag them, while every other path —
-# notably the production engine in skilltotal/ — is still scanned with the full default ruleset.
+# This repo IS a secret scanner, so its own sources deliberately contain secret-shaped literals
+# as DETECTION inputs, not live credentials: test fixtures (fake AKIA/ghp_/hf_ tokens, a
+# placeholder OpenSSH key) and the production detector's own format markers (e.g. the PEM
+# `-----BEGIN PRIVATE KEY-----` header regex). gitleaks scans the FULL git history, so these
+# re-trigger on every push unless allowlisted. Each allowlist is scoped as narrowly as possible so
+# a REAL leak anywhere is still caught (detect-secrets + GitHub push protection are independent
+# layers over the whole repo).
+#
+# Portability note: CI pins gitleaks 8.24.3. Top-level `[[allowlists]]` (plural) and per-rule
+# `targetRules` require >= 8.25.0, so we use the 8.24-compatible forms: a single top-level
+# `[allowlist]`, and a per-rule `[[rules.allowlists]]` (supported since 8.21.0) attached to an
+# extended default rule.
 
 [extend]
 useDefault = true
 
-[allowlist]
-description = "Deliberate fake secrets in this secret-scanner's own test fixtures"
 # The ENTIRE tests/ tree is this scanner's fixture corpus — its files deliberately contain fake
 # tokens, credential paths and payloads as detection inputs. Allowlist the whole tree so a new
-# fixture in ANY test file (not just test_secrets.py) can't fail gitleaks in CI/pre-commit.
-# Production code (skilltotal/) is NOT allowlisted and stays under the full default ruleset; a
-# real leak in production is still caught, and detect-secrets + GitHub push protection remain as
-# independent layers over the whole repo.
+# fixture in ANY test file can't fail gitleaks in CI/pre-commit. Production code (skilltotal/)
+# stays under the full default ruleset; a real leak there is still caught.
+[allowlist]
+description = "Deliberate fake secrets in this secret-scanner's own test fixtures"
 paths = [
   '''tests/.*''',
 ]
+
+# Extend gitleaks' built-in `private-key` rule (regex inherited from the default config) with a
+# tightly-scoped allowlist. The production secret DETECTOR (skilltotal/scanners/secrets.py) and its
+# ruleset changelog carry the literal PEM private-key format marker as a detection pattern /
+# documentation, not a leaked key. Scope: a line containing the PEM marker (regexTarget = line) AND
+# only in those two files (condition = AND). A real key elsewhere, or a different secret type in
+# these files, is still flagged.
+[[rules]]
+id = "private-key"
+
+  [[rules.allowlists]]
+  description = "This repo's OWN private-key format-marker literal (detector pattern + its changelog)"
+  condition = "AND"
+  regexTarget = "line"
+  regexes = [
+    '''PRIVATE KEY-----''',
+  ]
+  paths = [
+    '''skilltotal/scanners/secrets\.py''',
+    '''RULES_CHANGELOG\.md''',
+  ]
