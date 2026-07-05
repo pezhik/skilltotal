@@ -11,8 +11,12 @@ useDefault = true
 
 [allowlist]
 description = "Deliberate fake secrets in this secret-scanner's own test fixtures"
+# The ENTIRE tests/ tree is this scanner's fixture corpus — its files deliberately contain fake
+# tokens, credential paths and payloads as detection inputs. Allowlist the whole tree so a new
+# fixture in ANY test file (not just test_secrets.py) can't fail gitleaks in CI/pre-commit.
+# Production code (skilltotal/) is NOT allowlisted and stays under the full default ruleset; a
+# real leak in production is still caught, and detect-secrets + GitHub push protection remain as
+# independent layers over the whole repo.
 paths = [
-  '''tests/test_secrets\.py''',
-  '''tests/fixtures/.*''',
-  '''tests/manual_eval/.*''',
+  '''tests/.*''',
 ]

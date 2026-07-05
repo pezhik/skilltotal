@@ -18,12 +18,10 @@ guard against committing secrets or keys — no single layer is relied on alone:
 2. **CI secret scan** (`.github/workflows/ci.yml` → `secrets` job): `gitleaks` runs on every
    push/PR with full history (`fetch-depth: 0`). Fails the build if a secret is found anywhere
    in the commit range.
-3. **GitHub Secret Scanning + Push Protection** (server-side): GitHub's own scanner blocks a
-   `git push` containing a recognized secret format and alerts across history — a stop even if
-   layers 1–2 are bypassed. *Availability:* free on public repos; on private repos it requires
-   GitHub Advanced Security. While this repo is private, layers 1, 2 and 4 are active; this
-   layer (and CodeQL, currently `workflow_dispatch`-only) turns on automatically when the repo
-   is made public.
+3. **GitHub Push Protection** (server-side): on this **public** repo GitHub's platform push
+   protection blocks a `git push` containing a recognized **partner** secret format (an AWS
+   `AKIA…`, a Hugging Face `hf_…`, a GitHub `ghp_…` token, …) — a stop even if layers 1–2 are
+   bypassed. This layer is **not disable-able by repo config** for partner patterns.
 4. **No long-lived tokens** (OIDC): PyPI publishing uses **Trusted Publishing** (OpenID
    Connect) from GitHub Actions, so there are no PyPI API tokens stored in the repo, in CI
    secrets, or on any developer machine. There is no static publishing key to leak.
@@ -31,6 +29,20 @@ guard against committing secrets or keys — no single layer is relied on alone:
 Supporting measures: `.gitignore` excludes common secret files (`.env`, `*.pem`, `*.key`,
 `id_rsa`, `.pypirc`, `.npmrc`, …); a `detect-secrets` baseline (`.secrets.baseline`) tracks
 reviewed non-secrets to keep scans signal-rich.
+
+**This repo is a secret scanner — its `tests/` tree deliberately contains fake tokens as
+detection inputs.** That would otherwise trip the very layers above, so the fixtures are handled,
+not weakened:
+
+- **gitleaks & GitHub secret-scanning alerts** allowlist the whole `tests/` tree
+  (`.gitleaks.toml`, `.github/secret_scanning.yml`) — production code (`skilltotal/`) stays fully
+  scanned, so a real leak there is still caught.
+- **GitHub push protection** enforces partner patterns even inside `tests/` and can't be
+  configured off, so a fixture must never commit a *contiguous* provider-pattern literal. Build it
+  at runtime instead — `fake_token("hf_", "<body>")` (see `tests/test_secrets.py`) — so the scanned
+  temp file gets the full value while the source has no matchable literal. **Never** resolve a
+  blocked push via GitHub's per-secret allow URL: that keeps a real-looking token in public history
+  forever.
 
 ## Code security of the engine itself
 
