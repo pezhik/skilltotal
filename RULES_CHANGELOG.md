@@ -4,6 +4,38 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 30 (engine 0.32.0)
+
+**Two false-positive fixes from the first catalog scan of foundational packages.** numpy
+scored critical/90 with `has_malicious=False` — the exact "elevated but not malicious" shape
+the new per-finding golden gate exists to catch. Both fixes are demotion/indexing-layer only;
+the efficacy + FP floors stay at 0.
+
+- **CI/CD pipeline config demotion (`file_index.is_ci_path`, wired in
+  `engine._split_ci_evidence`).** Evidence in CI pipeline files — `.circleci/`, `.buildkite/`,
+  `.woodpecker/` dirs, the `.github/workflows/` pair, or exact names (`.gitlab-ci.yml`,
+  `.travis.yml`, `appveyor.yml`, `azure-pipelines.yml`, `.cirrus.yml`, `.drone.yml`,
+  `Jenkinsfile`) — is demoted to `needs_review`: a CI job executes on the project's build
+  service, never on the machine of whoever installs the component. numpy's
+  `.circleci/config.yml` writes its own `~/.ssh/config` for a docs deploy; that fed
+  `ST-SENS-PATH` and, with ordinary network code, synthesized `ST-COMBO-EXFIL` (critical).
+  Runs before combo synthesis, so CI-only evidence can't fabricate an exfil finding. Recall
+  guards: the same constructs in real component code still fire; install-time hooks
+  (`setup.py`, npm `postinstall`) are not CI config and stay scored. Bare `.github/` (issue
+  templates) and a `workflows/` code dir are NOT treated as CI.
+
+- **`vendored-*` directory skip (`file_index._is_skipped_dir`).** Ruleset 28 skips `vendor/`;
+  numpy vendors the meson build system as `vendored-meson/` — complete with meson's own CI
+  docker scripts (`curl | bash` compiler installs) that scored `ST-SHELL-PIPE-EXEC`. A
+  `vendored-`-prefixed directory is the same class: bundled third-party code, not the
+  component's authored behavior.
+
+Net effect: numpy critical/90 → low/20 (remaining `ST-CMDI-PY` is a real construct in a
+bundled benchmark runner; capabilities stay reported at 0 score).
+
+Tests: `tests/test_context_demotion.py` (CI demotion + combo cascade + prod-code/install-hook
+recall guards + `is_ci_path` unit + vendored-* skip).
+
 ## ruleset 29 (engine 0.31.0)
 
 **Four architectural false-positive fixes from a full audit of production reports.** The

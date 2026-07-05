@@ -54,6 +54,16 @@ SKIP_DIRS: frozenset[str] = frozenset(
     }
 )
 
+
+def _is_skipped_dir(part: str) -> bool:
+    """True if a path segment names a directory that never holds first-party source.
+
+    Besides the exact ``SKIP_DIRS`` names, a ``vendored-*`` prefixed directory is a vendored
+    third-party tree by convention (numpy ships ``vendored-meson/`` — the meson build system,
+    complete with meson's own CI scripts), exactly the class ``vendor/`` already covers.
+    """
+    return part in SKIP_DIRS or part.startswith("vendored-")
+
 # Directory segments and filename patterns that indicate non-shipped test code.
 _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
     {"test", "tests", "__tests__", "__mocks__", "spec", "specs", "e2e"}
@@ -135,6 +145,34 @@ def is_example_path(relpath: str) -> bool:
         return True
     name = parts[-1]
     return name.endswith(_ENV_TEMPLATE_SUFFIXES) or name == ".env.example"
+
+
+# CI/CD pipeline configuration: executes on the PROJECT'S build service (CircleCI, GitHub
+# Actions, GitLab CI, …), never on the machine of whoever installs or runs the component. A CI
+# job that writes its own ~/.ssh/config to push docs (numpy's .circleci/config.yml) is the
+# project operating its own infrastructure, not component behavior — so, like test code, its
+# evidence is demoted to needs_review (surfaced, not scored). Install-time hooks (setup.py,
+# npm postinstall) are NOT CI config and stay fully scored.
+_CI_DIR_SEGMENTS: frozenset[str] = frozenset({".circleci", ".buildkite", ".woodpecker"})
+_CI_EXACT_NAMES: frozenset[str] = frozenset(
+    {
+        ".gitlab-ci.yml", ".travis.yml", "appveyor.yml", ".appveyor.yml",
+        "azure-pipelines.yml", ".cirrus.yml", ".drone.yml", "jenkinsfile",
+    }
+)
+
+
+def is_ci_path(relpath: str) -> bool:
+    """True if ``relpath`` is CI/CD pipeline configuration (runs on the project's CI, not for
+    the component's consumers)."""
+    parts = relpath.lower().split("/")
+    if any(part in _CI_DIR_SEGMENTS for part in parts[:-1]):
+        return True
+    # .github/workflows/* — the pair, not bare "workflows" (too generic a segment on its own).
+    for i in range(len(parts) - 2):
+        if parts[i] == ".github" and parts[i + 1] == "workflows":
+            return True
+    return parts[-1] in _CI_EXACT_NAMES
 
 
 # Human-facing documentation / metadata: prose and ignore-files that are never executed and
@@ -749,7 +787,7 @@ class FileIndex:
             if not path.is_file():
                 continue
             rel = path.relative_to(root)
-            if any(part in SKIP_DIRS for part in rel.parts):
+            if any(_is_skipped_dir(part) for part in rel.parts):
                 continue
             if exclude and _matches_any(rel.as_posix(), exclude):
                 continue

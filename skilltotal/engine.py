@@ -21,6 +21,7 @@ from skilltotal.collector import collect
 from skilltotal.file_index import (
     FileIndex,
     IndexedFile,
+    is_ci_path,
     is_data_corpus_path,
     is_doc_path,
     is_example_path,
@@ -108,7 +109,10 @@ def analyze_directory(
     #   2. documentation/prose - READMEs, changelogs, ignore-files: descriptive, not behavior
     #   3. data/eval corpus - inert reference data (eval_datasets/poisoning.yaml, fixtures/*.json):
     #      a sample attack is a detector test vector, not behavior (code there is still scored)
-    #   4. Python/shell code-context - a pattern that only appears inside a string literal/comment
+    #   4. example/demo/benchmark scaffolding - illustrates the component, not its behavior
+    #   5. CI/CD pipeline config - runs on the project's build service, not the consumer's machine
+    #   6. structured-data prompt evidence - an injection phrase in a data blob is inert
+    #   7. Python/shell code-context - a pattern that only appears inside a string literal/comment
     #      is a literal or doc example (e.g. a scanner's own rule definitions), not behavior
     findings, test_review = _split_test_evidence(findings, index)
     needs_review.extend(test_review)
@@ -118,6 +122,8 @@ def analyze_directory(
     needs_review.extend(corpus_review)
     findings, example_review = _split_example_evidence(findings)
     needs_review.extend(example_review)
+    findings, ci_review = _split_ci_evidence(findings)
+    needs_review.extend(ci_review)
     findings, json_prompt_review = _split_structured_data_prompt_evidence(findings)
     needs_review.extend(json_prompt_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
@@ -492,6 +498,28 @@ def _split_example_evidence(
             review.append(
                 _demoted_review(finding, scaffold, "example/demo/benchmark scaffolding only")
             )
+    return kept, review
+
+
+def _split_ci_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote evidence found only in CI/CD pipeline config to needs_review. A CI job runs on
+    the project's build service, never on the consumer's machine — numpy's .circleci/config.yml
+    writing its own ~/.ssh/config for a docs deploy is the project operating its own
+    infrastructure, not component behavior. Runs before synthesized combos are computed, so a
+    CI-only credential path cannot feed ST-COMBO-EXFIL. Install-time hooks (setup.py, npm
+    postinstall) are not CI config and stay fully scored.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        prod = [e for e in finding.evidence if not is_ci_path(e.file)]
+        ci = [e for e in finding.evidence if is_ci_path(e.file)]
+        if prod:
+            kept.append(_finding_with_evidence(finding, prod))
+        if ci:
+            review.append(_demoted_review(finding, ci, "CI/CD pipeline configuration only"))
     return kept, review
 
 

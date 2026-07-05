@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.32.0]
+
+### Fixed
+- **Ruleset 30 — CI-config and vendored-tree false positives** (see `RULES_CHANGELOG.md`),
+  found when numpy scored critical/90 on its own infrastructure files:
+  - **CI/CD pipeline configuration** (`.circleci/`, `.github/workflows/`, `.gitlab-ci.yml`,
+    `Jenkinsfile`, …) is demoted to `needs_review` — a CI job runs on the project's build
+    service, never on the consumer's machine, so numpy's docs-deploy SSH setup is not
+    component behavior and can no longer feed `ST-COMBO-EXFIL`. Install-time hooks
+    (`setup.py`, npm `postinstall`) are unaffected and stay fully scored.
+  - **`vendored-*` directories** (numpy's `vendored-meson/`, which bundles the meson build
+    system with meson's own CI docker scripts) are now skipped like `vendor/` and
+    `node_modules`. Effect: numpy critical/90 → low/20; recall floors unchanged.
+
 ## [0.31.0]
 
 ### Fixed
