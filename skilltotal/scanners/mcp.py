@@ -569,8 +569,9 @@ class McpScanner(Scanner):
             if not _CODE_SURFACE.search(f.text):
                 continue
             spans = [(m.start(), m.end()) for m in pattern.finditer(f.text)]
-            norm, idx = normalize_with_map(f.text)
-            if norm and norm != f.text:
+            folded = f.normalized_or_none()  # cached; None = identity (pure-ASCII fast path)
+            if folded is not None:
+                norm, idx = folded
                 spans += [original_span(idx, m.start(), m.end()) for m in pattern.finditer(norm)]
             for start, end in spans:
                 if start >= end:

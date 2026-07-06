@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from skilltotal.models import Evidence
+from skilltotal.text_normalize import normalize_with_map
 
 
 def _matches_any(relpath: str, patterns: tuple[str, ...]) -> bool:
@@ -550,6 +551,25 @@ class IndexedFile:
     _rust_test_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed de-obfuscation result: None until computed; (None,) once computed as
+    # identity; ((norm, idx),) once computed with a real change. The 1-tuple wrapper
+    # distinguishes "not yet computed" from "computed: identity".
+    _norm_cache: tuple[tuple[str, list[int]] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    def normalized_or_none(self) -> tuple[str, list[int]] | None:
+        """De-obfuscated ``(normalized_text, index_map)``, or None when normalization is the
+        identity (the common, pure-ASCII case).
+
+        Cached: normalization is a per-character Python loop and MULTIPLE scanners ask for it
+        (prompt-surface strong patterns, MCP code surfaces); without the cache each rule
+        re-normalized every file on every call — minutes of wall clock on a large repo.
+        """
+        if self._norm_cache is None:
+            norm, idx = normalize_with_map(self.text)
+            self._norm_cache = ((norm, idx),) if norm and norm != self.text else (None,)
+        return self._norm_cache[0]
 
     @property
     def name(self) -> str:

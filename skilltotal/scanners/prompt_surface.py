@@ -23,6 +23,27 @@ from skilltotal.scanners.base import (
 
 CATEGORY = "prompt_surface"
 
+# Negation guards: "not send…", "cannot override…" are defensive prose, not directives.
+_NEG_PROSE = ("not ", "never ", "n't ", "cannot ", "refuse to ", "refuses to ", "refusing to ")
+_NEG_WS = (
+    r"not\s", r"never\s", r"n't\s", r"n’t\s", r"cannot\s", r"unable\sto\s",
+    r"refuse\sto\s", r"refuses\sto\s", r"refusing\sto\s",
+)
+
+
+def _neg_guarded(verb: str, negations: tuple[str, ...]) -> str:
+    """``verb`` with its fixed-width negation lookbehinds anchored right AFTER the verb.
+
+    Semantically identical to the ``(?<!not )verb`` form (the guarded window is the same
+    characters), but an order of magnitude faster: with the lookbehinds FIRST the regex engine
+    evaluates every guard at every text position; with the verb literal first it fast-skips to
+    actual verb occurrences and only guards those (measured 7x on a 23 MB repo, gemini-cli).
+    ``verb`` must be a fixed-width literal (a single word) so each lookbehind stays fixed-width.
+    """
+    guards = "".join(f"(?<!{neg}{verb})" for neg in negations)
+    return f"{verb}{guards}"
+
+
 _STRONG = alternation(
     # Instruction-override imperatives (unambiguous).
     r"ignore\s+(?:all\s+)?(?:the\s+)?previous\s+(?:instructions|prompts|context)",
@@ -50,16 +71,20 @@ _STRONG = alternation(
     # specs (FP: exa bundles the MCP spec: "clients MUST NOT send tokens to the MCP server").
     # Best-effort negation guard for plain prose (markdown emphasis can still defeat a fixed-width
     # lookbehind, which is why the ambiguous "tokens" target is dropped rather than relied upon).
-    r"(?<!not )(?<!never )(?<!n't )(?<!cannot )(?<!refuse to )(?<!refuses to )(?<!refusing to )"
-    r"send\s+(?:the\s+)?(?:credentials|secrets|api[\s_-]?keys?|passwords?|"
+    _neg_guarded("send", _NEG_PROSE)
+    + r"\s+(?:the\s+)?(?:credentials|secrets|api[\s_-]?keys?|passwords?|"
     r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|system\s+prompt)\s+to\b",
     # Exfiltration to a webhook. Like the "send <secret> to" rule above, require a SENSITIVE
     # data object between the send verb and "webhook" — the webhook destination adds the
     # specificity that lets us also accept "tokens"/"the data"/"user's data" here. Without
     # this gate, benign field descriptions matched: "Headers to send to the webhook URL" (a
     # real OpenAPI field in firecrawl), "send the payload to your webhook endpoint". FP fix.
-    r"(?<!not )(?<!never )(?<!n't )(?<!cannot )(?<!refuse to )(?<!refuses to )(?<!refusing to )"
-    r"(?:send|post|upload|transmit|forward|exfiltrate|leak)\s+"
+    "(?:"
+    + "|".join(
+        _neg_guarded(v, _NEG_PROSE)
+        for v in ("send", "post", "upload", "transmit", "forward", "exfiltrate", "leak")
+    )
+    + r")\s+"
     r"(?:it|this|them|the|your)?\s*(?:user['’]?s?\s+)?"
     r"(?:credentials|secrets|api[\s_-]?keys?|tokens?|passwords?|"
     r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|"
@@ -93,10 +118,17 @@ _STRONG = alternation(
     # Negation guard (mirrors the "send" rule): defensive guarantees like "cannot override
     # safety policy" / "will not bypass safety filters" / "can't disable guardrails" are the
     # opposite of a directive. Each lookbehind is fixed-width; "n't" catches can't/won't/don't.
-    # \s (not a literal space) so a line-wrapped "cannot\noverride" is still guarded.
-    r"(?<!not\s)(?<!never\s)(?<!n't\s)(?<!n’t\s)(?<!cannot\s)(?<!unable\sto\s)"
-    r"(?<!refuse\sto\s)(?<!refuses\sto\s)(?<!refusing\sto\s)"
-    r"(?:ignore|bypass|disable|turn\s+off|override)\s+(?:your\s+|all\s+|any\s+|the\s+)?"
+    # \s (not a literal space) so a line-wrapped "cannot\noverride" is still guarded. Guards are
+    # anchored after each verb's first word (see _neg_guarded) so they only run at verb hits;
+    # for "turn off" the guard sits after "turn", before the \s+off tail.
+    "(?:"
+    + "|".join(
+        [
+            *(_neg_guarded(v, _NEG_WS) for v in ("ignore", "bypass", "disable", "override")),
+            _neg_guarded("turn", _NEG_WS) + r"\s+off",
+        ]
+    )
+    + r")\s+(?:your\s+|all\s+|any\s+|the\s+)?"
     r"(?:safety|content|ethical|moral)\s+"
     r"(?:guidelines?|guardrails?|filters?|restrictions?|polic(?:y|ies)|constraints?)",
     flags=re.IGNORECASE | re.MULTILINE,

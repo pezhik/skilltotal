@@ -67,7 +67,15 @@ def normalize_with_map(text: str) -> tuple[str, list[int]]:
     ``index_map[i]`` is the offset in ``text`` of the character that produced
     ``normalized_text[i]``. Removable characters contribute nothing; a character that expands
     (e.g. the ``ﬁ`` ligature -> ``fi``) maps every produced character to its single origin.
+
+    Pure-ASCII text is returned unchanged with an EMPTY map: no confusable, removable, or
+    combining character is ASCII, so normalization is the identity — and every caller treats
+    ``normalized == text`` as "nothing to fold" without touching the map. The fast path matters:
+    the per-character loop below is orders of magnitude slower than ``str.isascii`` (one C scan),
+    and scanning a large ordinary repo used to burn minutes normalizing plain-ASCII sources.
     """
+    if text.isascii():
+        return text, []
     out: list[str] = []
     idx: list[int] = []
     for j, ch in enumerate(text):

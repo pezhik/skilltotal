@@ -95,6 +95,11 @@ class InvisibleUnicodeScanner(Scanner):
         review_seen: set[str] = set()
 
         for f in index.files:
+            # Every character this scanner hunts (tag chars, bidi controls, zero-width) is
+            # non-ASCII, so a pure-ASCII file cannot contain any. One C-speed check skips the
+            # per-line/per-char Python loops below for the overwhelmingly common case.
+            if f.text.isascii():
+                continue
             for lineno, line in enumerate(f.text.splitlines(), start=1):
                 tags = [c for c in line if _is_tag(ord(c))]
                 if tags:

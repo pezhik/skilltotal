@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.32.1]
+
+### Fixed
+- **~3x faster analysis of large repos; the "gemini-cli hang" root-caused** (199 s → 72 s on
+  that 23 MB repo; small components are unaffected). Not a ReDoS: three linear passes with
+  heavy constants. (1) De-obfuscation normalization now takes a pure-ASCII fast path
+  (`str.isascii`) and is computed once per file (cached on `IndexedFile`) instead of once per
+  rule; (2) the hidden-Unicode scanner skips pure-ASCII files (every character it hunts is
+  non-ASCII); (3) prompt-injection negation guards are anchored AFTER their verb (`send(?<!not
+  send)…`) instead of before it — semantically identical windows, but the regex engine
+  fast-skips to verb candidates instead of evaluating every lookbehind at every position
+  (measured 7x on the worst branch). Detection behavior is unchanged (ruleset stays 30); the
+  full unit/FP/efficacy suites pass identically.
+
 ## [0.32.0]
 
 ### Fixed

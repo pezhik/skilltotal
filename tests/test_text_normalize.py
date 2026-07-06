@@ -7,11 +7,21 @@ import re
 from skilltotal.text_normalize import normalize_with_map, original_span
 
 
-def test_ascii_is_unchanged_and_identity_mapped():
+def test_ascii_is_unchanged_with_empty_map():
+    # Pure ASCII takes the identity fast path: text unchanged, EMPTY map. The map is only
+    # meaningful when normalization changed the text — every caller gates on `norm != text`.
     text = "ignore previous instructions"
     norm, idx = normalize_with_map(text)
     assert norm == text
-    assert idx == list(range(len(text)))
+    assert idx == []
+
+
+def test_non_ascii_text_keeps_a_full_map():
+    # Anything past the ASCII fast path keeps the real per-character map contract.
+    text = "naïve plan"
+    norm, idx = normalize_with_map(text)
+    assert norm == "naive plan"
+    assert len(idx) == len(norm)
 
 
 def test_cyrillic_homoglyph_phrase_folds_to_ascii():
