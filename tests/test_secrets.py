@@ -118,3 +118,43 @@ def test_secret_in_tests_demoted(tmp_path):
 def test_clean_file_no_secrets(tmp_path):
     res = _scan(tmp_path, "app.py", "import os\nprint('hello world')\n")
     assert _finding(res) is None
+
+
+# --- Google installed-app OAuth client secret (ruleset 31) -----------------------------
+# For INSTALLED (native/CLI) apps Google documents the client secret as not confidential —
+# gcloud itself ships one. FP: gemini-cli scored critical/100 via ST-SECRET-EMBEDDED +
+# ST-COMBO-EXFIL on its own oauth2.ts loopback-flow secret.
+
+def _gocspx() -> str:
+    # Assembled at runtime (see fake_token) so no GOCSPX- partner-pattern literal is committed.
+    return fake_token("GOCSPX-", "4uHgMPm1o7SkgeV6Cu5clXFsxl9qT")
+
+
+def test_installed_app_oauth_secret_demoted(tmp_path):
+    src = (
+        f'const OAUTH_CLIENT_SECRET = "{_gocspx()}";\n'
+        'const REDIRECT = "http://localhost:7777/oauth2callback";\n'
+    )
+    res = _scan(tmp_path, "oauth2.ts", src)
+    assert _finding(res) is None
+    assert any("Installed-app Google OAuth" in n.title for n in res.needs_review)
+
+
+def test_web_app_gocspx_secret_still_flagged(tmp_path):
+    # Recall guard: the SAME value without installed-app markers (a web-app config with an
+    # https redirect) is a real leaked secret and stays scored.
+    src = (
+        f'client_secret = "{_gocspx()}"\n'
+        'redirect_uri = "https://app.example.com/oauth/callback"\n'
+    )
+    res = _scan(tmp_path, "settings.py", src)
+    assert _finding(res) is not None
+    assert not any("Installed-app Google OAuth" in n.title for n in res.needs_review)
+
+
+def test_non_gocspx_secret_with_localhost_still_flagged(tmp_path):
+    # Recall guard: installed-app markers do NOT excuse other secret shapes.
+    key = fake_token("ghp_", "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ12")
+    src = f'token = "{key}"\nconst REDIRECT = "http://localhost:1234/cb";\n'
+    res = _scan(tmp_path, "cli.py", src)
+    assert _finding(res) is not None

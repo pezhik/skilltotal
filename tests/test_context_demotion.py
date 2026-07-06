@@ -573,3 +573,21 @@ def test_vendored_prefix_dir_is_skipped(tmp_path: Path):
            "curl -fsS https://dlang.org/install.sh | bash -s dmd\n")
     _write(tmp_path, "src/main.py", "print('hi')\n")
     assert "ST-SHELL-PIPE-EXEC" not in _ids(_analyze(tmp_path))
+
+
+# --- installed-app Google OAuth secret cannot feed the exfil combo (ruleset 31) --------
+
+def test_installed_oauth_secret_does_not_synthesize_combo(tmp_path: Path):
+    # FP: gemini-cli critical/100 — its own loopback-flow OAuth client secret (public by
+    # design for native apps) plus ordinary network code synthesized ST-COMBO-EXFIL.
+    secret = "GOCSPX" + "-" + "4uHgMPm1o7SkgeV6Cu5clXFsxl9qT"  # runtime-assembled, no literal
+    _write(tmp_path, "src/oauth2.ts",
+           f'const OAUTH_CLIENT_SECRET = "{secret}";\n'
+           'const REDIRECT = "http://localhost:7777/oauth2callback";\n')
+    _write(tmp_path, "src/api.ts", "const r = await fetch('https://api.example.com');\n")
+    report = _analyze(tmp_path)
+    ids = _ids(report)
+    assert "ST-SECRET-EMBEDDED" not in ids
+    assert "ST-COMBO-EXFIL" not in ids
+    assert report.risk_level.value not in ("high", "critical")
+    assert any("Installed-app Google OAuth" in n.title for n in report.needs_review)

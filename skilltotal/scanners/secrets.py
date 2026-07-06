@@ -81,6 +81,24 @@ def _is_public_docsearch_key(value: str, context: str) -> bool:
     return bool(_HEX32.match(value)) and bool(_DOCSEARCH_CTX.search(context))
 
 
+# Google OAuth client secrets ("GOCSPX-…") are NOT confidential for INSTALLED apps (desktop /
+# CLI / native): Google's own docs say the secret "is obviously not treated as a secret" in that
+# flow, and Google ships one inside gcloud. The same value shape IS sensitive for a web app, so
+# demotion requires installed-app flow markers in the SAME file: the loopback redirect, the
+# legacy oob URN, the device-code flow, PKCE, or a client_secrets.json "installed" key. A
+# GOCSPX secret without those markers stays a scored finding (a leaked web-app secret).
+_GOOGLE_OAUTH_PREFIX = "GOCSPX-"
+_INSTALLED_APP_CTX = re.compile(
+    r"(?i)urn:ietf:wg:oauth:2\.0:oob|device[_/]code|code_verifier|code_challenge|"
+    r"http://(?:localhost|127\.0\.0\.1)|loopback|[\"']installed[\"']\s*[:=]"
+)
+
+
+def _is_installed_app_oauth_secret(value: str, file_text: str) -> bool:
+    """True if ``value`` is a Google OAuth client secret in an installed-app (native) flow."""
+    return value.startswith(_GOOGLE_OAUTH_PREFIX) and bool(_INSTALLED_APP_CTX.search(file_text))
+
+
 def _has_mixed_charset(value: str) -> bool:
     return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
 
@@ -123,6 +141,7 @@ class SecretsScanner(Scanner):
         evidence: list[Evidence] = []
         seen: set[tuple[str, int]] = set()
         docsearch_files: list[str] = []
+        installed_oauth_files: list[str] = []
 
         for f in index.files:
             for _label, pattern, grp in _KNOWN:
@@ -139,6 +158,10 @@ class SecretsScanner(Scanner):
                 if _is_public_docsearch_key(value, window):
                     if f.relpath not in docsearch_files:
                         docsearch_files.append(f.relpath)
+                    continue
+                if _is_installed_app_oauth_secret(value, f.text):
+                    if f.relpath not in installed_oauth_files:
+                        installed_oauth_files.append(f.relpath)
                     continue
                 self._add(f, m, value, evidence, seen)
 
@@ -159,6 +182,24 @@ class SecretsScanner(Scanner):
             )
 
         needs_review: list[NeedsReview] = []
+        if installed_oauth_files:
+            shown = ", ".join(installed_oauth_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=(
+                        f"Installed-app Google OAuth client secret ({len(installed_oauth_files)})"
+                    ),
+                    reason=(
+                        "A GOCSPX- Google OAuth client secret in a file with installed-app flow "
+                        "markers (loopback redirect / device code / PKCE / oob). For native "
+                        "apps Google documents this value as not confidential (gcloud ships "
+                        "one), so it is flagged for review, not scored — verify it is not a "
+                        f"web-application secret: {shown}."
+                    ),
+                    file=installed_oauth_files[0],
+                )
+            )
         if docsearch_files:
             shown = ", ".join(docsearch_files[:8])
             needs_review.append(

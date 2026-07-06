@@ -4,6 +4,32 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 31 (engine 0.33.0)
+
+**One false-positive fix: Google installed-app OAuth client secrets
+(`scanners/secrets.py`, `ST-SECRET-EMBEDDED`).** For INSTALLED (native/desktop/CLI) apps,
+Google's own documentation treats the OAuth client secret as not confidential — the loopback /
+device-code flows cannot keep it secret, and Google ships one inside gcloud. gemini-cli's
+`oauth2.ts` (loopback flow) scored `ST-SECRET-EMBEDDED` (high) on its `GOCSPX-…` constant and,
+combined with ordinary network code, synthesized `ST-COMBO-EXFIL` → critical/100 on Google's
+own legitimate CLI.
+
+Demotion is gated on BOTH conditions (mirrors the public-DocSearch-key precedent):
+- the value carries the modern Google client-secret prefix (`GOCSPX-`), AND
+- the SAME file shows installed-app flow markers: `http://localhost` / `http://127.0.0.1`
+  redirect, "loopback", the legacy `urn:ietf:wg:oauth:2.0:oob` URN, a device-code endpoint,
+  PKCE (`code_verifier`/`code_challenge`), or a `client_secrets.json` `"installed"` key.
+
+Matches are routed to `needs_review` ("verify it is not a web-application secret"), never
+scored — so they also cannot feed `ST-COMBO-EXFIL`. Recall preserved: a `GOCSPX-` value
+WITHOUT installed-app markers (a leaked web-app secret) stays a scored finding, as does any
+other secret shape in a file that happens to mention localhost. Effect: gemini-cli
+critical/100 → high/50 (remaining findings are its real shell/bind constructs).
+
+Tests: `tests/test_secrets.py` (demotion + web-app recall guard + other-secret recall guard;
+values assembled at runtime — `GOCSPX-` is a GitHub push-protection partner pattern),
+`tests/test_context_demotion.py` (no `ST-COMBO-EXFIL` synthesis from the demoted secret).
+
 ## ruleset 30 (engine 0.32.0)
 
 **Two false-positive fixes from the first catalog scan of foundational packages.** numpy
