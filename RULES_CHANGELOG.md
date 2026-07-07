@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 35 (engine 0.34.3)
+
+**One false-positive fix: the OpenAI `sk-` key pattern no longer over-matches short `sk-…`
+tokens (`scanners/secrets`).** The embedded-secret rule matched `sk-(?:proj-)?` + 20
+base62/`-`/`_` chars — far shorter and looser than a real OpenAI key — so it fired on litellm's
+own proxy *virtual keys* (`sk-P1zJMds…`, ~20 chars, returned from example auth code), `sk-1234`
+keys in API docstrings, and Hugging Face model ids (`org/sk-model-name`, dashes in the body).
+The pattern now requires the real key shape: a legacy `sk-` + long (≥40) pure-base62 body, or a
+prefixed `sk-proj-` / `sk-svcacct-` / `sk-admin-` key with a long body. Effect: `litellm`
+critical → high, `has_malicious_indicators` false. Recall preserved: a real 48-char legacy key
+and long project/service-account keys still match, and an `api_key = "sk-short"` *assignment* is
+still caught by the generic secret-assignment rule — only bare, non-assigned short `sk-` tokens
+are dropped (verified against the efficacy corpus and the Rust prod/inline-test secret fixtures).
+This resolves the residual secret over-match noted under ruleset 34; litellm's remaining `high`
+is an honest capability profile (proxy shell-exec / dynamic-code / `0.0.0.0` bind / network
+egress), not a false positive, so it stays `noindex`/held in the catalog like other powerful
+tools (wandb, browser-use, ragflow).
+
 ## ruleset 34 (engine 0.34.2)
 
 **One false-positive fix: decode-and-execute tokens inside structured-data files

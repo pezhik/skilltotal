@@ -12,7 +12,7 @@ mod tests {
 
     #[test]
     fn accepts_a_well_formed_key() {
-        assert!(validate_api_key("sk-rusttestfixture0123456789abcd"));
+        assert!(validate_api_key("sk-rusttestfixture0123456789ABCDEFGHIJKLMNOPQRS"));
     }
 
     #[test]

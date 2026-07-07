@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.3]
+
+### Fixed
+- **Ruleset 35 — the OpenAI `sk-` secret pattern no longer over-matches short `sk-…` tokens**
+  (see `RULES_CHANGELOG.md`). The pattern matched `sk-` + 20 chars, catching litellm proxy
+  virtual keys (`sk-P1zJMds…`), `sk-1234` docstring examples, and `org/sk-model-name` Hugging
+  Face model ids. It now requires a real OpenAI key shape: a legacy `sk-` + ≥40-char base62 body,
+  or a `sk-proj-`/`sk-svcacct-`/`sk-admin-` prefixed key. Effect: `litellm` critical → high,
+  not-malicious. Recall preserved: real 48-char legacy and long project keys still match, and an
+  `api_key = "sk-short"` *assignment* is still caught by the generic secret-assignment rule.
+
 ## [0.34.2]
 
 ### Fixed

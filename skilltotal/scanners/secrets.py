@@ -24,7 +24,18 @@ _KNOWN: list[tuple[str, re.Pattern[str], int]] = [
     ("GitHub fine-grained PAT", re.compile(r"\b(github_pat_[A-Za-z0-9_]{60,})\b"), 1),
     ("GitLab token", re.compile(r"\b(glpat-[A-Za-z0-9_\-]{20,})\b"), 1),
     ("Anthropic API key", re.compile(r"\b(sk-ant-[A-Za-z0-9_\-]{20,})\b"), 1),
-    ("OpenAI API key", re.compile(r"\b(sk-(?:proj-)?[A-Za-z0-9_\-]{20,})\b"), 1),
+    # Real OpenAI keys are a legacy `sk-` + long base62 body, or a prefixed
+    # (`sk-proj-` / `sk-svcacct-` / `sk-admin-`) key with a long body. Short `sk-…`
+    # tokens are NOT OpenAI secrets: litellm proxy virtual keys (`sk-P1zJMds…`, ~20
+    # chars), `sk-1234` doc examples, and `org/sk-model-name` Hugging Face model ids
+    # all share the `sk-` prefix. Requiring the real length + prefix shape drops those
+    # FPs while the 48-char legacy and long project-key forms still match. An
+    # `api_key = "sk-short"` assignment remains covered by the generic rule below.
+    (
+        "OpenAI API key",
+        re.compile(r"\b(sk-(?:proj|svcacct|admin)-[A-Za-z0-9_\-]{40,}|sk-[A-Za-z0-9]{40,})\b"),
+        1,
+    ),
     ("Slack token", re.compile(r"\b(xox[baprs]-[A-Za-z0-9\-]{10,})\b"), 1),
     ("Google API key", re.compile(r"\b(AIza[0-9A-Za-z_\-]{35})\b"), 1),
     # Hugging Face access tokens gate model/dataset downloads and (for write tokens) pushes to
