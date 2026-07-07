@@ -169,6 +169,19 @@ def test_golden_summary_counts_mismatches_via_csv(tmp_path):
     assert "Per-finding golden mismatches" in md
 
 
+def test_load_rows_tolerates_utf8_bom(tmp_path):
+    # A CSV written by PowerShell Set-Content -Encoding utf8 has a BOM; load_rows must still read
+    # the class column (utf-8-sig), else every row's class is dropped and benign_scanned -> 0.
+    clean = tmp_path / "c"
+    _write(clean, "ok.py", "x = 1\n")
+    csv_path = tmp_path / "bom.csv"
+    body = "class,ecosystem,source,version,expected_result\n" f"benign-baseline,local,{clean},,allow\n"
+    csv_path.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
+    results, summary = calibrate.calibrate(csv_path)
+    assert summary["benign_scanned"] == 1
+    assert results[0].cls == "benign-baseline"
+
+
 def test_combo_on_benign_tripwire_signal(tmp_path):
     # A benign-baseline package that trips a forbidden exfil combo is the high-precision tripwire
     # signal — counted even though the decode-exec dir is not "malicious verdict" per se.

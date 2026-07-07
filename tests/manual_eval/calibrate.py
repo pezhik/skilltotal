@@ -271,7 +271,10 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
 
 def load_rows(path: Path) -> list[tuple[str, str, str, str, list[str], list[str]]]:
     rows: list[tuple[str, str, str, str, list[str], list[str]]] = []
-    with path.open(encoding="utf-8", newline="") as fh:
+    # utf-8-sig strips a leading BOM if present: a CSV written by PowerShell's
+    # `Set-Content -Encoding utf8` (PS 5.1) carries a BOM that would otherwise make DictReader
+    # read the first header as "﻿class", silently dropping every row's class.
+    with path.open(encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             rows.append(
                 (
