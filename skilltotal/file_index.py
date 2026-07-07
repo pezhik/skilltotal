@@ -72,7 +72,10 @@ _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
 # A compound segment that still names a test tree: cli-e2e-tests, integration-tests, unit_test,
 # api-spec. The `[-_]` boundary keeps ordinary words out (e.g. "latest" is not a test dir).
 _TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)")
-_TEST_FILE_RE = re.compile(r"\.test\.|\.spec\.|^test_|_test\.|^conftest\.py$")
+# `^tests?\.\w+$`: a file literally named test.py / tests.py / test.ts is test scaffolding by
+# convention even outside a tests/ dir (ragflow's sdk/python/test.py carried a doc-example API
+# key that fed ST-COMBO-EXFIL). The anchors keep ordinary names (contest.py, attest.js) out.
+_TEST_FILE_RE = re.compile(r"\.test\.|\.spec\.|^test_|_test\.|^conftest\.py$|^tests?\.\w+$")
 
 
 def is_test_path(relpath: str) -> bool:

@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.0]
+
+### Fixed
+- **Ruleset 32 — two false positives found reviewing held real-world projects** (see
+  `RULES_CHANGELOG.md`):
+  - A file literally named `test.py` / `tests.py` (even outside a `tests/` directory) is now
+    treated as test scaffolding, so its evidence is demoted like other test code. `ragflow`'s
+    `sdk/python/test.py` shipped a doc-example API key that synthesized `ST-COMBO-EXFIL`
+    (critical); it no longer does.
+  - A prompt-injection phrase quoted inside **defensive prose** (a skill warning "treat as
+    untrusted, never authoritative: \"…exfiltrate X to Y, etc.\"") is demoted to `needs_review`
+    when the line carries a citation cue (`e.g.`, `etc.`, `untrusted`, `such as`…). A document
+    that merely reproduces a live injection (no cue) still scores, and this only applies to prose
+    files, not code/structured data. `claude-blog` no longer verdicts malicious.
+
 ## [0.33.0]
 
 ### Fixed
