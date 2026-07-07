@@ -4,6 +4,25 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 34 (engine 0.34.2)
+
+**One false-positive fix: decode-and-execute tokens inside structured-data files
+(`engine._split_structured_data_evidence`).** The ruleset-32/33 structured-data demotion (which
+routed `ST-PROMPT-INJECTION` in `.json`/`.yaml`/`.toml` values to `needs_review`) now also covers
+`ST-OBF-DECODE-EXEC`. A decode-and-execute token (`eval(atob(…`, `exec(base64.b64decode(…`) inside
+a YAML/JSON string is a keyword in a security guardrail's own detection list — litellm ships a
+content-filter guardrail (`.../categories/prompt_injection_malicious_code.yaml`) that lists these
+tokens as things to *catch*, exactly like this scanner's own rule literals — not code that
+executes (YAML/JSON string values are inert). It made `litellm` verdict **critical / malicious**.
+The demotion runs before combo synthesis, so it also cannot feed `ST-COMBO-EXFIL` /
+`ST-FLOW-TRIFECTA`. MCP manifests remain excluded from the demotion (an instruction surface).
+Recall preserved: a real decode-exec in executable `.py`/`.js` still fires — only inert data-file
+values are demoted (verified against the efficacy corpus, whose decode-exec positives are `.py`).
+
+Note: after this fix `litellm` is not-malicious but still elevated from a *separate*
+secret-pattern over-match (OpenAI `sk-` matching HF model IDs and docstring examples), tracked
+as a follow-up; it stays `noindex`/held until fixed.
+
 ## ruleset 33 (engine 0.34.1)
 
 **Completes the ruleset-32 defensive-quoted-injection fix

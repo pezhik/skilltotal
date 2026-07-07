@@ -124,8 +124,8 @@ def analyze_directory(
     needs_review.extend(example_review)
     findings, ci_review = _split_ci_evidence(findings)
     needs_review.extend(ci_review)
-    findings, json_prompt_review = _split_structured_data_prompt_evidence(findings)
-    needs_review.extend(json_prompt_review)
+    findings, structured_data_review = _split_structured_data_evidence(findings)
+    needs_review.extend(structured_data_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
 
@@ -448,23 +448,32 @@ def _is_structured_data_file(relpath: str) -> bool:
     return name.endswith(_STRUCTURED_DATA_SUFFIXES) and name not in _MCP_MANIFEST_NAMES
 
 
-def _split_structured_data_prompt_evidence(
+# Findings demoted when their evidence sits in a structured-data (JSON/YAML/TOML) file — the value
+# is inert data, not executed code or an agent-instruction surface:
+#   - ST-PROMPT-INJECTION: an injection phrase in a JSON/YAML value is a scenario pack / config /
+#     test vector, not a directive (MCP manifests excluded — tool descriptions steer the agent).
+#   - ST-OBF-DECODE-EXEC: a decode-and-execute token in a YAML/JSON string is a keyword/pattern in
+#     a security guardrail's own detection list (litellm ships one in a keyword YAML), not code that
+#     runs — exactly like this scanner's own rule literals.
+_STRUCTURED_DATA_DEMOTABLE = frozenset({"ST-PROMPT-INJECTION", "ST-OBF-DECODE-EXEC"})
+
+
+def _split_structured_data_evidence(
     findings: list[Finding],
 ) -> tuple[list[Finding], list[NeedsReview]]:
-    """Demote ST-PROMPT-INJECTION evidence found in a structured-data file (JSON/YAML/TOML).
+    """Demote code-pattern / injection evidence found in a structured-data file (JSON/YAML/TOML).
 
-    An injection phrase in a JSON/YAML *value* is data — a security tool's adversarial scenario
-    pack (``default_scenario_pack.json``: ``"title": "Prompt injection attempt: ..."``), a config,
-    or a test vector — not an agent-instruction surface. Agent-instruction surfaces (SKILL.md /
-    AGENTS.md markdown, and MCP *manifests* whose tool descriptions steer the agent) are excluded,
-    so a live injection there still fires. Runs before synthesis, so a demoted injection can't feed
-    ST-FLOW-TRIFECTA. FP: tandem (a defensive incident-monitor flagged malicious by its own
-    scenario data).
+    A JSON/YAML value is data, not executable code or an agent-instruction surface.
+    Agent-instruction surfaces (SKILL.md / AGENTS.md markdown, and MCP *manifests* whose tool
+    descriptions steer the agent) are excluded via ``_is_structured_data_file``, so a live
+    injection there still fires. Runs before synthesis, so a demoted match can't feed
+    ST-FLOW-TRIFECTA / ST-CONVERGENCE. FPs: tandem (a defensive monitor's scenario JSON), litellm
+    (its content-filter guardrail's keyword YAML).
     """
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
-        if finding.id != "ST-PROMPT-INJECTION":
+        if finding.id not in _STRUCTURED_DATA_DEMOTABLE:
             kept.append(finding)
             continue
         real = [e for e in finding.evidence if not _is_structured_data_file(e.file)]

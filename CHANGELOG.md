@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.2]
+
+### Fixed
+- **Ruleset 34 — decode-and-execute token in a structured-data file no longer scores** (see
+  `RULES_CHANGELOG.md`). `ST-OBF-DECODE-EXEC` matching inside a `.yaml`/`.json`/`.toml` value is
+  a keyword/pattern in a security tool's own detection list (litellm ships a content-filter
+  guardrail YAML listing decode-and-execute tokens as things to *catch*), not code that runs —
+  the same "detection literal, not behavior" class the engine already demotes for its own
+  patterns. Extended the structured-data demotion (previously prompt-injection only) to cover it.
+  Effect: `litellm` malicious/critical → not-malicious. Recall preserved: real decode-exec in
+  executable `.py`/`.js` still fires (only inert data-file values are demoted).
+
 ## [0.34.1]
 
 ### Fixed
