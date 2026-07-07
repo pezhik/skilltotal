@@ -169,6 +169,36 @@ def test_golden_summary_counts_mismatches_via_csv(tmp_path):
     assert "Per-finding golden mismatches" in md
 
 
+def test_combo_on_benign_tripwire_signal(tmp_path):
+    # A benign-baseline package that trips a forbidden exfil combo is the high-precision tripwire
+    # signal — counted even though the decode-exec dir is not "malicious verdict" per se.
+    evil = tmp_path / "evil"
+    _write(evil, "x.py", _DECODE_EXEC)
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,source,version,expected_result,forbidden_findings,expected_findings\n"
+        f"benign-baseline,{evil},,allow,ST-OBF-DECODE-EXEC,\n",
+        encoding="utf-8",
+    )
+    results, summary = calibrate.calibrate(csv_path)
+    assert summary["combo_on_benign"] == 1
+    md = calibrate.to_markdown(results, summary)
+    assert "combo-on-benign (tripwire)" in md
+
+
+def test_combo_on_benign_zero_when_clean(tmp_path):
+    clean = tmp_path / "clean"
+    _write(clean, "ok.py", "y = 2\n")
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,source,version,expected_result,forbidden_findings,expected_findings\n"
+        f"benign-baseline,{clean},,allow,ST-COMBO-EXFIL,\n",
+        encoding="utf-8",
+    )
+    _, summary = calibrate.calibrate(csv_path)
+    assert summary["combo_on_benign"] == 0
+
+
 def test_markdown_renders(tmp_path):
     csv_path = tmp_path / "ds.csv"
     benign = tmp_path / "b"

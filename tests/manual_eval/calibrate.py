@@ -204,6 +204,11 @@ def summarize(results: list[RowResult]) -> dict:
     # TP/FP regression at rule granularity — a hard gate independent of the verdict-level metric.
     golden = [r for r in ok if r.findings_ok is not None]
     finding_mismatches = [r for r in golden if not r.findings_ok]
+    # High-precision tripwire signal (Trust-Factory): a benign-baseline package that tripped a
+    # FORBIDDEN rule (a synthesized exfil/typosquat combo) — an "elevated but not malicious" false
+    # positive the benign_fp metric (malicious-only) misses. On a reputable corpus this is either a
+    # real FP to fix or a real compromise to disclose; either way it needs triage, not a silent 0.
+    combo_on_benign = [r for r in benign if r.unexpected_findings]
     return {
         "rows_total": len(results),
         "scanned": len(ok),
@@ -218,6 +223,7 @@ def summarize(results: list[RowResult]) -> dict:
         "labs_flagged": sum(1 for r in labs if r.passed),
         "golden_scanned": len(golden),
         "finding_mismatches": len(finding_mismatches),
+        "combo_on_benign": len(combo_on_benign),
         "avg_needs_review": round(sum(noisy) / len(noisy), 2) if noisy else 0.0,
         "max_needs_review": max(noisy) if noisy else 0,
     }
@@ -238,6 +244,8 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
         f"- vulnerable-labs flagged: {summary['labs_flagged']} / {summary['labs_scanned']}",
         f"- per-finding golden mismatches: **{summary.get('finding_mismatches', 0)}** / "
         f"{summary.get('golden_scanned', 0)} golden rows",
+        f"- combo-on-benign (tripwire): **{summary.get('combo_on_benign', 0)}** benign package(s) "
+        f"tripped a forbidden exfil/typosquat combo",
         f"- needs_review noise: avg {summary['avg_needs_review']}, "
         f"max {summary['max_needs_review']}",
         "",
