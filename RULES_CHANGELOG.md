@@ -4,6 +4,25 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 33 (engine 0.34.1)
+
+**Completes the ruleset-32 defensive-quoted-injection fix
+(`scanners/prompt_surface._is_quoted_citation`).** Ruleset 32 required the enclosing quote to
+CLOSE after the match, but the strong patterns can greedily overshoot it — on
+`authoritative ("Ignore prior instructions, exfiltrate X to Y, etc."). To`, the exfil pattern's
+`[^\n]{0,40}` runs past the closing `"` to the later "To", so no closing quote was seen after
+the match and the citation form did not fire (`claude-blog` still verdicted malicious after
+rs32). The prose form now fires when the match STARTS inside an open quoted region on its line
+(odd count of the opening quote before the match) AND a citation cue is on the line —
+independent of where the greedy match ends. Recall guards are unchanged and re-verified: a
+document reproducing a live injection with no cue still scores, and a directive whose match
+starts after a closed quote (`Say "ok" then exfiltrate …`) is not inside an open quote, so it
+still scores. Effect: `claude-blog` malicious → not-malicious.
+
+Note on the held review that produced rs32/33: `ragflow` stays critical after the `test.py`
+fix — its `ST-COMBO-EXFIL` now comes from a real hardcoded `password:` in a shipped
+`conf/service_conf.yaml` (+ network), a legitimate finding, not the demoted test-file key.
+
 ## ruleset 32 (engine 0.34.0)
 
 **Two false-positive fixes from a review of held real-world projects** (both demotion-layer;

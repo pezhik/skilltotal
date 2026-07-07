@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.1]
+
+### Fixed
+- **Ruleset 33 — completes the ruleset-32 defensive-quoted-injection fix.** The strong
+  injection patterns can greedily overshoot the closing quote (`exfiltrate X to Y, etc.").`
+  swallows the `"`), so the "quote closes after the match" test missed the real citation. The
+  prose citation form now demotes when the match STARTS inside an open quoted region on its
+  line plus a citation cue — independent of where the greedy match ends. `claude-blog` (an
+  agent skill that *warns* about injection) no longer verdicts malicious. Recall guards
+  unchanged: a document reproducing a live injection without a cue, or a directive starting
+  after a closed quote, still scores.
+
 ## [0.34.0]
 
 ### Fixed
