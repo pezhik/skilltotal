@@ -110,6 +110,22 @@ def _is_installed_app_oauth_secret(value: str, file_text: str) -> bool:
     return value.startswith(_GOOGLE_OAUTH_PREFIX) and bool(_INSTALLED_APP_CTX.search(file_text))
 
 
+# Client-side TELEMETRY ingestion keys are publishable by design (like a Sentry DSN, Algolia search
+# key, or GA measurement id): they are embedded in an open-source client to POST usage/crash
+# telemetry to the vendor's ingestion endpoint, and can only write to that firehose. Recognising the
+# adjacent telemetry-ingestion URL avoids flagging them as a leaked secret. FP:
+# snowflake-connector-python ships SFCTEST/SFCDEV/PROD keys next to a
+# `*.client-telemetry.<vendor>/enqueue` URL.
+_TELEMETRY_INGEST_CTX = re.compile(
+    r"(?i)client-telemetry|telemetry[\w.-]*\.[\w.-]+/(?:enqueue|ingest)|/telemetry/(?:enqueue|ingest)"
+)
+
+
+def _is_public_telemetry_key(context: str) -> bool:
+    """True if a secret sits next to a client-telemetry ingestion endpoint (a publishable key)."""
+    return bool(_TELEMETRY_INGEST_CTX.search(context))
+
+
 # Test TLS/certificate fixtures: packages ship throwaway dummy certificate + private-key pairs to
 # drive their OWN test HTTPS servers (urllib3 `dummyserver/certs/*.key`, grpcio
 # `src/core/tsi/test_creds/*.key`). Those PEM blocks are real key MATERIAL but are disposable test
@@ -170,6 +186,7 @@ class SecretsScanner(Scanner):
         seen: set[tuple[str, int]] = set()
         docsearch_files: list[str] = []
         installed_oauth_files: list[str] = []
+        telemetry_files: list[str] = []
         test_cert_files: list[str] = []
 
         for f in index.files:
@@ -191,6 +208,10 @@ class SecretsScanner(Scanner):
                 if _is_public_docsearch_key(value, window):
                     if f.relpath not in docsearch_files:
                         docsearch_files.append(f.relpath)
+                    continue
+                if _is_public_telemetry_key(window):
+                    if f.relpath not in telemetry_files:
+                        telemetry_files.append(f.relpath)
                     continue
                 if _is_installed_app_oauth_secret(value, f.text):
                     if f.relpath not in installed_oauth_files:
@@ -247,6 +268,22 @@ class SecretsScanner(Scanner):
                         f"web-application secret: {shown}."
                     ),
                     file=installed_oauth_files[0],
+                )
+            )
+        if telemetry_files:
+            shown = ", ".join(telemetry_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Public telemetry ingestion key ({len(telemetry_files)})",
+                    reason=(
+                        "A secret next to a client-telemetry ingestion endpoint "
+                        "(e.g. *.client-telemetry.<vendor>/enqueue). Client-side telemetry keys "
+                        "are publishable by design (like a Sentry DSN) — they can only write to "
+                        "the vendor's telemetry firehose — so it is flagged for review, not "
+                        f"scored: {shown}."
+                    ),
+                    file=telemetry_files[0],
                 )
             )
         if docsearch_files:

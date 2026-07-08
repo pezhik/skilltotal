@@ -79,8 +79,13 @@ _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
 _TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)")
 # `^tests?\.\w+$`: a file literally named test.py / tests.py / test.ts is test scaffolding by
 # convention even outside a tests/ dir (ragflow's sdk/python/test.py carried a doc-example API
-# key that fed ST-COMBO-EXFIL). The anchors keep ordinary names (contest.py, attest.js) out.
-_TEST_FILE_RE = re.compile(r"\.test\.|\.spec\.|^test_|_test\.|^conftest\.py$|^tests?\.\w+$")
+# key that fed ST-COMBO-EXFIL). `^test(ing)?_?utils?\.`: a `testing_utils.py` / `test_utils.py`
+# module is the project's test-support helpers (transformers' src/transformers/testing_utils.py
+# ships a hardcoded CI `hf_` token). The anchors keep ordinary names (contest.py, testimonials.py,
+# attest.js) out.
+_TEST_FILE_RE = re.compile(
+    r"\.test\.|\.spec\.|^test_|_test\.|^conftest\.py$|^tests?\.\w+$|^test(?:ing)?_?utils?\."
+)
 
 
 def is_test_path(relpath: str) -> bool:

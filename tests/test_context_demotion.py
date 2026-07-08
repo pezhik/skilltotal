@@ -462,6 +462,22 @@ def test_env_example_template_demoted(tmp_path: Path):
     assert "ST-SENS-PATH" not in _ids(_analyze(tmp_path))
 
 
+def test_testing_utils_module_demoted(tmp_path: Path):
+    # A `testing_utils.py` / `test_utils.py` module is the project's test-support helpers, not
+    # shipped runtime behavior. FP: transformers' src/transformers/testing_utils.py ships a
+    # hardcoded CI `hf_` token. Its evidence is demoted like other test code.
+    _write(tmp_path, "src/pkg/testing_utils.py",
+           'TOKEN = "hf_aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpP12"\n')
+    assert "ST-SECRET-EMBEDDED" not in _ids(_analyze(tmp_path))
+
+
+def test_ordinary_utils_module_still_scored(tmp_path: Path):
+    # Recall guard: a real utils module (not test-support) with an embedded token still scores.
+    _write(tmp_path, "src/pkg/config_utils.py",
+           'TOKEN = "hf_aAbBcCdDeEfFgGhHiIjJkKlLmMnNoOpP12"\n')
+    assert "ST-SECRET-EMBEDDED" in _ids(_analyze(tmp_path))
+
+
 def test_sens_path_in_structured_data_demoted(tmp_path: Path):
     # A credential token as a JSON string VALUE is inert data, not path access. FP: botocore bundles
     # the AWS API service models under botocore/data/*.json where "ec2KeyPair": "id_rsa" is an API

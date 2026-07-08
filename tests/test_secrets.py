@@ -138,6 +138,27 @@ def test_secret_in_tests_demoted(tmp_path):
     assert f.evidence[0].line_start == 1
 
 
+def test_public_telemetry_ingestion_key_demoted(tmp_path):
+    # A client-side telemetry ingestion key is publishable by design (like a Sentry DSN). FP:
+    # snowflake-connector-python ships keys next to *.client-telemetry.<vendor>/enqueue URLs.
+    src = (
+        'PROD = TelemetryAPI(\n'
+        '    url="https://client-telemetry.snowflakecomputing.com/enqueue",\n'
+        '    api_key="wLpEKqnLOW9tGNwTjab5N611YQApOb3t9xOnE1rX",\n'
+        ')\n'
+    )
+    res = _scan(tmp_path, "telemetry_oob.py", src)
+    assert _finding(res) is None
+    assert any("Public telemetry ingestion key" in n.title for n in res.needs_review)
+
+
+def test_secret_without_telemetry_context_still_flagged(tmp_path):
+    # Recall guard: the SAME key shape without a telemetry-ingestion URL nearby stays scored.
+    src = 'api_key = "wLpEKqnLOW9tGNwTjab5N611YQApOb3t9xOnE1rX"\n'
+    res = _scan(tmp_path, "config.py", src)
+    assert _finding(res) is not None
+
+
 def test_clean_file_no_secrets(tmp_path):
     res = _scan(tmp_path, "app.py", "import os\nprint('hello world')\n")
     assert _finding(res) is None

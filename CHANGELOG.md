@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.7]
+
+### Fixed
+- **Ruleset 39 — two embedded-secret false positives (closes the tripwire secret sub-cluster)**
+  (see `RULES_CHANGELOG.md`): (1) a secret next to a client-telemetry ingestion URL
+  (`*.client-telemetry.<vendor>/enqueue`) is a publishable key (Sentry-DSN class) →
+  `needs_review`, not scored — snowflake-connector-python's `telemetry_oob.py`; (2) a
+  `testing_utils.py` / `test_utils.py` module is recognised as test-support code so a hardcoded CI
+  token there is demoted — transformers' `src/transformers/testing_utils.py` `hf_` token. Recall
+  preserved (secret without a telemetry URL, and non-test `*_utils.py`, still score).
+
 ## [0.34.6]
 
 ### Fixed

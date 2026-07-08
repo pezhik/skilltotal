@@ -4,6 +4,27 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 39 (engine 0.34.7)
+
+**Two embedded-secret false positives from the reputable-corpus tripwire — closes the
+ST-SECRET-EMBEDDED sub-cluster** (`scanners/secrets`, `file_index`):
+
+1. **Public telemetry ingestion keys.** A secret assigned next to a client-telemetry ingestion
+   URL (`*.client-telemetry.<vendor>/enqueue`) is a publishable client-side key — like a Sentry
+   DSN or Algolia search key, it can only write to the vendor's telemetry firehose — so it is
+   routed to `needs_review`, not scored. FP: snowflake-connector-python ships SFCTEST/SFCDEV/PROD
+   keys in `telemetry_oob.py`. A key without a telemetry-ingestion URL nearby still scores.
+2. **`testing_utils.py` / `test_utils.py` are test-support code.** `is_test_path` now recognises a
+   `test(ing)?_utils?.<ext>` module as the project's test helpers (demoted like other test code),
+   so a hardcoded CI token there does not drive the score. FP: transformers ships a `hf_` token in
+   `src/transformers/testing_utils.py`. The anchors keep ordinary names (`config_utils.py`,
+   `testimonials.py`) scored.
+
+Recall preserved (efficacy 100% recall / 0 FP). With this the tripwire's full 18-FP cluster
+(litellm, wcwidth, pynacl/authlib, urllib3, grpcio, botocore, awscli, docker, dulwich, gcsfs,
+pyarrow, pyzmq, snowflake, transformers, …) is resolved; 0 real compromises were found in the
+top-750 reputable corpus.
+
 ## ruleset 38 (engine 0.34.6)
 
 **Sensitive-path precision + provider-SDK credential-domain calibration — the ST-SENS-PATH →
