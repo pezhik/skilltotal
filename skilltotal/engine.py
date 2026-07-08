@@ -18,6 +18,7 @@ from skilltotal.agent_skill import skill_capability_mismatch
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import collect
+from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
     FileIndex,
     IndexedFile,
@@ -40,14 +41,7 @@ from skilltotal.models import (
 from skilltotal.owasp import owasp_for
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
-from skilltotal.scoring import (
-    compute_score,
-    convergence_finding,
-    exfiltration_finding,
-    install_dropper_finding,
-    risk_level,
-    trifecta_finding,
-)
+from skilltotal.scoring import compute_score, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import package_name_typosquatting
 
@@ -132,23 +126,18 @@ def analyze_directory(
 
     capabilities = extract_capabilities(findings)
 
-    # Sensitive-data access (credential paths / embedded secrets) + network egress is the
-    # genuine credential-exfiltration pattern -> synthesized critical risky-construct finding.
-    # (Plain filesystem + network is a neutral capability and is intentionally not flagged.)
-    combo = exfiltration_finding(findings, capabilities, component)
-    if combo is not None:
-        findings.append(combo)
-
-    # Lethal-trifecta flow: untrusted-instruction surface + file access + network egress.
-    # Suppressed when the credential-specific combo already fired (covers the same concern).
-    trifecta = trifecta_finding(findings, capabilities, combo_fired=combo is not None)
-    if trifecta is not None:
-        findings.append(trifecta)
-
-    # Install-time dropper: a lifecycle/build hook paired with a decode-exec or credential payload.
-    dropper = install_dropper_finding(findings)
-    if dropper is not None:
-        findings.append(dropper)
+    # Synthesized combination findings: emergent risk from co-occurring signals (credential
+    # read + egress, install hook + payload, ...). The registry in skilltotal.combinations is the
+    # single ordered source of truth; the calibrated detection logic lives in scoring.py. Pre-
+    # classification combinations run over the base findings; order is load-bearing (the exfil
+    # combo must precede the trifecta, which is suppressed once the stronger combo has fired).
+    # `fired` tracks which combinations fired, for that suppression and for the post-phase below.
+    fired: set[str] = set()
+    for combination in pre_classification():
+        synthesized = combination.synth(findings, capabilities, component, fired)
+        if synthesized is not None:
+            findings.append(synthesized)
+            fired.add(combination.id)
 
     # Agent Skill: declared allowed-tools vs. what the bundled code actually does (deterministic
     # least-privilege / undeclared-capability check). Synthesized here, after capabilities.
@@ -168,11 +157,15 @@ def analyze_directory(
 
     _assign_threat_classes(findings)
 
-    # Convergence runs last: it counts the now-classified malicious indicators. A non-empty result
-    # is already classified (RISKY_CONSTRUCT) on construction, so it needs no re-projection.
-    convergence = convergence_finding(findings)
-    if convergence is not None and convergence.id not in ignore_set:
-        findings.append(convergence)
+    # Post-classification combinations run after threat classes are final — e.g. convergence,
+    # which counts the now-classified malicious indicators. A non-empty result is already
+    # classified (RISKY_CONSTRUCT) on construction, so it needs no re-projection. Honor
+    # ignore_set at append, as the base findings were dropped above.
+    for combination in post_classification():
+        synthesized = combination.synth(findings, capabilities, component, fired)
+        if synthesized is not None and synthesized.id not in ignore_set:
+            findings.append(synthesized)
+            fired.add(combination.id)
 
     # Attach OWASP Agentic Skills Top 10 categories last, once every finding (incl. synthesized
     # ones) is present. Pure metadata projection — never affects the score.

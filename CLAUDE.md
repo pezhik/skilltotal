@@ -125,7 +125,13 @@ collector.py → file_index.py → scanners/* → capabilities.py + scoring.py �
   fired) and `ST-CONVERGENCE` (≥2 distinct malicious-indicator findings co-occur; computed
   *after* `_assign_threat_classes` so classes are final). All synthesized rules are registered in
   `rules.py` with a matching `threat_class` (else `_assign_threat_classes` silently un-scores
-  them).
+  them). **`combinations.py` is the declarative registry** for these four: it owns the ordered
+  list + phase (`PRE_CLASSIFICATION` runs over base findings — exfil before the trifecta it
+  suppresses; `POST_CLASSIFICATION` runs after threat-class assignment — convergence) and a
+  `technique` label per combo (for the public per-technique benchmark); `engine.py` iterates it
+  instead of hardcoding the calls. The detection logic itself still lives in `scoring.py`; adding
+  a combination is a registry entry, not an engine edit. Each combo id is kept in sync with its
+  `RuleSpec` (rules.py) and `ComponentTrait` (traits.py) by `tests/test_combinations.py`.
 - **Evidence-context demotion** — besides test code (`_split_test_evidence`), `engine.py` also
   demotes evidence that is not executed/agent-facing behavior to `needs_review`:
   `_split_doc_evidence` (human-facing docs/prose via `file_index.is_doc_path`; AI-instruction

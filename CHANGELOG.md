@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.36.0]
+
+### Changed
+- **Declarative combination registry (`skilltotal/combinations.py`).** The four synthesized
+  *combination* findings — emergent risk from co-occurring signals (`ST-COMBO-EXFIL`,
+  `ST-FLOW-TRIFECTA`, `ST-INSTALL-DROPPER`, `ST-CONVERGENCE`) — are now declared in one ordered
+  registry, each with a short technique label (for the public per-technique benchmark) and an
+  evaluator adapter. The engine iterates the registry in two phases (pre-/post-threat-class
+  assignment) instead of four hardcoded calls, so a new combination is a registry entry, not an
+  edit to the engine's control flow. **Behavior is byte-identical** — the calibrated detection
+  logic stays in `scoring.py`, guarded by the recall gate and the per-finding golden set;
+  `RULESET_VERSION` (39) and the report shape (schema 1.5) are unchanged. Each combination id is
+  kept in sync with its `RuleSpec` and `ComponentTrait` by `tests/test_combinations.py`.
+
 ## [0.35.0]
 
 ### Added
