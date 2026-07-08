@@ -82,3 +82,19 @@ def test_non_package_component_not_flagged(tmp_path):
 def test_unrelated_name_not_flagged(tmp_path):
     pkg = _npm_pkg(tmp_path, "my-internal-widget-kit")
     assert "ST-TYPOSQUAT" not in _ids(engine.analyze(str(pkg)))
+
+
+def test_popular_crypto_names_are_exact_matches_not_flagged(tmp_path):
+    """Regression (tripwire): PyNaCl (2 edits from pyyaml) and authlib (1 edit from oauthlib)
+    are themselves popular packages; with them in the curated list the exact-match exemption
+    applies (case/PEP 503-normalized)."""
+    assert "ST-TYPOSQUAT" not in _ids(engine.analyze(str(_pypi_pkg(tmp_path, "PyNaCl"))))
+
+
+def test_authlib_not_flagged(tmp_path):
+    assert "ST-TYPOSQUAT" not in _ids(engine.analyze(str(_pypi_pkg(tmp_path, "authlib"))))
+
+
+def test_near_miss_of_pynacl_flagged(tmp_path):
+    # Adding pynacl to the list also protects it: a 1-edit impersonation now fires.
+    assert "ST-TYPOSQUAT" in _ids(engine.analyze(str(_pypi_pkg(tmp_path, "pynacll"))))

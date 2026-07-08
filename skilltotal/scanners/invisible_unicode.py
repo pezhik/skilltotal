@@ -5,7 +5,10 @@ invisible code points. We split these by how unambiguous the malice is:
 
 * **Tag characters** (U+E0000+ascii) literally encode invisible ASCII and have *no*
   legitimate use — a confirmed malicious indicator; the smuggled ASCII is decoded into the
-  evidence.
+  evidence. The one exception is a valid *emoji tag sequence* (UTS #51): U+1F3F4 BLACK FLAG
+  followed by a short lowercase/digit tag run terminated by U+E007F CANCEL TAG — subdivision
+  flags like 🏴+gbeng+CANCEL (England). Those are stripped before the check; any other tag
+  character still fires.
 * **Bidi overrides** (Trojan Source) and **zero-width** characters DO appear legitimately —
   RTL-language locale/`.po` files, CJK text, HTML-entity tables (e.g. webpack's
   ``&zwsp;``→U+200B map), emoji ZWJ sequences. On their own they are ambiguous, so they are
@@ -15,6 +18,8 @@ Evidence renders invisible characters as ``<U+XXXX>`` so they are visible in the
 """
 
 from __future__ import annotations
+
+import re
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
@@ -27,6 +32,15 @@ CATEGORY = "hidden_unicode"
 _BIDI = set(range(0x202A, 0x202F)) | set(range(0x2066, 0x206A))
 _ZERO_WIDTH = {0x200B, 0x2060, 0x200C, 0x200D, 0x00AD, 0xFEFF}
 _REVIEW = _BIDI | _ZERO_WIDTH
+
+
+# Valid emoji tag sequence (UTS #51): U+1F3F4 base + 1-8 tag lowercase/digit chars + CANCEL TAG.
+# Unicode's own data files (emoji-test.txt, shipped by terminal/width libraries) contain these,
+# so they must not count as smuggling. The 8-char cap keeps the exempt channel negligible: an
+# attacker can hide at most a flag-shaped 8-char lowercase run per visible black flag.
+_EMOJI_TAG_SEQ = re.compile(
+    "\U0001F3F4[\U000E0030-\U000E0039\U000E0061-\U000E007A]{1,8}\U000E007F"
+)
 
 
 def _is_tag(cp: int) -> bool:
@@ -100,7 +114,11 @@ class InvisibleUnicodeScanner(Scanner):
             # per-line/per-char Python loops below for the overwhelmingly common case.
             if f.text.isascii():
                 continue
-            for lineno, line in enumerate(f.text.splitlines(), start=1):
+            for lineno, raw_line in enumerate(f.text.splitlines(), start=1):
+                # Strip valid emoji tag sequences (subdivision flags) so the tag-character
+                # check below only sees tag chars with no legitimate reading.
+                line = (_EMOJI_TAG_SEQ.sub("", raw_line)
+                        if "\U0001F3F4" in raw_line else raw_line)
                 tags = [c for c in line if _is_tag(ord(c))]
                 if tags:
                     snippet = _render(line)[:200]

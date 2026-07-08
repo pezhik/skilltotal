@@ -4,6 +4,17 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 36 (engine 0.34.4)
+
+- `ST-HIDDEN-UNICODE`: valid emoji tag sequences (U+1F3F4 + 1-8 lowercase/digit tag chars +
+  U+E007F CANCEL TAG, per UTS #51) are stripped before the tag-character check. They are the
+  only legitimate use of tag characters (subdivision flags); Unicode's `emoji-test.txt` data
+  file ships with terminal/width libraries (tripwire FP: `pypi:wcwidth` scored malicious).
+  Any other tag character still fires; the exempt channel is capped at 8 flag-shaped chars.
+- `ST-TYPOSQUAT`: added `pynacl`, `authlib` to the curated popular-PyPI list. Both are popular
+  packages that sat 2/1 edits from `pyyaml`/`oauthlib` and self-flagged (tripwire FPs); as list
+  members they are exact-match exempt and their own near-miss impersonations are now caught.
+
 ## ruleset 35 (engine 0.34.3)
 
 **One false-positive fix: the OpenAI `sk-` key pattern no longer over-matches short `sk-…`

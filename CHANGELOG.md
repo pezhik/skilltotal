@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.4]
+
+### Fixed
+- **Ruleset 36 — precision fixes from the reputable-corpus tripwire** (see `RULES_CHANGELOG.md`).
+  `ST-HIDDEN-UNICODE` no longer treats valid emoji tag sequences (UTS #51 subdivision flags,
+  e.g. the England flag in Unicode's own `emoji-test.txt`) as ASCII smuggling — effect:
+  `wcwidth` malicious -> low. `ST-TYPOSQUAT` curated PyPI list gains `pynacl` and `authlib`
+  (popular packages previously flagged as near-misses of `pyyaml`/`oauthlib`); near-miss
+  impersonations of both now fire. Recall preserved: any non-flag tag character still raises
+  the malicious indicator, incl. a smuggle run on the same line as a legitimate flag.
+
 ## [0.34.3]
 
 ### Fixed
