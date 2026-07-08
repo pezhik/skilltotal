@@ -238,6 +238,10 @@ class Report:
     # Fast top-line answer to "is this likely malware?" — independent of risk_score, which
     # also rises on legitimate-but-powerful or sloppy code. Populated by the engine.
     verdict: dict[str, Any] = field(default_factory=dict)
+    # Behavioral trait fingerprint + standards crosswalk (CSA/MAESTRO/ATLAS). Pre-serialized
+    # by the engine (like verdict/metadata) to keep this module independent of the traits
+    # projection layer. Descriptive only — never affects the score (added in schema 1.5).
+    traits: list[dict[str, Any]] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -251,6 +255,7 @@ class Report:
                 cap.value: [e.to_dict() for e in evs]
                 for cap, evs in self.capabilities.items()
             },
+            "traits": self.traits,
             "findings": [f.to_dict() for f in self.findings],
             "needs_review": [n.to_dict() for n in self.needs_review],
             "metadata": self.metadata,

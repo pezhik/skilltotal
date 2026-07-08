@@ -48,6 +48,7 @@ from skilltotal.scoring import (
     risk_level,
     trifecta_finding,
 )
+from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import package_name_typosquatting
 
 
@@ -180,6 +181,10 @@ def analyze_directory(
     score = compute_score(findings)
     level = risk_level(score)
 
+    # Behavioral trait fingerprint + standards crosswalk. Pure projection over the final
+    # finding set (incl. synthesized combinations); descriptive, never affects the score.
+    traits = build_trait_profile(findings)
+
     report = Report(
         component=component,
         risk_score=score,
@@ -187,6 +192,7 @@ def analyze_directory(
         summary=_summary(level, score, findings, capabilities, needs_review),
         verdict=_verdict(findings, level),
         capabilities=capabilities,
+        traits=traits,
         findings=_sort_findings(findings),
         needs_review=needs_review,
         metadata=_metadata(index, findings, suppressed_count),

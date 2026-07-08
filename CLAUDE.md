@@ -191,5 +191,6 @@ rule → unit test → FP calibration on the trusted corpus → bump `RULESET_VE
 ## Docs
 
 `docs/architecture.md`, `docs/report-schema.md` + `docs/report.schema.json`,
-`docs/scoring.md`, `docs/contributing-rules.md`, `docs/releasing.md`, `docs/open-core.md`.
+`docs/scoring.md`, `docs/trait-crosswalk.md`, `docs/contributing-rules.md`, `docs/releasing.md`,
+`docs/open-core.md`.
 `CHANGELOG.md` / `RULES_CHANGELOG.md` track engine and ruleset changes.

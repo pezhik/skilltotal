@@ -4,7 +4,7 @@ The JSON report (`--json` / `--output`) is the serialization of the core `Report
 It is the stable contract intended for the web and SaaS products.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
-> schema version **1.4**) is the machine-readable source of truth. Consumers should validate
+> schema version **1.5**) is the machine-readable source of truth. Consumers should validate
 > against it. `tests/test_report_schema.py` guards it: any change to the report shape that is
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
@@ -25,6 +25,7 @@ It is the stable contract intended for the web and SaaS products.
   "capabilities": {
     "shell_execution": [ { "file": "...", "line_start": 10, "line_end": 10, "snippet": "..." } ]
   },
+  "traits": [ /* behavioral fingerprint + standards crosswalk; see below */ ],
   "findings": [ /* see below */ ],
   "needs_review": [ /* see below */ ],
   "metadata": { /* see below */ }
@@ -50,6 +51,23 @@ Object keyed by capability name; each value is a list of **evidence** objects.
 Possible keys: `filesystem_read`, `filesystem_write`, `shell_execution`, `network_egress`,
 `install_time_execution`, `dynamic_code_execution`, `mcp_tools_detected`,
 `prompt_surface_risk`. A capability is present only if at least one finding evidences it.
+
+### `traits[]`
+A behavioral **fingerprint**: a higher-level projection over findings that names the traits a
+component exhibits, each with a machine-readable crosswalk to industry standards. **Descriptive
+only — never affects the score** (like `capabilities`). Added in schema 1.5. Full taxonomy and
+mapping rationale: [`trait-crosswalk.md`](trait-crosswalk.md).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `trait` | string | Trait id (e.g. `execution_authority`, `embedded_credential`) |
+| `title` / `description` | string | Human-readable name and explanation |
+| `emergent` | boolean | `true` for combination traits backed by a synthesized risky-construct (`exfil_correlation`, `instruction_exfil_flow`, `malware_convergence`) |
+| `crosswalk.csa_trait` | string | Cloud Security Alliance trait/pattern |
+| `crosswalk.csa_risk` | string | The CSA named risk for that trait |
+| `crosswalk.maestro_layers` | array | MAESTRO layer objects `{ id, name }` (empty where none) |
+| `crosswalk.atlas_tactics` | array | MITRE ATLAS tactic names (empty where no honest fit) |
+| `evidence` | array | **Non-empty** evidence objects proving the trait |
 
 ### `findings[]`
 | Field | Type | Notes |

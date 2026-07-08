@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.35.0]
+
+### Added
+- **Behavioral trait fingerprint + standards crosswalk (report schema 1.5).** Reports now carry a
+  `traits` array: a higher-level projection over findings that names the component's behavioral
+  traits (e.g. `execution_authority`, `embedded_credential`, `untrusted_perception`) plus the
+  *emergent* combination traits backed by the synthesized risky-constructs (`exfil_correlation`
+  ← ST-COMBO-EXFIL, `instruction_exfil_flow` ← ST-FLOW-TRIFECTA, `malware_convergence` ←
+  ST-CONVERGENCE). Each trait carries a machine-readable crosswalk to the Cloud Security Alliance
+  trait/named-risk, MAESTRO threat-model layer(s), and MITRE ATLAS tactic(s) where there is an
+  honest fit. New module `skilltotal/traits.py` (a pure projection layer like `capabilities.py` /
+  `owasp.py`): no new detection, no execution, no re-scan. Traits are **descriptive and never
+  affect the score** — risk still comes only from `malicious_indicator` / `risky_construct`
+  findings. Component-only holds: CSA's runtime/architecture trait categories (control &
+  orchestration, trust models, learning) require deployment context we do not inspect and are
+  intentionally not represented. `RULESET_VERSION` is unchanged (39) — detection is identical.
+
 ## [0.34.7]
 
 ### Fixed

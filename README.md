@@ -361,7 +361,8 @@ Runtime behavior and sandbox analysis are planned for **SkillTotal Cloud** (paid
 
 A normalized report containing the component identity, a **risk score (0–100)** and
 **risk level** (low / medium / high / critical), detected **capabilities** (each
-evidence-backed), **findings**, **needs_review**, and **metadata**. See
+evidence-backed), a behavioral **trait fingerprint** (with a CSA / MAESTRO / MITRE ATLAS
+crosswalk), **findings**, **needs_review**, and **metadata**. See
 [docs/report-schema.md](docs/report-schema.md) and [docs/scoring.md](docs/scoring.md).
 
 Every finding also carries its **OWASP Agentic Skills Top 10** category ids (`owasp`), emitted in
@@ -370,6 +371,13 @@ both the JSON report and SARIF (native `taxonomies`/`relationships`);
 (AST01–AST05) and the honest gaps. For MCP servers,
 [docs/mcp-owasp-mapping.md](docs/mcp-owasp-mapping.md) maps SkillTotal's checks to the OWASP MCP
 Security Cheat Sheet (and names the runtime controls a static engine can't cover).
+
+The report's **`traits`** array is a behavioral fingerprint — a higher-level projection over the
+findings (e.g. `execution_authority`, `embedded_credential`, `untrusted_perception`, and the
+*emergent* `exfil_correlation` combination) — each mapped to the Cloud Security Alliance
+trait-based model, a MAESTRO threat-model layer, and a MITRE ATLAS tactic where there is an honest
+fit. It is descriptive and never affects the score; see
+[docs/trait-crosswalk.md](docs/trait-crosswalk.md).
 
 ## Architecture
 
