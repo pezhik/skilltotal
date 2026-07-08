@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 37 (engine 0.34.5)
+
+**One false-positive fix from the reputable-corpus tripwire: test-certificate private keys
+(`scanners/secrets`).** Packages ship throwaway dummy certificate + private-key pairs to drive
+their OWN test HTTPS servers — `urllib3` `dummyserver/certs/*.key`, `grpcio`
+`src/core/tsi/test_creds/*.key`. These PEM blocks are real key MATERIAL but are disposable test
+certificates, never a shipped production secret, so `ST-SECRET-EMBEDDED` firing on them (and
+synthesizing `ST-COMBO-EXFIL` high with the package's network egress) is a false positive. A
+"Private key block" whose directory path carries a test/dummy/fixture/mock/example marker next to a
+cert/cred/tls/ssl/pki marker (`_is_test_certificate`) is now routed to `needs_review`, not scored.
+Effect: `urllib3` and `grpcio` high → low. Recall preserved: a private key on a normal path
+(`id_rsa`, `config/deploy.key`) has no test-cert marker and still scores, so a genuinely leaked key
+is unaffected. Part of the tripwire FP triage (see the ops inbox note); the `ST-SENS-PATH` infra-lib
+sub-cluster (botocore/awscli/docker…) and the snowflake telemetry / transformers secret drivers are
+tracked separately — the `ST-SENS-PATH`+network combo is recall-sensitive (the efficacy corpus's
+`python-aws-post` positive depends on it) and needs a careful gate, not a blanket change.
+
 ## ruleset 36 (engine 0.34.4)
 
 - `ST-HIDDEN-UNICODE`: valid emoji tag sequences (U+1F3F4 + 1-8 lowercase/digit tag chars +

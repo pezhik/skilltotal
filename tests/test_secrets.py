@@ -52,6 +52,29 @@ def test_private_key_block_detected(tmp_path):
     assert _finding(res) is not None
 
 
+def test_test_certificate_private_key_demoted(tmp_path):
+    # Disposable test-server TLS keys are not a shipped prod secret. FP: urllib3 flagged
+    # ST-SECRET-EMBEDDED (-> ST-COMBO-EXFIL high) on dummyserver/certs/*.key; grpcio on
+    # src/core/tsi/test_creds/*.key. A PEM block in a test/dummy/fixture path next to a
+    # cert/cred/tls/ssl marker is routed to needs_review, not scored.
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDabcdefghijkl"
+    for rel in ("dummyserver/certs/server.key", "src/core/tsi/test_creds/ca.key"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        res = _scan(tmp_path, rel, f"-----BEGIN PRIVATE KEY-----\n{body}\n")
+        assert _finding(res) is None, rel
+        assert any("Test-certificate private key" in n.title for n in res.needs_review), rel
+
+
+def test_prod_private_key_still_flagged(tmp_path):
+    # Recall guard: the SAME PEM material on a normal path (no test/dummy/fixture marker) is a
+    # genuine leaked key and stays scored — the demotion is path-scoped, not content-scoped.
+    body = "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDabcdefghijkl"
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    res = _scan(tmp_path, "config/deploy.key", f"-----BEGIN PRIVATE KEY-----\n{body}\n")
+    assert _finding(res) is not None
+    assert not any("Test-certificate private key" in n.title for n in res.needs_review)
+
+
 def test_pem_header_constant_not_flagged(tmp_path):
     # A PEM format *marker* held as a string constant (auth code assembling/parsing a PEM) is not
     # a leaked key — the secret is the base64 body, which is absent here. FP: @ai-sdk/google-vertex.

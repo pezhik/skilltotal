@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.5]
+
+### Fixed
+- **Ruleset 37 — test-certificate private keys no longer scored** (see `RULES_CHANGELOG.md`),
+  a false positive from the reputable-corpus tripwire. Packages ship dummy TLS certificate +
+  private-key pairs for their own test HTTPS servers (`urllib3` `dummyserver/certs/*.key`,
+  `grpcio` `src/core/tsi/test_creds/*.key`); a "Private key block" whose directory path carries a
+  test/dummy/fixture marker next to a cert/cred/tls/ssl marker is routed to `needs_review`, not
+  scored. Effect: `urllib3`, `grpcio` high → low. Recall preserved: a private key on a normal
+  path (`id_rsa`, `config/deploy.key`) still scores.
+
 ## [0.34.4]
 
 ### Fixed

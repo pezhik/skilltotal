@@ -110,6 +110,23 @@ def _is_installed_app_oauth_secret(value: str, file_text: str) -> bool:
     return value.startswith(_GOOGLE_OAUTH_PREFIX) and bool(_INSTALLED_APP_CTX.search(file_text))
 
 
+# Test TLS/certificate fixtures: packages ship throwaway dummy certificate + private-key pairs to
+# drive their OWN test HTTPS servers (urllib3 `dummyserver/certs/*.key`, grpcio
+# `src/core/tsi/test_creds/*.key`). Those PEM blocks are real key MATERIAL but are disposable test
+# certificates, never a shipped production secret — the directory path (a test/dummy/fixture marker
+# next to a cert/cred/tls/ssl/pki marker) says so. Such a private-key block is routed to
+# needs_review, not scored. A private key on a normal path (`id_rsa`, `deploy/prod.pem`) has no test
+# marker and still scores, so a genuine leaked key is unaffected.
+_TEST_CERT_TESTISH = ("test", "dummy", "fixture", "mock", "example", "sample")
+_TEST_CERT_CERTISH = ("cert", "cred", "tls", "ssl", "pki")
+
+
+def _is_test_certificate(relpath: str) -> bool:
+    """True if ``relpath`` is a disposable test-certificate fixture (test-server key material)."""
+    dirs = "/".join(relpath.lower().replace("\\", "/").split("/")[:-1])
+    return any(t in dirs for t in _TEST_CERT_TESTISH) and any(c in dirs for c in _TEST_CERT_CERTISH)
+
+
 def _has_mixed_charset(value: str) -> bool:
     return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
 
@@ -153,12 +170,17 @@ class SecretsScanner(Scanner):
         seen: set[tuple[str, int]] = set()
         docsearch_files: list[str] = []
         installed_oauth_files: list[str] = []
+        test_cert_files: list[str] = []
 
         for f in index.files:
-            for _label, pattern, grp in _KNOWN:
+            for label, pattern, grp in _KNOWN:
                 for m in pattern.finditer(f.text):
                     value = m.group(grp)
                     if grp != 0 and _looks_like_placeholder(value):
+                        continue
+                    if label == "Private key block" and _is_test_certificate(f.relpath):
+                        if f.relpath not in test_cert_files:
+                            test_cert_files.append(f.relpath)
                         continue
                     self._add(f, m, value, evidence, seen)
             for m in _GENERIC.finditer(f.text):
@@ -193,6 +215,22 @@ class SecretsScanner(Scanner):
             )
 
         needs_review: list[NeedsReview] = []
+        if test_cert_files:
+            shown = ", ".join(test_cert_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Test-certificate private key ({len(test_cert_files)})",
+                    reason=(
+                        "A PEM private-key block in a test-certificate fixture path (a "
+                        "test/dummy/fixture directory next to a cert/cred/tls/ssl marker, e.g. "
+                        "urllib3 dummyserver/certs, grpcio test_creds). These are disposable test "
+                        "certificates for the package's own test server, not a shipped production "
+                        f"secret; flagged for review, not scored: {shown}."
+                    ),
+                    file=test_cert_files[0],
+                )
+            )
         if installed_oauth_files:
             shown = ", ".join(installed_oauth_files[:8])
             needs_review.append(
