@@ -134,7 +134,7 @@ def analyze_directory(
     # Sensitive-data access (credential paths / embedded secrets) + network egress is the
     # genuine credential-exfiltration pattern -> synthesized critical risky-construct finding.
     # (Plain filesystem + network is a neutral capability and is intentionally not flagged.)
-    combo = exfiltration_finding(findings, capabilities)
+    combo = exfiltration_finding(findings, capabilities, component)
     if combo is not None:
         findings.append(combo)
 
@@ -455,7 +455,13 @@ def _is_structured_data_file(relpath: str) -> bool:
 #   - ST-OBF-DECODE-EXEC: a decode-and-execute token in a YAML/JSON string is a keyword/pattern in
 #     a security guardrail's own detection list (litellm ships one in a keyword YAML), not code that
 #     runs — exactly like this scanner's own rule literals.
-_STRUCTURED_DATA_DEMOTABLE = frozenset({"ST-PROMPT-INJECTION", "ST-OBF-DECODE-EXEC"})
+#   - ST-SENS-PATH: a credential-location token as a JSON/YAML string VALUE is inert data, not a
+#     path being opened — botocore bundles the AWS API service models under `botocore/data/*.json`
+#     where `"ec2KeyPair": "id_rsa"` is an API example value, not credential access. Real access is
+#     `open("~/.aws/credentials")` in .py/.js, which is unaffected (efficacy positives are code).
+_STRUCTURED_DATA_DEMOTABLE = frozenset(
+    {"ST-PROMPT-INJECTION", "ST-OBF-DECODE-EXEC", "ST-SENS-PATH"}
+)
 
 
 def _split_structured_data_evidence(

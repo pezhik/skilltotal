@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from skilltotal.models import (
     Capability,
+    Component,
     Evidence,
     Finding,
     Severity,
@@ -81,6 +82,59 @@ def test_exfil_combo_absent_for_plain_filesystem_plus_network():
 def test_exfil_combo_absent_without_network():
     sens = _finding(Severity.HIGH, "ST-SENS-PATH")
     assert exfiltration_finding([sens], {}) is None
+
+
+# --- Provider-SDK credential-domain calibration (ruleset 38, tripwire FP) --------------
+# A provider SDK reading its OWN provider's credentials (botocore -> ~/.aws) is its documented
+# function, not exfil. FP: botocore/awscli/docker/... scored ST-COMBO-EXFIL high/critical.
+
+
+def _sens(snippet: str, fid: str = "ST-SENS-PATH") -> Finding:
+    ev = Evidence(file="cfg.py", line_start=1, line_end=1, snippet=snippet, match_offset=0)
+    return Finding(
+        id=fid, severity=Severity.HIGH, category="c", title="t", description="d",
+        evidence=[ev], recommendation="r", threat_class=ThreatClass.RISKY_CONSTRUCT,
+    )
+
+
+def _pkg(name: str) -> Component:
+    return Component(name=name, type="pypi", source=f"pypi:{name}")
+
+
+def test_exfil_combo_suppressed_for_provider_sdk_reading_own_creds():
+    sens = _sens("session = open(os.path.expanduser('~/.aws/credentials'))")
+    caps = {Capability.NETWORK_EGRESS: [_ev("http.py", 2)]}
+    assert exfiltration_finding([sens], caps, _pkg("botocore")) is None
+
+
+def test_exfil_combo_fires_for_nonsdk_reading_aws_creds():
+    # Recall guard: a package that is NOT the AWS SDK reading ~/.aws + posting still fires — the
+    # match is on the EXACT package name, so "python-aws-post" (contains "aws") is not excluded.
+    sens = _sens("open(os.path.expanduser('~/.aws/credentials'))")
+    caps = {Capability.NETWORK_EGRESS: [_ev("post.py", 2)]}
+    assert exfiltration_finding([sens], caps, _pkg("python-aws-post")) is not None
+
+
+def test_exfil_combo_fires_for_sdk_reading_offdomain_creds():
+    # Recall guard: an AWS SDK reading an OFF-domain credential (~/.ssh) is not its function.
+    sens = _sens("open(os.path.expanduser('~/.ssh/id_rsa'))")
+    caps = {Capability.NETWORK_EGRESS: [_ev("http.py", 2)]}
+    assert exfiltration_finding([sens], caps, _pkg("botocore")) is not None
+
+
+def test_exfil_combo_fires_for_sdk_with_embedded_secret():
+    # Recall guard: an embedded secret is never a "provider reads its own config" case, so the
+    # SDK allowance never excuses ST-SECRET-EMBEDDED.
+    secret = _sens("api_key = 'AKIA...'", fid="ST-SECRET-EMBEDDED")
+    caps = {Capability.NETWORK_EGRESS: [_ev("http.py", 2)]}
+    assert exfiltration_finding([secret], caps, _pkg("botocore")) is not None
+
+
+def test_exfil_combo_fires_without_component():
+    # Backward compatible: no component identity -> no SDK allowance -> combo fires as before.
+    sens = _sens("open('~/.aws/credentials')")
+    caps = {Capability.NETWORK_EGRESS: [_ev("http.py", 2)]}
+    assert exfiltration_finding([sens], caps) is not None
 
 
 def test_exfil_combo_evidence_deduplicated():

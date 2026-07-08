@@ -36,6 +36,25 @@ def test_ordinary_path_not_flagged(tmp_path: Path):
     assert "ST-SENS-PATH" not in _scan(tmp_path, 'open("./data/config.json")\n')
 
 
+def test_ssh_known_hosts_not_flagged(tmp_path: Path):
+    # ~/.ssh/known_hosts is public host-key data, never a credential (pyzmq reads it for its
+    # SSH tunnel). ~/.ssh/config stays flagged (write = config-injection); a legit reader is
+    # cleared by the provider credential-domain match in scoring, not by dropping detection.
+    snippet = 'known_hosts = os.path.expanduser("~/.ssh/known_hosts")'
+    assert "ST-SENS-PATH" not in _scan(tmp_path, snippet + "\n")
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        'open(os.path.expanduser("~/.ssh/id_rsa"))',  # recall: a private key still fires
+        'read("~/.ssh/id_ed25519")',
+    ],
+)
+def test_ssh_private_key_still_flagged(tmp_path: Path, snippet: str):
+    assert "ST-SENS-PATH" in _scan(tmp_path, snippet + "\n")
+
+
 def _scan_named(tmp_path: Path, name: str, content: str):
     (tmp_path / name).write_text(content, encoding="utf-8", newline="\n")
     return SensitivePathScanner().scan(FileIndex.build(tmp_path))

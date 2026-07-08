@@ -35,8 +35,12 @@ CATEGORY = "sensitive_path"
 # Strong, path-like credential locations. These are unambiguous enough to flag in any
 # file type, including documentation.
 _STRONG_PATHS = alternation(
-    r"~/\.ssh",
-    r"\.ssh/",
+    # ~/.ssh but NOT `~/.ssh/known_hosts` (public host keys, never a credential — pyzmq reads it
+    # for its SSH tunnel). `~/.ssh/config` DOES stay flagged: writing it is a real SSH-config
+    # injection vector; a legitimate reader (dulwich's git-over-ssh) is cleared by the provider
+    # credential-domain match in scoring, not by dropping detection. Private keys still match.
+    r"~/\.ssh(?!/known_hosts\b)",
+    r"\.ssh/(?!known_hosts\b)",
     r"~/\.aws",
     r"\.aws/credentials",
     r"~/\.kube",

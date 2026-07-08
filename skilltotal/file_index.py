@@ -52,6 +52,11 @@ SKIP_DIRS: frozenset[str] = frozenset(
         ".idea",
         ".vscode",
         "site-packages",
+        # Generated coverage reports: coverage.py / nyc render the project's OWN source as HTML
+        # (double-counting every finding already scanned in the real source) plus scaffolding —
+        # a build artifact, never first-party code (gcsfs ships coverage_html_report/).
+        "htmlcov",
+        "coverage_html_report",
     }
 )
 
@@ -157,7 +162,9 @@ def is_example_path(relpath: str) -> bool:
 # project operating its own infrastructure, not component behavior — so, like test code, its
 # evidence is demoted to needs_review (surfaced, not scored). Install-time hooks (setup.py,
 # npm postinstall) are NOT CI config and stay fully scored.
-_CI_DIR_SEGMENTS: frozenset[str] = frozenset({".circleci", ".buildkite", ".woodpecker"})
+_CI_DIR_SEGMENTS: frozenset[str] = frozenset(
+    {".circleci", ".buildkite", ".woodpecker", "cloudbuild"}
+)
 _CI_EXACT_NAMES: frozenset[str] = frozenset(
     {
         ".gitlab-ci.yml", ".travis.yml", "appveyor.yml", ".appveyor.yml",

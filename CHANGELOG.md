@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.34.6]
+
+### Fixed
+- **Ruleset 38 — sensitive-path precision + provider-SDK credential-domain calibration** (see
+  `RULES_CHANGELOG.md`), clearing the `ST-SENS-PATH` → `ST-COMBO-EXFIL` false-positive cluster from
+  the reputable-corpus tripwire (botocore, awscli, docker, dulwich, gcsfs, pyarrow, pyzmq). Three
+  coordinated fixes: (1) `~/.ssh/known_hosts` (public host keys) is no longer treated as a
+  credential; (2) a credential token as a `.json`/`.yaml` string value is inert data, not path
+  access (botocore ships the AWS API models under `botocore/data/*.json`); (3) a provider SDK
+  reading its OWN provider's credentials (botocore→`~/.aws`, docker→`.docker/config`, …; a curated
+  exact-name allowlist) no longer synthesizes the exfil combo. Recall preserved: off-domain access,
+  non-SDK packages reading any credential path, embedded secrets, and SSH-config writes all still
+  fire (efficacy 100% recall / 0 FP).
+
 ## [0.34.5]
 
 ### Fixed

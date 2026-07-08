@@ -4,6 +4,32 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 38 (engine 0.34.6)
+
+**Sensitive-path precision + provider-SDK credential-domain calibration — the ST-SENS-PATH →
+ST-COMBO-EXFIL false-positive cluster from the reputable-corpus tripwire** (botocore, awscli,
+docker, dulwich, gcsfs, pyarrow, pyzmq all scored a high/critical exfil combo). Three coordinated
+fixes, each behind the recall gate (efficacy 100% recall / 0 FP preserved):
+
+1. **`~/.ssh/known_hosts` is not a credential** (`scanners/sensitive_paths`). The `~/.ssh` pattern
+   no longer matches `known_hosts` (public host keys — pyzmq reads it for its SSH tunnel).
+   `~/.ssh/config` DOES stay flagged (writing it is an SSH-config-injection vector); a legitimate
+   reader is cleared by the domain match below, not by dropping detection.
+2. **Credential tokens in structured-data files are inert data** (`engine`). `ST-SENS-PATH` is added
+   to the structured-data demotion: a credential token as a `.json`/`.yaml` string VALUE is data,
+   not a path being opened — botocore bundles the AWS API service models under `botocore/data/*.json`
+   where `"ec2KeyPair": "id_rsa"` is an API example value. Real access (`open("~/.aws/credentials")`
+   in `.py`/`.js`) is unaffected; MCP manifests remain excluded.
+3. **Provider SDKs reading their OWN provider's credentials** (`scoring.exfiltration_finding`). A
+   package whose identity IS the credential's provider (botocore→`~/.aws`, docker→`.docker/config`,
+   gcsfs→gcloud, dulwich→`.git-credentials`/`~/.ssh/config`, paramiko→`~/.ssh`, azure-*→`~/.azure`,
+   pyarrow→S3/GCS) reads that credential as its documented function — so a sensitive-path evidence
+   whose domain matches the package's provider (a CURATED exact-name allowlist, never a substring —
+   `python-aws-post` contains "aws" but is NOT the AWS SDK) no longer feeds the exfil combo.
+   Off-domain access (an AWS SDK reading `~/.ssh`), a non-SDK package reading any credential path,
+   and embedded secrets (`ST-SECRET-EMBEDDED`) all keep firing, so recall for a genuine
+   credential-stealer (the efficacy `python-aws-post` / `node-sshkey-fetch` positives) is preserved.
+
 ## ruleset 37 (engine 0.34.5)
 
 **One false-positive fix from the reputable-corpus tripwire: test-certificate private keys

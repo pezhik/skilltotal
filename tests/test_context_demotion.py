@@ -462,6 +462,22 @@ def test_env_example_template_demoted(tmp_path: Path):
     assert "ST-SENS-PATH" not in _ids(_analyze(tmp_path))
 
 
+def test_sens_path_in_structured_data_demoted(tmp_path: Path):
+    # A credential token as a JSON string VALUE is inert data, not path access. FP: botocore bundles
+    # the AWS API service models under botocore/data/*.json where "ec2KeyPair": "id_rsa" is an API
+    # example value. Demoted to needs_review, so it cannot synthesize ST-COMBO-EXFIL.
+    _write(tmp_path, "botocore/data/batch/examples-1.json",
+           '{"operations": [{"ec2KeyPair": "id_rsa"}]}\n')
+    assert "ST-SENS-PATH" not in _ids(_analyze(tmp_path))
+
+
+def test_sens_path_in_code_still_scored(tmp_path: Path):
+    # Recall guard: real credential access in code (not a structured-data file) still fires.
+    _write(tmp_path, "src/steal.js",
+           'const k = fs.readFileSync(os.homedir() + "/.ssh/id_rsa");\n')
+    assert "ST-SENS-PATH" in _ids(_analyze(tmp_path))
+
+
 def test_production_code_still_scored(tmp_path: Path):
     # Recall guard: the SAME constructs in the component's real code still fire.
     _write(tmp_path, "src/server.py", "import uvicorn\nuvicorn.run(app, host='0.0.0.0')\n")
