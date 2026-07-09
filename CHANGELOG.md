@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.38.0]
+
+### Added
+- **Scoped / least-privilege identity execution-context signal (`ST-AUTH-SCOPED`, ruleset 41).**
+  A new scanner detects short-lived, scoped, assumed identities — STS AssumeRole / session tokens,
+  cloud managed / workload identity, impersonated service accounts, projected Kubernetes
+  service-account tokens, dynamic-secret brokers — and surfaces them as the `scoped_identity` trait
+  (CSA "Tool Execution Context / Least-Privilege Service Identity"). This completes the
+  execution-context dimension: `embedded_credential` (Agent Service Identity, largest blast radius)
+  → `delegated_authentication` (User Delegated Credentials) → `scoped_identity` (least privilege,
+  smallest). Neutral **capability finding (0-score)**; adds `Capability.SCOPED_IDENTITY`. Scored
+  detection is unchanged (efficacy 100% recall / 0 FP). See `RULES_CHANGELOG.md`.
+
 ## [0.37.0]
 
 ### Added

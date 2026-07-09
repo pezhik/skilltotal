@@ -36,6 +36,12 @@ the language auditors and compliance stakeholders already use.
 all others are single-behavior traits. MAESTRO layers reference the CSA MAESTRO framework; ATLAS
 tactics reference MITRE ATLAS.
 
+The three CSA **Tool Execution Context** traits form a blast-radius spectrum — how a component
+authenticates its tool calls, from largest to smallest blast radius: `embedded_credential` (Agent
+Service Identity — a long-lived static secret) → `delegated_authentication` (User Delegated
+Credentials — scoped to the end user) → `scoped_identity` (Least-Privilege Service Identity — a
+short-lived, assumed, narrowly-scoped credential).
+
 | Trait | Emergent | CSA trait | CSA named risk | MAESTRO layer(s) | MITRE ATLAS tactic(s) |
 |-------|----------|-----------|----------------|------------------|-----------------------|
 | `tool_surface` | no | Tool Usage | Uncontrolled tool selection and sequencing | L3 Agent Frameworks, L4 Deployment & Infrastructure | - |
@@ -44,6 +50,8 @@ tactics reference MITRE ATLAS.
 | `network_egress` | no | Interaction & Communication / Direct Communication | Amplified impact of trust exploitation in direct channels | L5 Evaluation & Observability, L7 Agent Ecosystem | - |
 | `network_exposure` | no | Interaction & Communication | Unauthorized or unintended access & data leakage | L4 Deployment & Infrastructure, L7 Agent Ecosystem | - |
 | `embedded_credential` | no | Tool Execution Context / Agent Service Identity | Insufficient permission granularity; credential rotation complexity | L4 Deployment & Infrastructure, L6 Security & Compliance | - |
+| `delegated_authentication` | no | Tool Execution Context / User Delegated Credentials | Access-control boundary confusion (agent-level vs user-level operations) | L4 Deployment & Infrastructure, L6 Security & Compliance | - |
+| `scoped_identity` | no | Tool Execution Context / Least-Privilege Service Identity | Agent proliferation / permission sprawl if scopes are not curated | L4 Deployment & Infrastructure, L6 Security & Compliance | - |
 | `untrusted_perception` | no | Perception & Context / Contextual Perception | Context manipulation and poisoning | L2 Data Operations, L5 Evaluation & Observability | Adversarial Perception Attacks, Model Poisoning |
 | `metadata_integrity` | no | Trust / Tool Poisoning | Trust inheritance through data | L6 Security & Compliance, L7 Agent Ecosystem | - |
 | `supply_chain_provenance` | no | General Protections / Supply Chain | Supply-chain compromise via install-time execution or name confusion | L4 Deployment & Infrastructure | - |

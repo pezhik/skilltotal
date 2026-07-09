@@ -4,6 +4,19 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 41 (engine 0.38.0)
+
+**New execution-context signal: `ST-AUTH-SCOPED` (scoped / least-privilege identity)** — new scanner
+`scanners/scoped_identity`. Detects short-lived, scoped, assumed identities: AWS STS AssumeRole /
+GetSessionToken, GCP impersonated_credentials / generateAccessToken / workload-identity, Azure
+managed / workload identity (DefaultAzureCredential / ManagedIdentityCredential /
+WorkloadIdentityCredential), projected Kubernetes service-account tokens, and Vault dynamic-secret
+clients (hvac / node-vault). Neutral **capability finding (0-score)** populating the new
+`scoped_identity` trait (CSA "Tool Execution Context / Least-Privilege Service Identity") — with
+`ST-AUTH-DELEGATED` (rs40) and `embedded_credential` this completes the three-way execution-context
+/ blast-radius dimension. Adds `Capability.SCOPED_IDENTITY`. Scored detection unchanged (efficacy
+100% recall / 0 FP).
+
 ## ruleset 40 (engine 0.37.0)
 
 **New execution-context signal: `ST-AUTH-DELEGATED` (delegated authentication)** — new scanner

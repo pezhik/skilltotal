@@ -37,6 +37,11 @@ files inside the component.
 - **Deterministic** — regex + AST, no LLM in the static engine; the same input always yields
   the same report.
 - **Evidence-anchored & low false-positive** — every finding points at an exact file:line.
+- **Standards-aligned** — every component gets a behavioral **trait fingerprint** mapped to the
+  **Cloud Security Alliance (CSA)** agentic threat model, **MAESTRO** threat-model layers, and
+  **MITRE ATLAS** tactics — including a three-way *execution-context* read (embedded static
+  credential → delegated OAuth/OIDC → least-privilege scoped identity) that shows the blast radius
+  of a compromise, not just that a secret exists.
 - **Free and open source** (Apache-2.0) — the full static report is free, forever.
 
 ## Install

@@ -55,6 +55,7 @@ class ComponentTrait(str, Enum):
     NETWORK_EXPOSURE = "network_exposure"
     EMBEDDED_CREDENTIAL = "embedded_credential"
     DELEGATED_AUTHENTICATION = "delegated_authentication"
+    SCOPED_IDENTITY = "scoped_identity"
     UNTRUSTED_PERCEPTION = "untrusted_perception"
     METADATA_INTEGRITY = "metadata_integrity"
     SUPPLY_CHAIN_PROVENANCE = "supply_chain_provenance"
@@ -159,6 +160,18 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         ),
         csa_trait="Tool Execution Context / User Delegated Credentials",
         csa_risk="Access-control boundary confusion (agent-level vs user-level operations)",
+        maestro_layers=("L4", "L6"),
+        atlas_tactics=(),
+    ),
+    ComponentTrait.SCOPED_IDENTITY: TraitCrosswalk(
+        title="Scoped / least-privilege identity",
+        description=(
+            "Authenticates with a short-lived, scoped, assumed identity (STS assumed role, cloud "
+            "managed/workload identity, impersonated service account, projected K8s token, or a "
+            "dynamic-secret broker) — the smallest blast radius of the execution-context patterns."
+        ),
+        csa_trait="Tool Execution Context / Least-Privilege Service Identity",
+        csa_risk="Agent proliferation / permission sprawl if scopes are not curated",
         maestro_layers=("L4", "L6"),
         atlas_tactics=(),
     ),
@@ -281,6 +294,7 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     # Credentials / sensitive data.
     "ST-SECRET-EMBEDDED": (_T.EMBEDDED_CREDENTIAL,),
     "ST-AUTH-DELEGATED": (_T.DELEGATED_AUTHENTICATION,),
+    "ST-AUTH-SCOPED": (_T.SCOPED_IDENTITY,),
     "ST-SENS-PATH": (_T.EMBEDDED_CREDENTIAL,),
     "ST-SENS-PATH-PY": (_T.EMBEDDED_CREDENTIAL,),
     "ST-SENS-WORD": (_T.EMBEDDED_CREDENTIAL,),
