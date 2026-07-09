@@ -54,6 +54,7 @@ class ComponentTrait(str, Enum):
     NETWORK_EGRESS = "network_egress"
     NETWORK_EXPOSURE = "network_exposure"
     EMBEDDED_CREDENTIAL = "embedded_credential"
+    DELEGATED_AUTHENTICATION = "delegated_authentication"
     UNTRUSTED_PERCEPTION = "untrusted_perception"
     METADATA_INTEGRITY = "metadata_integrity"
     SUPPLY_CHAIN_PROVENANCE = "supply_chain_provenance"
@@ -147,6 +148,17 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         description="Embeds a secret or reads credential/sensitive-path locations.",
         csa_trait="Tool Execution Context / Agent Service Identity",
         csa_risk="Insufficient permission granularity; credential rotation complexity",
+        maestro_layers=("L4", "L6"),
+        atlas_tactics=(),
+    ),
+    ComponentTrait.DELEGATED_AUTHENTICATION: TraitCrosswalk(
+        title="Delegated authentication",
+        description=(
+            "Authenticates tool/API calls with the end user's delegated OAuth/OIDC credentials "
+            "rather than a long-lived embedded service credential — a smaller blast radius."
+        ),
+        csa_trait="Tool Execution Context / User Delegated Credentials",
+        csa_risk="Access-control boundary confusion (agent-level vs user-level operations)",
         maestro_layers=("L4", "L6"),
         atlas_tactics=(),
     ),
@@ -268,6 +280,7 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     "ST-EXPOSE-DEBUG": (_T.NETWORK_EXPOSURE,),
     # Credentials / sensitive data.
     "ST-SECRET-EMBEDDED": (_T.EMBEDDED_CREDENTIAL,),
+    "ST-AUTH-DELEGATED": (_T.DELEGATED_AUTHENTICATION,),
     "ST-SENS-PATH": (_T.EMBEDDED_CREDENTIAL,),
     "ST-SENS-PATH-PY": (_T.EMBEDDED_CREDENTIAL,),
     "ST-SENS-WORD": (_T.EMBEDDED_CREDENTIAL,),

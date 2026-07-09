@@ -83,6 +83,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-TAINT-DESERIAL-PY": ("AST05",),
     # No honest AST fit — classic code-level vulnerabilities, raw capabilities, or network
     # misconfig. Left empty on purpose (never force a category); documented as gaps.
+    "ST-AUTH-DELEGATED": (),  # capability / positive execution-context signal; no AST-risk fit
     "ST-CMDI-NODE": (),
     "ST-CMDI-PY": (),
     "ST-DYN-NODE": (),

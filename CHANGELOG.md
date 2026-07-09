@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.37.0]
+
+### Added
+- **Delegated-authentication execution-context signal (`ST-AUTH-DELEGATED`, ruleset 40).** A new
+  scanner detects OAuth 2.0 / OpenID Connect **user-delegation** flows and surfaces them as the
+  `delegated_authentication` trait (CSA "Tool Execution Context / User Delegated Credentials") — the
+  lower-blast-radius counterpart to the `embedded_credential` trait ("Agent Service Identity"), so a
+  report shows *how* a component authenticates its tool calls, not just that it holds a secret. It is
+  a neutral **capability finding (0-score)**; the `client_credentials` static-service grant is
+  intentionally excluded (not user delegation). Adds `Capability.DELEGATED_AUTHENTICATION`. Scored
+  detection is unchanged (efficacy 100% recall / 0 FP). See `RULES_CHANGELOG.md`.
+
 ## [0.36.0]
 
 ### Changed

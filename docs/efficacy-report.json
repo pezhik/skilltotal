@@ -1,6 +1,6 @@
 {
-  "engine_version": "0.36.0",
-  "ruleset_version": 39,
+  "engine_version": "0.37.0",
+  "ruleset_version": 40,
   "positives": 25,
   "negatives": 16,
   "recall": 1.0,

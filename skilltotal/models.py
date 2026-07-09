@@ -81,6 +81,7 @@ class Capability(str, Enum):
     DYNAMIC_CODE_EXECUTION = "dynamic_code_execution"
     MCP_TOOLS_DETECTED = "mcp_tools_detected"
     PROMPT_SURFACE_RISK = "prompt_surface_risk"
+    DELEGATED_AUTHENTICATION = "delegated_authentication"
 
 
 class ThreatClass(str, Enum):

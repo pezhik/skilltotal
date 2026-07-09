@@ -4,6 +4,21 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 40 (engine 0.37.0)
+
+**New execution-context signal: `ST-AUTH-DELEGATED` (delegated authentication)** — new scanner
+`scanners/oauth_auth`. Detects OAuth 2.0 / OpenID Connect **user-delegation** flows
+(authorization-code / refresh-token / token-exchange grants, an OIDC authorize/discovery endpoint
+or `id_token`, or a delegation library: oauthlib / requests-oauthlib / authlib / msal /
+google-auth-oauthlib / next-auth / passport-oauth2 / …). The `client_credentials` grant is
+deliberately NOT matched — it is a static service identity, not user delegation. This is a
+**neutral `capability` finding (0-score)**; it populates the new `delegated_authentication` trait
+(CSA "Tool Execution Context / User Delegated Credentials"), the lower-blast-radius counterpart to
+the existing `embedded_credential` trait ("Agent Service Identity"), so a report can show *how* a
+component authenticates its tool calls, not just that it holds a secret. Adds `Capability.
+DELEGATED_AUTHENTICATION`. Detection of scored malicious/risky behavior is unchanged (efficacy
+100% recall / 0 FP).
+
 ## ruleset 39 (engine 0.34.7)
 
 **Two embedded-secret false positives from the reputable-corpus tripwire — closes the
