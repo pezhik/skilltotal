@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.38.1]
+
+### Fixed
+- **Prompt-injection FP: negation-guarded exfil directive (ruleset 42).** "never/cannot/does not
+  exfiltrate ... to ..." defensive prose in agent prompts no longer raises `ST-PROMPT-INJECTION`
+  (and no longer escalates into `ST-FLOW-TRIFECTA`/a `malicious` verdict). Found by the
+  reputable-corpus tripwire (claude-blog). See `RULES_CHANGELOG.md`.
+
 ## [0.38.0]
 
 ### Added
