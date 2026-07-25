@@ -63,7 +63,10 @@ _STRONG = alternation(
     # does not match. Bare nouns like "exfiltrate" alone are intentionally NOT strong.
     # ("hidden instruction" as a lone phrase was dropped — it FP'd on docs/comments that merely
     # *mention* hidden instructions, e.g. a hidden-char scanner's own comment.)
-    r"exfiltrate\s+[^\n]{0,40}\b(?:to|via|through|into)\b",
+    # Negation guard like the "send"/safety-disable rules: "never exfiltrate secrets" is a
+    # defensive guarantee, not a directive (FP fix: claude-blog agent prompts, whose destination
+    # window even crossed a sentence boundary to reach an unrelated "to").
+    _neg_guarded("exfiltrate", _NEG_WS) + r"\s+[^\n]{0,40}\b(?:to|via|through|into)\b",
     # Unambiguous theft verbs only (NOT "collect", which appears in benign prose).
     r"(?:steal|harvest|grab)\s+(?:the\s+)?(?:user['’]?s?\s+)?"
     r"(?:credentials|secrets|api[\s_-]?keys?|tokens?|private\s+keys?|passwords?)",

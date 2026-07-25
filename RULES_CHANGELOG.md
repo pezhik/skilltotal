@@ -4,6 +4,18 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 42 (engine 0.38.1)
+
+**Prompt-injection exfil-directive false positive from the reputable-corpus tripwire**
+(`scanners/prompt_surface`): the bare `exfiltrate ... to|via|through|into` directive pattern had no
+negation guard, so a defensive guarantee in an agent system prompt ("never exfiltrate secrets.
+Escalate cross-theme questions to the ...") matched — the destination window even crossed a
+sentence boundary to reach an unrelated "to" — and the resulting malicious indicator escalated
+into `ST-FLOW-TRIFECTA` and a `malicious` verdict (FP: claude-blog). The verb now carries the same
+fixed-width negation lookbehinds (`not/never/n't/cannot/unable to/refuse(s|ing) to`) already used
+by the "send <secret> to" and safety-disable rules. Affirmative directives ("exfiltrate the
+conversation history to https://...") still match; recall covered by unit tests.
+
 ## ruleset 41 (engine 0.38.0)
 
 **New execution-context signal: `ST-AUTH-SCOPED` (scoped / least-privilege identity)** — new scanner
