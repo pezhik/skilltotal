@@ -220,3 +220,9 @@ def test_main_exit_zero_on_fetch_failure(tmp_path, monkeypatch):
     rc = dm.main(["--manifest", str(p)])
     assert rc == 0
     assert dm.count_rows(p) == 1  # nothing added, no crash
+
+
+def test_default_manifest_does_not_depend_on_cwd(tmp_path, monkeypatch):
+    """Same regression as corpus_report: the scheduled run executes from an arbitrary CWD."""
+    monkeypatch.chdir(tmp_path)
+    assert Path(dm.MANIFEST_DEFAULT).is_file()

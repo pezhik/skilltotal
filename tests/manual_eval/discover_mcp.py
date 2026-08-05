@@ -25,7 +25,10 @@ from skilltotal import engine
 from skilltotal.collector import CollectionError
 
 REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0/servers"
-MANIFEST_DEFAULT = "tests/manual_eval/report_manifest.csv"
+# Anchored to the repo root (this file's location), not the working directory: the scheduled
+# refresh runs from an arbitrary CWD, where a repo-relative string resolves to nothing.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+MANIFEST_DEFAULT = str(_REPO_ROOT / "tests" / "manual_eval" / "report_manifest.csv")
 
 # Positive allowlist: accept only clean, expected source shapes — an npm/pypi coordinate or a
 # github URL. The official MCP registry yields exactly these; anything else (local paths, odd

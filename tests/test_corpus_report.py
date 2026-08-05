@@ -102,3 +102,14 @@ def test_cli_writes_json_and_md(tmp_path):
     assert (tmp_path / "corpus-report.md").read_text(encoding="utf-8").startswith(
         "# SkillTotal corpus report"
     )
+
+
+def test_default_paths_do_not_depend_on_cwd(tmp_path, monkeypatch):
+    """Defaults must resolve from any working directory, not just the repo root.
+
+    Regression: the defaults were repo-relative strings, so the scheduled weekly refresh —
+    which runs from an arbitrary CWD — died with FileNotFoundError on the manifest.
+    """
+    monkeypatch.chdir(tmp_path)
+    assert Path(cr.MANIFEST_DEFAULT).is_file()
+    assert Path(cr.OUT_PREFIX_DEFAULT).parent.is_dir()

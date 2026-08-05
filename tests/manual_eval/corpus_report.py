@@ -24,6 +24,13 @@ from skilltotal.owasp import OWASP_TAXONOMY
 
 _LEVELS = ("low", "medium", "high", "critical")
 
+# Defaults are anchored to the repo root (this file's location), not the working directory: the
+# scheduled refresh runs from an arbitrary CWD, where repo-relative strings resolve to nothing.
+# An explicitly passed --manifest/--out-prefix is still honoured as given.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+MANIFEST_DEFAULT = str(_REPO_ROOT / "tests" / "manual_eval" / "report_manifest.csv")
+OUT_PREFIX_DEFAULT = str(_REPO_ROOT / "docs" / "corpus-report")
+
 
 @dataclass
 class CompResult:
@@ -202,8 +209,8 @@ def sha256_file(path: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Generate the SkillTotal corpus report.")
-    ap.add_argument("--manifest", default="tests/manual_eval/report_manifest.csv")
-    ap.add_argument("--out-prefix", default="docs/corpus-report")
+    ap.add_argument("--manifest", default=MANIFEST_DEFAULT)
+    ap.add_argument("--out-prefix", default=OUT_PREFIX_DEFAULT)
     ap.add_argument("--delay", type=float, default=0.0, help="seconds to sleep between rows")
     args = ap.parse_args(argv)
 
