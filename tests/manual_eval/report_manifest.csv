@@ -31,3 +31,8 @@ npm:express,npm,npm,express
 npm:left-pad,npm,npm,left-pad
 pypi:requests,pypi,pypi,requests
 pypi:flask,pypi,pypi,flask
+pypi:adeu,pypi,mcp,adeu
+npm:@adeu/mcp-server,npm,mcp,adeu
+npm:affiliate-networks-mcp,npm,mcp,affiliate-networks-mcp
+https://github.com/MarketTrace/markettrace-agent-feed,git,mcp,agent-feed
+https://github.com/kernora-ai/agent-sec,git,mcp,agent-sec

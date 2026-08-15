@@ -1,27 +1,27 @@
 {
   "provenance": {
-    "engine_version": "0.22.0",
-    "ruleset_version": 23,
-    "report_schema_version": "1.4",
-    "generated_at": "2026-06-30",
-    "manifest_sha256": "206779188897f83706423fea7eb19141ddf6bb3b7488696bc51c8be5a7b8c2a2",
-    "components_total": 32,
-    "scanned": 32,
+    "engine_version": "0.38.1",
+    "ruleset_version": 42,
+    "report_schema_version": "1.5",
+    "generated_at": "2026-08-10",
+    "manifest_sha256": "c411ee1b829a75517832c235311647dcb7b6c11108d2e26f5325f7dc72e7306c",
+    "components_total": 37,
+    "scanned": 37,
     "skipped": 0,
     "errors": 0
   },
   "risk_distribution": {
     "low": {
-      "count": 31,
-      "pct": 96.9
+      "count": 37,
+      "pct": 100.0
     },
     "medium": {
       "count": 0,
       "pct": 0.0
     },
     "high": {
-      "count": 1,
-      "pct": 3.1
+      "count": 0,
+      "pct": 0.0
     },
     "critical": {
       "count": 0,
@@ -35,15 +35,15 @@
   "owasp": {
     "AST01": {
       "count": 1,
-      "pct": 3.1
+      "pct": 2.7
     },
     "AST02": {
       "count": 7,
-      "pct": 21.9
+      "pct": 18.9
     },
     "AST03": {
-      "count": 4,
-      "pct": 12.5
+      "count": 3,
+      "pct": 8.1
     },
     "AST04": {
       "count": 0,
@@ -51,7 +51,7 @@
     },
     "AST05": {
       "count": 1,
-      "pct": 3.1
+      "pct": 2.7
     },
     "AST06": {
       "count": 0,
@@ -75,54 +75,74 @@
     }
   },
   "capabilities": {
+    "delegated_authentication": {
+      "count": 6,
+      "pct": 16.2
+    },
     "dynamic_code_execution": {
-      "count": 2,
-      "pct": 6.2
+      "count": 3,
+      "pct": 8.1
     },
     "filesystem_read": {
-      "count": 13,
-      "pct": 40.6
+      "count": 15,
+      "pct": 40.5
     },
     "filesystem_write": {
-      "count": 9,
-      "pct": 28.1
+      "count": 12,
+      "pct": 32.4
     },
     "install_time_execution": {
       "count": 7,
-      "pct": 21.9
+      "pct": 18.9
     },
     "mcp_tools_detected": {
-      "count": 10,
-      "pct": 31.2
+      "count": 14,
+      "pct": 37.8
     },
     "network_egress": {
-      "count": 16,
-      "pct": 50.0
+      "count": 19,
+      "pct": 51.4
+    },
+    "scoped_identity": {
+      "count": 4,
+      "pct": 10.8
     },
     "shell_execution": {
-      "count": 8,
-      "pct": 25.0
+      "count": 11,
+      "pct": 29.7
     }
   },
   "top_rules": [
     {
       "id": "ST-MCP-DETECTED",
-      "count": 10
+      "count": 14
     },
     {
       "id": "ST-NET-PY",
-      "count": 10
+      "count": 12
     },
     {
       "id": "ST-FS-PY-READ",
+      "count": 10
+    },
+    {
+      "id": "ST-FS-PY-WRITE",
       "count": 8
     },
     {
       "id": "ST-NET-NODE",
+      "count": 7
+    },
+    {
+      "id": "ST-SHELL-NODE",
+      "count": 7
+    },
+    {
+      "id": "ST-SHELL-PY",
       "count": 6
     },
     {
-      "id": "ST-FS-PY-WRITE",
+      "id": "ST-AUTH-DELEGATED",
       "count": 6
     },
     {
@@ -134,20 +154,16 @@
       "count": 5
     },
     {
-      "id": "ST-MCP-DANGEROUS-TOOL",
-      "count": 4
-    },
-    {
-      "id": "ST-SHELL-PY",
-      "count": 4
-    },
-    {
-      "id": "ST-SHELL-NODE",
-      "count": 4
-    },
-    {
       "id": "ST-FS-NODE-WRITE",
-      "count": 3
+      "count": 4
+    },
+    {
+      "id": "ST-AUTH-SCOPED",
+      "count": 4
+    },
+    {
+      "id": "ST-MCP-DANGEROUS-TOOL",
+      "count": 2
     },
     {
       "id": "ST-EXPOSE-BIND",
@@ -156,19 +172,11 @@
     {
       "id": "ST-DYN-PY",
       "count": 2
-    },
-    {
-      "id": "ST-INSTALL-NPM",
-      "count": 1
-    },
-    {
-      "id": "ST-CMDI-PY",
-      "count": 1
     }
   ],
   "by_type": {
     "mcp": {
-      "low": 17,
+      "low": 22,
       "medium": 0,
       "high": 0,
       "critical": 0
@@ -180,9 +188,9 @@
       "critical": 0
     },
     "pypi": {
-      "low": 7,
+      "low": 8,
       "medium": 0,
-      "high": 1,
+      "high": 0,
       "critical": 0
     }
   },
@@ -408,6 +416,41 @@
       "source": "pypi:flask",
       "type": "pypi",
       "name": "flask",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "pypi:adeu",
+      "type": "mcp",
+      "name": "adeu",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "npm:@adeu/mcp-server",
+      "type": "mcp",
+      "name": "adeu",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "npm:affiliate-networks-mcp",
+      "type": "mcp",
+      "name": "affiliate-networks-mcp",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/MarketTrace/markettrace-agent-feed",
+      "type": "mcp",
+      "name": "agent-feed",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/kernora-ai/agent-sec",
+      "type": "mcp",
+      "name": "agent-sec",
       "status": "ok",
       "detail": ""
     }
