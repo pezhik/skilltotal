@@ -4,6 +4,30 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 43 (engine 0.39.0)
+
+**Published packages were analyzed without their shipped code** (`file_index`, `engine`). `dist/`
+and `build/` sat in `SKIP_DIRS` — correct for a repository, where they hold emitted copies of
+source that is also checked in, and where scanning them double-counts every finding. For a package
+fetched from a registry the situation inverts: `.npmignore`/`files` keep sources out of the tarball
+and ship only the build output, so the walker saw nothing but `package.json`, the README and a thin
+`bin/` launcher. The result was a silent **false negative** — no findings reported for components
+that execute shell commands, reach the network or read the filesystem.
+
+Found while surveying the whole public MCP registry (17,535 unique components): 3,314 of 7,040
+scanned npm components reported zero findings, and re-scanning a random sample with build output
+included changed the result for **11 of 12**, two of them moving off score 0.
+
+`BUILD_OUTPUT_DIRS` is now skipped only when the component did not come from a package registry
+(`engine._PUBLISHED_PACKAGE_TYPES`). To keep the evidence guarantee intact, bundled/minified
+scripts (code suffix, >=20 KB, average line length >500) are **not** scanned as first-party source:
+a finding there could not carry a checkable file/line snippet, and a bundle inlines dependencies
+that are not the component's own behavior. They are surfaced instead as a `coverage` needs_review
+entry naming the files, which never affects the score.
+
+Expect higher findings/capability counts on npm and PyPI package scans, and unchanged results for
+git and local sources.
+
 ## ruleset 42 (engine 0.38.1)
 
 **Prompt-injection exfil-directive false positive from the reputable-corpus tripwire**

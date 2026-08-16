@@ -139,6 +139,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--clone-mb", type=int, default=50)
     ap.add_argument("--max-pages", type=int, default=1000)
     ap.add_argument("--limit", type=int, default=0, help="scan only the first N (smoke run)")
+    ap.add_argument(
+        "--ecosystem",
+        default="",
+        help="comma-separated subset to scan (npm,pypi,git); empty means all. Lets a change that "
+        "only affects one fetch path be re-measured without repeating the whole population.",
+    )
     args = ap.parse_args(argv)
 
     if args.one:  # worker mode
@@ -151,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     done = already_done(out)
     todo = [(s, e) for s, e in population if s not in done]
+    wanted = {x.strip() for x in args.ecosystem.split(",") if x.strip()}
+    if wanted:
+        todo = [(s, e) for s, e in todo if e in wanted]
     if args.limit:
         todo = todo[: args.limit]
 

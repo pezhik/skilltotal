@@ -45,6 +45,11 @@ from skilltotal.scoring import compute_score, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import package_name_typosquatting
 
+# Component types produced by fetching a PUBLISHED artifact from a package registry (collector.
+# _collect_archive). Everything else — a git clone, a local directory, an uploaded project — keeps
+# its sources, so its build output is a duplicate rather than the only shipped code.
+_PUBLISHED_PACKAGE_TYPES = frozenset({"npm_package", "python_package"})
+
 
 def analyze(
     source: str,
@@ -82,10 +87,27 @@ def analyze_directory(
     ``suppress`` is an optional set of baseline fingerprints to drop before scoring.
     ``ignore_rules`` drops whole rule ids; ``exclude`` is a list of path globs to skip.
     """
-    index = FileIndex.build(Path(root), exclude=exclude)
+    # A published package artifact ships its build output and NOT its sources, so dist/ and build/
+    # must be scanned there; in a repository they duplicate source that is checked in beside them.
+    published = component.type in _PUBLISHED_PACKAGE_TYPES
+    index = FileIndex.build(Path(root), exclude=exclude, skip_build_output=not published)
 
     findings: list[Finding] = []
     needs_review: list[NeedsReview] = []
+    if index.minified:
+        shown = ", ".join(index.minified[:5])
+        more = f" (+{len(index.minified) - 5} more)" if len(index.minified) > 5 else ""
+        needs_review.append(
+            NeedsReview(
+                category="coverage",
+                title="Minified bundle not analyzed",
+                reason=(
+                    f"{len(index.minified)} bundled/minified script(s) were skipped because a "
+                    f"finding in them could not carry checkable file/line evidence, and their "
+                    f"inlined dependencies are not this component's own code: {shown}{more}"
+                ),
+            )
+        )
     for scanner in SCANNERS:
         result = scanner.scan(index)
         findings.extend(result.findings)

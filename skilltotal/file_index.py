@@ -47,8 +47,6 @@ SKIP_DIRS: frozenset[str] = frozenset(
         ".tox",
         ".mypy_cache",
         ".pytest_cache",
-        "dist",
-        "build",
         ".idea",
         ".vscode",
         "site-packages",
@@ -61,13 +59,60 @@ SKIP_DIRS: frozenset[str] = frozenset(
 )
 
 
-def _is_skipped_dir(part: str) -> bool:
+# Build-output directories, skipped for a REPOSITORY and scanned for a PUBLISHED PACKAGE.
+#
+# In a repo these hold emitted copies of first-party source that is also checked in, so scanning
+# them double-counts every finding. A published npm tarball is the mirror image: `.npmignore` /
+# `files` keep the sources out and ship only the build output, so skipping it scanned nothing but
+# the manifest and the README. That was a silent false negative — the worst failure mode for a
+# scanner — measured across the public MCP registry at 11 of 12 sampled npm packages that reported
+# zero findings while in fact shipping shell execution, network egress or filesystem access.
+BUILD_OUTPUT_DIRS: frozenset[str] = frozenset({"dist", "build"})
+
+
+# A minified/bundled script: code suffixes only, and only when the file is both large and written
+# with almost no line breaks.
+_MINIFIABLE_SUFFIXES: frozenset[str] = frozenset({".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"})
+_MINIFIED_MIN_BYTES = 20_000
+_MINIFIED_AVG_LINE = 500
+
+
+def _is_minified(filename: str, text: str) -> bool:
+    """True for a bundled/minified script, which must not be scanned as first-party source.
+
+    Two reasons, and the first is the important one. Every confirmed finding must carry evidence
+    the reader can check — file, line and snippet. A bundle is one 400 KB line, so its "snippet"
+    is unverifiable noise and its "line 1" is meaningless; reporting findings from it would break
+    the guarantee the product is built on. Second, a bundle inlines its dependencies, so matches
+    there describe libraries rather than the component's own authored behavior — the reason
+    ``node_modules`` is skipped.
+
+    Such files are surfaced as ``needs_review`` instead of silently vanishing: "this component
+    ships a bundle we did not analyze" is itself a fact worth stating, and needs_review never
+    affects the score.
+
+    The test is deliberately narrow — a code suffix, a substantial size, and almost no newlines —
+    so ordinary long-line files (a one-line JSON fixture, a big minified stylesheet) are untouched.
+    """
+    if not filename.lower().endswith(tuple(_MINIFIABLE_SUFFIXES)):
+        return False
+    if len(text) < _MINIFIED_MIN_BYTES:
+        return False
+    return len(text) / max(1, text.count("\n") + 1) > _MINIFIED_AVG_LINE
+
+
+def _is_skipped_dir(part: str, *, skip_build_output: bool = True) -> bool:
     """True if a path segment names a directory that never holds first-party source.
 
     Besides the exact ``SKIP_DIRS`` names, a ``vendored-*`` prefixed directory is a vendored
     third-party tree by convention (numpy ships ``vendored-meson/`` — the meson build system,
     complete with meson's own CI scripts), exactly the class ``vendor/`` already covers.
+
+    ``skip_build_output`` additionally skips ``BUILD_OUTPUT_DIRS``; the caller turns it off for a
+    published package artifact, where the build output IS the shipped code.
     """
+    if skip_build_output and part in BUILD_OUTPUT_DIRS:
+        return True
     return part in SKIP_DIRS or part.startswith("vendored-")
 
 # Directory segments and filename patterns that indicate non-shipped test code.
@@ -767,20 +812,41 @@ class IndexedFile:
 class FileIndex:
     """An immutable, pre-walked view of a component directory."""
 
-    def __init__(self, root: Path, files: list[IndexedFile], stats: dict[str, int]):
+    def __init__(
+        self,
+        root: Path,
+        files: list[IndexedFile],
+        stats: dict[str, int],
+        minified: list[str] | None = None,
+    ):
         self.root = root
         self.files = files
         self.stats = stats
+        # Relative paths of shipped bundles that were deliberately not indexed (see _is_minified).
+        self.minified = minified or []
 
     # ------------------------------------------------------------------ build
     @classmethod
-    def build(cls, root: Path, *, exclude: Iterable[str] | None = None) -> FileIndex:
+    def build(
+        cls,
+        root: Path,
+        *,
+        exclude: Iterable[str] | None = None,
+        skip_build_output: bool = True,
+    ) -> FileIndex:
         root = Path(root).resolve()
         files: list[IndexedFile] = []
-        stats = {"indexed": 0, "skipped_binary": 0, "skipped_large": 0, "total_seen": 0}
+        minified: list[str] = []
+        stats = {
+            "indexed": 0,
+            "skipped_binary": 0,
+            "skipped_large": 0,
+            "skipped_minified": 0,
+            "total_seen": 0,
+        }
         excludes = tuple(exclude or ())
 
-        for path in cls._walk(root, excludes):
+        for path in cls._walk(root, excludes, skip_build_output=skip_build_output):
             stats["total_seen"] += 1
             try:
                 size = path.stat().st_size
@@ -803,6 +869,10 @@ class FileIndex:
             # unaffected.
             if text.startswith("\ufeff"):
                 text = text[1:]
+            if _is_minified(path.name, text):
+                stats["skipped_minified"] += 1
+                minified.append(path.relative_to(root).as_posix())
+                continue
             files.append(
                 IndexedFile(
                     path=path,
@@ -814,15 +884,19 @@ class FileIndex:
             stats["indexed"] += 1
 
         files.sort(key=lambda f: f.relpath)
-        return cls(root, files, stats)
+        return cls(root, files, stats, sorted(minified))
 
     @staticmethod
-    def _walk(root: Path, exclude: tuple[str, ...] = ()) -> Iterator[Path]:
+    def _walk(
+        root: Path, exclude: tuple[str, ...] = (), *, skip_build_output: bool = True
+    ) -> Iterator[Path]:
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
             rel = path.relative_to(root)
-            if any(_is_skipped_dir(part) for part in rel.parts):
+            if any(
+                _is_skipped_dir(part, skip_build_output=skip_build_output) for part in rel.parts
+            ):
                 continue
             if exclude and _matches_any(rel.as_posix(), exclude):
                 continue

@@ -4,6 +4,25 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.39.0]
+
+### Fixed
+- **False negative: published packages were scanned without their code (ruleset 43).** `dist/` and
+  `build/` are skipped for a repository, where they duplicate first-party source checked in beside
+  them. A published npm tarball is the mirror image — `.npmignore`/`files` keep the sources out and
+  ship only the build output — so those scans covered nothing but the manifest and the README and
+  reported "no findings". Measured across the public MCP registry, 11 of 12 sampled npm packages
+  that reported zero findings were in fact shipping shell execution, network egress or filesystem
+  access. Build output is now scanned for package artifacts (`npm_package`, `python_package`) and
+  still skipped for git/local sources.
+
+### Added
+- **Minified bundles are disclosed, not scanned.** A bundled script is one very long line, so a
+  finding in it could not carry the checkable file/line evidence every confirmed finding must have,
+  and its inlined dependencies are not the component's own code. Such files are now reported as a
+  `coverage` **needs_review** entry ("Minified bundle not analyzed") listing the paths — visible
+  rather than silently absent, and without affecting the score.
+
 ## [0.38.1]
 
 ### Fixed
