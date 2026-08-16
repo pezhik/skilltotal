@@ -87,8 +87,15 @@ def hygiene_ok(cand: Candidate) -> bool:
 
     A positive allowlist: local paths, whitespace, and unexpected characters are rejected before a
     candidate can reach the public manifest.
+
+    ``..`` is rejected explicitly. The allowlist's character classes permit ``.`` and ``/`` (both
+    legal in scoped npm names), so a traversal-shaped identifier such as ``npm:../../etc/passwd``
+    satisfied the pattern. It was never exploitable — ``collector.npm_package_spec`` refuses
+    traversal, so such a candidate fails to resolve and is dropped — but this allowlist claims to
+    stop it, and neither npm, PyPI nor GitHub permits ``..`` in a name, so nothing legitimate is
+    lost by enforcing that here too.
     """
-    return bool(_SAFE_SOURCE.match(cand.source))
+    return ".." not in cand.source and bool(_SAFE_SOURCE.match(cand.source))
 
 
 def dedup(cands: list[Candidate], existing_sources: set[str]) -> list[Candidate]:

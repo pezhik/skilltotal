@@ -17,6 +17,19 @@ _spec.loader.exec_module(dm)
 # --- normalize_entry -------------------------------------------------------------------------
 
 
+def test_hygiene_rejects_traversal_shaped_identifiers():
+    """`.` and `/` are legal in scoped npm names, so the pattern alone let `..` through.
+
+    Not exploitable (collector.npm_package_spec refuses traversal, so the candidate never
+    resolves), but this gate advertises that it stops local paths, and no real npm/PyPI/GitHub
+    name contains `..`.
+    """
+    for bad in ("npm:../../etc/passwd", "pypi:../x", "https://github.com/o/../../etc"):
+        assert not dm.hygiene_ok(dm.Candidate(bad, "npm", "mcp", "x")), bad
+    for good in ("npm:@scope/pkg-mcp", "pypi:mcp-srv", "https://github.com/owner/repo"):
+        assert dm.hygiene_ok(dm.Candidate(good, "npm", "mcp", "x")), good
+
+
 def test_normalize_prefers_npm_package():
     item = {
         "server": {
