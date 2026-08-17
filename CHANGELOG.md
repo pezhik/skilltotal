@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.39.1]
+
+### Added
+- **MCP registry listing (`server.json`).** The MCP server (`skilltotal mcp`) has shipped for a
+  while but was absent from the official registry, which is where this ecosystem discovers servers.
+  The listing declares the PyPI package with a positional `mcp` argument, because a client that
+  launches the bare console script gets CLI usage on stdout and a broken JSON-RPC handshake. The
+  registry proves PyPI ownership from an `mcp-name:` marker in the published package description,
+  so this release exists to put that marker on PyPI; detection is unchanged (ruleset stays 43).
+
 ## [0.39.0]
 
 ### Fixed

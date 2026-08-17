@@ -13,9 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pezhik/skilltotal@v0.39.0
+      - uses: pezhik/skilltotal@v0.39.1
         with:
           source: .            # a path in the repo, a git URL, or an npm:/pypi:<name> spec
           fail-on: high        # fail the build on a high/critical finding; use 'none' to report only
-          # version: 0.39.0    # pin the engine for reproducible CI (optional)
+          # version: 0.39.1    # pin the engine for reproducible CI (optional)
           # baseline: .skilltotal-baseline.json   # suppress accepted findings (optional)
