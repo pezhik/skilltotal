@@ -101,6 +101,11 @@ def _is_minified(filename: str, text: str) -> bool:
     return len(text) / max(1, text.count("\n") + 1) > _MINIFIED_AVG_LINE
 
 
+def is_build_output_path(relpath: str) -> bool:
+    """True when the path sits under a build-output directory (``dist/``, ``build/``)."""
+    return any(part in BUILD_OUTPUT_DIRS for part in relpath.replace("\\", "/").split("/"))
+
+
 def _is_skipped_dir(part: str, *, skip_build_output: bool = True) -> bool:
     """True if a path segment names a directory that never holds first-party source.
 

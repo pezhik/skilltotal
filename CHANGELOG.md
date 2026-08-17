@@ -17,6 +17,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
   still skipped for git/local sources.
 
 ### Added
+- **Build output establishes capability, never risk.** A bundle inlines dependencies, tests and
+  templates into one file, blinding the path-based demotion layers, so a `risky_construct` or
+  `malicious_indicator` match found in build output is demoted to needs_review while capability
+  findings are kept. Without this, real packages were rated `critical` from a security tool's own
+  credential-path watch list and from a bundled SSRF test assertion.
 - **Minified bundles are disclosed, not scanned.** A bundled script is one very long line, so a
   finding in it could not carry the checkable file/line evidence every confirmed finding must have,
   and its inlined dependencies are not the component's own code. Such files are now reported as a

@@ -25,8 +25,21 @@ a finding there could not carry a checkable file/line snippet, and a bundle inli
 that are not the component's own behavior. They are surfaced instead as a `coverage` needs_review
 entry naming the files, which never affects the score.
 
-Expect higher findings/capability counts on npm and PyPI package scans, and unchanged results for
-git and local sources.
+**Build output proves capability, not risk.** Scanning build output alone was not safe to ship. A
+bundler inlines dependencies, tests, fixtures and template strings into one file, and every other
+demotion layer recognises those by their PATH (`tests/`, `docs/`, `examples/`) — bundling destroys
+exactly that signal. On real packages this produced `critical` verdicts from a security tool's own
+`"*id_rsa*"` watch list, a code generator's `JWT_ACCESS_SECRET: "test..."` scaffold, and a bundled
+`expect(...).toThrow()` asserting against 169.254.169.254.
+
+So `engine._split_build_output_evidence` keeps `capability` findings from build output — the shipped
+artifact really can execute a shell or reach the network, whoever authored the code — and demotes
+every `risky_construct` / `malicious_indicator` match found there to needs_review. It runs before
+synthesis, so a demoted secret cannot feed `ST-COMBO-EXFIL`. Evidence matched outside build output
+is untouched.
+
+Expect higher **capability** counts on npm and PyPI package scans, risk levels close to unchanged,
+and identical results for git and local sources.
 
 ## ruleset 42 (engine 0.38.1)
 

@@ -22,6 +22,7 @@ from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
     FileIndex,
     IndexedFile,
+    is_build_output_path,
     is_ci_path,
     is_data_corpus_path,
     is_doc_path,
@@ -145,6 +146,9 @@ def analyze_directory(
     needs_review.extend(structured_data_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
+    if published:
+        findings, build_review = _split_build_output_evidence(findings)
+        needs_review.extend(build_review)
 
     capabilities = extract_capabilities(findings)
 
@@ -430,6 +434,46 @@ def _split_doc_evidence(
             kept.append(_finding_with_evidence(finding, prod))
         if docs:
             review.append(_demoted_review(finding, docs, "documentation only"))
+    return kept, review
+
+
+def _split_build_output_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """In a published package's build output, keep capability findings and demote risk claims.
+
+    Build output is the only code a package ships, so it must be scanned — but a bundler inlines
+    dependencies, tests, fixtures and template strings into the same file, and every other
+    demotion layer here recognises those by their PATH (``tests/``, ``docs/``, ``examples/``).
+    Bundling destroys exactly that signal, leaving those guards blind.
+
+    So the line is drawn by what the evidence can still honestly support. A capability survives:
+    the shipped artifact really can execute a shell or reach the network, whoever authored the
+    code. A risk claim does not: whether a credential path is an exfiltration target or an entry
+    in a security tool's own signature list, whether a secret is real or a generator's placeholder,
+    whether an SSRF address is an attack or an assertion in a bundled test — all of that depends on
+    context the bundle no longer carries. Measured on real packages, keeping them produced
+    `critical` verdicts from a threat-feed's ``"*id_rsa*"`` pattern list, a
+    ``JWT_ACCESS_SECRET: "test..."`` scaffold, and a bundled ``expect(...).toThrow()`` guarding
+    against 169.254.169.254.
+
+    Demoted evidence lands in needs_review, so it is disclosed rather than dropped, and it runs
+    before synthesis so a demoted secret cannot feed ``ST-COMBO-EXFIL``.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        if _THREAT_CLASS_BY_ID.get(finding.id, ThreatClass.CAPABILITY) == ThreatClass.CAPABILITY:
+            kept.append(finding)
+            continue
+        prod = [e for e in finding.evidence if not is_build_output_path(e.file)]
+        built = [e for e in finding.evidence if is_build_output_path(e.file)]
+        if prod:
+            kept.append(_finding_with_evidence(finding, prod))
+        if built:
+            review.append(
+                _demoted_review(finding, built, "inside a published package's build output")
+            )
     return kept, review
 
 

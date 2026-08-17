@@ -86,6 +86,63 @@ def test_readable_build_output_is_still_scanned(tmp_path):
     assert not [n for n in report.needs_review if n.title == "Minified bundle not analyzed"]
 
 
+def test_build_output_proves_capability_but_not_risk(tmp_path):
+    """A bundle inlines tests, fixtures and pattern literals, so path-based demotion goes blind.
+
+    Real packages produced `critical` verdicts this way: a security tool's own `"*id_rsa*"` watch
+    list, a code generator's `JWT_ACCESS_SECRET: "test..."` scaffold, and a bundled SSRF assertion
+    against 169.254.169.254. The capability is still true and stays; the risk claim is demoted.
+    """
+    (tmp_path / "package.json").write_text('{"name": "g", "version": "1.0.0"}', encoding="utf-8")
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "bundle.js").write_text(
+        'const { execSync } = require("child_process");\n'
+        'const watchlist = ["*id_rsa*", "~/.ssh/id_rsa"];\n'
+        'const JWT_ACCESS_SECRET = "sk_test_51H8xKlAbCdEfGhIjKlMnOpQrStUvWxYz";\n'
+        'fetch("https://example.invalid/collect");\n',
+        encoding="utf-8",
+    )
+    report = analyze_directory(tmp_path, _component("npm_package"))
+    ids = {f.id for f in report.findings}
+    assert "ST-SHELL-NODE" in ids  # capability: the artifact really can do this
+    assert "ST-SENS-PATH" not in ids  # risk claim from bundled context: demoted
+    assert "ST-COMBO-EXFIL" not in ids  # ... so the synthesized combo cannot fire either
+    assert any("build output" in n.reason for n in report.needs_review)
+
+
+def test_demotion_only_touches_evidence_inside_build_output():
+    """Scoped by path: the same rule keeps whatever it matched outside dist/.
+
+    Asserted on the split function directly so the case is not masked by the other demotion
+    layers (a bare string literal, for instance, is already demoted by the code-context pass).
+    """
+    from skilltotal.engine import _split_build_output_evidence
+    from skilltotal.models import Evidence, Finding, Severity
+
+    def _finding(rule_id: str, files: list[str]) -> Finding:
+        return Finding(
+            id=rule_id,
+            severity=Severity.HIGH,
+            category="test",
+            title=rule_id,
+            description="d",
+            recommendation="r",
+            evidence=[
+                Evidence(file=f, line_start=1, line_end=1, snippet="x") for f in files
+            ],
+        )
+
+    risky = _finding("ST-SECRET-EMBEDDED", ["dist/bundle.js", "src/config.js"])
+    capability = _finding("ST-SHELL-NODE", ["dist/bundle.js"])
+    kept, review = _split_build_output_evidence([risky, capability])
+
+    kept_by_id = {f.id: f for f in kept}
+    assert [e.file for e in kept_by_id["ST-SECRET-EMBEDDED"].evidence] == ["src/config.js"]
+    assert [e.file for e in kept_by_id["ST-SHELL-NODE"].evidence] == ["dist/bundle.js"]
+    assert len(review) == 1 and "build output" in review[0].reason
+
+
 def test_minified_detection_ignores_small_and_non_code_files(tmp_path):
     """Narrow on purpose: a one-line JSON fixture or a short script must not be mistaken for one."""
     from skilltotal.file_index import _is_minified
