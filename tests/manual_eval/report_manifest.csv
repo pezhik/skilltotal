@@ -36,3 +36,8 @@ npm:@adeu/mcp-server,npm,mcp,adeu
 npm:affiliate-networks-mcp,npm,mcp,affiliate-networks-mcp
 https://github.com/MarketTrace/markettrace-agent-feed,git,mcp,agent-feed
 https://github.com/kernora-ai/agent-sec,git,mcp,agent-sec
+https://github.com/AInoAKARI/AInoAKARI,git,mcp,agent-trust-receipt
+https://github.com/matebenyovszky/agentplaybooks,git,mcp,agentplaybooks
+https://github.com/embeddedlayers/mcp-analytics,git,mcp,analytics
+npm:@ankimcp/anki-mcp-server,npm,mcp,anki-mcp-server
+https://github.com/ankimcp/anki-mcp-server-addon,git,mcp,anki-mcp-server-addon
