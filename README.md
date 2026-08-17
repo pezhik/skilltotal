@@ -1,3 +1,5 @@
+<!-- mcp-name: ai.skilltotal/skilltotal -->
+
 # SkillTotal
 
 [![PyPI](https://img.shields.io/pypi/v/skilltotal)](https://pypi.org/project/skilltotal/)
