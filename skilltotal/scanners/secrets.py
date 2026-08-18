@@ -62,8 +62,14 @@ _KNOWN: list[tuple[str, re.Pattern[str], int]] = [
 # Generic: a secret-named variable assigned a long opaque string.
 _GENERIC = re.compile(
     r"(?i)(?:api[_-]?key|secret|token|password|passwd|access[_-]?key|auth[_-]?token|"
-    r"client[_-]?secret)\s*[:=]\s*['\"]([A-Za-z0-9+/_\-]{20,})['\"]"
+    r"client[_-]?secret|private[_-]?key)\s*[:=]\s*['\"]([A-Za-z0-9+/_\-]{20,})['\"]"
 )
+
+# A 0x-prefixed 40-hex value is an EVM account/contract address — published on-chain and safe to
+# ship. It reaches this rule only because web3 code says `token = "0x…"`, where "token" names an
+# asset rather than a credential. The 64-hex private-key form is a different shape and still
+# matches, so this exclusion cannot hide a real key.
+_PUBLIC_CHAIN_ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
 
 # Substrings that mark a value as a placeholder / example, not a real secret. Kept to
 # unambiguous placeholder words — NOT generic hex/alpha runs, which occur in real tokens.
@@ -73,7 +79,15 @@ _PLACEHOLDER = re.compile(
 )
 
 
-def _looks_like_placeholder(value: str) -> bool:
+def _is_non_credential_value(value: str) -> bool:
+    """True when the matched value cannot be a live credential.
+
+    Two distinct reasons, both meaning "do not report": it is a placeholder/example, or it is a
+    PUBLISHED identifier that only looks secret — an EVM address is on-chain and public, and
+    reaches this rule solely because web3 code writes `token = "0x…"`.
+    """
+    if _PUBLIC_CHAIN_ADDRESS.match(value):
+        return True
     if _PLACEHOLDER.search(value):
         return True
     # Single repeated character (xxxxxxxx, 00000000) or too few distinct chars.
@@ -193,7 +207,7 @@ class SecretsScanner(Scanner):
             for label, pattern, grp in _KNOWN:
                 for m in pattern.finditer(f.text):
                     value = m.group(grp)
-                    if grp != 0 and _looks_like_placeholder(value):
+                    if grp != 0 and _is_non_credential_value(value):
                         continue
                     if label == "Private key block" and _is_test_certificate(f.relpath):
                         if f.relpath not in test_cert_files:
@@ -202,7 +216,7 @@ class SecretsScanner(Scanner):
                     self._add(f, m, value, evidence, seen)
             for m in _GENERIC.finditer(f.text):
                 value = m.group(1)
-                if _looks_like_placeholder(value) or not _has_mixed_charset(value):
+                if _is_non_credential_value(value) or not _has_mixed_charset(value):
                     continue
                 window = f.text[max(0, m.start() - 200) : m.end() + 200]
                 if _is_public_docsearch_key(value, window):

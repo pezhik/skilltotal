@@ -421,6 +421,35 @@ _RUST_BLOCK_ITEM = re.compile(r"\b(?:fn|mod)\b")
 _RUST_MARKER_LOOKAHEAD = 400  # max chars from a test attribute to its block body `{`
 
 
+# Markdown fenced-code delimiters. Only a FENCED block counts as code: inline backticks sit in a
+# sentence ("example values (Stripe's docs `sk_live_…`)"), which is still prose.
+_MARKDOWN_SUFFIXES: frozenset[str] = frozenset({".md", ".mdx"})
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
+def _markdown_code_spans(text: str) -> list[tuple[int, int]]:
+    """Char-spans of fenced code blocks in markdown.
+
+    An unclosed fence runs to end of file, which is how renderers treat it too.
+    """
+    spans: list[tuple[int, int]] = []
+    offset = 0
+    start: int | None = None
+    marker = ""
+    for line in text.splitlines(keepends=True):
+        match = _FENCE_RE.match(line)
+        if start is None:
+            if match:
+                start, marker = offset, match.group(1)[0]
+        elif match and match.group(1)[0] == marker:
+            spans.append((start, offset + len(line)))
+            start = None
+        offset += len(line)
+    if start is not None:
+        spans.append((start, len(text)))
+    return spans
+
+
 def _rust_code_mask(text: str) -> str:
     """Return ``text`` with comment / string / char-literal regions blanked to spaces.
 
@@ -612,6 +641,10 @@ class IndexedFile:
     _c_string_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed char-spans of markdown fenced code blocks.
+    _md_code_spans_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
     # Lazily-computed char-spans of inline Rust test code (#[cfg(test)] / #[test] blocks).
     _rust_test_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -704,6 +737,46 @@ class IndexedFile:
         """True if ``offset`` falls inside a shell ``#`` comment (shell files only)."""
         self._ensure_sh_comment_spans()
         return _offset_in_spans(self._sh_comment_spans, offset)
+
+    def _ensure_md_code_spans(self) -> None:
+        """Record markdown fenced-code char-spans once, for markdown files only."""
+        if self._md_code_spans_cache is not None:
+            return
+        self._md_code_spans_cache = (
+            _markdown_code_spans(self.text) if self.suffix in _MARKDOWN_SUFFIXES else []
+        )
+
+    def in_markdown_prose(self, offset: int) -> bool:
+        """True if ``offset`` is markdown PROSE — inside a .md/.mdx file, outside any fenced block.
+
+        Prose describes behaviour rather than performing it: "credentials live in
+        ~/.aws/credentials" is a sentence, while the same path inside a ```bash``` block is
+        configuration the component ships. Returns False for non-markdown files, so callers can
+        invoke it unconditionally.
+        """
+        if self.suffix not in _MARKDOWN_SUFFIXES:
+            return False
+        self._ensure_md_code_spans()
+        return not _offset_in_spans(self._md_code_spans_cache, offset)
+
+    def in_markdown_fenced_comment(self, offset: int) -> bool:
+        """True if ``offset`` sits on a ``#`` comment line INSIDE a markdown fenced block.
+
+        A fenced block is what the component ships, but a comment inside it is still a comment:
+        ``# credentials live in ~/.aws/credentials`` inside a ```bash``` block documents the
+        snippet, exactly as the same line would in a .sh file (which ``in_shell_comment``
+        already demotes).
+        """
+        if self.suffix not in _MARKDOWN_SUFFIXES:
+            return False
+        self._ensure_md_code_spans()
+        if not _offset_in_spans(self._md_code_spans_cache, offset):
+            return False
+        line_no = self.line_of_offset(offset)
+        hash_at = _unquoted_hash_index(self._line_text(line_no))
+        if hash_at is None:
+            return False
+        return self._line_starts[line_no - 1] + hash_at <= offset
 
     def _ensure_c_comment_spans(self) -> None:
         """Record C-family (// and /* */) comment char-spans once, for C-family files only."""

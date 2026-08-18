@@ -4,6 +4,31 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 44 (engine 0.40.0)
+
+**Markdown prose is documentation, not behaviour** (`file_index`, `engine._is_noncode_context`).
+Markdown was the one context the code-context demotion never handled, so `ST-SENS-PATH` and
+`ST-SECRET-EMBEDDED` fired on sentences describing where credentials live and on example keys
+quoted from a vendor's docs. Combined with ruleset 43 finally scanning a package's build output,
+that escalated real projects to `high` via `ST-COMBO-EXFIL` — public verdicts derived from a
+project's own README.
+
+The discriminator is prose vs a fenced code block, not which file it is: a credential inside a
+```` ```bash ```` block of a SKILL.md really is shipped, so it stays a finding, while a `#` comment
+line inside that same block demotes exactly as it would in a .sh file. `ST-PROMPT-INJECTION`
+(policy `strings_and_comments_all`) is exempt — for it the prose IS the attack surface, and
+recall there is untouched.
+
+**Secret-rule shape corrections.** `private[_-]?key` joins the generic assignment keywords; it was
+absent, so the most standard credential variable name of all went undetected. Conversely a value
+matching `^0x[0-9a-fA-F]{40}$` is an EVM account/contract address — public on-chain data that only
+reached the rule because web3 code writes `token = "0x…"`. It is no longer reported; the 64-hex
+private-key form is a different shape and still is.
+
+Measured on the seven components the registry survey had escalated: four false positives cleared,
+both genuine findings (a leaked `ghu_` GitHub token shipped in an npm tarball, and an API key in a
+SKILL.md code block) retained.
+
 ## ruleset 43 (engine 0.39.0)
 
 **Published packages were analyzed without their shipped code** (`file_index`, `engine`). `dist/`

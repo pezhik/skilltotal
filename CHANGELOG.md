@@ -4,6 +4,24 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.40.0]
+
+### Fixed
+- **Markdown prose was read as behaviour (ruleset 44).** A sentence such as "credentials are
+  stored in `~/.aws/credentials`" and an illustration like "example values (Stripe's docs
+  `sk_live_...`)" raised confirmed findings. Once a published package's build output supplied the
+  network half, `ST-COMBO-EXFIL` escalated real projects to `high` on the strength of their own
+  documentation. Matches in markdown prose — and in `#` comment lines inside fenced blocks — are
+  now demoted to needs_review. **Prompt injection is deliberately exempt**: there the prose *is*
+  the directive, so demoting it would trade away the recall this product exists for. Text inside a
+  fenced code block still counts, because that is what the component ships.
+- **`private_key = "..."` was never detected.** The generic secret-assignment rule keyed on
+  api_key / secret / token / password / access_key / auth_token / client_secret but not on
+  `private_key`, the most standard name of all for a real credential.
+- **A public blockchain address was reported as an embedded secret.** In web3 code `token` names
+  an asset, so `token = "0x<40 hex>"` matched — but that value is an on-chain address anyone can
+  read. The 64-hex private-key shape is unaffected and still reported.
+
 ## [0.39.1]
 
 ### Added

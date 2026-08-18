@@ -657,6 +657,14 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
         )
     if f.suffix in (".sh", ".bash", ".zsh"):
         return f.in_shell_comment(e.match_offset)
+    # Markdown prose states what a component does; a fenced block is what it actually ships.
+    # A credential path in a sentence ("credentials live in ~/.aws/credentials") or an
+    # illustrative key ("example values (Stripe's docs `sk_live_…`)") is documentation, and
+    # treating it as behavior escalated real projects to `high` once a package's build output
+    # supplied the network half of ST-COMBO-EXFIL. Prompt injection is exempt on purpose: there
+    # the prose IS the directive, so demoting it would trade away the recall that matters most.
+    if f.in_markdown_prose(e.match_offset) or f.in_markdown_fenced_comment(e.match_offset):
+        return policy != "strings_and_comments_all"
     # C-family: demote matches in // and /* */ comments (a description in a code comment is not
     # behavior). String literals are demoted ONLY for the strings_and_comments_all policy
     # (ST-PROMPT-INJECTION); for every other rule a credential path passed as a string argument is
