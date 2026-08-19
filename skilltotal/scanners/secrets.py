@@ -140,6 +140,33 @@ def _is_public_telemetry_key(context: str) -> bool:
     return bool(_TELEMETRY_INGEST_CTX.search(context))
 
 
+# PostHog project API keys carry the `phc_` prefix and are documented as safe to expose in client
+# code — they can only write events into that project's firehose. The private personal API key
+# uses a different prefix, so keying on `phc_` cannot hide a real one. Without this, any project
+# shipping product analytics reads as leaking a credential (FPs: browser-use, zeta-chain/cli).
+_POSTHOG_PUBLIC_PREFIX = "phc_"
+
+
+def _is_public_analytics_key(value: str) -> bool:
+    """True for a vendor key that is published by design rather than kept secret."""
+    return value.startswith(_POSTHOG_PUBLIC_PREFIX)
+
+
+# Solana account/program addresses are base58 public keys, at most 44 characters — on-chain data
+# anyone can read, and typically a fixed constant (the SPL Token program id, a mint). A SECRET
+# there is a keypair, which is roughly twice as long, so bounding the length keeps real key
+# material in scope. The adjacent naming requirement keeps ordinary base58 blobs out.
+_BASE58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+_CHAIN_ADDRESS_CTX = re.compile(
+    r"(?i)solana|spl[_-]?token|program[_-]?id|mint|pubkey|public[_-]?key|wallet|address"
+)
+
+
+def _is_public_chain_address(value: str, context: str) -> bool:
+    """True for a base58 on-chain address (public identifier), not a keypair."""
+    return bool(_BASE58.match(value)) and bool(_CHAIN_ADDRESS_CTX.search(context))
+
+
 # Test TLS/certificate fixtures: packages ship throwaway dummy certificate + private-key pairs to
 # drive their OWN test HTTPS servers (urllib3 `dummyserver/certs/*.key`, grpcio
 # `src/core/tsi/test_creds/*.key`). Those PEM blocks are real key MATERIAL but are disposable test
@@ -223,7 +250,11 @@ class SecretsScanner(Scanner):
                     if f.relpath not in docsearch_files:
                         docsearch_files.append(f.relpath)
                     continue
-                if _is_public_telemetry_key(window):
+                if _is_public_telemetry_key(window) or _is_public_analytics_key(value):
+                    if f.relpath not in telemetry_files:
+                        telemetry_files.append(f.relpath)
+                    continue
+                if _is_public_chain_address(value, window):
                     if f.relpath not in telemetry_files:
                         telemetry_files.append(f.relpath)
                     continue

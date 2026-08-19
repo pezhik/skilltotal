@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.41.0]
+
+### Fixed
+- **Values published on purpose were reported as leaked credentials (ruleset 45).** Sampling the
+  MCP-registry survey, all four of the first components carrying an "embedded secret" were of this
+  kind. PostHog project keys (`phc_`, documented as safe to expose in client code) and base58
+  on-chain addresses (a Solana program id or mint — public data, and length-bounded so a keypair
+  still counts) now join the Algolia DocSearch and client-telemetry keys the scanner already
+  recognised. `browser-use` went `high` → `low`, `zeta-chain/cli` `high` → `low`.
+- **A comment mentioning `eval` was read as dynamic execution.** `ST-DYN-NODE` declared no
+  code-context policy, so `// guarded string eval (no DOM types)` matched — the same demotion the
+  exposure and shell rules already use now applies.
+
 ## [0.40.0]
 
 ### Fixed

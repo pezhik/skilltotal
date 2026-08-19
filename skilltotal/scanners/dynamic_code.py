@@ -31,6 +31,10 @@ class DynamicCodeScanner(PatternScanner):
                 "the input is a trusted constant and never derived from external data."
             ),
             capability=Capability.DYNAMIC_CODE_EXECUTION,
+            # A `//` comment that mentions eval describes code rather than running it — the same
+            # reasoning the exposure and shell rules already apply. Without this, a note like
+            # "guarded string eval (no DOM types)" was reported as dynamic execution.
+            code_context="comments",
             suffixes=NODE_SUFFIXES,
             pattern=alternation(
                 r"\beval\s*\(",

@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 45 (engine 0.41.0)
+
+**Public-by-design values are not leaks** (`scanners/secrets`). A sample of the registry survey's
+"embedded secret" hits found every one of the first four to be a value its vendor publishes on
+purpose. Two classes join the Algolia DocSearch / client-telemetry precedents already in this
+scanner: a PostHog **project** API key (`phc_` prefix — documented as exposable in client code;
+the private personal key uses a different prefix, so this cannot mask a real one), and a base58
+**on-chain address** (32–44 chars with blockchain naming nearby — an SPL Token program id or mint
+is public data). The length bound matters: a Solana keypair is roughly twice as long and stays a
+finding, mirroring the EVM 40-vs-64-hex distinction from ruleset 44.
+
+**`ST-DYN-NODE` gains `code_context="comments"`.** It declared no policy, so the C-family comment
+demotion never applied to it and a note such as `// guarded string eval (no DOM types)` was
+reported as dynamic code execution.
+
+Measured effect on real projects: `pypi:browser-use` high → low, `zeta-chain/cli` high → low.
+
 ## ruleset 44 (engine 0.40.0)
 
 **Markdown prose is documentation, not behaviour** (`file_index`, `engine._is_noncode_context`).
