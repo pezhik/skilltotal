@@ -1,0 +1,62 @@
+{
+  "metadata": {
+    "generated": "2026-08-20",
+    "engine": "0.41.0",
+    "ruleset": 45,
+    "registry_entries": 73460,
+    "registry_url": "https://registry.modelcontextprotocol.io/v0/servers",
+    "clone_mb": 50,
+    "timeout": 60
+  },
+  "summary": {
+    "population": 17535,
+    "scanned": 15538,
+    "skipped": 1997,
+    "skip_reasons": {
+      "larger than the size bound": 146,
+      "repository or package no longer reachable": 1593,
+      "slower than the time bound": 194,
+      "other": 60,
+      "access denied": 4
+    },
+    "by_ecosystem": {
+      "git": {
+        "total": 7312,
+        "scanned": 5518
+      },
+      "npm": {
+        "total": 7152,
+        "scanned": 7016
+      },
+      "pypi": {
+        "total": 3071,
+        "scanned": 3004
+      }
+    },
+    "risk_level": {
+      "low": 15109,
+      "medium": 143,
+      "high": 256,
+      "critical": 30
+    },
+    "malicious_indicators": 65,
+    "capabilities": {
+      "mcp_tools_detected": 12666,
+      "network_egress": 10134,
+      "shell_execution": 4551,
+      "filesystem_read": 3936,
+      "filesystem_write": 3286,
+      "install_time_execution": 1162,
+      "delegated_authentication": 914,
+      "dynamic_code_execution": 539,
+      "scoped_identity": 85,
+      "prompt_surface_risk": 63
+    },
+    "registry_shape": {
+      "git_sources": 7312,
+      "distinct_owners": 4325,
+      "largest_owner_share": 18.0,
+      "top10_owner_share": 29.1
+    }
+  }
+}
