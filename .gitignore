@@ -66,3 +66,8 @@ local_e2e.db
 
 # Local-only superpowers planning docs (specs/plans) — must never reach the public repo.
 docs/superpowers/
+
+# Credentials written by `mcp-publisher login` into its working directory. They are live tokens
+# (the registry one grants republish rights over this server), so they must never be committed
+# here — nor packed into a release artifact, which is a mistake real MCP servers ship on npm.
+.mcpregistry_*

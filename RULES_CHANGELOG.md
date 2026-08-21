@@ -4,6 +4,18 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 46 (engine 0.42.0)
+
+**Credential-only files are now detected** (`scanners/secrets`). A file whose *entire content* is
+a credential was invisible: the key/value pattern needs an assignment to anchor on and the
+known-provider patterns need a vendor prefix, and a bare token in a dotfile has neither. The first
+two names are the ones `mcp-publisher login` writes into its working directory —
+`.mcpregistry_github_token` and `.mcpregistry_registry_token`. Publishing from that directory
+packs them into the release artifact, which measurably happens on npm today. The registry token is
+the more serious of the pair: it grants the right to republish that server in the MCP registry, so
+a shipped copy is a standing supply-chain takeover of the component. Content that is empty or a
+placeholder is not a finding.
+
 ## ruleset 45 (engine 0.41.0)
 
 **Public-by-design values are not leaks** (`scanners/secrets`). A sample of the registry survey's

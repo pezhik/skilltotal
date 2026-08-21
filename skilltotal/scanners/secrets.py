@@ -188,12 +188,56 @@ def _has_mixed_charset(value: str) -> bool:
     return any(c.isdigit() for c in value) and any(c.isalpha() for c in value)
 
 
+# Files whose *entire content* is a credential. They are not configuration that happens to
+# contain a token — they exist only as a login artifact, so any non-placeholder content in one
+# is a live credential shipped to everyone who installs the package. `mcp-publisher login`
+# writes both of these into its working directory; publishing from that directory packs them
+# into the tarball. The registry token is the more dangerous of the two: it grants the right to
+# republish this server in the MCP registry, i.e. supply-chain takeover of the component.
+#
+# The key/value patterns below cannot catch these: the file holds a bare token with no
+# assignment to anchor on, and an opaque JWT has no vendor prefix.
+_CREDENTIAL_FILES = frozenset(
+    {
+        ".mcpregistry_github_token",
+        ".mcpregistry_registry_token",
+    }
+)
+
+# Short enough to admit real tokens, long enough that an empty stub or a "TODO" is not a leak.
+_MIN_CREDENTIAL_FILE_LEN = 16
+
+
+# Below this length a "prefix of the secret" is not secret material, and blanking it would
+# mangle unrelated text that merely starts with the same characters.
+_MIN_REDACTABLE_PREFIX = 8
+
+
 def _redact(snippet: str, value: str) -> str:
-    """Replace the secret value in the snippet with a non-recoverable marker."""
+    """Replace the secret value in the snippet with a non-recoverable marker.
+
+    The snippet is built (and truncated to ``MAX_SNIPPET_CHARS``) before it reaches us, so a
+    long secret — a JWT, a PEM body, a token on a minified line — may survive only as a
+    *prefix*. A plain ``replace`` would then silently do nothing and the report would carry
+    most of a live credential. Redact the longest prefix that is actually present instead: a
+    security report must never re-publish what it found.
+    """
     if not value:
         return snippet
-    shown = value[:4]
-    return snippet.replace(value, f"{shown}…[redacted, {len(value)} chars]")
+    marker = f"{value[:4]}…[redacted, {len(value)} chars]"
+    if value in snippet:
+        return snippet.replace(value, marker)
+    # "value[:k] is in snippet" is monotone in k, so binary-search the longest such prefix.
+    lo, hi = _MIN_REDACTABLE_PREFIX, len(value)
+    if value[:lo] not in snippet:
+        return snippet
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if value[:mid] in snippet:
+            lo = mid
+        else:
+            hi = mid - 1
+    return snippet.replace(value[:lo], marker)
 
 
 class SecretsScanner(Scanner):
@@ -231,6 +275,11 @@ class SecretsScanner(Scanner):
         test_cert_files: list[str] = []
 
         for f in index.files:
+            if f.name.lower() in _CREDENTIAL_FILES:
+                self._add_credential_file(f, evidence, seen)
+                # The whole file is one credential; the key/value patterns below have nothing
+                # left to find in it and would only produce a duplicate span.
+                continue
             for label, pattern, grp in _KNOWN:
                 for m in pattern.finditer(f.text):
                     value = m.group(grp)
@@ -347,9 +396,24 @@ class SecretsScanner(Scanner):
             )
         return ScanResult(findings=findings, needs_review=needs_review)
 
+    @classmethod
+    def _add_credential_file(cls, f, evidence: list[Evidence], seen: set[tuple[str, int]]) -> None:
+        """Emit the whole content of a credential-only file as one redacted secret."""
+        value = f.text.strip()
+        if len(value) < _MIN_CREDENTIAL_FILE_LEN or _is_non_credential_value(value):
+            return
+        start = f.text.find(value)
+        cls._add_span(f, start, start + len(value), value, evidence, seen)
+
+    @classmethod
+    def _add(cls, f, m, value, evidence: list[Evidence], seen: set[tuple[str, int]]) -> None:
+        cls._add_span(f, m.start(), m.end(), value, evidence, seen)
+
     @staticmethod
-    def _add(f, m, value, evidence: list[Evidence], seen: set[tuple[str, int]]) -> None:
-        ev = f.evidence_for_span(m.start(), m.end())
+    def _add_span(
+        f, start: int, end: int, value, evidence: list[Evidence], seen: set[tuple[str, int]]
+    ) -> None:
+        ev = f.evidence_for_span(start, end)
         key = (ev.file, ev.line_start)
         if key in seen:
             return

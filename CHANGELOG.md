@@ -4,6 +4,22 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.42.0]
+
+### Added
+- **Credential-only files are detected (ruleset 46).** A file that *is* a credential rather than
+  one that contains one had no pattern to match: no assignment, no vendor prefix. The MCP
+  publisher's login artifacts (`.mcpregistry_github_token`, `.mcpregistry_registry_token`) are now
+  read as the credentials they are. The registry token grants republish rights over the server, so
+  shipping one in a package is a standing supply-chain takeover of that component.
+
+### Fixed
+- **A long secret could survive redaction in the report.** Evidence snippets are capped at
+  240 characters *before* redaction ran, so `snippet.replace(value, marker)` silently did nothing
+  whenever the secret was longer than the cap — leaving most of a live credential (a JWT, a PEM
+  body, a token on a minified line) in the output. Redaction now removes the longest prefix of the
+  secret that is actually present. A security report must never re-publish what it found.
+
 ## [0.41.0]
 
 ### Fixed

@@ -142,10 +142,10 @@ def test_public_telemetry_ingestion_key_demoted(tmp_path):
     # A client-side telemetry ingestion key is publishable by design (like a Sentry DSN). FP:
     # snowflake-connector-python ships keys next to *.client-telemetry.<vendor>/enqueue URLs.
     src = (
-        'PROD = TelemetryAPI(\n'
+        "PROD = TelemetryAPI(\n"
         '    url="https://client-telemetry.snowflakecomputing.com/enqueue",\n'
         '    api_key="wLpEKqnLOW9tGNwTjab5N611YQApOb3t9xOnE1rX",\n'
-        ')\n'
+        ")\n"
     )
     res = _scan(tmp_path, "telemetry_oob.py", src)
     assert _finding(res) is None
@@ -169,6 +169,7 @@ def test_clean_file_no_secrets(tmp_path):
 # gcloud itself ships one. FP: gemini-cli scored critical/100 via ST-SECRET-EMBEDDED +
 # ST-COMBO-EXFIL on its own oauth2.ts loopback-flow secret.
 
+
 def _gocspx() -> str:
     # Assembled at runtime (see fake_token) so no GOCSPX- partner-pattern literal is committed.
     return fake_token("GOCSPX-", "4uHgMPm1o7SkgeV6Cu5clXFsxl9qT")
@@ -188,8 +189,7 @@ def test_web_app_gocspx_secret_still_flagged(tmp_path):
     # Recall guard: the SAME value without installed-app markers (a web-app config with an
     # https redirect) is a real leaked secret and stays scored.
     src = (
-        f'client_secret = "{_gocspx()}"\n'
-        'redirect_uri = "https://app.example.com/oauth/callback"\n'
+        f'client_secret = "{_gocspx()}"\nredirect_uri = "https://app.example.com/oauth/callback"\n'
     )
     res = _scan(tmp_path, "settings.py", src)
     assert _finding(res) is not None
@@ -202,3 +202,51 @@ def test_non_gocspx_secret_with_localhost_still_flagged(tmp_path):
     src = f'token = "{key}"\nconst REDIRECT = "http://localhost:1234/cb";\n'
     res = _scan(tmp_path, "cli.py", src)
     assert _finding(res) is not None
+
+
+# --- credential-only files ------------------------------------------------------------------
+# `mcp-publisher login` writes its credentials into the working directory. Publishing from that
+# directory packs them into the release artifact — a mistake real MCP servers on npm ship today.
+# These files hold a bare token with no assignment and no vendor prefix, so the key/value and
+# known-provider patterns cannot see them at all.
+
+
+def test_publisher_registry_token_file_is_detected(tmp_path):
+    # A JWT-shaped registry token: this credential grants the right to republish the server in
+    # the MCP registry, i.e. supply-chain takeover of the component.
+    jwt = "eyJhbGciOiJIUzI1NiJ9." + "a1b2C3d4" * 40 + ".sIgNaTuRe123"
+    res = _scan(tmp_path, ".mcpregistry_registry_token", f'{{"token":"{jwt}"}}')
+    finding = _finding(res)
+    assert finding is not None
+    assert finding.threat_class is ThreatClass.RISKY_CONSTRUCT
+    assert [e.file for e in finding.evidence] == [".mcpregistry_registry_token"]
+
+
+def test_publisher_github_token_file_is_detected(tmp_path):
+    token = fake_token("ghu_", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5")
+    res = _scan(tmp_path, ".mcpregistry_github_token", token)
+    assert _finding(res) is not None
+
+
+def test_credential_file_never_leaks_the_token_into_the_report(tmp_path):
+    """The report must not re-publish what it found — not even a truncated prefix.
+
+    The snippet is capped at MAX_SNIPPET_CHARS *before* redaction runs, so a long secret used to
+    survive as a ~230-character prefix of a live credential.
+    """
+    body = "a1b2C3d4" * 60  # comfortably longer than one snippet
+    jwt = "eyJhbGciOiJIUzI1NiJ9." + body + ".sIgNaTuRe123"
+    res = _scan(tmp_path, ".mcpregistry_registry_token", f'{{"token":"{jwt}"}}')
+    snippet = _finding(res).evidence[0].snippet
+    assert "redacted" in snippet
+    assert body[:32] not in snippet
+
+
+def test_empty_credential_file_is_not_a_leak(tmp_path):
+    # A stub left by a failed login is not a shipped credential.
+    assert _finding(_scan(tmp_path, ".mcpregistry_github_token", "\n")) is None
+
+
+def test_placeholder_credential_file_is_not_a_leak(tmp_path):
+    res = _scan(tmp_path, ".mcpregistry_github_token", "your-token-here-placeholder")
+    assert _finding(res) is None
