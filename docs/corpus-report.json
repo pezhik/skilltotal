@@ -1,18 +1,18 @@
 {
   "provenance": {
-    "engine_version": "0.39.0",
-    "ruleset_version": 43,
+    "engine_version": "0.42.0",
+    "ruleset_version": 46,
     "report_schema_version": "1.5",
-    "generated_at": "2026-08-17",
-    "manifest_sha256": "34fc163fb1b7a21c7e4d0144a7ee71e550f606a67f680960c0cbe596e1316fdb",
-    "components_total": 42,
-    "scanned": 42,
+    "generated_at": "2026-08-22",
+    "manifest_sha256": "0fa2b1a24935e5c3615aee6a4f43c8efe1657443c4ab4684f6a6ee0186266b45",
+    "components_total": 47,
+    "scanned": 47,
     "skipped": 0,
     "errors": 0
   },
   "risk_distribution": {
     "low": {
-      "count": 42,
+      "count": 47,
       "pct": 100.0
     },
     "medium": {
@@ -35,15 +35,15 @@
   "owasp": {
     "AST01": {
       "count": 2,
-      "pct": 4.8
+      "pct": 4.3
     },
     "AST02": {
       "count": 8,
-      "pct": 19.0
+      "pct": 17.0
     },
     "AST03": {
       "count": 4,
-      "pct": 9.5
+      "pct": 8.5
     },
     "AST04": {
       "count": 0,
@@ -51,7 +51,7 @@
     },
     "AST05": {
       "count": 1,
-      "pct": 2.4
+      "pct": 2.1
     },
     "AST06": {
       "count": 0,
@@ -76,46 +76,46 @@
   },
   "capabilities": {
     "delegated_authentication": {
-      "count": 11,
-      "pct": 26.2
+      "count": 13,
+      "pct": 27.7
     },
     "dynamic_code_execution": {
       "count": 4,
-      "pct": 9.5
+      "pct": 8.5
     },
     "filesystem_read": {
       "count": 21,
-      "pct": 50.0
+      "pct": 44.7
     },
     "filesystem_write": {
       "count": 16,
-      "pct": 38.1
+      "pct": 34.0
     },
     "install_time_execution": {
       "count": 8,
-      "pct": 19.0
+      "pct": 17.0
     },
     "mcp_tools_detected": {
-      "count": 20,
-      "pct": 47.6
+      "count": 24,
+      "pct": 51.1
     },
     "network_egress": {
       "count": 27,
-      "pct": 64.3
+      "pct": 57.4
     },
     "scoped_identity": {
       "count": 4,
-      "pct": 9.5
+      "pct": 8.5
     },
     "shell_execution": {
-      "count": 18,
-      "pct": 42.9
+      "count": 19,
+      "pct": 40.4
     }
   },
   "top_rules": [
     {
       "id": "ST-MCP-DETECTED",
-      "count": 20
+      "count": 24
     },
     {
       "id": "ST-NET-PY",
@@ -127,30 +127,30 @@
     },
     {
       "id": "ST-SHELL-NODE",
-      "count": 12
+      "count": 13
+    },
+    {
+      "id": "ST-AUTH-DELEGATED",
+      "count": 13
     },
     {
       "id": "ST-FS-PY-READ",
       "count": 12
     },
     {
-      "id": "ST-AUTH-DELEGATED",
-      "count": 11
-    },
-    {
       "id": "ST-FS-NODE-READ",
-      "count": 9
+      "count": 10
     },
     {
       "id": "ST-FS-PY-WRITE",
       "count": 9
     },
     {
-      "id": "ST-FS-NODE-WRITE",
-      "count": 7
+      "id": "ST-SHELL-PY",
+      "count": 8
     },
     {
-      "id": "ST-SHELL-PY",
+      "id": "ST-FS-NODE-WRITE",
       "count": 7
     },
     {
@@ -158,12 +158,12 @@
       "count": 6
     },
     {
-      "id": "ST-AUTH-SCOPED",
+      "id": "ST-EXPOSE-BIND",
       "count": 4
     },
     {
-      "id": "ST-EXPOSE-BIND",
-      "count": 3
+      "id": "ST-AUTH-SCOPED",
+      "count": 4
     },
     {
       "id": "ST-MCP-DANGEROUS-TOOL",
@@ -176,7 +176,7 @@
   ],
   "by_type": {
     "mcp": {
-      "low": 27,
+      "low": 32,
       "medium": 0,
       "high": 0,
       "critical": 0
@@ -486,6 +486,41 @@
       "source": "https://github.com/ankimcp/anki-mcp-server-addon",
       "type": "mcp",
       "name": "anki-mcp-server-addon",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "pypi:armor-mcp",
+      "type": "mcp",
+      "name": "armor-mcp",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/arpi-ai/arpi-mcp",
+      "type": "mcp",
+      "name": "arpi-mcp",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/auralogs-ai/auralogs-mcp",
+      "type": "mcp",
+      "name": "auralogs",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/kevinfee3/authoryze-mcp",
+      "type": "mcp",
+      "name": "authoryze",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/Samp2Alex/auxen-mcp",
+      "type": "mcp",
+      "name": "auxen",
       "status": "ok",
       "detail": ""
     }

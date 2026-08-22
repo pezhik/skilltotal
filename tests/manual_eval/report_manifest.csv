@@ -41,3 +41,8 @@ https://github.com/matebenyovszky/agentplaybooks,git,mcp,agentplaybooks
 https://github.com/embeddedlayers/mcp-analytics,git,mcp,analytics
 npm:@ankimcp/anki-mcp-server,npm,mcp,anki-mcp-server
 https://github.com/ankimcp/anki-mcp-server-addon,git,mcp,anki-mcp-server-addon
+pypi:armor-mcp,pypi,mcp,armor-mcp
+https://github.com/arpi-ai/arpi-mcp,git,mcp,arpi-mcp
+https://github.com/auralogs-ai/auralogs-mcp,git,mcp,auralogs
+https://github.com/kevinfee3/authoryze-mcp,git,mcp,authoryze
+https://github.com/Samp2Alex/auxen-mcp,git,mcp,auxen
