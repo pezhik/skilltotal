@@ -3,16 +3,16 @@
     "engine_version": "0.42.0",
     "ruleset_version": 46,
     "report_schema_version": "1.5",
-    "generated_at": "2026-08-22",
-    "manifest_sha256": "0fa2b1a24935e5c3615aee6a4f43c8efe1657443c4ab4684f6a6ee0186266b45",
-    "components_total": 47,
-    "scanned": 47,
+    "generated_at": "2026-08-24",
+    "manifest_sha256": "4259aed7ced6f1fc2942d19f39a1885e8a4161de62bded376a46876064b66e57",
+    "components_total": 52,
+    "scanned": 52,
     "skipped": 0,
     "errors": 0
   },
   "risk_distribution": {
     "low": {
-      "count": 47,
+      "count": 52,
       "pct": 100.0
     },
     "medium": {
@@ -35,15 +35,15 @@
   "owasp": {
     "AST01": {
       "count": 2,
-      "pct": 4.3
+      "pct": 3.8
     },
     "AST02": {
       "count": 8,
-      "pct": 17.0
+      "pct": 15.4
     },
     "AST03": {
       "count": 4,
-      "pct": 8.5
+      "pct": 7.7
     },
     "AST04": {
       "count": 0,
@@ -51,7 +51,7 @@
     },
     "AST05": {
       "count": 1,
-      "pct": 2.1
+      "pct": 1.9
     },
     "AST06": {
       "count": 0,
@@ -77,49 +77,49 @@
   "capabilities": {
     "delegated_authentication": {
       "count": 13,
-      "pct": 27.7
+      "pct": 25.0
     },
     "dynamic_code_execution": {
       "count": 4,
-      "pct": 8.5
+      "pct": 7.7
     },
     "filesystem_read": {
-      "count": 21,
-      "pct": 44.7
+      "count": 22,
+      "pct": 42.3
     },
     "filesystem_write": {
-      "count": 16,
-      "pct": 34.0
+      "count": 17,
+      "pct": 32.7
     },
     "install_time_execution": {
       "count": 8,
-      "pct": 17.0
+      "pct": 15.4
     },
     "mcp_tools_detected": {
-      "count": 24,
-      "pct": 51.1
+      "count": 29,
+      "pct": 55.8
     },
     "network_egress": {
-      "count": 27,
-      "pct": 57.4
+      "count": 28,
+      "pct": 53.8
     },
     "scoped_identity": {
       "count": 4,
-      "pct": 8.5
+      "pct": 7.7
     },
     "shell_execution": {
       "count": 19,
-      "pct": 40.4
+      "pct": 36.5
     }
   },
   "top_rules": [
     {
       "id": "ST-MCP-DETECTED",
-      "count": 24
+      "count": 29
     },
     {
       "id": "ST-NET-PY",
-      "count": 14
+      "count": 15
     },
     {
       "id": "ST-NET-NODE",
@@ -135,7 +135,7 @@
     },
     {
       "id": "ST-FS-PY-READ",
-      "count": 12
+      "count": 13
     },
     {
       "id": "ST-FS-NODE-READ",
@@ -143,7 +143,7 @@
     },
     {
       "id": "ST-FS-PY-WRITE",
-      "count": 9
+      "count": 10
     },
     {
       "id": "ST-SHELL-PY",
@@ -176,7 +176,7 @@
   ],
   "by_type": {
     "mcp": {
-      "low": 32,
+      "low": 37,
       "medium": 0,
       "high": 0,
       "critical": 0
@@ -521,6 +521,41 @@
       "source": "https://github.com/Samp2Alex/auxen-mcp",
       "type": "mcp",
       "name": "auxen",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/auxen-ai/auxen-mcp",
+      "type": "mcp",
+      "name": "auxen",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/BackEngine-ai/backengine-mcp",
+      "type": "mcp",
+      "name": "backengine-mcp",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "pypi:mainbook-mcp",
+      "type": "mcp",
+      "name": "bank-statement-converter",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/gih2yun/bareun-mcp",
+      "type": "mcp",
+      "name": "bareun",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/navbuildz/basethread-mcp",
+      "type": "mcp",
+      "name": "basethread",
       "status": "ok",
       "detail": ""
     }
