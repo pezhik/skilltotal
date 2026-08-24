@@ -46,6 +46,23 @@ files inside the component.
   of a compromise, not just that a secret exists.
 - **Free and open source** (Apache-2.0) — the full static report is free, forever.
 
+## Measured, not asserted
+
+Detection claims are cheap, so the numbers behind them are published with the data and the code
+that produced them.
+
+- **[The whole MCP registry, scanned](docs/mcp-registry-survey.md)** — every distinct component in
+  the official registry, 17,535 of them, in one deterministic run.
+  81.5% expose tools to an agent, 65.2% can reach the network, 29.3% can execute shell commands —
+  and the risk distribution underneath is far flatter, because a capability scores zero here.
+  [Raw JSON](docs/mcp-registry-survey.json) · [the harness](tests/manual_eval/survey_registry.py).
+- **[Detection efficacy](docs/efficacy-report.md)** — recall and precision on a labelled corpus,
+  regenerated every release and enforced by CI as a floor.
+- **[Corpus report](docs/corpus-report.md)** — full findings across real published AI components.
+
+Every one of these reproduces: same input, same engine, same output. Nothing is executed and no
+LLM is involved.
+
 ## Install
 
 Requires **Python 3.10+**. Zero runtime dependencies. `git` is required only for scanning
