@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.43.0]
+
+### Added
+- **A `.env` shipped inside a released package is detected (ruleset 47).** The scanner understood a
+  *reference* to `.env` in code but not the file's presence in the artifact, so a published npm
+  package carrying a real `.env` scored 0/100. It fires only for published packages — a `.env` in a
+  working tree is correct usage — skips `.env.example` and friends, and reports the variable
+  **names with the values withheld**, since a report that carried them would be the leak.
+
 ## [0.42.0]
 
 ### Added

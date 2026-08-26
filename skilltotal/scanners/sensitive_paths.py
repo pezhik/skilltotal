@@ -87,8 +87,21 @@ def _suppresses_env(relpath: str) -> bool:
 # the credential-exfiltration combo. Real access (a path passed to open()/readFileSync()) is a
 # function argument — not a guard segment, keyword, or bare list element — so it still fires.
 _GUARD_PATH_SEGMENTS = frozenset(
-    {"policy", "policies", "guard", "guards", "denylist", "allowlist", "blocklist", "blocklists",
-     "sandbox", "permission", "permissions", "security", "acl"}
+    {
+        "policy",
+        "policies",
+        "guard",
+        "guards",
+        "denylist",
+        "allowlist",
+        "blocklist",
+        "blocklists",
+        "sandbox",
+        "permission",
+        "permissions",
+        "security",
+        "acl",
+    }
 )
 _GUARD_KEYWORDS = re.compile(
     r"(?i)\b(?:deny|denied|denylist|block|blocked|blocklist|forbid|forbidden|exclude|excluded|"
@@ -141,6 +154,51 @@ def _cited_in_markdown_code(relpath: str, line_text: str, matched: str) -> bool:
     return any(matched in segments[i] for i in range(1, len(segments), 2))
 
 
+# A dotenv file that ships INSIDE a released package. `.env` is where a project keeps its
+# environment secrets, so in a working tree it is normal and gitignored — but a published
+# artifact has no reason to carry one, and it gets there the same way the MCP publisher's
+# tokens do: the packer captured the project root. Documentation variants are excluded;
+# `.env.example` exists in order to be shipped.
+_ENV_FILE_RE = re.compile(r"^\.env(\.[A-Za-z0-9_-]+)?$")
+_ENV_TEMPLATE_RE = re.compile(
+    r"^\.env\.(example|sample|template|dist|defaults?|tpl|schema)$", re.IGNORECASE
+)
+_ENV_ASSIGNMENT_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
+# Below this the file holds nothing worth calling a shipped configuration.
+_MIN_ENV_BYTES = 8
+_ENV_KEYS_SHOWN = 8
+
+
+def _env_evidence(f) -> Evidence | None:
+    """Evidence for a shipped dotenv: the variable NAMES, never their values.
+
+    The values are the entire reason this is a finding, so putting them in the snippet would make
+    the report the leak. The names alone are what a reader needs — they say which credentials to
+    go and rotate.
+    """
+    assignments: list[str] = []
+    first_line = 1
+    for n, raw in enumerate(f.text.splitlines(), start=1):
+        m = _ENV_ASSIGNMENT_RE.match(raw)
+        if not m or not m.group(2).strip():
+            continue
+        if not assignments:
+            first_line = n
+        assignments.append(m.group(1))
+    if not assignments:
+        return None
+    shown = ", ".join(f"{k}=…" for k in assignments[:_ENV_KEYS_SHOWN])
+    more = len(assignments) - _ENV_KEYS_SHOWN
+    if more > 0:
+        shown += f", and {more} more"
+    return Evidence(
+        file=f.relpath,
+        line_start=first_line,
+        line_end=first_line,
+        snippet=f"{len(assignments)} variable(s), values withheld: {shown}",
+    )
+
+
 _WEAK = re.compile(r"\b(?:credentials|secrets)\b", re.IGNORECASE)
 _SENS_WORD_EXAMPLES = 8
 
@@ -168,6 +226,24 @@ class SensitivePathScanner(Scanner):
             # scanner defines `id_rsa`). Demote those so a security tool does not flag itself.
             code_context="strings_and_comments",
             pattern=_STRONG_PATHS,
+        ),
+        RuleSpec(
+            id="ST-ENV-SHIPPED",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Environment file shipped in the released package",
+            description=(
+                "The published artifact contains a .env file. That is where a project keeps its "
+                "environment secrets; it reaches a release when the packer captures the project "
+                "root, the same way publisher credentials do."
+            ),
+            recommendation=(
+                "Treat every value in it as exposed and rotate it, then exclude the file from the "
+                "release (a `files` allowlist or .npmignore for npm, MANIFEST.in for a Python "
+                "sdist — .gitignore alone excludes it from neither)."
+            ),
+            capability=None,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
         ),
         # Listed for `rules list`; bare secret words are routed to needs_review.
         RuleSpec(
@@ -272,14 +348,23 @@ class SensitivePathScanner(Scanner):
                 )
             )
 
+        env_shipped: list[Evidence] = []
+        for f in index.files:
+            name = f.relpath.rsplit("/", 1)[-1]
+            if not _ENV_FILE_RE.match(name) or _ENV_TEMPLATE_RE.match(name):
+                continue
+            if len(f.text.strip()) < _MIN_ENV_BYTES:
+                continue
+            ev = _env_evidence(f)
+            if ev is not None:
+                env_shipped.append(ev)
+
         evidence = evidence[:MAX_EVIDENCE_PER_FINDING]
         findings: list[Finding] = []
         if evidence:
             description = strong_rule.description
             if len(evidence) > 1:
-                description = (
-                    f"{description} ({len(evidence)} occurrence(s) shown as evidence)."
-                )
+                description = f"{description} ({len(evidence)} occurrence(s) shown as evidence)."
             findings.append(
                 Finding(
                     id=strong_rule.id,
@@ -289,6 +374,21 @@ class SensitivePathScanner(Scanner):
                     description=description,
                     evidence=evidence,
                     recommendation=strong_rule.recommendation,
+                )
+            )
+
+        if env_shipped:
+            env_rule = next(r for r in self.rules if r.id == "ST-ENV-SHIPPED")
+            findings.append(
+                Finding(
+                    id=env_rule.id,
+                    severity=env_rule.severity,
+                    category=env_rule.category,
+                    title=env_rule.title,
+                    description=env_rule.description,
+                    evidence=env_shipped[:MAX_EVIDENCE_PER_FINDING],
+                    recommendation=env_rule.recommendation,
+                    threat_class=env_rule.threat_class,
                 )
             )
 

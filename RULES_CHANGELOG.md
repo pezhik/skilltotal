@@ -4,6 +4,29 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 47 (engine 0.43.0)
+
+**A `.env` that shipped inside a released package is now a finding** (`ST-ENV-SHIPPED`,
+`scanners/sensitive_paths`). The scanner already understood a *reference* to `.env` in code, and
+routed it to `needs_review` because loading a local dotenv is ordinary. It had nothing to say about
+the file itself being inside the artifact — so a published npm package carrying a real `.env`
+scored 0/100. Same shape of gap as the credential-only files in ruleset 46: we recognised the
+mention and missed the object.
+
+The mechanism is the one behind the MCP publisher's leaked tokens — the packer captured the
+project root — and a listing of the whole registry found a dozen packages doing it.
+
+Three things keep it precise. It fires **only for published package artifacts**; in a repository or
+a working directory a `.env` is how dotenv is meant to be used, and scoring it there would fire on
+nearly every project. Documentation variants (`.env.example`, `.env.sample`, `.env.template`, …)
+are excluded — those exist in order to be shipped. And a file with no non-empty assignment is not a
+finding.
+
+The evidence lists the variable **names and never the values**: the values are the entire reason
+this is a finding, so a report carrying them would be the leak. Names are what a reader acts on —
+they say which credentials to rotate, and they let an honest `.env` full of `LOCALE` and
+`SERVER_PORT` be dismissed in a second.
+
 ## ruleset 46 (engine 0.42.0)
 
 **Credential-only files are now detected** (`scanners/secrets`). A file whose *entire content* is

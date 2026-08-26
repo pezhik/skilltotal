@@ -149,6 +149,9 @@ def analyze_directory(
     if published:
         findings, build_review = _split_build_output_evidence(findings)
         needs_review.extend(build_review)
+    else:
+        findings, env_review = _split_unpublished_env_evidence(findings)
+        needs_review.extend(env_review)
 
     capabilities = extract_capabilities(findings)
 
@@ -437,6 +440,39 @@ def _split_doc_evidence(
     return kept, review
 
 
+def _split_unpublished_env_evidence(
+    findings: list[Finding],
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """ST-ENV-SHIPPED only means anything for a released artifact.
+
+    A `.env` sitting in a working tree or a git checkout is how the pattern is *supposed* to be
+    used — the file is local and gitignored — so flagging it when someone scans a directory or a
+    repository would fire on nearly every project and teach people to ignore the rule. The finding
+    is about the file having escaped into a published package, which only the component type can
+    tell us, and the component type is not visible to a scanner.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for f in findings:
+        if f.id != "ST-ENV-SHIPPED":
+            kept.append(f)
+            continue
+        files = ", ".join(dict.fromkeys(e.file for e in f.evidence))
+        review.append(
+            NeedsReview(
+                category=f.category,
+                title=f"Local .env file ({len(f.evidence)})",
+                reason=(
+                    "A .env file is present, but this component was not scanned as a published "
+                    "package, and a local .env is normal and expected. Flagged for review, not "
+                    f"scored: {files}."
+                ),
+                file=f.evidence[0].file,
+            )
+        )
+    return kept, review
+
+
 def _split_build_output_evidence(
     findings: list[Finding],
 ) -> tuple[list[Finding], list[NeedsReview]]:
@@ -651,9 +687,8 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
     if f.suffix in (".py", ".pyw"):
         if f.in_comment(e.match_offset):
             return True
-        return (
-            policy in ("strings_and_comments", "strings_and_comments_all")
-            and f.in_string(e.match_offset)
+        return policy in ("strings_and_comments", "strings_and_comments_all") and f.in_string(
+            e.match_offset
         )
     if f.suffix in (".sh", ".bash", ".zsh"):
         return f.in_shell_comment(e.match_offset)
