@@ -76,3 +76,23 @@ def test_an_empty_env_is_not_a_leak(tmp_path):
 def test_a_commented_out_env_is_not_a_leak(tmp_path):
     body = "# DATABASE_URL=\n# OPENAI_API_KEY=\nEMPTY=\n"
     assert "ST-ENV-SHIPPED" not in _scanner_ids(_write(tmp_path, ".env", body))
+
+
+def test_env_in_build_output_is_still_scored(tmp_path):
+    """The build-output demotion must not swallow this rule.
+
+    That layer exists because a bundler inlines third-party code and destroys the path signals the
+    other demotions rely on. It has nothing to say about a whole file the packer copied in: a .env
+    under build/ ships to every installer exactly like one at the root. Found on a real package
+    whose credentials our own demotion was hiding.
+    """
+    (tmp_path / "package.json").write_text('{"name":"t","version":"1.0.0"}\n', encoding="utf-8")
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / ".env").write_text(ENV_BODY, encoding="utf-8", newline="\n")
+
+    component = Component(name="t", type="npm_package", version="1.0.0", source="local")
+    report = engine.analyze_directory(tmp_path, component).to_dict()
+    finding = next(f for f in report["findings"] if f["id"] == "ST-ENV-SHIPPED")
+    assert [e["file"] for e in finding["evidence"]] == ["build/.env"]
+    assert report["risk_score"] > 0

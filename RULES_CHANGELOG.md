@@ -22,6 +22,12 @@ nearly every project. Documentation variants (`.env.example`, `.env.sample`, `.e
 are excluded — those exist in order to be shipped. And a file with no non-empty assignment is not a
 finding.
 
+It is also exempt from the build-output demotion. That layer downgrades risk claims inside
+`dist/` and `build/` because a bundler inlines third-party code and destroys the path signals the
+other demotions rely on — reasoning that has nothing to say about a whole file the packer copied
+in. A `.env` under `build/` ships to every installer exactly like one at the root. Found on a real
+package whose `DICOMWEB_USER` / `DICOMWEB_PASS` / `DICOMWEB_TOKEN` our own demotion was hiding.
+
 The evidence lists the variable **names and never the values**: the values are the entire reason
 this is a finding, so a report carrying them would be the leak. Names are what a reader acts on —
 they say which credentials to rotate, and they let an honest `.env` full of `LOCALE` and

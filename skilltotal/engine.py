@@ -473,6 +473,13 @@ def _split_unpublished_env_evidence(
     return kept, review
 
 
+# Rules whose evidence is the EXISTENCE OF A FILE rather than code inside one. The demotion below
+# exists because bundling inlines third-party code and destroys the path signals other layers rely
+# on — reasoning that has nothing to say about a whole file the packer copied in. A `.env` under
+# `build/` ships to every installer exactly like one at the root, so it stays scored.
+_BUILD_OUTPUT_EXEMPT: frozenset[str] = frozenset({"ST-ENV-SHIPPED"})
+
+
 def _split_build_output_evidence(
     findings: list[Finding],
 ) -> tuple[list[Finding], list[NeedsReview]]:
@@ -499,6 +506,9 @@ def _split_build_output_evidence(
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
+        if finding.id in _BUILD_OUTPUT_EXEMPT:
+            kept.append(finding)
+            continue
         if _THREAT_CLASS_BY_ID.get(finding.id, ThreatClass.CAPABILITY) == ThreatClass.CAPABILITY:
             kept.append(finding)
             continue
