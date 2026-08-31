@@ -1,19 +1,19 @@
 # SkillTotal corpus report
 
-Deterministic static scan of **52** AI components (engine v0.42.0, ruleset 46, schema 1.5, generated 2026-08-24).
+Deterministic static scan of **57** AI components (engine v0.43.0, ruleset 47, schema 1.5, generated 2026-08-31).
 
-Manifest sha256 `4259aed7ced6f1fc2942d19f39a1885e8a4161de62bded376a46876064b66e57` · components listed: 52 (scanned 52, skipped 0, errors 0).
+Manifest sha256 `259703def233c6754dcaff6d7b9979c7430b63cb457e1ca0f88cde9a16837f7e` · components listed: 57 (scanned 57, skipped 0, errors 0).
 
 ## Risk level distribution
 
 | level | count | % of scanned |
 |---|---|---|
-| low | 52 | 100.0% |
+| low | 56 | 98.2% |
 | medium | 0 | 0.0% |
 | high | 0 | 0.0% |
-| critical | 0 | 0.0% |
+| critical | 1 | 1.8% |
 
-**Malicious indicators:** 0 / 52 components (0.0%) carry at least one deliberate malicious-indicator finding.
+**Malicious indicators:** 0 / 57 components (0.0%) carry at least one deliberate malicious-indicator finding.
 
 ## OWASP Agentic Skills Top 10
 
@@ -21,11 +21,11 @@ Components with at least one finding mapped to each category (see `docs/owasp-ag
 
 | category | count | % |
 |---|---|---|
-| AST01 | 2 | 3.8% |
-| AST02 | 8 | 15.4% |
-| AST03 | 4 | 7.7% |
+| AST01 | 2 | 3.5% |
+| AST02 | 10 | 17.5% |
+| AST03 | 6 | 10.5% |
 | AST04 | 0 | 0.0% |
-| AST05 | 1 | 1.9% |
+| AST05 | 2 | 3.5% |
 | AST06 | 0 | 0.0% |
 | AST07 | 0 | 0.0% |
 | AST08 | 0 | 0.0% |
@@ -36,35 +36,35 @@ Components with at least one finding mapped to each category (see `docs/owasp-ag
 
 | capability | count | % |
 |---|---|---|
-| delegated_authentication | 13 | 25.0% |
-| dynamic_code_execution | 4 | 7.7% |
-| filesystem_read | 22 | 42.3% |
-| filesystem_write | 17 | 32.7% |
-| install_time_execution | 8 | 15.4% |
-| mcp_tools_detected | 29 | 55.8% |
-| network_egress | 28 | 53.8% |
-| scoped_identity | 4 | 7.7% |
-| shell_execution | 19 | 36.5% |
+| delegated_authentication | 14 | 24.6% |
+| dynamic_code_execution | 5 | 8.8% |
+| filesystem_read | 23 | 40.4% |
+| filesystem_write | 19 | 33.3% |
+| install_time_execution | 10 | 17.5% |
+| mcp_tools_detected | 33 | 57.9% |
+| network_egress | 31 | 54.4% |
+| scoped_identity | 5 | 8.8% |
+| shell_execution | 21 | 36.8% |
 
 ## Top rules
 
 | rule | components |
 |---|---|
-| ST-MCP-DETECTED | 29 |
-| ST-NET-PY | 15 |
-| ST-NET-NODE | 13 |
-| ST-SHELL-NODE | 13 |
-| ST-AUTH-DELEGATED | 13 |
-| ST-FS-PY-READ | 13 |
-| ST-FS-NODE-READ | 10 |
-| ST-FS-PY-WRITE | 10 |
-| ST-SHELL-PY | 8 |
-| ST-FS-NODE-WRITE | 7 |
-| ST-INSTALL-NPM-PREPARE | 6 |
-| ST-EXPOSE-BIND | 4 |
-| ST-AUTH-SCOPED | 4 |
-| ST-MCP-DANGEROUS-TOOL | 2 |
-| ST-DYN-NODE | 2 |
+| ST-MCP-DETECTED | 33 |
+| ST-NET-PY | 17 |
+| ST-NET-NODE | 15 |
+| ST-SHELL-NODE | 14 |
+| ST-AUTH-DELEGATED | 14 |
+| ST-FS-PY-READ | 14 |
+| ST-FS-PY-WRITE | 12 |
+| ST-FS-NODE-READ | 11 |
+| ST-SHELL-PY | 10 |
+| ST-INSTALL-NPM-PREPARE | 8 |
+| ST-FS-NODE-WRITE | 8 |
+| ST-EXPOSE-BIND | 6 |
+| ST-AUTH-SCOPED | 5 |
+| ST-MCP-SERVER-EXEC | 4 |
+| ST-DYN-NODE | 3 |
 
 ## Reproduce
 
