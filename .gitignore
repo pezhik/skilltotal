@@ -44,6 +44,7 @@ secrets.json
 # SkillTotal output artifacts
 report.json
 *.sarif
+skilltotal.json    # the GitHub Action writes this into the workspace it scans
 
 # Real-world evaluation corpus (cloned third-party repos; reproduce via fetch_corpus.py)
 tests/manual_eval/corpus/

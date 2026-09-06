@@ -4,6 +4,22 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.43.1]
+
+### Fixed
+- **The GitHub Action reported nothing on the builds it failed.** GitHub runs `shell: bash` as
+  `bash -eo pipefail`, so the gated scan aborted its step the moment it found a high-severity
+  finding — before the exit code could be captured. The action still failed the build, but the
+  `risk-score` and `risk-level` outputs came back empty exactly when there was a risk to report,
+  and the gate step ended in `exit: : numeric argument required` instead of naming the finding.
+  The gate now captures its status with `|| GATE_EXIT=$?`, and an unset status is reported as an
+  incomplete scan rather than passed to `exit`.
+
+### Added
+- **CI exercises `action.yml` end to end.** The action is a shipped artifact that pytest cannot
+  reach; it is now run against a clean and a risky fixture, asserting that the gate fails the build
+  *and* still reports the risk, and that `fail-on` changes only the exit status, never the verdict.
+
 ## [0.43.0]
 
 ### Added

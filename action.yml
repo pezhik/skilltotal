@@ -79,8 +79,12 @@ runs:
         # so the JSON file exists even when the gate trips. Capture the exit code, don't abort here.
         GATE=()
         if [ "${{ inputs.fail-on }}" = "high" ]; then GATE+=(--fail-on-high); fi
-        skilltotal scan "${{ inputs.source }}" --json --output skilltotal.json "${BASE[@]}" "${GATE[@]}"
-        GATE_EXIT=$?
+        # `|| GATE_EXIT=$?` is load-bearing. GitHub runs `shell: bash` as `bash -eo pipefail`, so a
+        # bare failing command aborts the step immediately: the assignment below never ran and the
+        # outputs were left empty exactly when a finding had been found. `||` suppresses `-e`.
+        GATE_EXIT=0
+        skilltotal scan "${{ inputs.source }}" --json --output skilltotal.json "${BASE[@]}" "${GATE[@]}" \
+          || GATE_EXIT=$?
 
         # Parse risk via stdlib in one process (never pipe python -> python on any host).
         SCORE=$(python -c "import json;print(json.load(open('skilltotal.json')).get('risk_score',''))" 2>/dev/null || echo "")
@@ -143,6 +147,13 @@ runs:
       shell: bash
       run: |
         EXIT="${{ steps.scan.outputs.gate-exit }}"
+        # Empty means the scan step never reached its last line -- the install failed, or the
+        # runner killed it. That is a failure, but `exit ""` is a shell error rather than a
+        # verdict, so name it instead of letting bash report "numeric argument required".
+        if [ -z "$EXIT" ]; then
+          echo "::error::SkillTotal did not finish scanning; see the Scan step for the cause."
+          exit 1
+        fi
         if [ "$EXIT" != "0" ]; then
           echo "::error::SkillTotal gate failed (exit $EXIT). See the Code Scanning results."
           exit "$EXIT"

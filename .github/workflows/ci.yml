@@ -44,6 +44,71 @@ jobs:
       - name: Static security scan (bandit)
         run: bandit -r skilltotal
 
+  action:
+    # `action.yml` is a shipped artifact -- it is what a Marketplace consumer runs -- and pytest
+    # cannot reach it. Exercise it end to end here, including the failure path, because the way
+    # this action breaks is by *passing* while reporting nothing.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Clean component passes the gate
+        id: clean
+        uses: ./
+        with:
+          source: tests/fixtures/clean_pkg
+          fail-on: high
+          upload-sarif: false          # this job is read-only; Code Scanning needs security-events
+          sarif-file: clean.sarif
+
+      - name: Assert the clean run reported and wrote SARIF
+        run: |
+          LEVEL='${{ steps.clean.outputs.risk-level }}'
+          SCORE='${{ steps.clean.outputs.risk-score }}'
+          echo "level=$LEVEL score=$SCORE"
+          [ "$LEVEL" = "low" ] || { echo "::error::expected low risk, got '$LEVEL'"; exit 1; }
+          [ "$SCORE" = "0" ] || { echo "::error::expected score 0, got '$SCORE'"; exit 1; }
+          [ -s clean.sarif ] || { echo "::error::no SARIF written"; exit 1; }
+
+      - name: Risky component trips the gate
+        id: risky
+        continue-on-error: true
+        uses: ./
+        with:
+          source: tests/fixtures/malicious_npm_pkg
+          fail-on: high
+          upload-sarif: false
+          sarif-file: risky.sarif
+
+      - name: Assert the gate failed AND still reported the risk
+        # The second half is the regression that matters: the gate used to abort the scan step
+        # under `bash -e`, so the action failed the build (right answer) with empty outputs and a
+        # `numeric argument required` shell error (wrong reason, and no risk to report).
+        run: |
+          OUTCOME='${{ steps.risky.outcome }}'
+          LEVEL='${{ steps.risky.outputs.risk-level }}'
+          echo "outcome=$OUTCOME level=$LEVEL"
+          [ "$OUTCOME" = "failure" ] || { echo "::error::gate did not fail the step"; exit 1; }
+          [ -n "$LEVEL" ] || { echo "::error::outputs were empty when the gate tripped"; exit 1; }
+          [ -s risky.sarif ] || { echo "::error::no SARIF written for the risky component"; exit 1; }
+
+      - name: Report-only mode reports the same risk without failing
+        id: reportonly
+        uses: ./
+        with:
+          source: tests/fixtures/malicious_npm_pkg
+          fail-on: none
+          upload-sarif: false
+          sarif-file: reportonly.sarif
+
+      - name: Assert reporting is decoupled from the gate
+        run: |
+          LEVEL='${{ steps.reportonly.outputs.risk-level }}'
+          echo "level=$LEVEL"
+          [ "$LEVEL" = '${{ steps.risky.outputs.risk-level }}' ] \
+            || { echo "::error::fail-on changed the reported risk; it must only change the exit"; exit 1; }
+          case "$LEVEL" in low|'') echo "::error::expected a risky verdict, got '$LEVEL'"; exit 1 ;; esac
+
   secrets:
     runs-on: ubuntu-latest
     steps:

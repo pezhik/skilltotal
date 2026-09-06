@@ -239,7 +239,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.43.0
+      - uses: pezhik/skilltotal@v0.43.1
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail the build on a high/critical finding (or 'none')
