@@ -60,3 +60,46 @@ def test_schema_id_matches_report_schema_version():
     assert f"report-{skilltotal.REPORT_SCHEMA_VERSION}.json" in schema, (
         "docs/report.schema.json $id does not match REPORT_SCHEMA_VERSION"
     )
+
+
+# Stdlib names that only exist from 3.11 on. `requires-python = ">=3.10"` is a promise, and
+# nothing in the toolchain checks it: ruff has no rule for "this symbol postdates target-version",
+# and a developer on 3.11+ sees a green local run. The one thing that catches it is the 3.10 CI
+# matrix leg -- which went red for 17 days without being noticed, so assert it here as well, where
+# a failure names the cause instead of a bare ImportError during collection.
+_POST_310_STDLIB = {
+    "datetime": {"UTC"},
+    "asyncio": {"TaskGroup", "Runner"},
+    "enum": {"StrEnum", "ReprEnum"},
+    "typing": {"Self", "LiteralString", "Never", "TypeVarTuple", "assert_type", "assert_never"},
+    "builtins": {"ExceptionGroup", "BaseExceptionGroup"},
+}
+
+
+def test_no_stdlib_names_newer_than_the_supported_python():
+    import ast
+
+    offenders: list[str] = []
+    for path in sorted(ROOT.rglob("*.py")):
+        parts = set(path.parts)
+        # manual_eval/corpus is third-party source fetched by the calibration harness.
+        if parts & {".git", ".venv", "node_modules"} or "corpus" in parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue  # eval-corpus samples are deliberately malformed in places
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            new_names = _POST_310_STDLIB.get(node.module or "", set())
+            for alias in node.names:
+                if alias.name in new_names:
+                    offenders.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno} "
+                        f"from {node.module} import {alias.name}"
+                    )
+    assert not offenders, (
+        "these names do not exist on Python 3.10, which pyproject still supports: "
+        + "; ".join(offenders)
+    )

@@ -18,7 +18,7 @@ import argparse
 import json
 import re
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
 
     summary = summarize(load(Path(args.survey)))
     meta = {
-        "generated": datetime.now(UTC).strftime("%Y-%m-%d"),
+        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "engine": args.engine,
         "ruleset": args.ruleset,
         "registry_entries": args.registry_entries,
