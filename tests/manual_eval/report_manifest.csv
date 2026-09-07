@@ -56,3 +56,8 @@ https://github.com/TechDocsStudio/biel-mcp,git,mcp,biel-ai
 https://github.com/bitroadai/bitroad-mcp,git,mcp,bitroad
 https://github.com/bittlebitsai/bittlebits-plugin,git,mcp,bittlebits
 npm:bizmuse-mcp,npm,mcp,bizmuse
+npm:adtest-mcp,npm,mcp,adtest-mcp
+https://github.com/BloopodotAI/bloopo-marketplace,git,mcp,bloopo
+pypi:bourdon,pypi,mcp,bourdon
+pypi:bowmark-mcp,pypi,mcp,bowmark
+https://github.com/bowmark-ai/skill,git,mcp,bowmark

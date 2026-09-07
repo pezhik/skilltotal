@@ -1,19 +1,19 @@
 {
   "provenance": {
-    "engine_version": "0.43.0",
+    "engine_version": "0.43.1",
     "ruleset_version": 47,
     "report_schema_version": "1.5",
-    "generated_at": "2026-08-31",
-    "manifest_sha256": "259703def233c6754dcaff6d7b9979c7430b63cb457e1ca0f88cde9a16837f7e",
-    "components_total": 57,
-    "scanned": 57,
+    "generated_at": "2026-09-07",
+    "manifest_sha256": "e5aa04b9af643727368201a2b1144641eeee22b0b168512dae10aa63eefa332e",
+    "components_total": 62,
+    "scanned": 62,
     "skipped": 0,
     "errors": 0
   },
   "risk_distribution": {
     "low": {
-      "count": 56,
-      "pct": 98.2
+      "count": 61,
+      "pct": 98.4
     },
     "medium": {
       "count": 0,
@@ -25,7 +25,7 @@
     },
     "critical": {
       "count": 1,
-      "pct": 1.8
+      "pct": 1.6
     }
   },
   "malicious_indicators": {
@@ -35,15 +35,15 @@
   "owasp": {
     "AST01": {
       "count": 2,
-      "pct": 3.5
+      "pct": 3.2
     },
     "AST02": {
-      "count": 10,
-      "pct": 17.5
+      "count": 11,
+      "pct": 17.7
     },
     "AST03": {
-      "count": 6,
-      "pct": 10.5
+      "count": 7,
+      "pct": 11.3
     },
     "AST04": {
       "count": 0,
@@ -51,7 +51,7 @@
     },
     "AST05": {
       "count": 2,
-      "pct": 3.5
+      "pct": 3.2
     },
     "AST06": {
       "count": 0,
@@ -77,69 +77,69 @@
   "capabilities": {
     "delegated_authentication": {
       "count": 14,
-      "pct": 24.6
+      "pct": 22.6
     },
     "dynamic_code_execution": {
       "count": 5,
-      "pct": 8.8
+      "pct": 8.1
     },
     "filesystem_read": {
-      "count": 23,
-      "pct": 40.4
+      "count": 24,
+      "pct": 38.7
     },
     "filesystem_write": {
-      "count": 19,
-      "pct": 33.3
+      "count": 20,
+      "pct": 32.3
     },
     "install_time_execution": {
-      "count": 10,
-      "pct": 17.5
+      "count": 11,
+      "pct": 17.7
     },
     "mcp_tools_detected": {
-      "count": 33,
-      "pct": 57.9
+      "count": 36,
+      "pct": 58.1
     },
     "network_egress": {
-      "count": 31,
-      "pct": 54.4
+      "count": 33,
+      "pct": 53.2
     },
     "scoped_identity": {
       "count": 5,
-      "pct": 8.8
+      "pct": 8.1
     },
     "shell_execution": {
-      "count": 21,
-      "pct": 36.8
+      "count": 23,
+      "pct": 37.1
     }
   },
   "top_rules": [
     {
       "id": "ST-MCP-DETECTED",
-      "count": 33
+      "count": 36
     },
     {
       "id": "ST-NET-PY",
-      "count": 17
+      "count": 18
     },
     {
       "id": "ST-NET-NODE",
-      "count": 15
+      "count": 16
     },
     {
       "id": "ST-SHELL-NODE",
-      "count": 14
+      "count": 15
+    },
+    {
+      "id": "ST-FS-PY-READ",
+      "count": 15
     },
     {
       "id": "ST-AUTH-DELEGATED",
       "count": 14
     },
     {
-      "id": "ST-FS-PY-READ",
-      "count": 14
-    },
-    {
       "id": "ST-FS-PY-WRITE",
-      "count": 12
+      "count": 13
     },
     {
       "id": "ST-FS-NODE-READ",
@@ -147,7 +147,7 @@
     },
     {
       "id": "ST-SHELL-PY",
-      "count": 10
+      "count": 11
     },
     {
       "id": "ST-INSTALL-NPM-PREPARE",
@@ -159,7 +159,7 @@
     },
     {
       "id": "ST-EXPOSE-BIND",
-      "count": 6
+      "count": 7
     },
     {
       "id": "ST-AUTH-SCOPED",
@@ -167,7 +167,7 @@
     },
     {
       "id": "ST-MCP-SERVER-EXEC",
-      "count": 4
+      "count": 5
     },
     {
       "id": "ST-DYN-NODE",
@@ -176,7 +176,7 @@
   ],
   "by_type": {
     "mcp": {
-      "low": 41,
+      "low": 46,
       "medium": 0,
       "high": 0,
       "critical": 1
@@ -591,6 +591,41 @@
       "source": "npm:bizmuse-mcp",
       "type": "mcp",
       "name": "bizmuse",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "npm:adtest-mcp",
+      "type": "mcp",
+      "name": "adtest-mcp",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/BloopodotAI/bloopo-marketplace",
+      "type": "mcp",
+      "name": "bloopo",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "pypi:bourdon",
+      "type": "mcp",
+      "name": "bourdon",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "pypi:bowmark-mcp",
+      "type": "mcp",
+      "name": "bowmark",
+      "status": "ok",
+      "detail": ""
+    },
+    {
+      "source": "https://github.com/bowmark-ai/skill",
+      "type": "mcp",
+      "name": "bowmark",
       "status": "ok",
       "detail": ""
     }
