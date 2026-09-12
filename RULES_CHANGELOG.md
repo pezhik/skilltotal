@@ -4,6 +4,20 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 48 (engine 0.44.0)
+
+**A directory built *for* the tests is now recognised as test code** (`file_index.is_test_path`).
+The compound-segment rule only matched the suffix form — `integration-tests`, `cli-e2e-tests`,
+`unit_test` — so a `test-site/`, `test_data/` or `spec-helpers/` directory read as production code
+and its fixtures scored. That is how firecrawl earned a malicious indicator: `apps/test-site/`
+is a site the project ships to exercise its own scraper, and it deliberately contains a
+prompt-injection sample. The fixture was doing its job; we were reading it as behaviour.
+
+The `[-_]` boundary that keeps the suffix form honest now guards the prefix form too, so
+`latest`, `contest`, `protest`, `testimonials` and `attestation` still do not match. No component
+in the evaluation corpus or the fixtures lives under a test-prefixed directory, so recall is
+unchanged.
+
 ## ruleset 47 (engine 0.43.0)
 
 **A `.env` that shipped inside a released package is now a finding** (`ST-ENV-SHIPPED`,

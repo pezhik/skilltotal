@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: pezhik/skilltotal@v0.43.1
+      - uses: pezhik/skilltotal@v0.44.0
         with:
           source: .            # a path in the repo, a git URL, or an npm:/pypi:<name> spec
           fail-on: high        # fail the build on a high/critical finding; use 'none' to report only

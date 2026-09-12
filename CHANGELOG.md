@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.44.0]
+
+### Changed
+- **Fixtures in a `test-site/` (or `test_data/`, `spec-helpers/`) directory no longer score
+  (ruleset 48).** The test-path rule matched only the suffix form of a compound segment, so a
+  directory a project builds *for* its tests was read as shipped behaviour. firecrawl's
+  `apps/test-site/` — a site it ships to exercise its own scraper, containing a deliberate
+  prompt-injection sample — was scored as a malicious indicator against the project. The word
+  boundary that keeps `latest` and `contest` out of the suffix form now guards the prefix form too.
+
 ## [0.43.1]
 
 ### Fixed

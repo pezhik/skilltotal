@@ -124,9 +124,15 @@ def _is_skipped_dir(part: str, *, skip_build_output: bool = True) -> bool:
 _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
     {"test", "tests", "__tests__", "__mocks__", "spec", "specs", "e2e"}
 )
-# A compound segment that still names a test tree: cli-e2e-tests, integration-tests, unit_test,
-# api-spec. The `[-_]` boundary keeps ordinary words out (e.g. "latest" is not a test dir).
-_TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)")
+# A compound segment that still names a test tree, in either order: cli-e2e-tests,
+# integration-tests, unit_test, api-spec (suffix form) and test-site, test_data, spec-helpers
+# (prefix form). Only the suffix form existed at first, so a directory a project builds *for* its
+# tests read as production code — firecrawl's `apps/test-site/` ships a deliberate
+# prompt-injection sample to exercise its own scraper, and that fixture scored as a malicious
+# indicator against the project.
+# The `[-_]` boundary on both sides is what keeps ordinary words out: "latest", "contest",
+# "protest", "testimonials" and "attestation" all still fail to match.
+_TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)|(?:tests?|specs?|e2e)[-_].*")
 # `^tests?\.\w+$`: a file literally named test.py / tests.py / test.ts is test scaffolding by
 # convention even outside a tests/ dir (ragflow's sdk/python/test.py carried a doc-example API
 # key that fed ST-COMBO-EXFIL). `^test(ing)?_?utils?\.`: a `testing_utils.py` / `test_utils.py`

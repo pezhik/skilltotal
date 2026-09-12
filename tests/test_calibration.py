@@ -29,6 +29,27 @@ def test_is_test_path():
     assert not is_test_path("lib/contest.py")  # not 'conftest'
 
 
+def test_is_test_path_matches_a_test_prefixed_directory():
+    """A directory built FOR the tests, not just one named after them.
+
+    Only the suffix form (integration-tests) matched at first, so firecrawl's `apps/test-site/` --
+    a site it ships to exercise its own scraper, deliberately containing a prompt-injection
+    sample -- read as production code and scored as a malicious indicator against the project.
+    """
+    assert is_test_path("apps/test-site/src/pages/prompt-injection.astro")
+    assert is_test_path("test_data/payload.json")
+    assert is_test_path("spec-helpers/build.js")
+    # The `[-_]` boundary is the whole safety margin: ordinary words must still fall through.
+    for benign in (
+        "src/latest/index.ts",
+        "app/testimonials/page.tsx",
+        "lib/protest.py",
+        "docs/attestation/readme.md",
+        "src/testing.ts",
+    ):
+        assert not is_test_path(benign), benign
+
+
 # --- sensitive paths: process.env must not be flagged -------------------------
 def _sens(tmp_path: Path, content: str):
     _write(tmp_path, "f.js", content)
