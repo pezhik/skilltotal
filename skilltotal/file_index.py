@@ -168,6 +168,9 @@ _DATA_CORPUS_SEGMENTS: frozenset[str] = frozenset(
         "eval", "evals", "eval_datasets", "eval-datasets", "evaluation", "evaluations",
         "benchmark", "benchmarks", "datasets", "dataset",
         "golden", "goldens", "snapshots", "__snapshots__", "corpus", "corpora",
+        # Security-testing payload lists (`payloads/llm_testing/adversarial_prompts.txt`,
+        # `payloads/csp_bypass/waf_specific_bypasses.txt`): attack strings kept as data.
+        "payloads",
     }
 )
 # Executable code suffixes. Evidence in these is NEVER treated as inert corpus data, even inside
@@ -338,6 +341,10 @@ def is_doc_path(relpath: str) -> bool:
     suffix = name[name.rindex("."):] if "." in name[1:] else ""
     if suffix not in _PROSE_SUFFIXES:
         return False
+    # Prose filed under an audit directory is an audit write-up (`audits/<run>/raw/OBS-006.txt`).
+    # Code there (lighthouse's `audits/*.js`) is excluded by the suffix check above.
+    if suffix and "audits" in parts[:-1]:
+        return True
     stem = name[: name.rindex(".")] if suffix else name
     # Markdown-family prose is human-facing documentation unless its NAME says it is an
     # instruction surface. Keying on a documentation keyword alone left `THREAT_MODEL.md`,
@@ -385,93 +392,127 @@ _C_FAMILY_SUFFIXES: frozenset[str] = frozenset(
 )
 
 
-def _c_comment_spans(text: str) -> list[tuple[int, int]]:
-    """Char-spans of ``//`` line and ``/* */`` block comments in C-family source.
+# JavaScript-family suffixes, where `/` can also open a regular-expression literal.
+_JS_FAMILY_SUFFIXES: frozenset[str] = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
+# After one of these, a `/` starts a regex literal rather than a division.
+_JS_REGEX_PRECEDERS = frozenset("(,=:[!&|?{};+-*%<>~^")
+_JS_REGEX_KEYWORDS = frozenset(
+    {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw",
+     "yield", "await"}
+)
 
-    String-aware (skips ``'…'``/``"…"``/`` `…` `` with backslash escapes) so a ``//`` or ``/*``
-    inside a string literal is not mistaken for a comment. Best-effort and stdlib-only; template
-    ``${…}`` interpolation is treated as opaque string content (worst case: no demotion).
+
+def _js_regex_end(text: str, i: int) -> int | None:
+    """End offset of a JS regex literal opening at ``text[i] == "/"``, or None if it is not one.
+
+    A `/` opens a regex only where an expression may start: at the start of the file, after an
+    operator or opening bracket, or after a keyword such as ``return``. The literal ends at the
+    first unescaped `/` outside a ``[...]`` class; a newline first means it was a division.
     """
-    spans: list[tuple[int, int]] = []
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if c in ("'", '"', "`"):
-            quote = c
-            i += 1
-            while i < n:
-                if text[i] == "\\":
-                    i += 2
-                    continue
-                if text[i] == quote:
-                    i += 1
-                    break
-                i += 1
+    j = i - 1
+    while j >= 0 and text[j].isspace():
+        j -= 1
+    after = text[i + 1 : i + 2]
+    if j >= 0 and text[j] == "<" and (after.isalpha() or after == ">"):
+        return None  # a JSX closing tag, `</div>` or `</>`
+    if j >= 0 and text[j] not in _JS_REGEX_PRECEDERS:
+        k = j
+        while k >= 0 and (text[k].isalnum() or text[k] in "_$"):
+            k -= 1
+        if text[k + 1 : j + 1] not in _JS_REGEX_KEYWORDS:
+            return None
+    n = len(text)
+    k = i + 1
+    in_class = False
+    while k < n:
+        ch = text[k]
+        if ch == "\n":
+            return None
+        if ch == "\\":
+            k += 2
             continue
-        if c == "/" and i + 1 < n:
-            nxt = text[i + 1]
-            if nxt == "/":
-                start = i
-                i += 2
-                while i < n and text[i] != "\n":
-                    i += 1
-                spans.append((start, i))
-                continue
-            if nxt == "*":
-                start = i
-                i += 2
-                while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
-                    i += 1
-                i = min(n, i + 2)
-                spans.append((start, i))
-                continue
-        i += 1
-    return spans
+        if ch == "[":
+            in_class = True
+        elif ch == "]":
+            in_class = False
+        elif ch == "/" and not in_class:
+            k += 1
+            while k < n and text[k].isalpha():
+                k += 1
+            return k
+        k += 1
+    return None
 
 
-def _c_string_spans(text: str) -> list[tuple[int, int]]:
-    """Char-spans of ``'…'``/``"…"``/`` `…` `` string literals in C-family source.
+def _c_code_spans(
+    text: str, suffix: str
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
+    """Char-spans of comments, string literals and JS regex literals, from one lexing pass.
 
-    The mirror image of :func:`_c_comment_spans`: comment-aware (skips ``//`` line and ``/* */``
-    block comments) so a quote inside a comment does not open a bogus string, and it RECORDS the
-    string spans instead of skipping them. Same best-effort escape handling and stdlib-only
-    approach; template ``${…}`` interpolation is treated as opaque string content (worst case: the
-    whole template counts as one string span). Used only by the ``strings_and_comments_all``
-    code-context policy (ST-PROMPT-INJECTION).
+    Comments are ``//`` lines and ``/* */`` blocks; strings are ``'…'``/``"…"``/`` `…` `` with
+    backslash escapes. Best-effort and stdlib-only. Three details keep one odd token from
+    desynchronising the rest of the file, which silently turned every later comment into code
+    and every later string into a live directive:
+
+    * a ``'`` or ``"`` string ends at an unescaped newline (none of these languages continue one
+      across lines), so an apostrophe in JSX text or a Rust lifetime cannot swallow the file;
+    * a triple double-quote opens a string (Kotlin, Swift, Scala, C#) that may span lines;
+    * in the JavaScript family a regex literal such as ``/'/g`` is skipped as a unit, so the
+      quote inside it does not open a string.
+
+    Template ``${…}`` interpolation is treated as opaque string content.
     """
-    spans: list[tuple[int, int]] = []
+    comments: list[tuple[int, int]] = []
+    strings: list[tuple[int, int]] = []
+    regexes: list[tuple[int, int]] = []
+    js = suffix in _JS_FAMILY_SUFFIXES
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        if c == '"' and text.startswith('"""', i):
+            start = i
+            end = text.find('"""', i + 3)
+            i = n if end < 0 else end + 3
+            strings.append((start, i))
+            continue
         if c in ("'", '"', "`"):
-            quote = c
             start = i
             i += 1
             while i < n:
-                if text[i] == "\\":
+                ch = text[i]
+                if ch == "\\":
                     i += 2
                     continue
-                if text[i] == quote:
+                if ch == c:
                     i += 1
                     break
+                if ch == "\n" and c != "`":
+                    break
                 i += 1
-            spans.append((start, i))
+            strings.append((start, min(i, n)))
             continue
         if c == "/" and i + 1 < n:
             nxt = text[i + 1]
             if nxt == "/":
-                i += 2
+                start = i
                 while i < n and text[i] != "\n":
                     i += 1
+                comments.append((start, i))
                 continue
             if nxt == "*":
-                i += 2
-                while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
-                    i += 1
-                i = min(n, i + 2)
+                start = i
+                end = text.find("*/", i + 2)
+                i = n if end < 0 else end + 2
+                comments.append((start, i))
                 continue
+            if js:
+                end = _js_regex_end(text, i)
+                if end is not None:
+                    regexes.append((i, end))
+                    i = end
+                    continue
         i += 1
-    return spans
+    return comments, strings, regexes
 
 
 # Rust unit tests live INLINE in the same .rs file as production code (gated by `#[cfg(test)]`
@@ -711,6 +752,10 @@ class IndexedFile:
     _c_string_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed char-spans of JavaScript-family regex literals (/…/flags).
+    _c_regex_spans_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
     # Lazily-computed char-spans of markdown fenced code blocks.
     _md_code_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -794,7 +839,7 @@ class IndexedFile:
         if self._sh_comment_spans is not None:
             return
         spans: list[tuple[int, int]] = []
-        if self.suffix in (".sh", ".bash", ".zsh"):
+        if self.is_shell_like:
             offset = 0
             for line in self.text.splitlines(keepends=True):
                 hash_idx = _unquoted_hash_index(line)
@@ -848,37 +893,111 @@ class IndexedFile:
             return False
         return self._line_starts[line_no - 1] + hash_at <= offset
 
-    def _ensure_c_comment_spans(self) -> None:
-        """Record C-family (// and /* */) comment char-spans once, for C-family files only."""
+    def _ensure_c_code_spans(self) -> None:
+        """Record C-family comment and string-literal char-spans once, for C-family files only."""
         if self._c_comment_spans_cache is not None:
             return
-        self._c_comment_spans_cache = (
-            _c_comment_spans(self.text) if self.suffix in _C_FAMILY_SUFFIXES else []
-        )
+        if self.suffix in _C_FAMILY_SUFFIXES:
+            (
+                self._c_comment_spans_cache,
+                self._c_string_spans_cache,
+                self._c_regex_spans_cache,
+            ) = _c_code_spans(self.text, self.suffix)
+        else:
+            self._c_comment_spans_cache = []
+            self._c_string_spans_cache = []
+            self._c_regex_spans_cache = []
 
     def in_c_comment(self, offset: int) -> bool:
         """True if ``offset`` falls inside a C-family ``//`` or ``/* */`` comment.
 
         Returns False for non-C-family files, so callers can invoke it unconditionally.
         """
-        self._ensure_c_comment_spans()
+        self._ensure_c_code_spans()
         return _offset_in_spans(self._c_comment_spans_cache, offset)
-
-    def _ensure_c_string_spans(self) -> None:
-        """Record C-family string-literal char-spans once, for C-family files only."""
-        if self._c_string_spans_cache is not None:
-            return
-        self._c_string_spans_cache = (
-            _c_string_spans(self.text) if self.suffix in _C_FAMILY_SUFFIXES else []
-        )
 
     def in_c_string(self, offset: int) -> bool:
         """True if ``offset`` falls inside a C-family string literal ('…'/"…"/`…`).
 
         Returns False for non-C-family files, so callers can invoke it unconditionally.
         """
-        self._ensure_c_string_spans()
+        self._ensure_c_code_spans()
         return _offset_in_spans(self._c_string_spans_cache, offset)
+
+    def in_js_regex(self, offset: int) -> bool:
+        """True if ``offset`` falls inside a JavaScript-family regex literal (``/…/flags``).
+
+        A phrase inside a regex is a pattern the code matches against, never text it emits.
+        Returns False for other files, so callers can invoke it unconditionally.
+        """
+        self._ensure_c_code_spans()
+        return _offset_in_spans(self._c_regex_spans_cache, offset)
+
+    def in_rendered_markup_text(self, offset: int) -> bool:
+        """True if ``offset`` is page text in HTML or JSX: what a browser renders for a person.
+
+        In ``.html``/``.htm`` that is everything outside ``<script>`` and ``<style>`` blocks and
+        outside tags. In ``.tsx``/``.jsx`` it is text between a closing ``>`` and the next ``<``
+        with no ``{``/``}`` between, found without leaving the current element. Used only for
+        prompt injection: a blog post explaining "ignore previous instructions" is a page, not
+        a directive to the agent running the component.
+        """
+        text = self.text
+        if self.suffix in (".html", ".htm"):
+            lowered = text.lower()
+            for tag in ("script", "style"):
+                open_at = lowered.rfind("<" + tag, 0, offset)
+                if open_at >= 0 and lowered.find("</" + tag, open_at, offset) < 0:
+                    return False
+            return text.rfind("<", 0, offset) <= text.rfind(">", 0, offset)
+        if self.suffix in (".tsx", ".jsx"):
+            if self.in_c_string(offset) or self.in_c_comment(offset) or self.in_js_regex(offset):
+                return False
+            back = max(text.rfind(ch, 0, offset) for ch in "<>{}")
+            ahead = [p for p in (text.find(ch, offset) for ch in "<>{}") if p >= 0]
+            return back >= 0 and text[back] == ">" and bool(ahead) and text[min(ahead)] == "<"
+        return False
+
+    def in_sql_comment(self, offset: int) -> bool:
+        """True if ``offset`` sits after an unquoted ``--`` on its line in a ``.sql`` file."""
+        if self.suffix != ".sql":
+            return False
+        line_no = self.line_of_offset(offset)
+        line = self._line_text(line_no)
+        col = offset - self._line_starts[line_no - 1]
+        in_quote = False
+        for k, ch in enumerate(line[:col]):
+            if ch == "'":
+                in_quote = not in_quote
+            elif not in_quote and line.startswith("--", k):
+                return True
+        return False
+
+    def in_shell_quoted(self, offset: int) -> bool:
+        """True if ``offset`` is inside a quoted argument on a shell or Makefile line.
+
+        A quoted string on a command line is data handed to a program. It is not text an agent
+        reads as an instruction: `scan "Ignore previous instructions"` demonstrates a scanner.
+        """
+        if not self.is_shell_like:
+            return False
+        line_no = self.line_of_offset(offset)
+        line = self._line_text(line_no)
+        col = offset - self._line_starts[line_no - 1]
+        quote = ""
+        for ch in line[:col]:
+            if quote:
+                if ch == quote:
+                    quote = ""
+            elif ch in ("'", '"'):
+                quote = ch
+        return bool(quote)
+
+    @property
+    def is_shell_like(self) -> bool:
+        """Shell scripts and Makefiles, whose `#` comments and quoted arguments are not code."""
+        name = self.relpath.rsplit("/", 1)[-1].lower()
+        return self.suffix in (".sh", ".bash", ".zsh", ".mk") or name in ("makefile", "gnumakefile")
 
     def _ensure_rust_test_spans(self) -> None:
         """Record inline Rust test-block char-spans once, for ``.rs`` files only."""

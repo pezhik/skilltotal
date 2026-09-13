@@ -700,8 +700,20 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
         return policy in ("strings_and_comments", "strings_and_comments_all") and f.in_string(
             e.match_offset
         )
-    if f.suffix in (".sh", ".bash", ".zsh"):
-        return f.in_shell_comment(e.match_offset)
+    everything = policy == "strings_and_comments_all"
+    if f.is_shell_like:
+        return f.in_shell_comment(e.match_offset) or (
+            everything and f.in_shell_quoted(e.match_offset)
+        )
+    if f.in_sql_comment(e.match_offset):
+        return True
+    # A phrase inside a JS regex literal is a pattern the code matches, for any rule that already
+    # treats string literals as non-code. Rendered HTML/JSX page text is prose for the reader of
+    # the page, and only prompt injection (whose policy covers prose-like strings) demotes it.
+    if policy != "comments" and f.in_js_regex(e.match_offset):
+        return True
+    if everything and f.in_rendered_markup_text(e.match_offset):
+        return True
     # Markdown prose states what a component does; a fenced block is what it actually ships.
     # A credential path in a sentence ("credentials live in ~/.aws/credentials") or an
     # illustrative key ("example values (Stripe's docs `sk_live_…`)") is documentation, and

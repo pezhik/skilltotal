@@ -20,6 +20,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
   stripped before a file is classified. Evaluation-corpus recall and precision are unchanged at
   100%/100%.
 
+### Fixed
+- **One odd token no longer desynchronises a JS/TS file.** The C-family comment and string
+  scanners did not know JavaScript regex literals, and a quoted string did not end at a newline,
+  so `s.replace(/'/g, …)` opened a phantom string that ran to the end of the file. Every later
+  comment was then read as code and every later string as a live directive. The two scanners are
+  now one lexer that skips regex literals, ends `'`/`"` strings at a newline and understands
+  triple-quoted strings.
+
 ## [0.45.0]
 
 ### Fixed

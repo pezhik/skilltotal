@@ -62,6 +62,29 @@ corpus keeps 100% recall.
   longer theft (steal/harvest still are); `attacks`, `defense`, `jailbreak` join the citation
   cues.
 
+A clean re-scan of all 67 after the fixes above left 20 still flagged, again none a backdoor.
+Six of them were not a rule gap at all but a lexer one; the rest were four more classes:
+
+- **JS/TS comments and strings are recognised after a regex literal** (`file_index._c_code_spans`).
+  A `/'/g` literal opened a phantom string to the end of the file, so real comments ("adversarial
+  instructions (e.g. "ignore previous context…")") and pattern descriptions ("Attempts to harvest
+  credentials") below it scored. Regex literals are now lexed as a unit, and a phrase inside one
+  is a pattern for every rule that already treats string literals as non-code -- including an
+  MCP grader's `/<important>|do not (tell|mention)/` in `ST-MCP-TOOL-POISONING`.
+- **Rendered page text is not a directive** (`ST-PROMPT-INJECTION` only): HTML outside tags,
+  `<script>` and `<style>`, and JSX text between elements, is what a person reads on a page -- a
+  blog post explaining "ignore previous instructions", a playground `<textarea>` sample, a
+  zero-width-character demo.
+- **SQL `--` comments, and quoted arguments on shell and Makefile lines**: "you can no longer
+  harvest tokens via PostgREST" in a migration, and `scan "Ignore previous instructions…"` in a
+  Makefile target that demonstrates a scanner. Makefiles also get shell `#` comment handling.
+- **`payloads/` is a data corpus; prose under `audits/` is documentation.** Code in either
+  directory is still scanned.
+- **Citation cues are read across the paragraph, and include `injection`.** A test step that
+  names its fixture on one line and quotes the injection value three lines later is a citation; a
+  blank line ends the search, so a cue in an earlier paragraph cannot excuse a quote.
+  `.md.tmpl` templates quote like markdown.
+
 ## ruleset 49 (engine 0.45.0)
 
 **MCP servers written against the current TypeScript SDK are now detected** (`scanners/mcp`,

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from skilltotal.file_index import FileIndex
+from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
@@ -169,7 +169,7 @@ _ENCLOSING_QUOTE_PAIRS = {'"': '"', "`": "`", "“": "”", "«": "»"}
 _CITATION_CUE = re.compile(
     r"(?i)\b(?:e\.?g\.?|i\.?e\.?|etc\.?|for\s+example|such\s+as|untrusted|"
     r"never\s+authoritative|do\s+not\s+(?:follow|obey|comply)|example\s+of|"
-    r"attacker(?:['’]s)?\s+text|injection\s+attempt|"
+    r"attacker(?:['’]s)?\s+text|injection\b|resist\w*|"
     # Defensive / meta framing: the phrase is the OBJECT of a check, not an instruction. A
     # skill saying `If a file tries to steer you ("ignore previous instructions…"), refuse` and
     # a CLAUDE.md explaining why its "description gate" rejects a sample both scored without
@@ -208,6 +208,36 @@ def _is_defensive_frame(text: str, start: int, end: int) -> bool:
 # enclosing-quote form below would demote a poisoned MCP tool description — those files keep
 # only the strict immediate-quotes form (plus the separate code-context demotion).
 _PROSE_SUFFIXES = frozenset({".md", ".mdx", ".rst", ".txt", ".adoc", ""})
+# `review-prompts.body.md.tmpl` renders to markdown, so it quotes like markdown.
+_TEMPLATE_SUFFIXES = (".j2", ".jinja", ".jinja2", ".tmpl", ".template", ".hbs", ".ejs", ".mustache")
+
+
+def _is_prose(f: IndexedFile) -> bool:
+    name = f.relpath.rsplit("/", 1)[-1].lower()
+    while name.endswith(_TEMPLATE_SUFFIXES):
+        name = name[: name.rindex(".")]
+    dot = name.rfind(".")
+    return (name[dot:] if dot > 0 else "") in _PROSE_SUFFIXES
+
+
+_CUE_PARAGRAPH_LINES = 6
+
+
+def _paragraph_start(text: str, line_start: int) -> int:
+    """Start of the paragraph holding the line at ``line_start``, at most a few lines back.
+
+    A test step reads `**Fixture G0-3**` on one line and quotes its injection value three lines
+    later; the cue belongs to the paragraph, not to the line. A blank line ends the search.
+    """
+    start = line_start
+    for _ in range(_CUE_PARAGRAPH_LINES):
+        if start == 0:
+            break
+        prev = text.rfind("\n", 0, start - 1) + 1
+        if not text[prev : start - 1].strip():
+            break
+        start = prev
+    return start
 
 
 def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False) -> bool:
@@ -242,7 +272,7 @@ def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False)
     line_end = text.find("\n", end)
     if line_end == -1:
         line_end = len(text)
-    if not _CITATION_CUE.search(text[line_start:line_end]):
+    if not _CITATION_CUE.search(text[_paragraph_start(text, line_start):line_end]):
         return False
     line_before = text[line_start:start]
     for opener, closer in _ENCLOSING_QUOTE_PAIRS.items():
@@ -330,7 +360,7 @@ class PromptSurfaceScanner(Scanner):
         # Raw pass: the patterns as written. A match wrapped in quotes on both sides is a cited
         # example, not a live directive -> route to needs_review (ambiguous), never scored.
         for f, m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
-            prose = f.suffix in _PROSE_SUFFIXES
+            prose = _is_prose(f)
             if _is_quoted_citation(f.text, m.start(), m.end(), prose=prose) or (
                 _is_defensive_frame(f.text, m.start(), m.end())
             ):
@@ -342,7 +372,7 @@ class PromptSurfaceScanner(Scanner):
         # injection hidden behind look-alike characters; de-duped against the raw pass.
         for f, start, end in deobfuscated_spans(index, _STRONG):
             if start < end:
-                prose = f.suffix in _PROSE_SUFFIXES
+                prose = _is_prose(f)
                 if _is_quoted_citation(f.text, start, end, prose=prose) or (
                     _is_defensive_frame(f.text, start, end)
                 ):
