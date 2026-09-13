@@ -110,14 +110,25 @@ def test_report_states_coverage_and_versions():
     assert "Not scanned" in text  # coverage is disclosed, never implied
 
 
-def test_report_discloses_independent_rounding():
-    """A column of one-decimal shares can sum to 99.9%; say so rather than let it read as an error.
+def test_partition_shares_sum_to_their_total():
+    """The published risk column summed to 99.9 under independent rounding; it must add up.
 
-    The published risk table did exactly that (97.2 + 0.9 + 1.6 + 0.2), with nothing on the page
-    to explain it. Counts are what reconcile, and the convention must be stated where it applies.
+    Real counts from the 2026-08-20 survey. The web renderer's tests assert the same vector, so
+    the two implementations cannot drift apart.
     """
+    assert sr.partition_shares([15109, 143, 256, 30], 15538) == [97.2, 0.9, 1.7, 0.2]
+    assert sr.partition_shares([1593, 194, 146, 60, 4], 17535, 11.4) == [9.1, 1.1, 0.8, 0.4, 0.0]
+    # Each share is the floor or the ceiling of its exact value: never more than 0.1 away.
+    for counts, whole in (([15109, 143, 256, 30], 15538), ([1, 1, 1], 3)):
+        for c, shr in zip(counts, sr.partition_shares(counts, whole), strict=True):
+            assert abs(shr - 100 * c / whole) < 0.1
+    # Tenths summed as floats land at 99.99999999999999; the column is exact in tenths.
+    assert abs(sum(sr.partition_shares([1, 1, 1], 3)) - 100.0) < 1e-9
+
+
+def test_report_discloses_the_rounding_method():
     text = sr.render_markdown(sr.summarize(_rows()), _META)
-    assert "rounded to one decimal place independently" in text
+    assert "sums exactly to its total" in text
 
 
 def test_json_and_markdown_come_from_one_dataset(tmp_path):

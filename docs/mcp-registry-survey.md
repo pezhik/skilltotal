@@ -23,7 +23,7 @@ Nothing was dropped silently — every exclusion is counted:
 | repository or package no longer reachable | 1,593 | 9.1% |
 | slower than the time bound | 194 | 1.1% |
 | larger than the size bound | 146 | 0.8% |
-| other | 60 | 0.3% |
+| other | 60 | 0.4% |
 | access denied | 4 | 0.0% |
 
 | Ecosystem | Scanned | Listed | Coverage |
@@ -57,7 +57,7 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 |---|---:|---:|
 | low | 15,109 | 97.2% |
 | medium | 143 | 0.9% |
-| high | 256 | 1.6% |
+| high | 256 | 1.7% |
 | critical | 30 | 0.2% |
 | carrying a malicious indicator | 65 | 0.4% |
 
@@ -79,4 +79,4 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 - Population fetched from `https://registry.modelcontextprotocol.io/v0/servers` and deduplicated by source.
 - Two bounds, both disclosed above: 50 MB per fetch and 60s of wall clock per component.
 - Harness: `tests/manual_eval/survey_registry.py`. This report: `tests/manual_eval/survey_report.py`. Both ship in this repository.
-- Shares are rounded to one decimal place independently, so a column can sum to 99.9% or 100.1%. The counts beside them are exact and are the figures to reconcile.
+- Shares are rounded to one decimal place so that each table sums exactly to its total (largest-remainder method); a share can therefore sit up to 0.1 point from its unrounded value. The counts beside them are exact.

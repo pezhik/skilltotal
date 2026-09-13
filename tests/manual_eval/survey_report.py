@@ -19,6 +19,7 @@ import json
 import re
 from collections import Counter
 from datetime import datetime, timezone
+from fractions import Fraction
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -111,11 +112,33 @@ def pct(part: int, whole: int) -> str:
     return f"{100 * part / whole:.1f}%" if whole else "n/a"
 
 
+def partition_shares(counts: list[int], whole: int, target: float = 100.0) -> list[float]:
+    """Round shares to one decimal so they sum exactly to ``target`` (largest-remainder method).
+
+    Rounding each share on its own gave a risk column of 97.2 + 0.9 + 1.6 + 0.2 = 99.9, which
+    reads as an error on a page whose argument is rigour. Hamilton's method takes each share's
+    floor and hands the leftover tenths to the largest fractional remainders, so every value is
+    the floor or the ceiling of its exact share -- never more than 0.1 away -- and the column adds
+    up by construction. Ties go to the earlier index. The web renderer implements the same rule,
+    and a shared vector in both test suites keeps the two from drifting.
+    """
+    if not whole or not counts:
+        return [0.0 for _ in counts]
+    exact = [Fraction(1000 * c, whole) for c in counts]  # tenths of a percent, exact
+    floors = [int(x) for x in exact]
+    units = round(target * 10) - sum(floors)
+    if units < 0:
+        raise ValueError("target is below the sum of floors; pass the rounded true total")
+    order = sorted(range(len(counts)), key=lambda i: (-(exact[i] - floors[i]), i))
+    for i in order[:units]:
+        floors[i] += 1
+    return [f / 10 for f in floors]
+
+
 def render_markdown(s: dict, meta: dict) -> str:
     n = s["scanned"]
     shape = s["registry_shape"]
     entries = meta["registry_entries"]
-    unreachable = s["skip_reasons"].get(_UNREACHABLE, 0)
     out: list[str] = []
     add = out.append
 
@@ -154,8 +177,15 @@ def render_markdown(s: dict, meta: dict) -> str:
     add("")
     add("| Why a component was not scanned | Components | Share of population |")
     add("|---|---:|---:|")
-    for label, count in sorted(s["skip_reasons"].items(), key=lambda kv: -kv[1]):
-        add(f"| {label} | {count:,} | {pct(count, s['population'])} |")
+    skip_rows = sorted(s["skip_reasons"].items(), key=lambda kv: -kv[1])
+    skip_target = round(100 * s["skipped"] / s["population"], 1) if s["population"] else 0.0
+    skip_shares = dict(zip(
+        [label for label, _ in skip_rows],
+        partition_shares([count for _, count in skip_rows], s["population"], skip_target),
+        strict=True,
+    ))
+    for label, count in skip_rows:
+        add(f"| {label} | {count:,} | {skip_shares[label]:.1f}% |")
     add("")
     add("| Ecosystem | Scanned | Listed | Coverage |")
     add("|---|---:|---:|---:|")
@@ -183,16 +213,17 @@ def render_markdown(s: dict, meta: dict) -> str:
     add("")
     add("| Level | Components | Share |")
     add("|---|---:|---:|")
-    for lvl in _LEVELS:
-        add(f"| {lvl} | {s['risk_level'][lvl]:,} | {pct(s['risk_level'][lvl], n)} |")
+    risk_shares = partition_shares([s["risk_level"][lvl] for lvl in _LEVELS], n)
+    for lvl, shr in zip(_LEVELS, risk_shares, strict=True):
+        add(f"| {lvl} | {s['risk_level'][lvl]:,} | {shr:.1f}% |")
     add(f"| carrying a malicious indicator | {s['malicious_indicators']:,} | "
         f"{pct(s['malicious_indicators'], n)} |")
     add("")
     add("## The registry itself")
     add("")
     add(f"- {entries:,} entries resolve to {s['population']:,} distinct components.")
-    add(f"- {pct(unreachable, s['population'])} of the population points at a repository or "
-        f"package that is gone or private.")
+    add(f"- {skip_shares.get(_UNREACHABLE, 0.0):.1f}% of the population points at a repository "
+        f"or package that is gone or private.")
     add(f"- {shape['git_sources']:,} components are hosted on GitHub across "
         f"{shape['distinct_owners']:,} owners — yet one owner accounts for "
         f"**{shape['largest_owner_share']}%** of them, and the ten largest for "
@@ -222,12 +253,12 @@ def render_markdown(s: dict, meta: dict) -> str:
         f"{meta['timeout']}s of wall clock per component.")
     add("- Harness: `tests/manual_eval/survey_registry.py`. This report: "
         "`tests/manual_eval/survey_report.py`. Both ship in this repository.")
-    # Every share is rounded to its nearest tenth on its own, so a column can add up to 99.9% or
-    # 100.1%. Forcing the column to 100.0 (largest-remainder) would move one figure off its nearest
-    # value and break a *different* sum instead -- e.g. high + critical. The counts are the thing
-    # that always reconciles, so they sit beside every share and the convention is stated.
-    add("- Shares are rounded to one decimal place independently, so a column can sum to 99.9% "
-        "or 100.1%. The counts beside them are exact and are the figures to reconcile.")
+    # Partition tables (risk levels, skip reasons) use partition_shares so each column sums to its
+    # total by construction; the convention is stated because one figure per table may sit a tenth
+    # from its independently-rounded value.
+    add("- Shares are rounded to one decimal place so that each table sums exactly to its total "
+        "(largest-remainder method); a share can therefore sit up to 0.1 point from its "
+        "unrounded value. The counts beside them are exact.")
     return "\n".join(out) + "\n"
 
 
