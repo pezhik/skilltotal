@@ -60,6 +60,10 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.
     "ST-INSTALL-DROPPER": ("AST02",),
     "ST-INSTALL-NPM": ("AST02",),
+    "ST-INSTALL-GYP": ("AST02",),
+    "ST-AGENT-AUTORUN": ("AST02",),
+    "ST-AGENT-AUTORUN-REMOTE": ("AST02",),
+    "ST-ARCHIVE-PASSWORD-EXTRACT": ("AST01",),
     "ST-INSTALL-NPM-PREPARE": ("AST02",),
     "ST-INSTALL-PY": ("AST02",),
     "ST-SHELL-PIPE-EXEC": ("AST02",),
@@ -69,6 +73,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-MCP-DANGEROUS-TOOL": ("AST03",),
     "ST-MCP-OVERBROAD-SCOPE": ("AST03",),
     "ST-MCP-SERVER-EXEC": ("AST03",),
+    "ST-AGENT-CLI-BYPASS": ("AST03",),
     # AST04 Insecure Metadata — misleading/falsified descriptions, hidden/smuggled instructions.
     "ST-HIDDEN-UNICODE": ("AST04",),
     "ST-HIDDEN-UNICODE-AMBIG": ("AST04",),

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 
-from skilltotal.models import Capability, Severity
+from skilltotal.models import Capability, Severity, ThreatClass
 from skilltotal.scanners.base import PatternScanner, RuleSpec, alternation
 
 CATEGORY = "install_time_execution"
@@ -54,6 +54,37 @@ class InstallScriptsScanner(PatternScanner):
             capability=Capability.INSTALL_TIME_EXECUTION,
             names=("package.json",),
             pattern=re.compile(r'"prepare"\s*:'),
+        ),
+        RuleSpec(
+            id="ST-INSTALL-GYP",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="binding.gyp runs a hidden command at install time",
+            description=(
+                "binding.gyp uses node-gyp command substitution (`<!(…)`) to run a script with "
+                "its output discarded, fetch from the network, pipe into a shell, or decode "
+                "data. node-gyp evaluates it during `npm install` even when package.json "
+                "declares no install script, so install-script checks never see it. The Miasma "
+                "npm worm (June 2026) spread this way: `<!(node index.js > /dev/null 2>&1 && "
+                "echo stub.c)`."
+            ),
+            recommendation=(
+                "Do not install this version. Honest bindings use substitution only to print "
+                "include paths (`node -p \"require('node-addon-api').include\"`)."
+            ),
+            capability=Capability.INSTALL_TIME_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            names=("binding.gyp",),
+            pattern=re.compile(
+                r"<!@?\(\s*(?:"
+                r"[^)\"']*?\b(?:curl|wget)\b"
+                r"|[^)\"']*?https?://"
+                r"|[^)\"']*?\|\s*(?:ba|z)?sh\b"
+                r"|[^)\"']*?\bbase64\b"
+                r"|node\s+(?!-[pe]\b)[^\s)\"']+\.[cm]?js\b[^)\"']*?(?:>\s*/dev/null|2>&1|>\s*nul\b)"
+                r")",
+                re.IGNORECASE,
+            ),
         ),
         RuleSpec(
             id="ST-INSTALL-PY",

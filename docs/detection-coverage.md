@@ -27,6 +27,9 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Prompt injection / instruction override** | `ST-PROMPT-INJECTION` (malicious); `ST-PROMPT-WEAK` (needs_review) | `agent-instruction-override` |
 | **MCP tool poisoning** (agent-directed instructions in tool metadata) | `ST-MCP-TOOL-POISONING` (malicious); `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-TOOL-SHADOWING` | `mcp-tool-poisoning` |
 | **MCP sampling abuse** (server-written prompt asks the client's model for credentials or a command, and for silence) | `ST-MCP-SAMPLING-INJECTION` (malicious) | `mcp-sampling-injection` |
+| **node-gyp install-time substitution** (`binding.gyp` `<!(…)` running hidden commands) | `ST-INSTALL-GYP` (malicious) | `gyp-command-substitution` |
+| **Auto-run agent / editor configuration** (Claude/Gemini/Cursor hooks, VS Code folder-open tasks) | `ST-AGENT-AUTORUN` (risky), `ST-AGENT-AUTORUN-REMOTE` (malicious), `ST-AGENT-CLI-BYPASS` (risky) | `agent-config-autorun` |
+| **Password-protected payload download** | `ST-ARCHIVE-PASSWORD-EXTRACT` (malicious) | `password-archive` |
 | **Network/debug exposure** | `ST-EXPOSE-BIND`, `ST-EXPOSE-DEBUG` | — |
 | **Shell decode-and-execute / remote pipe-to-shell** (`… base64 -d \| bash`, `curl \| bash`) | `ST-OBF-DECODE-EXEC-SH` (malicious), `ST-SHELL-PIPE-EXEC` | `sh-base64-exec` |
 | **Analysis evasion** (password-protected archive bundled in a component) | `ST-ENCRYPTED-ARCHIVE` | — |

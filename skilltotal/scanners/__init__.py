@@ -7,6 +7,7 @@ capability engine share a single source of truth.
 
 from __future__ import annotations
 
+from skilltotal.scanners.agent_config import AgentConfigScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
@@ -50,6 +51,7 @@ SCANNERS: list[Scanner] = [
     ExposureScanner(),
     EncryptedArchiveScanner(),
     EmailExfilScanner(),
+    AgentConfigScanner(),
 ]
 
 

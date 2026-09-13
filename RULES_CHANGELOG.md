@@ -4,6 +4,54 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 51 (engine 0.47.0)
+
+**Attack techniques published against AI components in 2026.** Each campaign below was reproduced
+as an inert sample (every URL `.invalid`, every encoded blob a harmless `echo`) and run through the
+engine before any rule was written: ten of eleven were missed. All eleven, with honest look-alikes,
+are in the evaluation corpus (45 positives, 28 negatives, 100%/100%).
+
+- **`ST-INSTALL-GYP` (new, malicious indicator).** node-gyp evaluates `<!(…)` command substitution
+  in `binding.gyp` during `npm install` even when package.json declares no install script. The
+  Miasma worm (June 2026, 57 packages) used `<!(node index.js > /dev/null 2>&1 && echo stub.c)`.
+  Fires on substitution that runs a script with its output discarded, fetches, pipes into a shell
+  or decodes; `<!(node -p "require('node-addon-api').include")` and `pkg-config` stay clean. It also
+  counts as an install hook for `ST-INSTALL-DROPPER`.
+- **`ST-AGENT-AUTORUN` (new, risky) and `ST-AGENT-AUTORUN-REMOTE` (new, malicious indicator).**
+  Configuration an agent or editor executes on its own: hooks in `.claude/settings.json`,
+  `.claude/settings.local.json`, `.gemini/settings.json`, `.qwen/settings.json`,
+  `.cursor/hooks.json`, and `.vscode/tasks.json` tasks with `runOn: folderOpen`. Miasma wave 2
+  wrote exactly these to re-infect projects; TrustFall (May 2026) showed the agentic CLIs run such
+  configuration after one trust prompt, or none in CI. A formatter hook is a risky construct; when
+  the command, or the script it runs from the same component, pipes a download into a shell or
+  decodes and executes, it is a malicious indicator. `.vscode/` is no longer skipped.
+- **`ST-AGENT-CLI-BYPASS` (new, risky).** Code that launches `claude`, `gemini`, `codex`, `q`,
+  `kiro`, `opencode`, `aider` or `cursor-agent` with approvals off (`--dangerously-skip-permissions`,
+  `--yolo`, `--trust-all-tools` …), as the s1ngularity and Shai-Hulud npm payloads did to search
+  disks for secrets. Honest orchestrators do it too, so it is not a verdict.
+- **Shell rules read fenced code blocks in markdown** (`ST-OBF-DECODE-EXEC-SH`,
+  `ST-SHELL-PIPE-EXEC`). The ClawHavoc skills on ClawHub (early 2026, 341 skills) hid
+  `echo '<base64>' | base64 -D | bash` under a "Prerequisites" heading. Prose outside a fence is
+  still prose, and a README's install block is still documentation.
+- **`ST-ARCHIVE-PASSWORD-EXTRACT` (new, malicious indicator).** A download followed by `unzip -P`,
+  `7z x -p` or `unrar x -p` in the same script or fenced block, the ToxicSkills delivery shape: the
+  password keeps the payload away from scanners. Extracting a local test fixture stays clean.
+- **Zero-width characters threaded through words are hidden text** (`ST-HIDDEN-UNICODE`). TrapDoor
+  (34 packages across npm, PyPI and crates.io) spliced U+200B/U+200C/U+200D/U+FEFF between the
+  letters of directives in CLAUDE.md and .cursorrules. Six splices between ASCII letters on a line
+  fire; emoji ZWJ sequences, CJK/RTL text and soft hyphens do not.
+- **Agent-instruction phrasings** (`ST-PROMPT-INJECTION`): reading a credential location and
+  uploading *it*; carrying `$…_KEY`/`$…_TOKEN` from the environment into query parameters, headers
+  or every request (CSA's SKILL.md research); copying the skill's own rules into CLAUDE.md /
+  AGENTS.md / .cursorrules so they outlive the skill; and fetching instructions from a URL to follow
+  "even if they conflict". Fetching instructions from a URL without an override clause is
+  needs_review; adding a Build section to CLAUDE.md or summarizing a fetched guide is neither.
+- **Credential stores** (`ST-SENS-PATH`): `.kube/config`, `gcloud/credentials.db`,
+  `.azure/credentials`, `~/.npmrc`, `~/.pypirc`, `.config/gh/hosts.yml`, and the login files of
+  local AI agents: `.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`,
+  GitHub Copilot's `hosts.json`/`apps.json`. Read next to network egress, they synthesize
+  `ST-COMBO-EXFIL` like any other credential path.
+
 ## ruleset 50 (engine 0.46.0)
 
 **Every malicious-indicator hit in the registry survey was reviewed by hand, and none was a

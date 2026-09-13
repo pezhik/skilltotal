@@ -1,8 +1,8 @@
 {
-  "engine_version": "0.46.0",
-  "ruleset_version": 50,
-  "positives": 34,
-  "negatives": 20,
+  "engine_version": "0.47.0",
+  "ruleset_version": 51,
+  "positives": 45,
+  "negatives": 28,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -15,15 +15,18 @@
     "AST05": 1.0
   },
   "recall_by_technique": {
+    "agent-config-autorun": 1.0,
     "credential-exfil": 1.0,
     "decode-exec": 1.0,
     "deserialize-exec": 1.0,
     "email-exfil": 1.0,
+    "gyp-command-substitution": 1.0,
     "hidden-unicode": 1.0,
     "install-dropper": 1.0,
     "lethal-trifecta": 1.0,
     "mcp-sampling-injection": 1.0,
     "mcp-tool-poisoning": 1.0,
+    "password-archive": 1.0,
     "prompt-injection": 1.0,
     "pth-persistence": 1.0,
     "shell-decode-exec": 1.0,
@@ -31,18 +34,18 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 5,
+      "node": 7,
       "python": 7,
-      "manifest/text": 3,
+      "manifest/text": 6,
       "shell": 2
     },
     "AST02": {
-      "node": 2,
+      "node": 4,
       "python": 2
     },
     "AST04": {
       "python": 4,
-      "manifest/text": 6,
+      "manifest/text": 10,
       "node": 1
     },
     "AST05": {
