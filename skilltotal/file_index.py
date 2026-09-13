@@ -140,8 +140,12 @@ _TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)|(?:tests?|specs
 # ships a hardcoded CI `hf_` token). The anchors keep ordinary names (contest.py, testimonials.py,
 # attest.js) out.
 _TEST_FILE_RE = re.compile(
-    r"\.test\.|\.spec\.|^test_|_test\.|^conftest\.py$|^tests?\.\w+$|^test(?:ing)?_?utils?\."
+    r"\.test\.|\.spec\.|^tests?[-_]|_test\.|^conftest\.py$|^tests?\.\w+$|^test(?:ing)?_?utils?\."
 )
+# `^tests?[-_]` covers the prefix form with either separator (`test-snapshot-budget.sh`,
+# `test_render.py`): a hyphenated test script at the repo root carried a literal "IGNORE
+# PREVIOUS INSTRUCTIONS" fixture and scored as a live directive. The `[-_]` boundary keeps
+# `testimonials.md` and `testament.txt` out, as it does for directory names.
 
 
 def is_test_path(relpath: str) -> bool:
@@ -177,19 +181,28 @@ _CODE_SUFFIXES: frozenset[str] = frozenset(
 )
 
 
+# Record-per-line and tabular formats are data wherever they live: nothing executes them and no
+# agent reads them as instructions. An `issues.jsonl` export at a repo root carried the text of a
+# prompt-injection *ticket* and scored as a live directive.
+_DATA_SUFFIXES: frozenset[str] = frozenset({".jsonl", ".ndjson", ".csv", ".tsv"})
+
+
 def is_data_corpus_path(relpath: str) -> bool:
     """True if ``relpath`` is an inert data/eval/benchmark corpus file (not executed code).
 
     Requires BOTH a corpus directory segment AND a non-code file suffix, so reference data
     (``.yaml``/``.json``/``.jsonl``/``.csv``/``.md`` …) is demoted while any executable code in
-    the same tree is still scanned and scored.
+    the same tree is still scanned and scored. Record/tabular suffixes (``_DATA_SUFFIXES``) are
+    data regardless of directory.
     """
     parts = relpath.lower().split("/")
-    if not any(part in _DATA_CORPUS_SEGMENTS for part in parts[:-1]):
-        return False
     name = parts[-1]
     dot = name.rfind(".")
     suffix = name[dot:] if dot > 0 else ""
+    if suffix in _DATA_SUFFIXES:
+        return True
+    if not any(part in _DATA_CORPUS_SEGMENTS for part in parts[:-1]):
+        return False
     return suffix not in _CODE_SUFFIXES
 
 
@@ -262,6 +275,15 @@ _DOC_KEYWORDS: frozenset[str] = frozenset(
     }
 )
 _PROSE_SUFFIXES: frozenset[str] = frozenset({".md", ".mdx", ".rst", ".txt", ".adoc", ""})
+# The subset that is documentation by default (see is_doc_path); `.txt` deliberately not included.
+# (Distinct from `_MARKDOWN_SUFFIXES` further down, which serves a different purpose.)
+_DOC_BY_DEFAULT_SUFFIXES: frozenset[str] = frozenset({".md", ".mdx", ".rst", ".adoc"})
+# Name fragments that mark a markdown file as something an agent is meant to READ rather than a
+# human: such files keep full scrutiny. Matched as substrings of the `[._-]`-split stem.
+_INSTRUCTION_KEYWORDS: frozenset[str] = frozenset(
+    {"prompt", "instruction", "rule", "agent", "skill", "system", "persona", "guideline",
+     "policy", "policies", "context", "memory", "workflow", "directive", "command"}
+)
 # Exact filenames that are always documentation/metadata or ignore-files.
 _DOC_EXACT_NAMES: frozenset[str] = frozenset(
     {"pkg-info", "code_of_conduct.md", ".gitignore", ".dockerignore", ".npmignore",
@@ -292,6 +314,16 @@ def is_doc_path(relpath: str) -> bool:
     if suffix not in _PROSE_SUFFIXES:
         return False
     stem = name[: name.rindex(".")] if suffix else name
+    # Markdown-family prose is human-facing documentation unless its NAME says it is an
+    # instruction surface. Keying on a documentation keyword alone left `THREAT_MODEL.md`,
+    # `audit-report.md` and `breach-precedents.md` in scope, where their descriptions of attacks
+    # scored as live directives. The instruction check is a substring match on purpose: a
+    # `deployprompt.md` or `agentrules.md` stays in scope, which is the recall-safe direction.
+    # `.txt` and suffix-less files are excluded from this default: `prompt.txt` is a real
+    # instruction surface with no naming convention to rely on.
+    if suffix in _DOC_BY_DEFAULT_SUFFIXES:
+        words = re.split(r"[._-]", stem)
+        return not any(kw in word for word in words for kw in _INSTRUCTION_KEYWORDS)
     # Split on `.` too so a localized/variant doc keeps its keyword: README.zh-CN.md ->
     # ["readme","zh","cn"], CHANGELOG.fr.md -> ["changelog","fr"].
     return any(word in _DOC_KEYWORDS for word in re.split(r"[._-]", stem))
@@ -321,7 +353,10 @@ def _offset_in_spans(spans: list[tuple[int, int]] | None, offset: int) -> bool:
 # inside a Go/JS/Rust value-string is a pattern definition/description, not a live directive).
 _C_FAMILY_SUFFIXES: frozenset[str] = frozenset(
     {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".java", ".c", ".cc", ".cpp",
-     ".h", ".hpp"}
+     ".h", ".hpp",
+     # Same `//` and `/* */` comment syntax; a Swift `///` doc-comment describing what an
+     # automation "can exfiltrate" scored as a live prompt-injection directive without this.
+     ".swift", ".kt", ".kts", ".cs", ".scala", ".dart", ".m", ".mm"}
 )
 
 

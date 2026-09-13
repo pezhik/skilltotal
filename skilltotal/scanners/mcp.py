@@ -65,10 +65,20 @@ DANGEROUS_TOOL_PATTERNS: dict[str, re.Pattern[str]] = {
 # description/metadata, rather than documentation of what the tool does. These are distinct
 # from the generic prompt-injection phrases in prompt_surface.py and are scoped to MCP tool
 # surfaces, so matches are high-signal / low false-positive.
+# A hidden-block marker is only poisoning when it INTRODUCES an instruction to the agent. Bare,
+# the markers matched `SYSTEM_META[system]` (an array index), `--api-key <secret>` (a CLI
+# placeholder) and `[System] You are stuck repeating the same action` (a framework nudge). So the
+# marker must not follow an identifier character, and an agent-directed verb must follow it in
+# the same sentence -- which every real poisoned description has, because that is its point.
+_MARKER_PAYLOAD = (
+    r"(?=[^.\n]{0,120}?\b(?:read|send|include|pass|forward|upload|exfiltrate|ignore|reveal|"
+    r"do\s+not|don['’]?t|must|never|always|before)\b)"
+)
+
 _POISONING = alternation(
     # Fake authority / hidden-block markers smuggled into a description.
-    r"<\s*(?:important|system|secret|instructions?)\s*>",
-    r"\[\s*(?:system|important|instructions?)\s*\]",
+    r"(?<![\w\]\)])<\s*(?:important|system|secret|instructions?)\s*>" + _MARKER_PAYLOAD,
+    r"(?<![\w\]\)])\[\s*(?:system|important|instructions?)\s*\]" + _MARKER_PAYLOAD,
     r"(?:system|developer|admin(?:istrator)?)\s+(?:note|message|instruction)\s*:",
     # Override the tool's documented purpose.
     r"ignore\s+(?:the\s+)?(?:tool['’]?s?\s+)?(?:actual\s+)?(?:description|purpose|instructions)",
@@ -83,10 +93,18 @@ _POISONING = alternation(
     r"(?:mandatory|required|compulsory)\s+(?:security|verification|authentication|validation|safety)\s+(?:check|step|procedure|measure|protocol)",
     # Covert behaviour / exfiltration directed at the agent from within metadata. "silently"
     # alone is too common in benign text ("fails silently"), so require an adjacent action verb.
-    r"do\s+not\s+(?:tell|inform|mention|reveal|notify)[^\n]{0,30}user",
-    r"secretly\b",
-    r"silently\s+(?:read|send|exfiltrate|include|pass|collect|forward|copy|upload)",
-    r"without\s+(?:telling|informing|notifying)\s+the\s+user",
+    # Concealment phrasing on its own is ambiguous, not an indicator. "do not tell the user" and
+    # "without telling the user" turned up in three honest tools in the registry ("do NOT tell
+    # the user the job is done until status=completed", "do not call without telling the user a
+    # prompt will appear") against one synthetic positive. The prompt-surface scanner already
+    # routes both to needs_review as "Ambiguous prompt-control phrasing" across every file,
+    # JSON included; scoring them here as a malicious indicator contradicted that call.
+    # "secretly"/"silently" likewise need an action AND a data-shaped object: bare "secretly"
+    # matched a plugin's own warning text, and "silently pass" in a QA tool meant "skip".
+    r"(?:secretly|silently)\s+(?:read|send|exfiltrate|include|pass|collect|forward|copy|upload)"
+    r"\s+(?:the\s+|all\s+|any\s+|your\s+|their\s+|its\s+)?(?:\S+\s+){0,3}?"
+    r"(?:files?|data|credentials?|secrets?|tokens?|keys?|contents?|inputs?|conversation|"
+    r"history|messages?|prompt|environment|env)\b",
     flags=re.IGNORECASE,
 )
 

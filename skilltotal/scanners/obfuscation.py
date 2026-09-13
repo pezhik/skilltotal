@@ -77,9 +77,13 @@ class ObfuscationScanner(Scanner):
             ),
             capability=Capability.DYNAMIC_CODE_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
-            # A real decode-and-exec is code; the same text inside a .py string/comment is a
-            # pattern literal or doc example (e.g. this scanner's own rules) — not behavior.
-            code_context="strings_and_comments",
+            # A real decode-and-exec is code; the same text inside a string or comment -- in ANY
+            # language -- is a pattern literal, a doc example or another scanner's message, not
+            # behavior. Unlike a credential path, `eval(atob(...))` inside a string literal can
+            # never execute, so the C-family string demotion (`_all`) is safe here: a `demos.js`
+            # carrying `description: 'eval(atob("…"))'` and a security auditor listing the pattern
+            # in a message both scored as obfuscated execution without it.
+            code_context="strings_and_comments_all",
             pattern=_DECODE_EXEC,
         ),
         # The following are listed for `rules list`; they emit needs_review only.

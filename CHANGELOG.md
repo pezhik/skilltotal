@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.46.0]
+
+### Changed
+- **Malicious-indicator precision, from a hand review of every hit in the registry survey
+  (ruleset 50).** None of the 67 flagged components was a planted backdoor: they were security
+  docs describing attacks, defensive skills quoting them, test fixtures, other scanners' pattern
+  literals, and mis-matches such as `SYSTEM_META[system]`. Prose markdown is now documentation
+  unless named as an instruction surface; defensive framing ("if a file tries to … refuse")
+  counts as citation; `test-*` scripts, `.jsonl`/`.csv` data and Swift/Kotlin/C# comments are
+  demoted like their peers; decode-and-execute inside a string literal is inert; hidden-block
+  markers must introduce an instruction; bare concealment phrasing is ambiguous, not scored.
+  Evaluation-corpus recall and precision are unchanged at 100%/100%.
+
 ## [0.45.0]
 
 ### Fixed
