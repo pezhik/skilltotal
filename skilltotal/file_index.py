@@ -184,7 +184,11 @@ _CODE_SUFFIXES: frozenset[str] = frozenset(
 # Record-per-line and tabular formats are data wherever they live: nothing executes them and no
 # agent reads them as instructions. An `issues.jsonl` export at a repo root carried the text of a
 # prompt-injection *ticket* and scored as a live directive.
-_DATA_SUFFIXES: frozenset[str] = frozenset({".jsonl", ".ndjson", ".csv", ".tsv"})
+_DATA_SUFFIXES: frozenset[str] = frozenset(
+    {".jsonl", ".ndjson", ".csv", ".tsv",
+     # Detection signatures describe attacks by nature and are never executed by the component.
+     ".yar", ".yara"}
+)
 
 
 def is_data_corpus_path(relpath: str) -> bool:
@@ -284,6 +288,19 @@ _INSTRUCTION_KEYWORDS: frozenset[str] = frozenset(
     {"prompt", "instruction", "rule", "agent", "skill", "system", "persona", "guideline",
      "policy", "policies", "context", "memory", "workflow", "directive", "command"}
 )
+# A prose file named for the ATTACK it discusses is documentation even when its name also carries
+# an instruction keyword: `prompt-injection-defense-002.md`, `prompt-monitoring.md` and
+# `advanced_attacks.txt` describe or list attacks, they do not issue them. Applies to `.txt` too,
+# where `attacks.txt` / `payloads.txt` are corpora while a bare `prompt.txt` stays in scope.
+_SECURITY_DOC_KEYWORDS: frozenset[str] = frozenset(
+    {"injection", "jailbreak", "attack", "payload", "defense", "defence", "threat", "security",
+     "audit", "monitoring", "detection", "vulnerab", "exploit", "redteam", "red-team"}
+)
+# Template suffixes that wrap a document: `README.md.j2`, `review-prompts.body.md.tmpl`. Stripped
+# before classification so the wrapped name decides.
+_TEMPLATE_SUFFIXES: tuple[str, ...] = (
+    ".j2", ".jinja", ".jinja2", ".tmpl", ".template", ".hbs", ".ejs", ".mustache",
+)
 # Exact filenames that are always documentation/metadata or ignore-files.
 _DOC_EXACT_NAMES: frozenset[str] = frozenset(
     {"pkg-info", "code_of_conduct.md", ".gitignore", ".dockerignore", ".npmignore",
@@ -304,9 +321,17 @@ def is_doc_path(relpath: str) -> bool:
     """True if ``relpath`` is human-facing documentation/metadata (not an instruction surface)."""
     parts = relpath.lower().split("/")
     name = parts[-1]
+    while name.endswith(_TEMPLATE_SUFFIXES):
+        name = name[: name.rindex(".")]
     if name in _INSTRUCTION_NAMES or name.endswith(_INSTRUCTION_SUFFIXES):
         return False
     if name in _DOC_EXACT_NAMES:
+        return True
+    # Named for an attack -> documentation about it, whatever else the name says. Checked before
+    # the instruction keywords below and covers `.txt` corpora such as `advanced_attacks.txt`.
+    if any(kw in name for kw in _SECURITY_DOC_KEYWORDS) and (
+        name.endswith(tuple(_PROSE_SUFFIXES - {""}))
+    ):
         return True
     if any(part in _DOC_DIR_SEGMENTS or part.endswith(".egg-info") for part in parts[:-1]):
         return True
