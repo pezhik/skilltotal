@@ -110,6 +110,16 @@ def test_report_states_coverage_and_versions():
     assert "Not scanned" in text  # coverage is disclosed, never implied
 
 
+def test_report_discloses_independent_rounding():
+    """A column of one-decimal shares can sum to 99.9%; say so rather than let it read as an error.
+
+    The published risk table did exactly that (97.2 + 0.9 + 1.6 + 0.2), with nothing on the page
+    to explain it. Counts are what reconcile, and the convention must be stated where it applies.
+    """
+    text = sr.render_markdown(sr.summarize(_rows()), _META)
+    assert "rounded to one decimal place independently" in text
+
+
 def test_json_and_markdown_come_from_one_dataset(tmp_path):
     survey = tmp_path / "survey.jsonl"
     survey.write_text(

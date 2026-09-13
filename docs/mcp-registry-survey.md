@@ -79,3 +79,4 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 - Population fetched from `https://registry.modelcontextprotocol.io/v0/servers` and deduplicated by source.
 - Two bounds, both disclosed above: 50 MB per fetch and 60s of wall clock per component.
 - Harness: `tests/manual_eval/survey_registry.py`. This report: `tests/manual_eval/survey_report.py`. Both ship in this repository.
+- Shares are rounded to one decimal place independently, so a column can sum to 99.9% or 100.1%. The counts beside them are exact and are the figures to reconcile.

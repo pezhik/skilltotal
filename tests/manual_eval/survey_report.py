@@ -222,6 +222,12 @@ def render_markdown(s: dict, meta: dict) -> str:
         f"{meta['timeout']}s of wall clock per component.")
     add("- Harness: `tests/manual_eval/survey_registry.py`. This report: "
         "`tests/manual_eval/survey_report.py`. Both ship in this repository.")
+    # Every share is rounded to its nearest tenth on its own, so a column can add up to 99.9% or
+    # 100.1%. Forcing the column to 100.0 (largest-remainder) would move one figure off its nearest
+    # value and break a *different* sum instead -- e.g. high + critical. The counts are the thing
+    # that always reconciles, so they sit beside every share and the convention is stated.
+    add("- Shares are rounded to one decimal place independently, so a column can sum to 99.9% "
+        "or 100.1%. The counts beside them are exact and are the figures to reconcile.")
     return "\n".join(out) + "\n"
 
 
