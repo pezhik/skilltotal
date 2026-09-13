@@ -146,9 +146,15 @@ def _is_broad_scope(value: object) -> bool:
     return False
 
 # Source-level signals that an MCP tool surface exists.
+#
+# `new McpServer(` and `.tool("name"` are the current TypeScript SDK's own quick-start shape.
+# Without them, a server with benign tool names produced no MCP finding at all: a sample of
+# registry entries where no surface was recognised found two thirds depended on an MCP SDK, and
+# ten of fourteen inspected were exactly this. (Dangerous names were still classified through
+# `_TS_TOOL_NAME`, which is why the gap hid behind the dangerous-tool tests.)
 _CODE_SURFACE = re.compile(
-    r"@(?:mcp|server|app)\.tool\b|FastMCP\s*\(|\bnew\s+Server\s*\(|\.registerTool\s*\(|"
-    r"@tool\b",
+    r"@(?:mcp|server|app)\.tool\b|FastMCP\s*\(|\bnew\s+(?:Mcp)?Server\s*\(|\.registerTool\s*\(|"
+    r"\.tool\s*\(\s*['\"]|@tool\b",
 )
 
 CODE_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")

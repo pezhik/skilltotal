@@ -180,6 +180,29 @@ def test_mcp_code_defined_tool_classified_ts(tmp_path):
     assert any(f.id == "ST-MCP-DANGEROUS-TOOL" for f in result.findings)
 
 
+def test_mcp_modern_sdk_server_is_detected(tmp_path):
+    """A server on the current TypeScript SDK -- `new McpServer(` + `server.tool("…")` -- is an MCP
+    surface even when every tool name is benign.
+
+    The surface signal knew `new Server(` and `.registerTool(` only, so this shape produced no
+    ST-MCP-DETECTED at all; the dangerous-tool tests above kept passing because they go through
+    the name classifier. 18.5% of the registry survey read as "no MCP tools" and, on a sample,
+    two thirds of it was this.
+    """
+    from skilltotal.file_index import FileIndex
+    from skilltotal.scanners.mcp import McpScanner
+
+    (tmp_path / "index.js").write_text(
+        'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
+        'const server = new McpServer({ name: "weather", version: "1.0.0" });\n'
+        'server.tool("get_forecast", { city: z.string() }, async ({ city }) => ({ city }));\n',
+        encoding="utf-8",
+    )
+    result = McpScanner().scan(FileIndex.build(tmp_path))
+    assert any(f.id == "ST-MCP-DETECTED" for f in result.findings)
+    assert not any(f.id == "ST-MCP-DANGEROUS-TOOL" for f in result.findings)
+
+
 def test_mcp_code_defined_tool_classified_py(tmp_path):
     """A dangerous MCP tool defined via a Python decorator is classified."""
     from skilltotal.file_index import FileIndex

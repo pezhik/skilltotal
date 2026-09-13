@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 49 (engine 0.45.0)
+
+**MCP servers written against the current TypeScript SDK are now detected** (`scanners/mcp`,
+`ST-MCP-DETECTED`). The code-surface signal recognised `new Server(` and `.registerTool(` but not
+`new McpServer(` or `server.tool("…")` — the shape the SDK's own quick-start produces. A server
+with benign tool names therefore produced no MCP finding at all; dangerous names were still
+classified through a separate path, which is why the gap hid behind the dangerous-tool tests.
+In the registry survey 18.5% of entries read as "no MCP tools"; in a random sample of those, two
+thirds depended on an MCP SDK, and ten of fourteen inspected were exactly this gap.
+
+**A single NUL byte no longer marks a source file as binary** (`file_index`). Bundled `dist/*.js`
+occasionally carries one inside a string literal, and the whole-file check dropped the file — and
+with it every finding in it. The sniff is now git's: a NUL within the first 8,000 bytes. Real
+binaries are still skipped. Two of the fourteen inspected servers were lost this way.
+
+Both fixes only add detection; recall and precision on the evaluation corpus are unchanged.
+
 ## ruleset 48 (engine 0.44.0)
 
 **A directory built *for* the tests is now recognised as test code** (`file_index.is_test_path`).

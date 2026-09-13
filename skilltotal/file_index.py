@@ -619,6 +619,10 @@ def neutralize_hidden(text: str) -> str:
 
 # Files larger than this are not loaded as text (still recorded in stats).
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
+# Binary sniff window, git's convention: a NUL within the first 8,000 bytes marks a binary.
+# Checking the WHOLE file dropped bundled `dist/*.js` that carried a single NUL inside a string
+# literal deep in the file -- and with the file, every finding in it, including the MCP surface.
+_BINARY_SNIFF_BYTES = 8000
 
 # Maximum characters kept in an evidence snippet (protects against minified one-liners).
 MAX_SNIPPET_CHARS = 240
@@ -943,7 +947,7 @@ class FileIndex:
                 raw = path.read_bytes()
             except OSError:
                 continue
-            if b"\x00" in raw:  # crude but effective binary check
+            if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:  # git-style sniff; see the constant
                 stats["skipped_binary"] += 1
                 continue
             text = raw.decode("utf-8", errors="replace")

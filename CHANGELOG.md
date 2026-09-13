@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.45.0]
+
+### Fixed
+- **MCP servers on the current TypeScript SDK are detected (ruleset 49).** `new McpServer(` and
+  `server.tool("…")` now count as a tool surface; before, such a server with benign tool names
+  produced no MCP finding. A sample of registry entries that read as "no MCP tools" was two-thirds
+  real SDK servers, most of them this gap.
+- **A NUL byte deep inside a bundled script no longer discards the file.** The binary sniff is
+  git's (NUL within the first 8,000 bytes) instead of the whole file, so `dist/*.js` with a NUL in
+  a string literal is scanned like any other source.
+
 ## [0.44.0]
 
 ### Changed

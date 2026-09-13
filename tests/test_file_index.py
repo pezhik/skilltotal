@@ -71,6 +71,23 @@ def test_skips_binary(tmp_path: Path):
     assert index.stats["skipped_binary"] == 1
 
 
+def test_nul_byte_deep_in_a_bundle_is_not_binary(tmp_path: Path):
+    """Only a NUL in the sniff window marks a binary; one buried in a 100 KB bundle does not.
+
+    Bundled `dist/*.js` sometimes carries a literal NUL inside a string. The whole-file check
+    dropped such files entirely, and with them every finding they held -- two of fourteen MCP
+    servers the registry survey failed to detect were lost this way.
+    """
+    deep = ("x = 1;\n" * 2000).encode() + b'const s = "\x00";\n'  # NUL well past 8,000 bytes
+    (tmp_path / "bundle.js").write_bytes(deep)
+    (tmp_path / "real.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+    index = FileIndex.build(tmp_path)
+    rels = {f.relpath for f in index.files}
+    assert "bundle.js" in rels
+    assert "real.bin" not in rels
+    assert index.stats["skipped_binary"] == 1
+
+
 def test_snippet_truncation(tmp_path: Path):
     long_line = "x" * 1000 + "TARGET"
     _write(tmp_path, "c.txt", long_line)
