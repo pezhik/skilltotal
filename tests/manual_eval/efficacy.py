@@ -14,7 +14,7 @@ Walks ``tests/eval_corpus/{positive,negative}/<AST-class>/<technique>/<variant>/
   (see ``docs/language-scope.md``).
 
 Zero network, zero runtime deps. Importable as an API (used by ``tests/test_efficacy_floor.py``
-and the ops Tier-2 gate) and runnable as a script that writes ``docs/efficacy-report.{md,json}``.
+and release gates) and runnable as a script that writes ``docs/efficacy-report.{md,json}``.
 
 Usage:
     python tests/manual_eval/efficacy.py [--corpus <dir>] [--out docs/efficacy-report]

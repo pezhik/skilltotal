@@ -204,7 +204,7 @@ def summarize(results: list[RowResult]) -> dict:
     # TP/FP regression at rule granularity — a hard gate independent of the verdict-level metric.
     golden = [r for r in ok if r.findings_ok is not None]
     finding_mismatches = [r for r in golden if not r.findings_ok]
-    # High-precision tripwire signal (Trust-Factory): a benign-baseline package that tripped a
+    # High-precision tripwire signal: a benign-baseline package that tripped a
     # FORBIDDEN rule (a synthesized exfil/typosquat combo) — an "elevated but not malicious" false
     # positive the benign_fp metric (malicious-only) misses. On a reputable corpus this is either a
     # real FP to fix or a real compromise to disclose; either way it needs triage, not a silent 0.

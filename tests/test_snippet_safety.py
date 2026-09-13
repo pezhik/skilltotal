@@ -21,9 +21,9 @@ def test_neutralize_renders_hidden_codepoints():
 
 def test_neutralize_keeps_clean_text_and_tabs():
     assert neutralize_hidden("clean\tline\nok") == "clean\tline\nok"
-    # visible non-ASCII (cyrillic / CJK / emoji) is legitimate and preserved
-    assert neutralize_hidden("обычный 中文") == (
-        "обычный 中文"
+    # visible non-ASCII (Greek / CJK / emoji) is legitimate and preserved
+    assert neutralize_hidden("κανονικό 中文") == (
+        "κανονικό 中文"
     )
 
 

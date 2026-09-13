@@ -521,7 +521,7 @@ class McpScanner(Scanner):
         Emitted as needs_review (never scored): on its own this is not proof of malicious
         behavior — legitimate servers (e.g. a GitHub server) have this surface too. The real
         risk is architectural and depends on the agent's runtime permissions; we only point
-        out the capability combination. Mirrors ST-COMBO-FS-NET for MCP tool capabilities.
+        out the capability combination.
         """
         channels = sorted(categories & self._CHANNEL_CATEGORIES)
         data = sorted(categories & self._DATA_CATEGORIES)

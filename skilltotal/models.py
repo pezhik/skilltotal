@@ -193,17 +193,6 @@ class NeedsReview:
 
 
 @dataclass
-class CapabilityEvidence:
-    """A detected capability together with the evidence that proves it."""
-
-    capability: Capability
-    evidence: list[Evidence]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {"evidence": [e.to_dict() for e in self.evidence]}
-
-
-@dataclass
 class Component:
     """Identity of the analyzed component (derived only from the component itself)."""
 

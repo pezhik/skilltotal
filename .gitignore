@@ -60,12 +60,15 @@ package-lock.json
 !tests/**/package.json
 !tests/**/package-lock.json
 
+# Default output of tests/manual_eval/survey_registry.py (a 17k-row dataset).
+survey.jsonl
+
 # Stray local SQLite DBs from local integration runs (not part of the engine)
 _test_web.db
 _dev_web.db
 local_e2e.db
 
-# Local-only superpowers planning docs (specs/plans) — must never reach the public repo.
+# Local planning notes.
 docs/superpowers/
 
 # Credentials written by `mcp-publisher login` into its working directory. They are live tokens

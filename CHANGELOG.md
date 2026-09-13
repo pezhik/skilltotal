@@ -20,6 +20,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
   load overriding instructions from a server; and the cloud and AI-CLI credential files harvested
   by Shai-Hulud and s1ngularity.
 
+### Removed
+- **`skilltotal.models.CapabilityEvidence` and `skilltotal.rules.rules_as_dicts()`.** Neither was
+  used by the engine or documented; `Report.capabilities` and `get_rules()` cover both.
+
 ### Changed
 - **`.vscode/` is scanned.** It was skipped as editor noise; a `tasks.json` that runs on folder
   open, and the script next to it, are behavior.
