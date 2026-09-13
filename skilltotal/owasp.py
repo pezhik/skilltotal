@@ -73,6 +73,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-HIDDEN-UNICODE": ("AST04",),
     "ST-HIDDEN-UNICODE-AMBIG": ("AST04",),
     "ST-MCP-TOOL-POISONING": ("AST04",),
+    "ST-MCP-SAMPLING-INJECTION": ("AST04",),
     "ST-MCP-TOOL-SHADOWING": ("AST04",),
     "ST-PROMPT-INJECTION": ("AST04",),
     "ST-PROMPT-WEAK": ("AST04",),

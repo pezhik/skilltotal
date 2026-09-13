@@ -19,7 +19,7 @@ AST category are left **unmapped** (empty `owasp`) rather than forced into a lab
 | **AST01 Malicious Skills** | `ST-OBF-DECODE-EXEC(-PY/-SH)`, `ST-PTH-EXEC`, `ST-ENCRYPTED-ARCHIVE`, `ST-SHELL-EVASION`, `ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, `ST-EMAIL-BCC-EXFIL`, `ST-CONVERGENCE` | deliberate harm: decode-and-execute, persistence, exfiltration, evasion, multi-indicator convergence |
 | **AST02 Supply Chain Compromise** | `ST-INSTALL-NPM(-PREPARE)`, `ST-INSTALL-PY`, `ST-INSTALL-DROPPER`, `ST-SHELL-PIPE-EXEC` | install-time hooks and remote-fetch-and-run (`curl \| sh`) |
 | **AST03 Over-Privileged Skills** | `ST-MCP-OVERBROAD-SCOPE`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-SKILL-CAP-MISMATCH` | excessive scope/autonomy/dangerous host powers; undeclared capabilities |
-| **AST04 Insecure Metadata** | `ST-MCP-TOOL-POISONING`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-INJECTION`, `ST-PROMPT-WEAK`, `ST-HIDDEN-UNICODE(-AMBIG)`, `ST-SKILL-CAP-MISMATCH` | misleading/falsified descriptions, hidden/smuggled instructions, falsified capability declarations |
+| **AST04 Insecure Metadata** | `ST-MCP-TOOL-POISONING`, `ST-MCP-SAMPLING-INJECTION`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-INJECTION`, `ST-PROMPT-WEAK`, `ST-HIDDEN-UNICODE(-AMBIG)`, `ST-SKILL-CAP-MISMATCH` | misleading/falsified descriptions, hidden/smuggled instructions, falsified capability declarations |
 | **AST05 Unsafe Deserialization** | `ST-DESERIALIZE-PY`, `ST-TAINT-DESERIAL-PY` | unsafe `pickle`/`yaml`/`marshal` loads, incl. taint into a deserialize sink |
 
 `ST-SKILL-CAP-MISMATCH` spans **AST03 + AST04** (code does more than the skill declares: both

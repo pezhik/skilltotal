@@ -20,7 +20,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
   stripped before a file is classified. Evaluation-corpus recall and precision are unchanged at
   100%/100%.
 
+### Added
+- **`ST-MCP-SAMPLING-INJECTION`**: an MCP server using sampling to make the client's model hand
+  over credentials or run a command, and keep quiet about it.
+
 ### Fixed
+- **Recall on published attack shapes.** Against the calibration labs and ten reproduced attacks
+  the first cut of ruleset 50 caught one of ten (ruleset 49: five). Multi-line `<IMPORTANT>` blocks,
+  FastMCP docstring poisoning, concealment of the agent's own action, decode-and-execute inside a
+  string passed to `new Function`/`eval`/`setTimeout`, injection in a skill's reference files and
+  covert credential reads are detected again or for the first time; all ten are in the evaluation
+  corpus so the gate would have caught it.
 - **One odd token no longer desynchronises a JS/TS file.** The C-family comment and string
   scanners did not know JavaScript regex literals, and a quoted string did not end at a newline,
   so `s.replace(/'/g, …)` opened a phantom string that ran to the end of the file. Every later

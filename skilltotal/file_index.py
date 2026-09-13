@@ -9,6 +9,7 @@ match. Centralizing traversal here means every scanner inherits identical, safe 
 
 from __future__ import annotations
 
+import ast
 import bisect
 import fnmatch
 import io
@@ -320,8 +321,27 @@ _INSTRUCTION_NAMES: frozenset[str] = frozenset(
 _INSTRUCTION_SUFFIXES: tuple[str, ...] = (".mdc",)
 
 
-def is_doc_path(relpath: str) -> bool:
-    """True if ``relpath`` is human-facing documentation/metadata (not an instruction surface)."""
+def skill_dirs(relpaths: Iterable[str]) -> frozenset[str]:
+    """Directories (``""`` for the root) holding a ``SKILL.md``: an agent reads what is in them."""
+    dirs = set()
+    for rel in relpaths:
+        head, _, name = rel.rpartition("/")
+        if name.lower() == "skill.md":
+            dirs.add(head.lower())
+    return frozenset(dirs)
+
+
+def _under_skill(relpath: str, skills: frozenset[str]) -> bool:
+    return any(d == "" or relpath.startswith(d + "/") for d in skills)
+
+
+def is_doc_path(relpath: str, skills: frozenset[str] = frozenset()) -> bool:
+    """True if ``relpath`` is human-facing documentation/metadata (not an instruction surface).
+
+    ``skills`` are the directories holding a ``SKILL.md`` (see ``skill_dirs``). Markdown inside a
+    skill is not documentation by default: a skill tells the agent to read its ``references/``
+    files, so an injection there is issued to the agent, not described to a person.
+    """
     parts = relpath.lower().split("/")
     name = parts[-1]
     while name.endswith(_TEMPLATE_SUFFIXES):
@@ -353,7 +373,7 @@ def is_doc_path(relpath: str) -> bool:
     # `deployprompt.md` or `agentrules.md` stays in scope, which is the recall-safe direction.
     # `.txt` and suffix-less files are excluded from this default: `prompt.txt` is a real
     # instruction surface with no naming convention to rely on.
-    if suffix in _DOC_BY_DEFAULT_SUFFIXES:
+    if suffix in _DOC_BY_DEFAULT_SUFFIXES and not _under_skill(relpath.lower(), skills):
         words = re.split(r"[._-]", stem)
         return not any(kw in word for word in words for kw in _INSTRUCTION_KEYWORDS)
     # Split on `.` too so a localized/variant doc keeps its keyword: README.zh-CN.md ->
@@ -513,6 +533,79 @@ def _c_code_spans(
                     continue
         i += 1
     return comments, strings, regexes
+
+
+# Code sinks that execute their string argument (detection literals, never called here).
+_JS_EXEC_SINK = re.compile(
+    r"(?:\beval|\bnew\s+Function|\bFunction|\bsetTimeout|\bsetInterval|\bexecScript)\s*\(\s*$"
+)
+_PY_EXEC_SINK = re.compile(r"(?:\bexec|\beval|\bcompile)\s*\(\s*$")
+# Decorators whose function a model sees: its docstring becomes the tool/prompt description.
+_AGENT_FACING_DECORATORS = frozenset({"tool", "prompt"})
+_SAMPLING_CALLS = frozenset({"create_message"})
+
+
+def _python_agent_facing_spans(
+    text: str, line_starts: list[int]
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Char-spans of Python strings a model reads, and of the functions that call sampling.
+
+    See ``IndexedFile.in_agent_facing_string`` and ``IndexedFile.sampling_regions``.
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return [], []
+    lines = text.splitlines(keepends=True)
+
+    def offset(lineno: int, col_bytes: int) -> int:
+        # ast columns count UTF-8 bytes; the index counts characters.
+        line = lines[lineno - 1] if 0 < lineno <= len(lines) else ""
+        col = len(line.encode("utf-8")[:col_bytes].decode("utf-8", errors="ignore"))
+        return line_starts[lineno - 1] + col if 0 < lineno <= len(line_starts) else len(text)
+
+    def span(node: ast.AST) -> tuple[int, int]:
+        return (
+            offset(node.lineno, node.col_offset),  # type: ignore[attr-defined]
+            offset(node.end_lineno, node.end_col_offset),  # type: ignore[attr-defined]
+        )
+
+    def decorator_name(dec: ast.expr) -> str:
+        target = dec.func if isinstance(dec, ast.Call) else dec
+        if isinstance(target, ast.Attribute):
+            return target.attr
+        return target.id if isinstance(target, ast.Name) else ""
+
+    spans: list[tuple[int, int]] = []
+    regions: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        facing = [d for d in node.decorator_list if decorator_name(d) in _AGENT_FACING_DECORATORS]
+        if facing:
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+                    and isinstance(body[0].value.value, str):
+                spans.append(span(body[0].value))
+            for dec in facing:
+                if isinstance(dec, ast.Call):
+                    for kw in dec.keywords:
+                        if kw.arg in ("description", "title"):
+                            spans.append(span(kw.value))
+        samples = any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr in _SAMPLING_CALLS
+            for call in ast.walk(node)
+        )
+        if samples:
+            regions.append(span(node))
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.JoinedStr) or (
+                    isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                ):
+                    spans.append(span(sub))
+    return spans, regions
 
 
 # Rust unit tests live INLINE in the same .rs file as production code (gated by `#[cfg(test)]`
@@ -756,6 +849,12 @@ class IndexedFile:
     _c_regex_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed char-spans of Python strings a model reads (tool docstrings, sampling
+    # prompts); see ``in_agent_facing_string``.
+    _agent_facing_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _sampling_cache: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
     # Lazily-computed char-spans of markdown fenced code blocks.
     _md_code_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -923,6 +1022,68 @@ class IndexedFile:
         """
         self._ensure_c_code_spans()
         return _offset_in_spans(self._c_string_spans_cache, offset)
+
+    def in_agent_facing_string(self, offset: int) -> bool:
+        """True if ``offset`` is inside a Python string that a model reads as text.
+
+        String literals are normally demoted as pattern definitions, but three kinds are the
+        opposite: they are exactly what an MCP client hands to the model.
+
+        * the docstring of a function decorated as a tool or prompt (``@mcp.tool()``,
+          ``@server.prompt``) -- FastMCP publishes it as the description;
+        * a ``description=``/``title=`` keyword in that decorator;
+        * every string in a function that calls ``create_message`` -- MCP sampling, where the
+          server makes the client's model run a prompt the server wrote.
+        """
+        if self.suffix not in (".py", ".pyw"):
+            return False
+        self._ensure_agent_facing()
+        return _offset_in_spans(self._agent_facing_cache, offset)
+
+    def _ensure_agent_facing(self) -> None:
+        if self._agent_facing_cache is None:
+            self._agent_facing_cache, self._sampling_cache = _python_agent_facing_spans(
+                self.text, self._line_starts
+            )
+
+    def sampling_regions(self) -> list[tuple[int, int]]:
+        """Char-spans of code that asks the MCP client's model to run a server-written prompt.
+
+        Python: each function that calls ``create_message``. JavaScript/TypeScript: the text
+        around each ``createMessage(`` call, since the prompt is usually built a few lines above.
+        """
+        if self.suffix in (".py", ".pyw"):
+            if "create_message" not in self.text:
+                return []
+            self._ensure_agent_facing()
+            return list(self._sampling_cache or [])
+        if self.suffix in _JS_FAMILY_SUFFIXES:
+            return [
+                (max(0, m.start() - 4000), min(len(self.text), m.end() + 2000))
+                for m in re.finditer(r"\bcreateMessage\s*\(", self.text)
+            ]
+        return []
+
+    def string_is_executed(self, offset: int) -> bool:
+        """True if the string literal holding ``offset`` is passed straight to a code sink.
+
+        ``new Function("…")``, ``eval("…")``, ``setTimeout("…")`` and Python ``exec("…")`` run
+        their string argument, so what is inside that string is code, not a pattern or a label.
+        """
+        if self.suffix in (".py", ".pyw"):
+            self._ensure_code_spans()
+            spans = self._str_spans
+            sink = _PY_EXEC_SINK
+        elif self.suffix in _C_FAMILY_SUFFIXES:
+            self._ensure_c_code_spans()
+            spans = self._c_string_spans_cache
+            sink = _JS_EXEC_SINK
+        else:
+            return False
+        for start, end in spans or ():
+            if start <= offset < end:
+                return bool(sink.search(self.text, max(0, start - 60), start))
+        return False
 
     def in_js_regex(self, offset: int) -> bool:
         """True if ``offset`` falls inside a JavaScript-family regex literal (``/…/flags``).

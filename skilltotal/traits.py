@@ -302,6 +302,9 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     # Untrusted perception (prompt injection + hidden/smuggled instructions).
     "ST-PROMPT-INJECTION": (_T.UNTRUSTED_PERCEPTION,),
     "ST-PROMPT-WEAK": (_T.UNTRUSTED_PERCEPTION,),
+    # The server writes the prompt the client's model runs: perception the user never sees, with
+    # the session's own authority behind it.
+    "ST-MCP-SAMPLING-INJECTION": (_T.UNTRUSTED_PERCEPTION, _T.EXECUTION_AUTHORITY),
     "ST-HIDDEN-UNICODE": (_T.METADATA_INTEGRITY, _T.UNTRUSTED_PERCEPTION),
     "ST-HIDDEN-UNICODE-AMBIG": (_T.METADATA_INTEGRITY, _T.UNTRUSTED_PERCEPTION),
     # Metadata integrity (poisoning / shadowing / falsified declaration).

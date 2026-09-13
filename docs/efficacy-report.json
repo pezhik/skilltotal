@@ -1,8 +1,8 @@
 {
   "engine_version": "0.46.0",
   "ruleset_version": 50,
-  "positives": 25,
-  "negatives": 16,
+  "positives": 34,
+  "negatives": 20,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -22,6 +22,7 @@
     "hidden-unicode": 1.0,
     "install-dropper": 1.0,
     "lethal-trifecta": 1.0,
+    "mcp-sampling-injection": 1.0,
     "mcp-tool-poisoning": 1.0,
     "prompt-injection": 1.0,
     "pth-persistence": 1.0,
@@ -30,7 +31,7 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 4,
+      "node": 5,
       "python": 7,
       "manifest/text": 3,
       "shell": 2
@@ -40,7 +41,9 @@
       "python": 2
     },
     "AST04": {
-      "manifest/text": 3
+      "python": 4,
+      "manifest/text": 6,
+      "node": 1
     },
     "AST05": {
       "python": 2

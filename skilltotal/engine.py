@@ -28,6 +28,7 @@ from skilltotal.file_index import (
     is_doc_path,
     is_example_path,
     is_test_path,
+    skill_dirs,
 )
 from skilltotal.models import (
     Component,
@@ -134,7 +135,9 @@ def analyze_directory(
     #      is a literal or doc example (e.g. a scanner's own rule definitions), not behavior
     findings, test_review = _split_test_evidence(findings, index)
     needs_review.extend(test_review)
-    findings, doc_review = _split_doc_evidence(findings)
+    findings, doc_review = _split_doc_evidence(
+        findings, skill_dirs(f.relpath for f in index.files)
+    )
     needs_review.extend(doc_review)
     findings, corpus_review = _split_data_corpus_evidence(findings)
     needs_review.extend(corpus_review)
@@ -420,7 +423,7 @@ def _demoted_review(finding: Finding, demoted: list[Evidence], note: str) -> Nee
 
 
 def _split_doc_evidence(
-    findings: list[Finding],
+    findings: list[Finding], skills: frozenset[str] = frozenset()
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Demote evidence found only in human-facing documentation/metadata to needs_review.
 
@@ -431,8 +434,8 @@ def _split_doc_evidence(
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
-        prod = [e for e in finding.evidence if not is_doc_path(e.file)]
-        docs = [e for e in finding.evidence if is_doc_path(e.file)]
+        prod = [e for e in finding.evidence if not is_doc_path(e.file, skills)]
+        docs = [e for e in finding.evidence if is_doc_path(e.file, skills)]
         if prod:
             kept.append(_finding_with_evidence(finding, prod))
         if docs:
@@ -668,8 +671,12 @@ def _split_code_context_evidence(
         if policy is None:
             kept.append(finding)
             continue
-        real = [e for e in finding.evidence if not _is_noncode_context(e, policy, by_path)]
-        demoted = [e for e in finding.evidence if _is_noncode_context(e, policy, by_path)]
+        real = [
+            e for e in finding.evidence if not _is_noncode_context(e, policy, by_path, finding.id)
+        ]
+        demoted = [
+            e for e in finding.evidence if _is_noncode_context(e, policy, by_path, finding.id)
+        ]
         if real:
             kept.append(_finding_with_evidence(finding, real))
         if demoted:
@@ -679,7 +686,14 @@ def _split_code_context_evidence(
     return kept, review
 
 
-def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile]) -> bool:
+_AGENT_TEXT_RULES = frozenset(
+    {"ST-PROMPT-INJECTION", "ST-MCP-TOOL-POISONING", "ST-MCP-SAMPLING-INJECTION"}
+)
+
+
+def _is_noncode_context(
+    e: Evidence, policy: str, by_path: dict[str, IndexedFile], rule_id: str = ""
+) -> bool:
     """True if evidence ``e`` is a non-executable string/comment match that ``policy`` demotes.
 
     Python: a match inside a comment (any policy) or a string literal
@@ -693,6 +707,14 @@ def _is_noncode_context(e: Evidence, policy: str, by_path: dict[str, IndexedFile
     """
     f = by_path.get(e.file)
     if f is None or e.match_offset is None:
+        return False
+    # A string a sink executes (`new Function("…")`, `exec("…")`) is code for every rule. A string
+    # a model reads (a FastMCP tool docstring, a sampling prompt) is the directive itself for the
+    # rules about text aimed at a model; for the others (a credential path an honest SSH tool's
+    # docstring mentions) it is still a description.
+    if f.string_is_executed(e.match_offset):
+        return False
+    if rule_id in _AGENT_TEXT_RULES and f.in_agent_facing_string(e.match_offset):
         return False
     if f.suffix in (".py", ".pyw"):
         if f.in_comment(e.match_offset):
