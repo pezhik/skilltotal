@@ -104,6 +104,18 @@ def test_report_publishes_no_embedded_secret_count():
     assert "published on purpose" in text
 
 
+def test_report_states_the_population_snapshot_when_it_differs_from_the_scan_date():
+    """A re-run over an earlier registry snapshot must say so, or 17,535 will not reconcile
+    against the live registry a reader checks today."""
+    meta = {**_META, "generated": "2026-09-13", "population_snapshot": "2026-08-16"}
+    text = sr.render_markdown(sr.summarize(_rows()), meta)
+    assert "scanned on 2026-09-13 against the registry as of 2026-08-16" in text
+    assert "as of 2026-08-16, deduplicated by source" in text
+    # Same-day runs keep the plain wording.
+    same = sr.render_markdown(sr.summarize(_rows()), _META)
+    assert "run on 2026-08-19" in same and "against the registry as of" not in same
+
+
 def test_report_states_coverage_and_versions():
     text = sr.render_markdown(sr.summarize(_rows()), _META)
     assert "0.41.0" in text and "ruleset 45" in text

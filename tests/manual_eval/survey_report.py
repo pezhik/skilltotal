@@ -142,11 +142,20 @@ def render_markdown(s: dict, meta: dict) -> str:
     out: list[str] = []
     add = out.append
 
+    # The population can be an earlier snapshot than the scan: re-running a better engine over
+    # the SAME 17,535 entries is what makes two reports comparable, so say both dates when they
+    # differ rather than let a reader reconcile the count against today's registry.
+    snapshot = meta.get("population_snapshot") or meta["generated"]
+    when = (
+        f"scanned on {meta['generated']} against the registry as of {snapshot}"
+        if snapshot != meta["generated"]
+        else f"run on {meta['generated']}"
+    )
     add("# The MCP registry, measured")
     add("")
     add(
         f"A deterministic static scan of every distinct component in the public MCP registry — "
-        f"{s['population']:,} of them — run on {meta['generated']} with SkillTotal "
+        f"{s['population']:,} of them — {when} with SkillTotal "
         f"{meta['engine']} (ruleset {meta['ruleset']})."
     )
     add("")
@@ -248,7 +257,7 @@ def render_markdown(s: dict, meta: dict) -> str:
     add(f"- Engine {meta['engine']}, ruleset {meta['ruleset']} — deterministic regex and AST "
         f"analysis. The component is never executed and no LLM is involved, so the run "
         f"reproduces.")
-    add(f"- Population fetched from `{meta['registry_url']}` and deduplicated by source.")
+    add(f"- Population: `{meta['registry_url']}` as of {snapshot}, deduplicated by source.")
     add(f"- Two bounds, both disclosed above: {meta['clone_mb']} MB per fetch and "
         f"{meta['timeout']}s of wall clock per component.")
     add("- Harness: `tests/manual_eval/survey_registry.py`. This report: "
@@ -271,11 +280,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--registry-entries", required=True, type=int)
     ap.add_argument("--clone-mb", type=int, default=50)
     ap.add_argument("--timeout", type=int, default=60)
+    ap.add_argument(
+        "--population-snapshot", default="",
+        help="date (YYYY-MM-DD) the registry population was captured; defaults to the run date",
+    )
     args = ap.parse_args(argv)
 
     summary = summarize(load(Path(args.survey)))
+    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     meta = {
-        "generated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "generated": generated,
+        "population_snapshot": args.population_snapshot or generated,
         "engine": args.engine,
         "ruleset": args.ruleset,
         "registry_entries": args.registry_entries,
