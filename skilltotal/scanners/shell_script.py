@@ -32,6 +32,17 @@ R_PASSWORD_ARCHIVE = "ST-ARCHIVE-PASSWORD-EXTRACT"  # nosec B105 - a rule id, no
 # Markdown whose fenced shell blocks are commands for a person or an agent to run. The ClawHavoc
 # skills (ClawHub, early 2026) put `echo '<base64>' | base64 -D | bash` under "Prerequisites".
 _MARKDOWN = (".md", ".mdx")
+# Fence info strings that mean "run this in a shell". A ```typescript block showing
+# `sandbox.exec('curl ... | sh')` is a code sample, not a command (FP: a Cloudflare skill's
+# reference file raised a registry MCP server from medium to high).
+_SHELL_FENCES = frozenset(
+    {"", "bash", "sh", "shell", "zsh", "console", "terminal", "shell-session"}
+)
+_FENCE_INFO = re.compile(r" {0,3}(?:`{3,}|~{3,})\s*([\w+-]*)")
+# Rules that apply inside markdown. A pipe-to-shell there is an install instruction in prose docs
+# far more often than anything else, so it stays a script-only signal; decoding-then-executing
+# and extracting a downloaded archive with a password have no honest documentation reading.
+_MARKDOWN_RULES = frozenset({R_DECODE_EXEC_SH, R_PASSWORD_ARCHIVE})
 _DOWNLOAD = re.compile(r"\b(?:curl|wget|Invoke-WebRequest|iwr)\b", re.IGNORECASE)
 
 
@@ -121,6 +132,8 @@ class ShellScriptScanner(Scanner):
             seen: set[tuple[str, int, int]] = set()
             evidence = []
             for f in files:
+                if f.suffix in _MARKDOWN and rule.id not in _MARKDOWN_RULES:
+                    continue
                 regions = self._regions(f)
                 for m, ev in f.finditer(rule.pattern):
                     region = next((r for r in regions if r[0] <= m.start() < r[1]), None)
@@ -145,7 +158,12 @@ class ShellScriptScanner(Scanner):
     def _regions(f) -> list[tuple[int, int]]:
         """Where shell commands live: the whole script, or each fenced block of a markdown file."""
         if f.suffix in _MARKDOWN:
-            return f.markdown_code_spans()
+            spans = []
+            for start, end in f.markdown_code_spans():
+                info = _FENCE_INFO.match(f.text, start)
+                if info is not None and info.group(1).lower() in _SHELL_FENCES:
+                    spans.append((start, end))
+            return spans
         return [(0, len(f.text))]
 
     @staticmethod

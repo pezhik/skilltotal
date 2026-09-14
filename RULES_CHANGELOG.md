@@ -10,6 +10,9 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 as an inert sample (every URL `.invalid`, every encoded blob a harmless `echo`) and run through the
 engine before any rule was written: ten of eleven were missed. All eleven, with honest look-alikes,
 are in the evaluation corpus (45 positives, 28 negatives, 100%/100%).
+Precision check before release: 300 registry components scanned with rulesets 50 and 51 changed
+two verdicts; one false escalation was fixed (below), the other is a Claude Code `go fmt` hook
+reported as `ST-AGENT-AUTORUN`, which is what it is. No new malicious verdicts.
 
 - **`ST-INSTALL-GYP` (new, malicious indicator).** node-gyp evaluates `<!(…)` command substitution
   in `binding.gyp` during `npm install` even when package.json declares no install script. The
@@ -29,10 +32,13 @@ are in the evaluation corpus (45 positives, 28 negatives, 100%/100%).
   `kiro`, `opencode`, `aider` or `cursor-agent` with approvals off (`--dangerously-skip-permissions`,
   `--yolo`, `--trust-all-tools` …), as the s1ngularity and Shai-Hulud npm payloads did to search
   disks for secrets. Honest orchestrators do it too, so it is not a verdict.
-- **Shell rules read fenced code blocks in markdown** (`ST-OBF-DECODE-EXEC-SH`,
-  `ST-SHELL-PIPE-EXEC`). The ClawHavoc skills on ClawHub (early 2026, 341 skills) hid
-  `echo '<base64>' | base64 -D | bash` under a "Prerequisites" heading. Prose outside a fence is
-  still prose, and a README's install block is still documentation.
+- **Shell rules read shell fenced code blocks in markdown** (`ST-OBF-DECODE-EXEC-SH`,
+  `ST-ARCHIVE-PASSWORD-EXTRACT`). The ClawHavoc skills on ClawHub (early 2026, 341 skills) hid
+  `echo '<base64>' | base64 -D | bash` under a "Prerequisites" heading. Only fences marked as
+  shell (or unmarked) count, and only decode-and-execute and password extraction apply there: a
+  `curl … | sh` in markdown is an install instruction far more often than not, and a ```typescript
+  sample of `sandbox.exec('curl … | sh')` in a skill reference raised a registry server to high in
+  the precision check. Prose outside a fence is still prose.
 - **`ST-ARCHIVE-PASSWORD-EXTRACT` (new, malicious indicator).** A download followed by `unzip -P`,
   `7z x -p` or `unrar x -p` in the same script or fenced block, the ToxicSkills delivery shape: the
   password keeps the payload away from scanners. Extracting a local test fixture stays clean.
