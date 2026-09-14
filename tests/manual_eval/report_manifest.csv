@@ -61,3 +61,8 @@ https://github.com/BloopodotAI/bloopo-marketplace,git,mcp,bloopo
 pypi:bourdon,pypi,mcp,bourdon
 pypi:bowmark-mcp,pypi,mcp,bowmark
 https://github.com/bowmark-ai/skill,git,mcp,bowmark
+https://github.com/ruslan2027/adako-mcp,git,mcp,ads
+https://github.com/piers-fawkes/fodda-mcp,git,mcp,brand-intelligence
+https://github.com/MathAndMagic/bridgeapp-plugin,git,mcp,bridgeapp
+https://github.com/modelcontextprotocol/registry,git,mcp,business-contact-finder
+npm:buywhere-mcp,npm,mcp,buywhere-mcp
