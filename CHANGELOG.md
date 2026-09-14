@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.47.2]
+
+### Fixed
+- **Defensive MCP tools quoting "ignore previous instructions" are not poisoned (ruleset 53).**
+  Ruleset 52 widened the poisoning phrase to "ignore previous/prior/system instructions"; four
+  registry servers that describe the phrases they block were then flagged. The MCP rule is back to
+  the tool's own instructions; "ignore previous instructions" stays with `ST-PROMPT-INJECTION`,
+  which tells a cited example from a directive.
+
 ## [0.47.1]
 
 ### Fixed

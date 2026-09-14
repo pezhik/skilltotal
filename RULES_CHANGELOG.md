@@ -4,6 +4,15 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 53 (engine 0.47.2)
+
+- **`ST-MCP-TOOL-POISONING`: "ignore … instructions" names the tool's own instructions only**
+  (`the tool's` / `original` / `actual`). Ruleset 52 had added `previous`, `prior`, `above`,
+  `user's` and `system`, and four registry servers whose descriptions quote "ignore previous
+  instructions" as a phrase they filter scored as poisoned. That phrase belongs to
+  `ST-PROMPT-INJECTION`, which separates a quoted example from a live directive. This change only
+  narrows one alternative of one rule.
+
 ## ruleset 52 (engine 0.47.1)
 
 All seven malicious-indicator hits in the ruleset-51 registry survey were honest; each class below
