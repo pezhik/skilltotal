@@ -4,6 +4,32 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.47.0]
+
+### Added
+- **Detection for the attack techniques published against AI components in 2026 (ruleset 51).**
+  Each was reproduced as an inert sample and checked against the engine first; ten of eleven were
+  missed. Now covered: node-gyp command substitution in `binding.gyp` (the Miasma worm's install
+  vector that bypasses install-script checks); agent and editor configuration that runs commands
+  on its own (`.claude/settings.json` hooks, `.gemini/settings.json`, `.cursor/hooks.json`,
+  `.vscode/tasks.json` on folder open), escalated when it fetches or decodes code; AI coding CLIs
+  launched with approvals disabled; shell commands inside markdown fenced blocks, where malicious
+  skills put `base64 -D | bash` under "Prerequisites"; downloaded archives extracted with a
+  password; zero-width characters threaded through words; agent instructions that carry a secret
+  from the environment into URLs, copy themselves into CLAUDE.md/AGENTS.md to outlive the skill, or
+  load overriding instructions from a server; and the cloud and AI-CLI credential files harvested
+  by Shai-Hulud and s1ngularity.
+
+### Removed
+- **Maintainer notes are no longer published** (`CLAUDE.md`, `docs/publishing-setup.md`).
+- **`skilltotal.models.CapabilityEvidence` and `skilltotal.rules.rules_as_dicts()`.** Neither was
+  used by the engine or documented; `Report.capabilities` and `get_rules()` cover both.
+
+### Changed
+- **The report schema `$id` is on the project's own domain**: `https://www.skilltotal.ai/schemas/report-1.5.json` (was `skilltotal.dev`, which the project does not own). Schema content is unchanged.
+- **`.vscode/` is scanned.** It was skipped as editor noise; a `tasks.json` that runs on folder
+  open, and the script next to it, are behavior.
+
 ## [0.46.0]
 
 ### Changed

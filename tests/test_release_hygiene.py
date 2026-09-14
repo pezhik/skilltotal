@@ -60,6 +60,11 @@ def test_schema_id_matches_report_schema_version():
     assert f"report-{skilltotal.REPORT_SCHEMA_VERSION}.json" in schema, (
         "docs/report.schema.json $id does not match REPORT_SCHEMA_VERSION"
     )
+    # The id once pointed at skilltotal.dev, a domain the project does not own. A schema id on
+    # someone else's domain lets them publish a "canonical" schema for our reports.
+    assert '"$id": "https://www.skilltotal.ai/schemas/' in schema, (
+        "docs/report.schema.json $id must be on the project's own domain, www.skilltotal.ai"
+    )
 
 
 # Stdlib names that only exist from 3.11 on. `requires-python = ">=3.10"` is a promise, and

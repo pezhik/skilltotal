@@ -49,7 +49,8 @@ SKIP_DIRS: frozenset[str] = frozenset(
         ".mypy_cache",
         ".pytest_cache",
         ".idea",
-        ".vscode",
+        # `.vscode` is NOT skipped: a `tasks.json` with `runOn: folderOpen` runs a command when the
+        # folder is opened, and the Miasma npm worm (2026) shipped its re-infection script there.
         "site-packages",
         # Generated coverage reports: coverage.py / nyc render the project's OWN source as HTML
         # (double-counting every finding already scanned in the real source) plus scaffolding —
@@ -959,6 +960,11 @@ class IndexedFile:
         self._md_code_spans_cache = (
             _markdown_code_spans(self.text) if self.suffix in _MARKDOWN_SUFFIXES else []
         )
+
+    def markdown_code_spans(self) -> list[tuple[int, int]]:
+        """Char-spans of fenced code blocks (markdown files only; empty otherwise)."""
+        self._ensure_md_code_spans()
+        return list(self._md_code_spans_cache or [])
 
     def in_markdown_prose(self, offset: int) -> bool:
         """True if ``offset`` is markdown PROSE — inside a .md/.mdx file, outside any fenced block.

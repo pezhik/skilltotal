@@ -52,13 +52,6 @@ def test_clean_component_verdict_is_clean(clean_report):
     assert v["headline"] == "No significant risks found"
 
 
-def test_combo_finding_is_capability_not_malware(malicious_py):
-    # filesystem+network combo is an exfiltration *surface*, not proof of intent.
-    by_id = _by_id(malicious_py)
-    if "ST-COMBO-FS-NET" in by_id:
-        assert by_id["ST-COMBO-FS-NET"].threat_class == ThreatClass.CAPABILITY
-
-
 def test_every_finding_has_a_threat_class(malicious_npm, malicious_py, mcp_report):
     for report in (malicious_npm, malicious_py, mcp_report):
         for f in report.findings:

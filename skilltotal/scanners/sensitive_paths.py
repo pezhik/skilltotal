@@ -55,6 +55,19 @@ _STRONG_PATHS = alternation(
     r"\bwallet\.dat\b",
     r"\.ethereum/keystore",
     r"~/\.config/solana",
+    # Shai-Hulud "Third Coming" (Bitwarden CLI 2026.4.0) and s1ngularity read these, written
+    # relative to the home directory as often as with `~`.
+    r"\.kube/config\b",
+    r"gcloud/credentials\.db",
+    r"\.azure/(?:credentials|accessTokens\.json|msal_token_cache)",
+    r"~/\.npmrc",
+    r"~/\.pypirc",
+    r"\.config/gh/hosts\.yml",
+    # Local AI coding agents keep their login here; stealing it hands over the account.
+    r"\.claude/\.credentials\.json",
+    r"\.codex/auth\.json",
+    r"\.gemini/oauth_creds\.json",
+    r"\.config/github-copilot/(?:hosts|apps)\.json",
     flags=re.IGNORECASE,
 )
 

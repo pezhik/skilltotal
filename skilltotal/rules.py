@@ -132,5 +132,3 @@ def get_rules() -> list[RuleSpec]:
     return sorted(rules, key=lambda r: r.id)
 
 
-def rules_as_dicts() -> list[dict[str, str]]:
-    return [r.to_dict() for r in get_rules()]

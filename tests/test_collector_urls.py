@@ -142,9 +142,9 @@ def test_ascii_package_names_accepted():
 
 
 def test_non_ascii_package_names_rejected():
-    # cyrillic / specials must NOT pass validation (so they never reach the registry URL)
-    assert npm_package_name("npm:azure-iothub-service-clientпав") is None
-    assert pypi_package_name("pypi:requestsпав") is None
+    # non-ASCII letters / specials must NOT pass validation (so they never reach the registry URL)
+    assert npm_package_name("npm:azure-iothub-service-clientπαβ") is None
+    assert pypi_package_name("pypi:requestsπαβ") is None
 
 
 def test_pre_check_allows_small_repo(monkeypatch):

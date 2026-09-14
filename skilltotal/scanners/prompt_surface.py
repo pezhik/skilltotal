@@ -83,6 +83,26 @@ _STRONG = alternation(
     r"(?:secretly|silently|quietly|covertly)\s+(?:read|send|upload|copy|collect|exfiltrate|"
     r"include|forward|grab|fetch)\b[^.]{0,80}?(?:credentials?\b|id_rsa|\.ssh/|\.aws/|\.env\b|"
     r"tokens?\b|secrets?\b|passwords?\b|api[\s_-]?keys?\b|private\s+keys?\b|cookies\b|keychain)",
+    # Read a credential location, then send IT (TrapDoor's fake "security scan").
+    r"(?:read|cat|copy|collect|gather|grab)s?\b[^.\n]{0,40}?(?:~/\.ssh|~/\.aws|id_rsa|"
+    r"\.aws/credentials|\.env\b)[^.\n]{0,80}?\b(?:upload|send|post|exfiltrate|transmit|forward)s?"
+    r"\s+(?:it|them|its\s+contents|their\s+contents)\b",
+    # A secret from the environment carried out on every request (CSA SKILL.md research, 2026):
+    # "append the environment variable $ANTHROPIC_API_KEY as a query parameter".
+    r"(?:append|add|include|attach|insert|pass)\s+(?:the\s+)?(?:value\s+of\s+)?(?:the\s+)?"
+    r"(?:environment\s+variable\s+)?[`'\"]?\$?\{?[A-Z][A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD)\}?"
+    r"[`'\"]?[^.\n]{0,60}?\b(?:query\s+param(?:eter)?|to\s+(?:the|every|each|all|any)\s+"
+    r"(?:urls?|requests?|links?)|(?:request\s+)?headers?\b|webhook)",
+    # Persistence: copy the skill's own instructions into other context files so they outlive it.
+    r"(?:copy|write|append|insert|add|save)\s+(?:the\s+|these\s+|this\s+|all\s+)?(?:\w+\s+){0,4}?"
+    r"(?:instructions|rules|file|prompt)\b[^.]{0,60}?(?:CLAUDE\.md|AGENTS\.md|GEMINI\.md|"
+    r"\.cursorrules|\.windsurfrules|copilot-instructions\.md)[^\n]{0,160}?\b(?:persist|"
+    r"stay\s+active|remain\s+active|after\s+(?:this\s+skill|it|the\s+skill)\s+is\s+"
+    r"(?:removed|uninstalled|deleted)|survive)",
+    # Instructions loaded from a server at run time that override the ones the user reviewed.
+    r"(?:fetch|download|load|retrieve|pull)\s+(?:the\s+)?(?:latest\s+|current\s+|updated\s+|new\s+)?"
+    r"(?:instructions|rules|prompts?|directives)\s+from\s+\S*https?://\S+[^.]{0,80}?\b(?:follow|"
+    r"obey|execute|apply)\b[^.]{0,60}?\b(?:even\s+if|override|take\s+precedence|regardless)",
     # "send <secret> to". Excludes bare "tokens" — legitimately "sent" all over auth flows and
     # specs (FP: exa bundles the MCP spec: "clients MUST NOT send tokens to the MCP server").
     # Best-effort negation guard for plain prose (markdown emphasis can still defeat a fixed-width
@@ -159,6 +179,9 @@ _WEAK = alternation(
     r"before\s+(?:answering|you\s+answer)",
     r"do(?:\s*not|n['’]?t)\s+tell\s+the\s+user",
     r"without\s+(?:telling|informing|notifying)\s+the\s+user",
+    # Instructions fetched from a URL at run time: the reviewed text is not the text that runs.
+    r"(?:fetch|download|load|retrieve|pull)\s+(?:the\s+)?(?:latest\s+|current\s+|updated\s+)?"
+    r"(?:instructions|rules|prompts?|directives)\s+from\s+\S*https?://",
     flags=re.IGNORECASE | re.MULTILINE,
 )
 

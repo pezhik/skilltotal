@@ -83,7 +83,7 @@ target-version = "py310"
 #
 # tests/manual_eval/corpus is THIRD-PARTY source fetched by the calibration harness (gitignored,
 # absent on a clean checkout). Linting it reports other projects' style as our failures, and it
-# would break the deploy gate on any machine that has run calibration.
+# would fail lint on any machine that has run calibration.
 extend-exclude = ["tests/eval_corpus", "tests/manual_eval/corpus"]
 
 [tool.ruff.lint]

@@ -43,6 +43,14 @@ _EMOJI_TAG_SEQ = re.compile(
 )
 
 
+# Zero-width characters threaded between the letters of ASCII words ("r<ZWSP>e<ZWSP>a<ZWSP>d").
+# Emoji ZWJ sequences, CJK text and RTL scripts never put them between Latin letters, and a word
+# broken this way reads to a person as nothing at all. TrapDoor (2026) hid CLAUDE.md and
+# .cursorrules directives like this. Soft hyphen is excluded: it is real hyphenation.
+_SPLICE = re.compile("[A-Za-z][\u200b\u200c\u200d\u2060\ufeff]+(?=[A-Za-z])")
+_SPLICES_PER_LINE = 6
+
+
 def _is_tag(cp: int) -> bool:
     return 0xE0000 <= cp <= 0xE007F
 
@@ -76,9 +84,10 @@ class InvisibleUnicodeScanner(Scanner):
             severity=Severity.HIGH,
             title="Hidden / invisible Unicode (ASCII smuggling)",
             description=(
-                "Unicode tag characters (U+E0000+) were detected — invisible code points that "
-                "encode ASCII. They have no legitimate use and are used to smuggle "
-                "instructions past human review while remaining readable by an LLM."
+                "Unicode tag characters (U+E0000+), or zero-width characters threaded between "
+                "the letters of words, were detected. Both hide text from a person while a "
+                "model still reads it, and neither has a legitimate use in that form; they are "
+                "used to smuggle instructions past human review."
             ),
             recommendation=(
                 "Treat the component as malicious until reviewed. Inspect the decoded hidden "
@@ -120,6 +129,16 @@ class InvisibleUnicodeScanner(Scanner):
                 line = (_EMOJI_TAG_SEQ.sub("", raw_line)
                         if "\U0001F3F4" in raw_line else raw_line)
                 tags = [c for c in line if _is_tag(ord(c))]
+                splices = len(_SPLICE.findall(line))
+                if splices >= _SPLICES_PER_LINE and not tags:
+                    if len(evidence) < MAX_EVIDENCE_PER_FINDING:
+                        hidden = "".join(c for c in line if not _is_review(ord(c)))
+                        evidence.append(
+                            Evidence(file=f.relpath, line_start=lineno, line_end=lineno,
+                                     snippet=_render(line)[:200]
+                                     + f"  [text without zero-width: {hidden[:120]!r}]")
+                        )
+                    continue
                 if tags:
                     snippet = _render(line)[:200]
                     decoded = _decode_tags(line)
