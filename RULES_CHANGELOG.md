@@ -4,6 +4,31 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 52 (engine 0.47.1)
+
+All seven malicious-indicator hits in the ruleset-51 registry survey were honest; each class below
+is fixed and all seven now scan clean. All 45 corpus attacks and the 21 published-technique probes
+stay caught.
+
+- **Environment secret carried into requests** (`ST-PROMPT-INJECTION`): the variable must be named
+  as one, `$FOO_KEY` or "environment variable FOO_KEY", in upper case. Case-insensitively `authToken`
+  matched in "pass `authToken` as parameter; use `Authorization: Bearer ${token}` header".
+- **Hidden-block marker payload** (`ST-MCP-TOOL-POISONING`): "when" and "make sure" removed from the
+  instruction verbs. A structured FastMCP docstring (`<usecase>`, `<instructions>`, `<parameters>`)
+  says "Use this when the user wants…" under `<instructions>`. The published shadowing attack still
+  matches on "send"/"change".
+- **`re.compile(r"...")` is not the builtin `compile()`**: a jailbreak filter's own phrase list
+  inside `re.compile` scored as a live directive; code sinks are now builtins only.
+- **Suffix-less shell scripts are recognised by shebang** for `#` comments and quoted arguments
+  (a comment in `cli/<tool>` saying a dead store "would silently read as no secrets").
+- **Rust strings**: `"..."` may span lines, `r#"..."#` is a raw string, and `'a` is a lifetime.
+  A multi-line `warn!` message was read as code from its second line on.
+- **Modal verbs describe, they do not direct**: "a compromised agent could exfiltrate it to an
+  arbitrary host" no longer matches the exfiltrate directive; "silently read as" is not a read.
+- **`ST-MCP-TOOL-POISONING`: bare "ignore instructions" is a description** ("models that
+  hallucinate, ignore instructions, or produce garbled output"); the phrase must name what to
+  ignore ("the tool description", "previous instructions").
+
 ## ruleset 51 (engine 0.47.0)
 
 **Attack techniques published against AI components in 2026.** Each campaign below was reproduced

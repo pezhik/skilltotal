@@ -487,9 +487,23 @@ def _c_code_spans(
     strings: list[tuple[int, int]] = []
     regexes: list[tuple[int, int]] = []
     js = suffix in _JS_FAMILY_SUFFIXES
+    rust = suffix == ".rs"
     i, n = 0, len(text)
     while i < n:
         c = text[i]
+        if rust and c == "r" and (i == 0 or not (text[i - 1].isalnum() or text[i - 1] == "_")):
+            raw = _RUST_RAW_OPEN.match(text, i)
+            if raw:
+                close = '"' + "#" * (len(raw.group(0)) - 2)
+                end = text.find(close, raw.end())
+                start, i = i, (n if end < 0 else end + len(close))
+                strings.append((start, i))
+                continue
+        if rust and c == "'":
+            char = _RUST_CHAR.match(text, i)
+            if char is None:
+                i += 1  # a lifetime such as 'a or 'static
+                continue
         if c == '"' and text.startswith('"""', i):
             start = i
             end = text.find('"""', i + 3)
@@ -507,7 +521,7 @@ def _c_code_spans(
                 if ch == c:
                     i += 1
                     break
-                if ch == "\n" and c != "`":
+                if ch == "\n" and c != "`" and not (rust and c == '"'):
                     break
                 i += 1
             strings.append((start, min(i, n)))
@@ -536,11 +550,15 @@ def _c_code_spans(
     return comments, strings, regexes
 
 
+_RUST_RAW_OPEN = re.compile(r'r#*"')
+_RUST_CHAR = re.compile(r"'(?:\\(?:u\{[0-9a-fA-F]{1,6}\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'")
 # Code sinks that execute their string argument (detection literals, never called here).
 _JS_EXEC_SINK = re.compile(
     r"(?:\beval|\bnew\s+Function|\bFunction|\bsetTimeout|\bsetInterval|\bexecScript)\s*\(\s*$"
 )
-_PY_EXEC_SINK = re.compile(r"(?:\bexec|\beval|\bcompile)\s*\(\s*$")
+# Builtins only: `re.compile(r"...")` is a pattern, not code (a jailbreak-phrase filter scored).
+_PY_EXEC_SINK = re.compile(r"(?<![\w.])(?:exec|eval|compile)\s*\(\s*$")
+_SHELL_SHEBANG = re.compile(r"#!\S*(?:/|\s)(?:env\s+)?(?:ba|z|da|k)?sh\b")
 # JSX attributes whose value is text shown to a person.
 _JSX_UI_ATTRIBUTE = re.compile(
     r"\b(?:placeholder|title|label|aria-label|aria-description|alt|helperText|hint|tooltip|"
@@ -1185,7 +1203,11 @@ class IndexedFile:
     def is_shell_like(self) -> bool:
         """Shell scripts and Makefiles, whose `#` comments and quoted arguments are not code."""
         name = self.relpath.rsplit("/", 1)[-1].lower()
-        return self.suffix in (".sh", ".bash", ".zsh", ".mk") or name in ("makefile", "gnumakefile")
+        if self.suffix in (".sh", ".bash", ".zsh", ".mk") or name in ("makefile", "gnumakefile"):
+            return True
+        # A suffix-less script with a shell shebang (`cli/rustok`, `#!/bin/sh`): its `#` lines are
+        # comments too.
+        return self.suffix == "" and bool(_SHELL_SHEBANG.match(self.text[:200]))
 
     def _ensure_rust_test_spans(self) -> None:
         """Record inline Rust test-block char-spans once, for ``.rs`` files only."""
