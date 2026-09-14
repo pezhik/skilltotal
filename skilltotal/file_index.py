@@ -541,6 +541,11 @@ _JS_EXEC_SINK = re.compile(
     r"(?:\beval|\bnew\s+Function|\bFunction|\bsetTimeout|\bsetInterval|\bexecScript)\s*\(\s*$"
 )
 _PY_EXEC_SINK = re.compile(r"(?:\bexec|\beval|\bcompile)\s*\(\s*$")
+# JSX attributes whose value is text shown to a person.
+_JSX_UI_ATTRIBUTE = re.compile(
+    r"\b(?:placeholder|title|label|aria-label|aria-description|alt|helperText|hint|tooltip|"
+    r"description|subtitle|caption|emptyText|errorMessage)\s*=\s*\{?\s*$"
+)
 # Decorators whose function a model sees: its docstring becomes the tool/prompt description.
 _AGENT_FACING_DECORATORS = frozenset({"tool", "prompt"})
 _SAMPLING_CALLS = frozenset({"create_message"})
@@ -1123,6 +1128,22 @@ class IndexedFile:
             back = max(text.rfind(ch, 0, offset) for ch in "<>{}")
             ahead = [p for p in (text.find(ch, offset) for ch in "<>{}") if p >= 0]
             return back >= 0 and text[back] == ">" and bool(ahead) and text[min(ahead)] == "<"
+        return False
+
+    def in_jsx_ui_attribute(self, offset: int) -> bool:
+        """True if ``offset`` is inside the string value of a UI text attribute in JSX.
+
+        ``placeholder="Paste the contents of ~/.codex/auth.json here"`` is an instruction to the
+        person filling in a form, not code that opens the file. An AI agent app carried exactly that
+        line and, next to an unrelated network call, synthesized a critical exfiltration finding.
+        Only attributes that hold text for a reader count; ``src``/``href``/``value`` do not.
+        """
+        if self.suffix not in (".tsx", ".jsx"):
+            return False
+        self._ensure_c_code_spans()
+        for start, end in self._c_string_spans_cache or ():
+            if start <= offset < end:
+                return bool(_JSX_UI_ATTRIBUTE.search(self.text, max(0, start - 40), start))
         return False
 
     def in_sql_comment(self, offset: int) -> bool:

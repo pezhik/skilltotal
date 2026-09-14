@@ -57,6 +57,13 @@ reported as `ST-AGENT-AUTORUN`, which is what it is. No new malicious verdicts.
   local AI agents: `.claude/.credentials.json`, `.codex/auth.json`, `.gemini/oauth_creds.json`,
   GitHub Copilot's `hosts.json`/`apps.json`. Read next to network egress, they synthesize
   `ST-COMBO-EXFIL` like any other credential path.
+- **UI text that names a credential file is not access** (every rule that treats string literals as
+  non-code). The release calibration's golden set caught it: an AI agent app's form placeholder,
+  `placeholder={`Paste the contents of ~/.codex/auth.json here.`}`, plus an unrelated network
+  call in a template script synthesized a critical `ST-COMBO-EXFIL`. JSX text attributes
+  (`placeholder`, `title`, `label`, `aria-label`, `alt`, `description` …) and rendered HTML/JSX
+  text are prose for the person using the page; `fs.readFileSync(home + '/.codex/auth.json')`
+  still counts.
 
 ## ruleset 50 (engine 0.46.0)
 

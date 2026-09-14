@@ -729,12 +729,14 @@ def _is_noncode_context(
         )
     if f.in_sql_comment(e.match_offset):
         return True
-    # A phrase inside a JS regex literal is a pattern the code matches, for any rule that already
-    # treats string literals as non-code. Rendered HTML/JSX page text is prose for the reader of
-    # the page, and only prompt injection (whose policy covers prose-like strings) demotes it.
-    if policy != "comments" and f.in_js_regex(e.match_offset):
-        return True
-    if everything and f.in_rendered_markup_text(e.match_offset):
+    # For every rule that already treats string literals as non-code: a phrase inside a JS regex
+    # literal is a pattern the code matches, and rendered HTML/JSX page text or a UI text attribute
+    # (`placeholder="Paste ~/.codex/auth.json here"`) is prose for the person using the page.
+    if policy != "comments" and (
+        f.in_js_regex(e.match_offset)
+        or f.in_rendered_markup_text(e.match_offset)
+        or f.in_jsx_ui_attribute(e.match_offset)
+    ):
         return True
     # Markdown prose states what a component does; a fenced block is what it actually ships.
     # A credential path in a sentence ("credentials live in ~/.aws/credentials") or an
