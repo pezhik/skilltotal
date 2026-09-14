@@ -4,7 +4,7 @@ SkillTotal's value grows as new code-hiding / malware techniques are covered. Th
 repeatable process for turning a new malicious sample into a shipped detection rule. It is
 **corpus-driven**: every rule is backed by a fixture and guarded against false positives.
 
-> Guiding principle ([CI-first](../CLAUDE.md)): a detection must be *actionable* (a real
+> Guiding principle (CI-first): a detection must be *actionable* (a real
 > reason to fail a CI build) and *low false-positive*. Ambiguous signals go to
 > `needs_review`, never to `findings`.
 

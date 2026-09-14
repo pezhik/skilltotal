@@ -21,10 +21,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
   by Shai-Hulud and s1ngularity.
 
 ### Removed
+- **Maintainer notes are no longer published** (`CLAUDE.md`, `docs/publishing-setup.md`).
 - **`skilltotal.models.CapabilityEvidence` and `skilltotal.rules.rules_as_dicts()`.** Neither was
   used by the engine or documented; `Report.capabilities` and `get_rules()` cover both.
 
 ### Changed
+- **The report schema `$id` is on the project's own domain**: `https://www.skilltotal.ai/schemas/report-1.5.json` (was `skilltotal.dev`, which the project does not own). Schema content is unchanged.
 - **`.vscode/` is scanned.** It was skipped as editor noise; a `tasks.json` that runs on folder
   open, and the script next to it, are behavior.
 
