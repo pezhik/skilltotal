@@ -157,3 +157,25 @@ def test_json_and_markdown_come_from_one_dataset(tmp_path):
     text = (tmp_path / "out.md").read_text(encoding="utf-8")
     assert data["summary"]["scanned"] == 3
     assert f"{data['summary']['scanned']:,}" in text
+
+
+def test_report_makes_no_claim_of_absence():
+    """Zero indicators is what the rules matched, not a verdict that the registry is clean."""
+    rows = [r for r in _rows() if not r.get("malicious")]
+    text = sr.render_markdown(sr.summarize(rows), _META)
+    assert "No claim that any component is safe" in text
+    # A capability nobody carries is left out rather than printed as 0.0%.
+    assert "evaluates code dynamically" not in text
+    assert "can reach the network" in text
+
+
+def test_report_discloses_a_mixed_ruleset_run():
+    rows = _rows()
+    for r in rows:
+        if r["status"] == "ok":
+            r["ruleset_version"] = 52
+    rows[1]["ruleset_version"] = 53
+    text = sr.render_markdown(sr.summarize(rows), _META)
+    assert "2 with ruleset 52, 1 with ruleset 53" in text
+    single = [dict(r, ruleset_version=53) if r["status"] == "ok" else r for r in _rows()]
+    assert "Scanned components by ruleset" not in sr.render_markdown(sr.summarize(single), _META)

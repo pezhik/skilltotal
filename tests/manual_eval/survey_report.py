@@ -88,6 +88,8 @@ def summarize(rows: list[dict]) -> dict:
         },
         "risk_level": {lvl: sum(1 for r in ok if r.get("risk_level") == lvl) for lvl in _LEVELS},
         "malicious_indicators": sum(1 for r in ok if r.get("malicious")),
+        "rulesets": dict(sorted(Counter(str(r["ruleset_version"]) for r in ok
+                                        if "ruleset_version" in r).items())),
         "capabilities": {
             cap: sum(1 for r in ok if cap in r.get("capabilities", [])) for cap in _CAP_LABEL
         },
@@ -210,6 +212,8 @@ def render_markdown(s: dict, meta: dict) -> str:
     add("|---|---:|---:|")
     for cap, label in _CAP_LABEL.items():
         count = s["capabilities"].get(cap, 0)
+        if not count:
+            continue  # a 0.0% row would read as a finding of absence, which a scan cannot make
         add(f"| {label} | {count:,} | **{pct(count, n)}** |")
     add("")
     add("## Risk levels")
@@ -250,6 +254,14 @@ def render_markdown(s: dict, meta: dict) -> str:
         "precision estimate from a labelled sample."
     )
     add("")
+    add(
+        "**No claim that any component is safe.** A malicious indicator is a match against a "
+        "published rule for a known attack shape: decode-and-execute, hidden Unicode, "
+        "instructions planted for the agent, auto-run hooks, credentials sent out. A count of "
+        "zero means no component matched one, not that none is harmful: code fetched at run time "
+        "is out of a static scan's sight, and so is an attack no rule describes yet."
+    )
+    add("")
     add("**No component is named.** These are population statistics.")
     add("")
     add("## Method")
@@ -257,6 +269,13 @@ def render_markdown(s: dict, meta: dict) -> str:
     add(f"- Engine {meta['engine']}, ruleset {meta['ruleset']} — deterministic regex and AST "
         f"analysis. The component is never executed and no LLM is involved, so the run "
         f"reproduces.")
+    rulesets = s.get("rulesets", {})
+    if len(rulesets) > 1:
+        # Say which rows came from which ruleset rather than let one version label a mixed run.
+        parts = ", ".join(f"{n:,} with ruleset {rs}" for rs, n in rulesets.items())
+        add(f"- Scanned components by ruleset: {parts}. The later ruleset re-scanned only the "
+            f"components whose result its changes could affect, plus those that exceeded a bound "
+            f"on the first pass.")
     add(f"- Population: `{meta['registry_url']}` as of {snapshot}, deduplicated by source.")
     add(f"- Two bounds, both disclosed above: {meta['clone_mb']} MB per fetch and "
         f"{meta['timeout']}s of wall clock per component.")
