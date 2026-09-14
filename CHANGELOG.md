@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.47.1]
+
+### Fixed
+- **Two false positives found by the ruleset-51 registry survey (ruleset 52).** An agent guide
+  saying "pass `authToken` as parameter; use `Authorization: Bearer ${token}` header" matched the
+  environment-secret-in-requests phrase case-insensitively; the secret must now be written as an
+  environment variable (`$FOO_KEY`, or "environment variable FOO_KEY", upper case). A structured
+  tool docstring's `<instructions>` section ("Use this when the user wants...") read as a hidden
+  instruction block; "when" and "make sure" no longer count as the instruction after a marker.
+  Every published attack shape in the corpus is still caught.
+
 ## [0.47.0]
 
 ### Added

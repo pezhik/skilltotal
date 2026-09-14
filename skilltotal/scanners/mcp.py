@@ -75,9 +75,11 @@ DANGEROUS_TOOL_PATTERNS: dict[str, re.Pattern[str]] = {
 # stopped at the newline missed every one of them. Only a marker that ENDS its line may look past
 # it: an agent framework's `[System] Task reminder: continue the task: ${msg}` carries its own text
 # on the marker's line, and the next line's "Do not ask the user…" is a different message.
+# "when" and "make sure" are not instructions on their own: a structured docstring's
+# `<instructions>` section says "Use this when the user wants…" (a registry server, ruleset 51).
 _MARKER_PAYLOAD = (
     r"(?=(?:[ \t]*\r?\n[^.]{0,160}?|[^.\n]{0,120}?)\b(?:read|send|include|pass|forward|upload|"
-    r"exfiltrate|ignore|reveal|retrieve|change|redirect|when|make\s+sure|do\s+not|don['’]?t|"
+    r"exfiltrate|ignore|reveal|retrieve|change|redirect|do\s+not|don['’]?t|"
     r"must|never|always|before)\b)"
 )
 # Concealing the agent's OWN action is the tell ("do not mention that you first need to read the
