@@ -179,3 +179,16 @@ def test_report_discloses_a_mixed_ruleset_run():
     assert "2 with ruleset 52, 1 with ruleset 53" in text
     single = [dict(r, ruleset_version=53) if r["status"] == "ok" else r for r in _rows()]
     assert "Scanned components by ruleset" not in sr.render_markdown(sr.summarize(single), _META)
+
+
+def test_a_non_zero_count_never_prints_as_zero_percent():
+    """4 critical of 15,457 rounds to 0.0%, which reads as none; the label says <0.1%."""
+    assert sr.share_label(0.0, 4) == "<0.1%"
+    assert sr.share_label(0.0, 0) == "0.0%"
+    assert sr.share_label(0.21, 33) == "0.2%"
+    assert sr.pct(4, 15457) == "<0.1%"
+
+
+def test_report_says_shipped_secrets_do_not_raise_the_level():
+    text = sr.render_markdown(sr.summarize(_rows()), _META)
+    assert "reports separately as an exposure" in text

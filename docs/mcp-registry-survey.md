@@ -1,6 +1,6 @@
 # The MCP registry, measured
 
-A deterministic static scan of every distinct component in the public MCP registry — 17,535 of them — scanned on 2026-09-14 against the registry as of 2026-08-16 with SkillTotal 0.47.2 (ruleset 53).
+A deterministic static scan of every distinct component in the public MCP registry — 17,535 of them — scanned on 2026-09-15 against the registry as of 2026-08-16 with SkillTotal 0.48.0 (ruleset 55).
 
 ## How to read this
 
@@ -13,51 +13,51 @@ The registry lists a server per published *version*, so its 73,460 entries colla
 | | |
 |---|---|
 | Distinct components | 17,535 |
-| Scanned | **15,439** (88.0%) |
-| Not scanned | 2,096 (12.0%) |
+| Scanned | **15,457** (88.1%) |
+| Not scanned | 2,078 (11.9%) |
 
 Nothing was dropped silently — every exclusion is counted:
 
 | Why a component was not scanned | Components | Share of population |
 |---|---:|---:|
-| repository or package no longer reachable | 1,634 | 9.3% |
-| slower than the time bound | 223 | 1.3% |
-| larger than the size bound | 175 | 1.0% |
-| other | 62 | 0.4% |
+| repository or package no longer reachable | 1,635 | 9.3% |
+| slower than the time bound | 220 | 1.3% |
+| larger than the size bound | 157 | 0.9% |
+| other | 64 | 0.4% |
 | access denied | 2 | 0.0% |
 
 | Ecosystem | Scanned | Listed | Coverage |
 |---|---:|---:|---:|
-| git | 5,443 | 7,312 | 74.4% |
-| npm | 7,006 | 7,152 | 98.0% |
+| git | 5,456 | 7,312 | 74.6% |
+| npm | 7,011 | 7,152 | 98.0% |
 | pypi | 2,990 | 3,071 | 97.4% |
 
 ## What these components can do
 
-Share of the 15,439 scanned components carrying each capability:
+Share of the 15,457 scanned components carrying each capability:
 
 | Capability | Components | Share |
 |---|---:|---:|
-| exposes MCP tools | 13,623 | **88.2%** |
-| can reach the network | 10,139 | **65.7%** |
-| can execute shell commands | 4,680 | **30.3%** |
-| reads the filesystem | 3,914 | **25.4%** |
-| writes the filesystem | 3,257 | **21.1%** |
-| runs code at install time | 1,153 | **7.5%** |
-| uses delegated (OAuth/OIDC) authentication | 929 | **6.0%** |
-| evaluates code dynamically | 559 | **3.6%** |
-| uses a scoped, short-lived identity | 85 | **0.6%** |
+| exposes MCP tools | 13,644 | **88.3%** |
+| can reach the network | 10,169 | **65.8%** |
+| can execute shell commands | 4,708 | **30.5%** |
+| reads the filesystem | 3,932 | **25.4%** |
+| writes the filesystem | 3,288 | **21.3%** |
+| runs code at install time | 1,162 | **7.5%** |
+| uses delegated (OAuth/OIDC) authentication | 938 | **6.1%** |
+| evaluates code dynamically | 564 | **3.6%** |
+| uses a scoped, short-lived identity | 87 | **0.6%** |
 
 ## Risk levels
 
-SkillTotal scores risky constructs and malicious indicators; a capability on its own contributes zero to the score. The risk distribution is therefore far flatter than the capability table above, and that difference is the point.
+SkillTotal scores risky constructs and malicious indicators; a capability on its own contributes zero to the score, and so does a secret the component ships, which the engine reports separately as an exposure. The risk distribution is therefore far flatter than the capability table above, and that difference is the point.
 
 | Level | Components | Share |
 |---|---:|---:|
-| low | 15,051 | 97.5% |
-| medium | 114 | 0.7% |
-| high | 247 | 1.6% |
-| critical | 27 | 0.2% |
+| low | 15,293 | 99.0% |
+| medium | 127 | 0.8% |
+| high | 33 | 0.2% |
+| critical | 4 | <0.1% |
 | carrying a malicious indicator | 0 | 0.0% |
 
 ## The registry itself
@@ -76,8 +76,8 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 
 ## Method
 
-- Engine 0.47.2, ruleset 53 — deterministic regex and AST analysis. The component is never executed and no LLM is involved, so the run reproduces.
-- Scanned components by ruleset: 15,196 with ruleset 52, 243 with ruleset 53. The later ruleset re-scanned only the components whose result its changes could affect, plus those that exceeded a bound on the first pass.
+- Engine 0.48.0, ruleset 55 — deterministic regex and AST analysis. The component is never executed and no LLM is involved, so the run reproduces.
+- Scanned components by ruleset: 15,203 with ruleset 54, 254 with ruleset 55. The later ruleset re-scanned only the components whose result its changes could affect, plus those that exceeded a bound on the first pass.
 - Population: `https://registry.modelcontextprotocol.io/v0/servers` as of 2026-08-16, deduplicated by source.
 - Two bounds, both disclosed above: 50 MB per fetch and 60s of wall clock per component.
 - Harness: `tests/manual_eval/survey_registry.py`. This report: `tests/manual_eval/survey_report.py`. Both ship in this repository.

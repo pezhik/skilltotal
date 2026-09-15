@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "generated": "2026-09-14",
+    "generated": "2026-09-15",
     "population_snapshot": "2026-08-16",
-    "engine": "0.47.2",
-    "ruleset": 53,
+    "engine": "0.48.0",
+    "ruleset": 55,
     "registry_entries": 73460,
     "registry_url": "https://registry.modelcontextprotocol.io/v0/servers",
     "clone_mb": 50,
@@ -11,23 +11,23 @@
   },
   "summary": {
     "population": 17535,
-    "scanned": 15439,
-    "skipped": 2096,
+    "scanned": 15457,
+    "skipped": 2078,
     "skip_reasons": {
-      "larger than the size bound": 175,
-      "repository or package no longer reachable": 1634,
-      "other": 62,
+      "larger than the size bound": 157,
+      "repository or package no longer reachable": 1635,
+      "other": 64,
       "access denied": 2,
-      "slower than the time bound": 223
+      "slower than the time bound": 220
     },
     "by_ecosystem": {
       "git": {
         "total": 7312,
-        "scanned": 5443
+        "scanned": 5456
       },
       "npm": {
         "total": 7152,
-        "scanned": 7006
+        "scanned": 7011
       },
       "pypi": {
         "total": 3071,
@@ -35,26 +35,26 @@
       }
     },
     "risk_level": {
-      "low": 15051,
-      "medium": 114,
-      "high": 247,
-      "critical": 27
+      "low": 15293,
+      "medium": 127,
+      "high": 33,
+      "critical": 4
     },
     "malicious_indicators": 0,
     "rulesets": {
-      "52": 15196,
-      "53": 243
+      "54": 15203,
+      "55": 254
     },
     "capabilities": {
-      "mcp_tools_detected": 13623,
-      "network_egress": 10139,
-      "shell_execution": 4680,
-      "filesystem_read": 3914,
-      "filesystem_write": 3257,
-      "install_time_execution": 1153,
-      "delegated_authentication": 929,
-      "dynamic_code_execution": 559,
-      "scoped_identity": 85,
+      "mcp_tools_detected": 13644,
+      "network_egress": 10169,
+      "shell_execution": 4708,
+      "filesystem_read": 3932,
+      "filesystem_write": 3288,
+      "install_time_execution": 1162,
+      "delegated_authentication": 938,
+      "dynamic_code_execution": 564,
+      "scoped_identity": 87,
       "prompt_surface_risk": 0
     },
     "registry_shape": {

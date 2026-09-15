@@ -111,7 +111,18 @@ def _share(part: int, whole: int) -> float:
 
 
 def pct(part: int, whole: int) -> str:
-    return f"{100 * part / whole:.1f}%" if whole else "n/a"
+    return share_label(100 * part / whole, part) if whole else "n/a"
+
+
+def share_label(share: float, count: int) -> str:
+    """A share to one decimal, except that a non-zero count never prints as 0.0%.
+
+    Four critical components out of fifteen thousand round to 0.0%, which reads as "none". The
+    count beside it is exact; the label must not contradict it.
+    """
+    if count and round(share, 1) == 0:
+        return "<0.1%"
+    return f"{share:.1f}%"
 
 
 def partition_shares(counts: list[int], whole: int, target: float = 100.0) -> list[float]:
@@ -220,15 +231,16 @@ def render_markdown(s: dict, meta: dict) -> str:
     add("")
     add(
         "SkillTotal scores risky constructs and malicious indicators; a capability on its own "
-        "contributes zero to the score. The risk distribution is therefore far flatter than the "
-        "capability table above, and that difference is the point."
+        "contributes zero to the score, and so does a secret the component ships, which the "
+        "engine reports separately as an exposure. The risk distribution is therefore far flatter "
+        "than the capability table above, and that difference is the point."
     )
     add("")
     add("| Level | Components | Share |")
     add("|---|---:|---:|")
     risk_shares = partition_shares([s["risk_level"][lvl] for lvl in _LEVELS], n)
     for lvl, shr in zip(_LEVELS, risk_shares, strict=True):
-        add(f"| {lvl} | {s['risk_level'][lvl]:,} | {shr:.1f}% |")
+        add(f"| {lvl} | {s['risk_level'][lvl]:,} | {share_label(shr, s['risk_level'][lvl])} |")
     add(f"| carrying a malicious indicator | {s['malicious_indicators']:,} | "
         f"{pct(s['malicious_indicators'], n)} |")
     add("")
