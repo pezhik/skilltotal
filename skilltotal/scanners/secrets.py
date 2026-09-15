@@ -75,8 +75,18 @@ _PUBLIC_CHAIN_ADDRESS = re.compile(r"^0x[0-9a-fA-F]{40}$")
 # unambiguous placeholder words — NOT generic hex/alpha runs, which occur in real tokens.
 _PLACEHOLDER = re.compile(
     r"(?i)example|your[_-]?|changeme|placeholder|dummy|sample|xxxx|<[^>]+>|redacted|"
-    r"\bfake\b|insert[_-]?(?:your|here)|\.\.\."
+    r"\bfake\b|insert[_-]?(?:your|here)|\.\.\.|"
+    # Values people type for tests and local defaults: `bg_fake_…`, `mock-api-key-for-testing`,
+    # `e2e-test-token`, `super_secret_password`, `change-this-to-a-random-secret`,
+    # `md_0123456789abcdef…` (a repeated `abcdef`). A generated credential spells none of these.
+    r"fake|mock|fixture|e2e|super[-_]?secret|change[-_]?(?:me|this)|"
+    r"(?-i:abcdef\w*abcdef|0123456789abcdef)|"
+    r"not[-_]?a[-_]?real|(?:^|[-_])test[-_]"
 )
+
+
+_ENV_VAR_NAME = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}$")
+_HUMAN_WORDS = re.compile(r"^[a-z]{2,}\d{0,4}(?:[-_.][a-z]{2,}\d{0,4}){2,}$")
 
 
 def _is_non_credential_value(value: str) -> bool:
@@ -89,6 +99,13 @@ def _is_non_credential_value(value: str) -> bool:
     if _PUBLIC_CHAIN_ADDRESS.match(value):
         return True
     if _PLACEHOLDER.search(value):
+        return True
+    # A name, not a value: `ENV_PRIVATE_KEY = "RECEIPT_SIGNING_KEY"` names the variable to read.
+    if _ENV_VAR_NAME.match(value):
+        return True
+    # Words joined by hyphens are typed by a person (`random-char-string-for-dev`,
+    # `mcp-agent-password`); a generated credential is not spelled that way.
+    if _HUMAN_WORDS.match(value):
         return True
     # Single repeated character (xxxxxxxx, 00000000) or too few distinct chars.
     return len(set(value)) <= 4
@@ -114,7 +131,8 @@ def _is_public_docsearch_key(value: str, context: str) -> bool:
 # GOCSPX secret without those markers stays a scored finding (a leaked web-app secret).
 _GOOGLE_OAUTH_PREFIX = "GOCSPX-"
 _INSTALLED_APP_CTX = re.compile(
-    r"(?i)urn:ietf:wg:oauth:2\.0:oob|device[_/]code|code_verifier|code_challenge|"
+    r"(?i)urn:ietf:wg:oauth:2\.0:oob|device[_/]code|code_verifier|code_challenge|bundled|"
+    r"default[_-]client|desktop[_ -]app|native[_ -]app|"
     r"http://(?:localhost|127\.0\.0\.1)|loopback|[\"']installed[\"']\s*[:=]"
 )
 
@@ -164,7 +182,10 @@ _CHAIN_ADDRESS_CTX = re.compile(
 
 def _is_public_chain_address(value: str, context: str) -> bool:
     """True for a base58 on-chain address (public identifier), not a keypair."""
-    return bool(_BASE58.match(value)) and bool(_CHAIN_ADDRESS_CTX.search(context))
+    if not _BASE58.match(value):
+        return False
+    # pump.fun mints end in "pump" by construction; they are passed around as a `token`.
+    return value.endswith("pump") or bool(_CHAIN_ADDRESS_CTX.search(context))
 
 
 # Test TLS/certificate fixtures: packages ship throwaway dummy certificate + private-key pairs to
@@ -182,6 +203,38 @@ def _is_test_certificate(relpath: str) -> bool:
     """True if ``relpath`` is a disposable test-certificate fixture (test-server key material)."""
     dirs = "/".join(relpath.lower().replace("\\", "/").split("/")[:-1])
     return any(t in dirs for t in _TEST_CERT_TESTISH) and any(c in dirs for c in _TEST_CERT_CERTISH)
+
+
+# A secret in a file that exists for tests: a fixture module, a mock, an end-to-end script, a test
+# runner's config, a `.dev.vars.test` env file, or an app kept under `testdata/`/`testbeds/` for the
+# project's own scanner to probe. Scoped to this rule: engine-wide test demotion deliberately
+# leaves code under `fixtures/` scanned, so a payload cannot hide there, but a password in a test
+# fixture is not a credential anyone ships.
+_TEST_SECRET_PATH = re.compile(
+    r"(?i)(?:^|/)(?:testdata|test[-_]data|testbeds?|minimal[-_]testbeds|fixtures?|mocks?)/|"
+    r"(?:^|[/._-])(?:fixtures?|mocks?|e2e)(?:[._-][\w.-]*)?\.\w+$|"
+    r"(?:^|/)(?:vitest|jest|playwright|cypress)\.config\.\w+$|(?:^|/)\.[\w.-]+\.test$"
+)
+# Configuration of a secret scanner lists values it must ignore; those are the opposite of leaks.
+_SECRET_SCANNER_CONFIGS = frozenset(
+    {".gitleaks.toml", ".gitguardian.yaml", ".gitguardian.yml", ".secrets.baseline",
+     ".talismanrc", ".trufflehogignore"}
+)
+# Keys a vendor has you put in the page: the Firebase web config, the Maps JavaScript API loader,
+# Paddle.js, the Cloudflare Web Analytics beacon, and the token an OpenAI app serves at
+# /.well-known/openai-apps-challenge to prove it owns its domain. Access is bound to the domain
+# or project, not to the secrecy of the string.
+_CLIENT_KEY_CTX = re.compile(
+    r"(?i)authDomain|messagingSenderId|GoogleService-Info|firebase(?:app|Config|\.initializeApp)|"
+    r"firebase[_-]?api[_-]?key|"
+    r"maps\.googleapis\.com/maps/api/js|Paddle\.(?:Initialize|Setup)|cloudflare[_-]?beacon|"
+    r"data-cf-beacon|cloudflareinsights|openai[-_]?apps[-_]?challenge"
+)
+
+
+def _is_client_key(relpath: str, context: str) -> bool:
+    """True for a key a vendor publishes in client code by design (see ``_CLIENT_KEY_CTX``)."""
+    return bool(_CLIENT_KEY_CTX.search(context) or _CLIENT_KEY_CTX.search(relpath))
 
 
 def _has_mixed_charset(value: str) -> bool:
@@ -273,8 +326,13 @@ class SecretsScanner(Scanner):
         installed_oauth_files: list[str] = []
         telemetry_files: list[str] = []
         test_cert_files: list[str] = []
+        test_secret_files: list[str] = []
+        client_key_files: list[str] = []
 
         for f in index.files:
+            if f.name.lower() in _SECRET_SCANNER_CONFIGS:
+                continue
+            test_file = bool(_TEST_SECRET_PATH.search(f.relpath))
             if f.name.lower() in _CREDENTIAL_FILES:
                 self._add_credential_file(f, evidence, seen)
                 # The whole file is one credential; the key/value patterns below have nothing
@@ -288,6 +346,15 @@ class SecretsScanner(Scanner):
                     if label == "Private key block" and _is_test_certificate(f.relpath):
                         if f.relpath not in test_cert_files:
                             test_cert_files.append(f.relpath)
+                        continue
+                    if test_file:
+                        if f.relpath not in test_secret_files:
+                            test_secret_files.append(f.relpath)
+                        continue
+                    window = f.text[max(0, m.start() - 300) : m.end() + 300]
+                    if label != "Private key block" and _is_client_key(f.relpath, window):
+                        if f.relpath not in client_key_files:
+                            client_key_files.append(f.relpath)
                         continue
                     self._add(f, m, value, evidence, seen)
             for m in _GENERIC.finditer(f.text):
@@ -306,6 +373,14 @@ class SecretsScanner(Scanner):
                 if _is_public_chain_address(value, window):
                     if f.relpath not in telemetry_files:
                         telemetry_files.append(f.relpath)
+                    continue
+                if test_file:
+                    if f.relpath not in test_secret_files:
+                        test_secret_files.append(f.relpath)
+                    continue
+                if _is_client_key(f.relpath, window):
+                    if f.relpath not in client_key_files:
+                        client_key_files.append(f.relpath)
                     continue
                 if _is_installed_app_oauth_secret(value, f.text):
                     if f.relpath not in installed_oauth_files:
@@ -344,6 +419,35 @@ class SecretsScanner(Scanner):
                         f"secret; flagged for review, not scored: {shown}."
                     ),
                     file=test_cert_files[0],
+                )
+            )
+        if test_secret_files:
+            shown = ", ".join(test_secret_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Secret-shaped value in a test file ({len(test_secret_files)})",
+                    reason=(
+                        "A secret-shaped value in a fixture, mock, end-to-end script, test-runner "
+                        "config or test data app. Such values drive the project's own tests; "
+                        f"flagged for review, not scored: {shown}."
+                    ),
+                    file=test_secret_files[0],
+                )
+            )
+        if client_key_files:
+            shown = ", ".join(client_key_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Client-side key published by design ({len(client_key_files)})",
+                    reason=(
+                        "A key in a Firebase web config, a Maps JavaScript API loader, Paddle.js, "
+                        "a Cloudflare Web Analytics beacon or an OpenAI apps domain challenge. "
+                        "Vendors have these embedded in pages and bind them to a domain or "
+                        f"project; flagged for review, not scored: {shown}."
+                    ),
+                    file=client_key_files[0],
                 )
             )
         if installed_oauth_files:

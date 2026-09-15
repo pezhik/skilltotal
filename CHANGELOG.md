@@ -4,6 +4,24 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.48.0]
+
+### Fixed
+- **The high and critical tiers of the registry survey, read by hand (ruleset 54).** Nearly every
+  high or critical component got there through `ST-COMBO-EXFIL`, and its inputs often named a
+  credential without touching one. Credential paths that are installed public keys, a key handed to
+  the SSH client, a sentence of help text, a UI label, a denylist or policy glob, or a line in a
+  manifest no longer feed the combination. Secret-shaped values that are test placeholders, fixture
+  and test-runner values, secret-scanner configuration, variable names, typed words, or client keys
+  vendors publish in pages (Firebase web config, Maps JavaScript loader, Paddle.js, Cloudflare Web
+  Analytics, OpenAI apps domain challenge) are reported for review instead of scored. Hardcoded
+  live keys and shipped private keys still score. Every corpus attack and published-technique probe
+  is still caught.
+
+### Added
+- `IndexedFile.string_span_at()`: the span of the Python or C-family string literal around an
+  offset.
+
 ## [0.47.2]
 
 ### Fixed

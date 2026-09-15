@@ -134,7 +134,7 @@ _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
 # indicator against the project.
 # The `[-_]` boundary on both sides is what keeps ordinary words out: "latest", "contest",
 # "protest", "testimonials" and "attestation" all still fail to match.
-_TEST_SEGMENT_RE = re.compile(r"(?:.*[-_])?(?:tests?|specs?|e2e)|(?:tests?|specs?|e2e)[-_].*")
+_TEST_SEGMENT_RE = re.compile(r"(?:.*[-_.])?(?:tests?|specs?|e2e)|(?:tests?|specs?|e2e)[-_].*")
 # `^tests?\.\w+$`: a file literally named test.py / tests.py / test.ts is test scaffolding by
 # convention even outside a tests/ dir (ragflow's sdk/python/test.py carried a doc-example API
 # key that fed ST-COMBO-EXFIL). `^test(ing)?_?utils?\.`: a `testing_utils.py` / `test_utils.py`
@@ -1113,6 +1113,21 @@ class IndexedFile:
             if start <= offset < end:
                 return bool(sink.search(self.text, max(0, start - 60), start))
         return False
+
+    def string_span_at(self, offset: int) -> tuple[int, int] | None:
+        """The char-span of the Python or C-family string literal holding ``offset``, if any."""
+        if self.suffix in (".py", ".pyw"):
+            self._ensure_code_spans()
+            spans = self._str_spans
+        elif self.suffix in _C_FAMILY_SUFFIXES:
+            self._ensure_c_code_spans()
+            spans = self._c_string_spans_cache
+        else:
+            return None
+        for start, end in spans or ():
+            if start <= offset < end:
+                return start, end
+        return None
 
     def in_js_regex(self, offset: int) -> bool:
         """True if ``offset`` falls inside a JavaScript-family regex literal (``/…/flags``).

@@ -101,8 +101,36 @@ _SDK_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
     # (pyarrow.fs S3/GCS filesystems; s3fs/adlfs are the fsspec cloud backends).
     "pyarrow": frozenset({"aws", "gcp"}), "s3fs": frozenset({"aws"}),
     "adlfs": frozenset({"azure"}), "fsspec": frozenset({"aws", "gcp", "azure"}),
+    # The Firebase CLI keeps its login as an Application Default Credentials file.
+    "firebase-tools": frozenset({"gcp"}),
 }
 _AZURE_SDK_PREFIX = "azure-"  # the azure-* SDK family (azure-identity, azure-storage-blob, …)
+
+
+# Files that describe or configure rather than run: markup, prose, manifests, infrastructure
+# templates, unit files. A credential path in them (a kubeconfig default in manifest.json, `ssh -i`
+# in a systemd unit, a detection rule listing wallet paths) opens nothing, so it cannot be the read
+# half of an exfiltration path. ST-SENS-PATH still reports it.
+_DECLARATIVE_SUFFIXES = frozenset(
+    {
+        ".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".xml", ".plist",
+        ".properties", ".tf", ".tfvars", ".bicep", ".j2", ".tpl", ".service", ".example",
+        ".html", ".htm", ".md", ".mdx", ".rst", ".txt", ".nft", ".eql", ".lucene", ".tmpl",
+    }
+)
+_IGNORE_FILES = frozenset(
+    {".gitignore", ".hgignore", ".dockerignore", ".npmignore", ".prettierignore", ".eslintignore"}
+)
+
+
+def _is_declarative_file(relpath: str) -> bool:
+    name = relpath.rsplit("/", 1)[-1].lower()
+    dot = name.rfind(".")
+    return (
+        name == "dockerfile"
+        or name in _IGNORE_FILES
+        or (dot > 0 and name[dot:] in _DECLARATIVE_SUFFIXES)
+    )
 
 
 def _credential_domain(snippet: str) -> str | None:
@@ -189,6 +217,7 @@ def exfiltration_finding(
         if f.id in _SENSITIVE_DATA_IDS
         for e in f.evidence
         if not _CLOUD_METADATA_RE.search(e.snippet)  # metadata fetch is network, not a secret read
+        and not (f.id == "ST-SENS-PATH" and _is_declarative_file(e.file))
         and not (
             provider_domains
             and f.id in ("ST-SENS-PATH", "ST-SENS-PATH-PY")

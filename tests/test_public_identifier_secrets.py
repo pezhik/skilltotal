@@ -16,7 +16,7 @@ from skilltotal.models import Component
 
 # PostHog documents the project API key as safe to expose in client code; the `phc_` prefix is
 # the public form (the private personal API key uses a different prefix).
-POSTHOG_PUBLIC = "phc_" + "9aPzNVOhUXbYcmZoLpQrStUvWxYz0123456789abcdef"
+POSTHOG_PUBLIC = "phc_" + "9aPzNVOhUXbYcmZoLpQrStUvWxYz4k7Qm2Rt8Wn5Hc3J"
 # Solana SPL Token program address: a fixed, on-chain, public constant.
 SOLANA_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 

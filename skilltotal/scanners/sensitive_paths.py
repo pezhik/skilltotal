@@ -39,13 +39,15 @@ _STRONG_PATHS = alternation(
     # for its SSH tunnel). `~/.ssh/config` DOES stay flagged: writing it is a real SSH-config
     # injection vector; a legitimate reader (dulwich's git-over-ssh) is cleared by the provider
     # credential-domain match in scoring, not by dropping detection. Private keys still match.
-    r"~/\.ssh(?!/known_hosts\b)",
-    r"\.ssh/(?!known_hosts\b)",
+    # `authorized_keys` and `*.pub` are public keys too: provisioning code appends to the first and
+    # uploads the second, and neither grants access to anything when read.
+    r"~/\.ssh(?!/(?:known_hosts|authorized_keys)\b|/[\w.-]+\.pub\b)",
+    r"\.ssh/(?!known_hosts\b|authorized_keys\b|[\w.-]+\.pub\b)",
     r"~/\.aws",
     r"\.aws/credentials",
     r"~/\.kube",
     r"~/\.config/gcloud",
-    r"\bid_rsa\b",
+    r"\bid_rsa\b(?!\.pub\b)",
     # Cloud / registry / wallet credential locations seen in real cred-stealers.
     r"\.docker/config\.json",
     r"~/\.azure",
@@ -118,11 +120,17 @@ _GUARD_PATH_SEGMENTS = frozenset(
 )
 _GUARD_KEYWORDS = re.compile(
     r"(?i)\b(?:deny|denied|denylist|block|blocked|blocklist|forbid|forbidden|exclude|excluded|"
-    r"reject|protect|protected|sensitive|redact|sanitize|allowlist)\b"
+    r"reject|protect|protected|sensitive|redact|sanitize|allowlist|dangerous|risky|suspicious|"
+    # camelCase and snake_case list names: `const dangerousPaths = ['~/.ssh', '~/.aws']`.
+    r"(?:dangerous|risky|sensitive|protected|blocked)_?(?:paths?|files?|dirs?))\b"
 )
 # A bare string-literal list element: only a quoted string + optional `.to_string()`/`.into()`
 # and a trailing comma (e.g. `"id_rsa".to_string(),`, `"**/.ssh/*",`). Declarative data, not a call.
-_BARE_LIST_ELEMENT = re.compile(r"""^\s*["'][^"']*["']\s*(?:\.\w+\(\))?\s*,?\s*$""")
+_BARE_LIST_ELEMENT = re.compile(
+    r"""^\s*(?:["'][^"'\n]*["']\s*(?:\.\w+\(\))?\s*,\s*)*["'][^"'\n]*["']\s*(?:\.\w+\(\))?\s*,?\s*$"""
+)
+# A trailing `// ssh private key` or `# comment` after a list element is still just a list element.
+_TRAILING_COMMENT = re.compile(r"\s+(?://|#).*$")
 # A bare regex-literal list element: a slash-delimited regex (optional flags) on its own line,
 # e.g. `/id_rsa/,`, `/credentials/i,`, `/\.pem$/,`. A regex literal is a PATTERN that matches
 # against paths, never a path being accessed — so a credential token inside one is a detector's
@@ -141,12 +149,96 @@ def _guard_segment(relpath: str) -> bool:
 
 def _is_guardlist_context(relpath: str, line_text: str) -> bool:
     """True if a sensitive-path match is a defensive denylist/guardrail mention, not access."""
+    bare = _TRAILING_COMMENT.sub("", line_text)
     return (
         _guard_segment(relpath)
         or bool(_GUARD_KEYWORDS.search(line_text))
-        or bool(_BARE_LIST_ELEMENT.match(line_text))
-        or bool(_BARE_REGEX_ELEMENT.match(line_text))
+        or bool(_BARE_LIST_ELEMENT.match(bare))
+        or bool(_BARE_REGEX_ELEMENT.match(bare))
     )
+
+
+# A credential location that the line names without reading it. Each shape is a different reason:
+# a directory being created or locked down (`mkdir -p ~/.ssh && chmod 700 ~/.ssh`), or a private
+# key handed to the SSH client as its identity (`ssh -i ~/.ssh/deploy`, `IdentityFile`,
+# `ssh-keygen -f`). The SSH client reads that key locally to authenticate; nothing is sent. Writing
+# a credential file is NOT among them: `cat > ~/.ssh/config` is an SSH-config injection vector.
+# Copying the key somewhere (`scp ~/.ssh/id_rsa host:`, `cat ~/.ssh/id_rsa | curl`) has none of
+# these shapes and still fires.
+_DIR_SETUP_BEFORE = re.compile(r"\b(?:mkdir|chmod|chown)\b[^|;&\n]*$")
+_BARE_DIR_MATCH = re.compile(r"(?i)^(?:~/)?\.ssh/?$")
+_SSH_IDENTITY_BEFORE = re.compile(
+    r"(?:(?<![\w-])-i\s*=?\s*|\bIdentityFile\s+|\bssh-keygen\b[^|;&\n]*\s-f\s*|\bssh-add\s+)"
+    r"[\"']?[^\s\"'|;&]*$"
+)
+# The same key kept in a variable named for it (`SSH_KEY="$HOME/.ssh/deploy"` in a deploy script,
+# `sshKey: get('--ssh-key') ?? '/root/.ssh/id_ed25519'`). The name says what reads it.
+_SSH_KEY_VARIABLE_BEFORE = re.compile(
+    r"(?i)(?:\b|_)(?:ssh[_-]?key(?:[_-]?path)?|identity[_-]?file)\w*[\"']?\s*(?:[:=]|\?\?|\|\||:-)"
+    r"[^|;&\n]*$"
+)
+# `match = "**/.ssh/*"` in a policy template is a pattern for paths, not a path.
+_POLICY_GLOB_BEFORE = re.compile(r"\*\*/$")
+# Object keys and attributes whose string value is shown to a person.
+_UI_TEXT_KEY_BEFORE = re.compile(
+    r"(?i)\b(?:placeholder|label|hint|description|desc|title|help(?:text)?|tooltip|resolution|"
+    r"message|note|example)[\"']?\s*[:=]\s*[`\"']?$"
+)
+# A sentence in a string: help text, an error message, a blog post kept in a `.ts` module
+# (`'Neither KUBECONFIG nor ~/.kube/config exists'`). A path a program opens sits in a short
+# string of its own or in a command; neither reads as five words of prose.
+_PROSE_WORD = re.compile(r"(?<![\w/.~-])[A-Za-z][a-z]+(?![\w/.-])")
+_COMMAND_HINT = re.compile(r"[|;&<>]|\$\(|\b(?:cat|curl|wget|scp|rsync|nc|base64|tar|cp)\s")
+_PROSE_MIN_WORDS = 5
+
+
+def _is_prose_string(literal: str) -> bool:
+    body = literal.strip("\"'`")
+    return len(_PROSE_WORD.findall(body)) >= _PROSE_MIN_WORDS and not _COMMAND_HINT.search(body)
+
+
+def _line_quoted_segment(line_text: str, col: int) -> str | None:
+    """The quoted run holding column ``col`` on this line, for shell/Makefile lines."""
+    quote, start = "", 0
+    for k, ch in enumerate(line_text):
+        if quote:
+            if ch == quote:
+                if start <= col < k:
+                    return line_text[start:k]
+                quote = ""
+        elif ch in ("'", '"'):
+            quote, start = ch, k + 1
+    return None
+
+
+def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
+    """True if the line names a credential location without reading it (see above)."""
+    col = match.start() - f.text.rfind("\n", 0, match.start()) - 1
+    before = line_text[: max(0, col)]
+    if _BARE_DIR_MATCH.match(match.group(0)) and _DIR_SETUP_BEFORE.search(before):
+        return True
+    if _SSH_IDENTITY_BEFORE.search(before) or _SSH_KEY_VARIABLE_BEFORE.search(before):
+        return True
+    if _POLICY_GLOB_BEFORE.search(before):
+        return True
+    if f.string_is_executed(match.start()):
+        return False
+    span = f.string_span_at(match.start())
+    if span is not None:
+        # Judge the part of the literal on this line: a blog post kept in one template literal
+        # contains tables and code, yet each sentence in it is still a sentence.
+        line_start = match.start() - col
+        line_end = line_start + len(line_text)
+        segment = f.text[max(span[0], line_start) : min(span[1], line_end)]
+        # The key in front of the literal, with its opening quote: `placeholder: "~/.ssh/id_rsa"`.
+        ahead = f.text[line_start : span[0] + 1] if span[0] >= line_start else ""
+        if _is_prose_string(segment) or _UI_TEXT_KEY_BEFORE.search(ahead):
+            return True
+    elif f.is_shell_like:
+        quoted = _line_quoted_segment(line_text, col)
+        if quoted is not None and _is_prose_string(quoted):
+            return True
+    return f.in_rendered_markup_text(match.start())
 
 
 # Markdown files where an inline-code span (`...`) is a *cited example*, not path access. A security
@@ -282,6 +374,7 @@ class SensitivePathScanner(Scanner):
         evidence: list[Evidence] = []
         guard_files: list[str] = []
         cited_files: list[str] = []
+        unread_files: list[str] = []
         for f, _m, ev in index.search(_STRONG_PATHS):
             key = (ev.file, ev.line_start, ev.line_end)
             if key in seen_ev:
@@ -291,6 +384,10 @@ class SensitivePathScanner(Scanner):
             if _is_guardlist_context(ev.file, line_text):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
+                continue
+            if _not_a_read(f, _m, line_text):
+                if ev.file not in unread_files:
+                    unread_files.append(ev.file)
                 continue
             if _cited_in_markdown_code(ev.file, line_text, _m.group(0)):
                 if ev.file not in cited_files:
@@ -315,6 +412,25 @@ class SensitivePathScanner(Scanner):
                         f"access to it); flagged for review, not scored: {shown}."
                     ),
                     file=guard_files[0],
+                )
+            )
+
+        if unread_files:
+            shown = ", ".join(unread_files[:_SENS_WORD_EXAMPLES])
+            more = len(unread_files) - _SENS_WORD_EXAMPLES
+            if more > 0:
+                shown += f", and {more} more"
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=f"Credential path named but not read ({len(unread_files)})",
+                    reason=(
+                        f"A credential location appears in {len(unread_files)} file(s) as a "
+                        f"directory being created, a key passed to the SSH "
+                        f"client as its identity, or words in a sentence; flagged for review, not "
+                        f"scored: {shown}."
+                    ),
+                    file=unread_files[0],
                 )
             )
 

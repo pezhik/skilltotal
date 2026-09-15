@@ -4,6 +4,35 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 54 (engine 0.48.0)
+
+The high and critical components of the registry survey were read by hand. Almost all reached that
+level through `ST-COMBO-EXFIL`, so the fixes are to its two inputs. Nothing here adds detection; each
+change narrows what counts, and each sits next to the attack it must keep catching in
+`tests/test_ruleset54.py`. All corpus attacks and the 21 published-technique probes stay caught.
+
+- **`ST-SENS-PATH` — named, not read** (reported for review): `authorized_keys` and `*.pub` files are
+  public keys; a `.ssh` directory being created or locked down; a key passed to the SSH client
+  (`ssh -i`, `IdentityFile`, `ssh-keygen -f`, `ssh-add`) or kept in a variable named for it
+  (`SSH_KEY=`, `sshKey:`); a policy glob (`**/.ssh/*`); a sentence inside a string or a quoted shell
+  argument, judged on the line; a UI text key (`placeholder:`, `label:`, `resolution:`); a list of
+  bare strings or regexes, including one with a trailing comment; list names such as
+  `dangerousPaths`. Copying a key (`scp ~/.ssh/id_rsa host:`, `cat … | curl`) and writing
+  `~/.ssh/config` still fire.
+- **`ST-COMBO-EXFIL` — declarative files are not the read half**: a credential path in markup,
+  prose, a manifest, an infrastructure template, a unit file, an ignore file or a Dockerfile opens
+  nothing. `ST-SENS-PATH` still reports it. `firebase-tools` joins the provider list for its own
+  Application Default Credentials file.
+- **`ST-SECRET-EMBEDDED` — not live credentials** (reported for review): values spelling test
+  vocabulary (`fake`, `mock`, `fixture`, `e2e`, `super-secret`, `change-me`, a repeated `abcdef`,
+  `test_` prefixes); an environment variable name as the value; hyphen-joined words; files that exist
+  for tests (fixtures, mocks, end-to-end scripts, `vitest`/`jest`/`playwright` configs,
+  `.dev.vars.test`, `testdata/`, `testbeds/`); secret-scanner configuration (`.gitleaks.toml`,
+  `.gitguardian.yaml`, `.secrets.baseline`); client keys vendors have you publish (Firebase web
+  config, the Maps JavaScript API loader, Paddle.js, the Cloudflare Web Analytics beacon, the OpenAI
+  apps domain challenge); a pump.fun mint address; a bundled or default-client Google OAuth secret.
+- **Test code**: a .NET test project directory (`Product.Tests/`) is test code.
+
 ## ruleset 53 (engine 0.47.2)
 
 - **`ST-MCP-TOOL-POISONING`: "ignore … instructions" names the tool's own instructions only**
