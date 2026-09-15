@@ -887,7 +887,8 @@ def _iter_string_consts(node: ast.Call):
 
 def _strings_in(expr: ast.expr):
     if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
-        yield expr.value
+        if "\n" not in expr.value:
+            yield expr.value
     elif isinstance(expr, (ast.List, ast.Tuple, ast.Set)):
         for element in expr.elts:
             yield from _strings_in(element)

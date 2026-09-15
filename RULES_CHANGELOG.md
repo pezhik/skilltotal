@@ -17,6 +17,9 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   files; deploy keys held in a variable named for them and existence tests (`[ -f … ]`); sentences
   containing `;` or `&`. `ST-INSTALL-DROPPER` no longer takes its credential payload from a
   declarative file (a skill's reference page, a manifest).
+- **Residual hits in the final high tier**: list data written as a Rust match arm, a name-to-label
+  map entry or a tuple with a number; a regex literal holding a character class; `rm` of a
+  credential directory; prose in Chinese or Japanese; a multi-line document written from Python.
 
 ## ruleset 54 (engine 0.48.0)
 

