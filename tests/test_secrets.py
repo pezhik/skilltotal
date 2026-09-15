@@ -38,7 +38,7 @@ def test_aws_key_detected_and_redacted(tmp_path):
     key = fake_token("AKIA", "1B2C3D4E5F6G7H8I")
     res = _scan(tmp_path, "config.py", f'AWS_KEY = "{key}"\n')
     f = _finding(res)
-    assert f is not None and f.threat_class == ThreatClass.RISKY_CONSTRUCT
+    assert f is not None and f.threat_class == ThreatClass.EXPOSURE
     # value never re-leaked: redacted, only a short prefix shown
     snippet = f.evidence[0].snippet
     assert key not in snippet
@@ -218,7 +218,7 @@ def test_publisher_registry_token_file_is_detected(tmp_path):
     res = _scan(tmp_path, ".mcpregistry_registry_token", f'{{"token":"{jwt}"}}')
     finding = _finding(res)
     assert finding is not None
-    assert finding.threat_class is ThreatClass.RISKY_CONSTRUCT
+    assert finding.threat_class is ThreatClass.EXPOSURE
     assert [e.file for e in finding.evidence] == [".mcpregistry_registry_token"]
 
 

@@ -95,9 +95,13 @@ class ThreatClass(str, Enum):
     # Signals of deliberate deception / hidden execution (drives the malware verdict):
     # tool poisoning, prompt injection, decode-and-exec, hidden unicode instructions.
     MALICIOUS_INDICATOR = "malicious_indicator"
-    # Dangerous, likely-unintentional constructs: hardcoded secrets, command injection,
-    # unsafe deserialization, network exposure. A real risk regardless of author intent.
+    # Dangerous, likely-unintentional constructs: command injection, unsafe deserialization,
+    # network exposure, a credential read next to egress. A real risk regardless of author intent.
     RISKY_CONSTRUCT = "risky_construct"
+    # A credential the component ships: a hardcoded key, a private key, a packed .env file. That is
+    # the author's leak -- whoever holds the package can use the key -- not a risk the component
+    # poses to the machine it runs on, so it is reported with its evidence and never scored.
+    EXPOSURE = "exposure"
     # Neutral capability surface (can exec / read fs / reach network). Informational.
     CAPABILITY = "capability"
 

@@ -274,6 +274,10 @@ def _verdict(findings: list[Finding], level) -> dict:
         vlevel, headline = level.value, "High-risk capabilities - review before installing"
     elif level is RiskLevel.MEDIUM:
         vlevel, headline = "medium", "Some risk - review before installing"
+    elif by_class[ThreatClass.EXPOSURE] > 0:
+        # A shipped credential does not raise the risk to the user, but the reader must not be
+        # told "nothing here" about a package that carries a live key.
+        vlevel, headline = "low", "No malicious indicators - exposed secrets found"
     elif by_class[ThreatClass.CAPABILITY] > 0:
         # Clean, but powerful: no malicious indicators and no risky constructs, yet the
         # component has real capabilities (shell/filesystem/network). Acknowledge them instead
@@ -289,6 +293,7 @@ def _verdict(findings: list[Finding], level) -> dict:
         "reasons": _verdict_reasons(findings),
         "malicious_indicators": by_class[ThreatClass.MALICIOUS_INDICATOR],
         "risky_constructs": by_class[ThreatClass.RISKY_CONSTRUCT],
+        "exposed_secrets": by_class[ThreatClass.EXPOSURE],
         "capabilities": by_class[ThreatClass.CAPABILITY],
     }
 

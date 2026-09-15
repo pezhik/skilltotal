@@ -56,10 +56,12 @@ _DROPPER_PAYLOAD_IDS = frozenset(
         "ST-SENS-PATH", "ST-SENS-PATH-PY",
     }
 )
-# Findings that represent access to sensitive data (credential locations / embedded secrets).
-# Plain filesystem access is deliberately NOT here — reading ordinary files is a capability,
-# not a risk, so a normal "reads files + uses network" tool is not flagged as exfiltration.
-_SENSITIVE_DATA_IDS = frozenset({"ST-SENS-PATH", "ST-SENS-PATH-PY", "ST-SECRET-EMBEDDED"})
+# Findings that represent reading a credential location. Plain filesystem access is deliberately
+# NOT here — reading ordinary files is a capability, not a risk, so a normal "reads files + uses
+# network" tool is not flagged as exfiltration. An embedded secret is not here either: a key the
+# component ships is the author's exposure (ThreatClass.EXPOSURE), and calling it plus any network
+# call a "credential-exfiltration path" described a theft that nothing in the code performs.
+_SENSITIVE_DATA_IDS = frozenset({"ST-SENS-PATH", "ST-SENS-PATH-PY"})
 # A confirmed untrusted-instruction surface (the "untrusted content" axis of the trifecta).
 _UNTRUSTED_CONTENT_IDS = frozenset({"ST-PROMPT-INJECTION"})
 

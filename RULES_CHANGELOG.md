@@ -4,6 +4,15 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 55 (engine 0.48.0)
+
+- **`exposure` threat class**: `ST-SECRET-EMBEDDED` and `ST-ENV-SHIPPED` report a credential the
+  component ships and do not score. Detection is unchanged; the same values are found with the same
+  evidence and severity.
+- **`ST-COMBO-EXFIL` inputs are credential-location reads only** (`ST-SENS-PATH`,
+  `ST-SENS-PATH-PY`). In the registry survey this combination was reached almost entirely through an
+  embedded secret beside an ordinary network call, which describes no theft.
+
 ## ruleset 54 (engine 0.48.0)
 
 The high and critical components of the registry survey were read by hand. Almost all reached that

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.5.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.6.json",
   "title": "SkillTotal Report",
   "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.5 (1.4 + traits: a behavioral trait fingerprint with a CSA/MAESTRO/ATLAS crosswalk, descriptive only and never scored). Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
@@ -139,8 +139,8 @@
         "recommendation": { "type": "string" },
         "threat_class": {
           "type": "string",
-          "enum": ["malicious_indicator", "risky_construct", "capability"],
-          "description": "Reading axis next to severity (added in 1.3)."
+          "enum": ["malicious_indicator", "risky_construct", "exposure", "capability"],
+          "description": "Reading axis next to severity (added in 1.3; exposure added in 1.6: a shipped credential, reported and never scored)."
         },
         "owasp": {
           "type": "array",

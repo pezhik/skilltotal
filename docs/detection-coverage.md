@@ -18,7 +18,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 |---|---|---|
 | **Install-time execution** (npm pre/post/install, `setup.py`/cmdclass) | `ST-INSTALL-NPM`, `ST-INSTALL-NPM-PREPARE`, `ST-INSTALL-PY` | `npm-postinstall-exfil`, `pypi-typosquat-dropper` |
 | **Import-time / second-stage download-and-execute** | `ST-OBF-DECODE-EXEC` (malicious), `ST-DYN-PY`/`ST-DYN-NODE`, `ST-NET-PY`/`ST-NET-NODE` | `pypi-typosquat-dropper`, `pypi-importtime-stealer` |
-| **Credential / secret exfiltration** (read `~/.aws`, `~/.ssh`, `.env` → POST) | `ST-COMBO-EXFIL` (critical), `ST-SENS-PATH`/`ST-SENS-PATH-PY`, `ST-SECRET-EMBEDDED`, `ST-FS-*-READ` + `ST-NET-*` | `npm-postinstall-exfil`, `npm-trapdoor-stealer` |
+| **Credential / secret exfiltration** (read `~/.aws`, `~/.ssh`, `.env` → POST) | `ST-COMBO-EXFIL` (critical), `ST-SENS-PATH`/`ST-SENS-PATH-PY`, `ST-FS-*-READ` + `ST-NET-*` | `npm-postinstall-exfil`, `npm-trapdoor-stealer` |
 | **Obfuscation** (base64/hex/codecs decode → exec) | `ST-OBF-DECODE-EXEC` (malicious); heuristics `ST-OBF-BASE64-BLOB`/`ST-OBF-HEX`/`ST-OBF-MINIFIED` (needs_review) | `pypi-importtime-stealer` |
 | **Unsafe deserialization** (pickle/marshal/dill loader) | `ST-DESERIALIZE-PY` | `py-marshal-loader` |
 | **Deserialize-and-execute dropper** (`exec(marshal.loads(<remote>))`) | `ST-OBF-DECODE-EXEC-PY` (malicious) | `py-marshal-loader` |
@@ -43,7 +43,8 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Mail backdoor** (hardcoded BCC/CC copies outgoing mail) | `ST-EMAIL-BCC-EXFIL` | — |
 
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
-risk; `capability` rules are informational (they never push the score up — capability ≠ risk).
+risk; `exposure` rules (`ST-SECRET-EMBEDDED`, `ST-ENV-SHIPPED`) report a credential the component
+ships without scoring it; `capability` rules are informational (capability ≠ risk).
 
 ## Measured efficacy (recall / precision)
 

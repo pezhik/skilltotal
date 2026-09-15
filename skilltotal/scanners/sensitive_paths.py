@@ -348,7 +348,7 @@ class SensitivePathScanner(Scanner):
                 "sdist — .gitignore alone excludes it from neither)."
             ),
             capability=None,
-            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            threat_class=ThreatClass.EXPOSURE,
         ),
         # Listed for `rules list`; bare secret words are routed to needs_review.
         RuleSpec(

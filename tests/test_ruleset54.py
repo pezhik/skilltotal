@@ -108,8 +108,7 @@ def test_placeholder_values_used_by_tests_and_local_defaults(tmp_path: Path):
     assert "ST-SECRET-EMBEDDED" not in ids
 
     real = "const API_KEY = '6e0ddbe4f1c07a93b2d58e61c4a7f09b3d2e8c15a6f47b90';\n" + _NET_JS
-    ids = _ids(_write(tmp_path / "b", {"src/index.ts": real}))
-    assert "ST-SECRET-EMBEDDED" in ids and "ST-COMBO-EXFIL" in ids
+    assert "ST-SECRET-EMBEDDED" in _ids(_write(tmp_path / "b", {"src/index.ts": real}))
 
 
 def test_secrets_in_fixture_mock_and_test_runner_files(tmp_path: Path):
@@ -154,8 +153,7 @@ def test_client_keys_vendors_publish_in_pages(tmp_path: Path):
 
     # The same Google key shape used server-side for a paid API is still a leak.
     server = {"src/logic.ts": f'const GEMINI_API_KEY = process.env.G || "{google}";\n' + _NET_JS}
-    ids = _ids(_write(tmp_path / "b", server))
-    assert "ST-SECRET-EMBEDDED" in ids and "ST-COMBO-EXFIL" in ids
+    assert "ST-SECRET-EMBEDDED" in _ids(_write(tmp_path / "b", server))
 
 
 # --- second pass --------------------------------------------------------------------------

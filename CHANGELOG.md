@@ -6,6 +6,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ## [0.48.0]
 
+### Changed
+- **Exposed secrets are their own class and no longer raise the risk score (report schema 1.6,
+  ruleset 55).** A hardcoded key, private key or packed `.env` file is the author's leak, not a risk
+  the component poses to the machine it runs on. `ST-SECRET-EMBEDDED` and `ST-ENV-SHIPPED` now carry
+  `threat_class: "exposure"`: reported with file and line, counted in `verdict.exposed_secrets`,
+  still tripping `--fail-on high`, and contributing nothing to `risk_score`. An embedded secret no
+  longer feeds `ST-COMBO-EXFIL`, which now means what its name says: a credential location read
+  next to network egress. Consumers that switch on `threat_class` must handle the new value.
+
 ### Fixed
 - **The high and critical tiers of the registry survey, read by hand (ruleset 54).** Nearly every
   high or critical component got there through `ST-COMBO-EXFIL`, and its inputs often named a

@@ -122,12 +122,13 @@ def test_exfil_combo_fires_for_sdk_reading_offdomain_creds():
     assert exfiltration_finding([sens], caps, _pkg("botocore")) is not None
 
 
-def test_exfil_combo_fires_for_sdk_with_embedded_secret():
-    # Recall guard: an embedded secret is never a "provider reads its own config" case, so the
-    # SDK allowance never excuses ST-SECRET-EMBEDDED.
+def test_embedded_secret_is_not_the_read_half_of_exfiltration():
+    # Ruleset 55: a key the component ships is an exposure, reported on its own. Next to a network
+    # call it is not a path by which the component steals anything, so the combo stays silent.
     secret = _sens("api_key = 'AKIA...'", fid="ST-SECRET-EMBEDDED")
     caps = {Capability.NETWORK_EGRESS: [_ev("http.py", 2)]}
-    assert exfiltration_finding([secret], caps, _pkg("botocore")) is not None
+    assert exfiltration_finding([secret], caps, _pkg("botocore")) is None
+    assert exfiltration_finding([secret], caps) is None
 
 
 def test_exfil_combo_fires_without_component():

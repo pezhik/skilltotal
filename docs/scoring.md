@@ -24,7 +24,13 @@ same rule do not inflate the score — only a new *kind* of risk does. The score
 **Capability is not risk.** Only findings whose `threat_class` is `malicious_indicator` or
 `risky_construct` contribute to the score. Neutral `capability` findings (shell execution,
 filesystem read/write, network egress, MCP tool surface) are still reported — as findings and
-as capability chips — but contribute **0**. A legitimate-but-powerful component is therefore
+as capability chips — but contribute **0**.
+
+**An exposed secret is not risk to the user either.** `exposure` findings — a hardcoded key or
+private key (`ST-SECRET-EMBEDDED`), a `.env` packed into a release (`ST-ENV-SHIPPED`) — are the
+author's leak: anyone holding the package can use the credential. They are reported with full
+evidence, counted in `verdict.exposed_secrets`, keep their severity for `--fail-on`, and contribute
+**0** to the score (since schema 1.6 / ruleset 55). A legitimate-but-powerful component is therefore
 not pushed into the red by what it *can* do; the score and verdict reflect actual risk
 (deliberate malice and dangerous constructs), not raw capability.
 
@@ -55,8 +61,8 @@ not pushed into the red by what it *can* do; the score and verdict reflect actua
 
 ## Combination rule (sensitive data + network ⇒ critical)
 
-If a component **both** accesses sensitive data — a credential-location reference
-(`ST-SENS-PATH`) or an embedded secret (`ST-SECRET-EMBEDDED`) — **and** has `network_egress`,
+If a component **both** reads a credential location (`ST-SENS-PATH`, `ST-SENS-PATH-PY`: `~/.ssh`,
+`~/.aws/credentials`, an AI assistant's login file) **and** has `network_egress`,
 the engine adds one synthesized **critical** `risky_construct` finding, `ST-COMBO-EXFIL`
 ("Sensitive-data access combined with network egress"). Its evidence is drawn (de-duplicated)
 from the contributing finding/capabilities, so the evidence invariant still holds. This makes
@@ -64,7 +70,8 @@ the credential-exfiltration path explicit and scored.
 
 Note this is **sensitivity-gated**: plain filesystem access plus network is a neutral capability
 combination (legitimate tools read files and use the network) and is *not* flagged — only access
-to *secret* data combined with an egress channel is.
+to *secret* data combined with an egress channel is. An embedded secret is not an input: a key the
+component ships plus a network call describes no theft, and it is reported as an exposure.
 
 ## Taint: untrusted input → dangerous sink (Python)
 

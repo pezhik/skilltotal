@@ -64,8 +64,8 @@ Everything under `skilltotal/` is a pure library — no `print`, no `sys.exit` �
    declares the `Capability` it implies, so capabilities are regrouped finding-evidence.
 6. **Score** (`scoring.py`): sum of severity weights of risk-bearing findings (malicious +
    risky_construct; capability findings score 0), cap 100 → risk level. A synthesized *critical*
-   `risky_construct` finding (`ST-COMBO-EXFIL`) is added when sensitive-data access (credential
-   path / embedded secret) co-occurs with network egress.
+   `risky_construct` finding (`ST-COMBO-EXFIL`) is added when a credential-location read
+   co-occurs with network egress. Embedded secrets are `exposure` findings: reported, never scored.
 7. **Report** (`report.py` / `sarif.py`): render `Report` as human text, JSON, or SARIF.
 
 ## Key design decisions

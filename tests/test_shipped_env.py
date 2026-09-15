@@ -78,7 +78,7 @@ def test_a_commented_out_env_is_not_a_leak(tmp_path):
     assert "ST-ENV-SHIPPED" not in _scanner_ids(_write(tmp_path, ".env", body))
 
 
-def test_env_in_build_output_is_still_scored(tmp_path):
+def test_env_in_build_output_is_still_reported(tmp_path):
     """The build-output demotion must not swallow this rule.
 
     That layer exists because a bundler inlines third-party code and destroys the path signals the
@@ -95,4 +95,6 @@ def test_env_in_build_output_is_still_scored(tmp_path):
     report = engine.analyze_directory(tmp_path, component).to_dict()
     finding = next(f for f in report["findings"] if f["id"] == "ST-ENV-SHIPPED")
     assert [e["file"] for e in finding["evidence"]] == ["build/.env"]
-    assert report["risk_score"] > 0
+    # An exposure (ruleset 55): reported in full, never scored.
+    assert finding["threat_class"] == "exposure"
+    assert report["verdict"]["exposed_secrets"] == 1

@@ -4,7 +4,7 @@ The JSON report (`--json` / `--output`) is the serialization of the core `Report
 It is the stable contract intended for the web and SaaS products.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
-> schema version **1.5**) is the machine-readable source of truth. Consumers should validate
+> schema version **1.6**) is the machine-readable source of truth. Consumers should validate
 > against it. `tests/test_report_schema.py` guards it: any change to the report shape that is
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
@@ -79,6 +79,7 @@ mapping rationale: [`trait-crosswalk.md`](trait-crosswalk.md).
 | `description` | string | What was detected (interprets evidence only) |
 | `evidence` | array | **Non-empty** list of evidence objects (invariant) |
 | `recommendation` | string | Actionable guidance |
+| `threat_class` | string | `malicious_indicator` (drives the malicious verdict), `risky_construct` (scored), `exposure` (a shipped credential: reported, not scored; added in 1.6), `capability` (informational) |
 
 ### `evidence[]` (inside findings and capabilities)
 | Field | Type | Notes |
@@ -123,5 +124,6 @@ one SARIF result anchored to its file/line.
 1. Every object in `findings[]` has a non-empty `evidence[]`.
 2. Every evidence object has all four fields with valid line numbers.
 3. Items that cannot be evidenced appear only in `needs_review[]`.
-4. `risk_score` is the capped sum of finding severity weights; `risk_level` is derived from
-   it.
+4. `risk_score` is the capped sum of the severity weights of `malicious_indicator` and
+   `risky_construct` findings; `risk_level` is derived from it. `exposure` and `capability`
+   findings never change it.
