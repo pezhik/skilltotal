@@ -1,6 +1,6 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.48.0 · ruleset 54 · offline corpus.
+Engine 0.48.0 · ruleset 55 · offline corpus.
 
 - **recall: 100.0%** (45/45 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/28 benign samples wrongly flagged)
