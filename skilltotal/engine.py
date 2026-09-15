@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from skilltotal.models import (
 from skilltotal.owasp import owasp_for
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
+from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING
 from skilltotal.scoring import compute_score, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import package_name_typosquatting
@@ -156,6 +158,9 @@ def analyze_directory(
         findings, env_review = _split_unpublished_env_evidence(findings)
         needs_review.extend(env_review)
 
+    # Cap evidence only now: a scanner collects every match, the splits above move tests, docs and
+    # strings out, and what is left is what a report shows.
+    findings = [_cap_evidence(f) for f in findings]
     capabilities = extract_capabilities(findings)
 
     # Synthesized combination findings: emergent risk from co-occurring signals (credential
@@ -753,6 +758,12 @@ def _is_noncode_context(
     if f.in_c_comment(e.match_offset):
         return True
     return policy == "strings_and_comments_all" and f.in_c_string(e.match_offset)
+
+
+def _cap_evidence(f: Finding) -> Finding:
+    if len(f.evidence) <= MAX_EVIDENCE_PER_FINDING:
+        return f
+    return replace(f, evidence=f.evidence[:MAX_EVIDENCE_PER_FINDING])
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:

@@ -15,7 +15,7 @@ import re
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -67,9 +67,9 @@ class EmailExfilScanner(Scanner):
                 continue
             for m in _BCC_LITERAL.finditer(f.text):
                 evidence.append(f.evidence_for_span(m.start(), m.end()))
-                if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+                if len(evidence) >= MAX_EVIDENCE_SCANNED:
                     break
-            if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         if evidence:
             return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)])

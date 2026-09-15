@@ -23,7 +23,7 @@ import re
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
-from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, RuleSpec, Scanner, ScanResult
+from skilltotal.scanners.base import MAX_EVIDENCE_SCANNED, RuleSpec, Scanner, ScanResult
 
 CATEGORY = "hidden_unicode"
 
@@ -131,7 +131,7 @@ class InvisibleUnicodeScanner(Scanner):
                 tags = [c for c in line if _is_tag(ord(c))]
                 splices = len(_SPLICE.findall(line))
                 if splices >= _SPLICES_PER_LINE and not tags:
-                    if len(evidence) < MAX_EVIDENCE_PER_FINDING:
+                    if len(evidence) < MAX_EVIDENCE_SCANNED:
                         hidden = "".join(c for c in line if not _is_review(ord(c)))
                         evidence.append(
                             Evidence(file=f.relpath, line_start=lineno, line_end=lineno,
@@ -144,7 +144,7 @@ class InvisibleUnicodeScanner(Scanner):
                     decoded = _decode_tags(line)
                     if decoded:
                         snippet += f"  [decoded hidden text: {decoded[:120]!r}]"
-                    if len(evidence) < MAX_EVIDENCE_PER_FINDING:
+                    if len(evidence) < MAX_EVIDENCE_SCANNED:
                         evidence.append(
                             Evidence(file=f.relpath, line_start=lineno, line_end=lineno,
                                      snippet=snippet)

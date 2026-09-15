@@ -15,7 +15,7 @@ import re
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -428,7 +428,7 @@ class McpScanner(Scanner):
         # Source-level tool definitions (Python / JS decorators & SDK calls).
         for _f, _m, ev in index.search(_CODE_SURFACE):
             detected.append(ev)
-            if len(detected) >= MAX_EVIDENCE_PER_FINDING:
+            if len(detected) >= MAX_EVIDENCE_SCANNED:
                 break
 
         # Classify the names of tools defined in code (not just JSON manifests).
@@ -451,7 +451,7 @@ class McpScanner(Scanner):
                 Finding(
                     id=rule.id, severity=rule.severity, category=rule.category,
                     title=rule.title, description=desc,
-                    evidence=dangerous[:MAX_EVIDENCE_PER_FINDING],
+                    evidence=dangerous[:MAX_EVIDENCE_SCANNED],
                     recommendation=rule.recommendation,
                 )
             )
@@ -507,8 +507,8 @@ class McpScanner(Scanner):
                     continue
                 for m in sorted(hits, key=lambda h: h.start()):
                     evidence.append(f.evidence_for_span(m.start(), m.end()))
-                if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
-                    return evidence[:MAX_EVIDENCE_PER_FINDING]
+                if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                    return evidence[:MAX_EVIDENCE_SCANNED]
         return evidence
 
     # Off-host channels (can reach the outside / ingest untrusted content) and sensitive-data
@@ -570,7 +570,7 @@ class McpScanner(Scanner):
         is_mcp_context = is_manifest_name or "mcpServers" in data or "tools" in data
         if is_mcp_context:
             for key, value in _iter_scope_values(data):
-                if _is_broad_scope(value) and len(overbroad_scope) < MAX_EVIDENCE_PER_FINDING:
+                if _is_broad_scope(value) and len(overbroad_scope) < MAX_EVIDENCE_SCANNED:
                     ev = _evidence_for(f, f'"{key}"')
                     if ev:
                         overbroad_scope.append(ev)
@@ -624,13 +624,13 @@ class McpScanner(Scanner):
                 if anchor:
                     dangerous.append(anchor)
             pphrase = _match_phrase(desc, _POISONING)
-            if pphrase and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
+            if pphrase and len(poisoning) < MAX_EVIDENCE_SCANNED:
                 # Anchor to the offending phrase in the raw source; fall back to the field key.
                 anchor = _evidence_for(f, pphrase) or _evidence_for(f, '"description"')
                 if anchor:
                     poisoning.append(anchor)
             sphrase = _match_phrase(desc, _SHADOWING)
-            if sphrase and len(shadowing) < MAX_EVIDENCE_PER_FINDING:
+            if sphrase and len(shadowing) < MAX_EVIDENCE_SCANNED:
                 anchor = _evidence_for(f, sphrase) or _evidence_for(f, '"description"')
                 if anchor:
                     shadowing.append(anchor)
@@ -643,7 +643,7 @@ class McpScanner(Scanner):
                     if not isinstance(pspec, dict):
                         continue
                     pphrase = _match_phrase(str(pspec.get("description", "")), _POISONING)
-                    if pphrase and len(poisoning) < MAX_EVIDENCE_PER_FINDING:
+                    if pphrase and len(poisoning) < MAX_EVIDENCE_SCANNED:
                         anchor = _evidence_for(f, pphrase) or _evidence_for(f, f'"{pname}"')
                         if anchor:
                             poisoning.append(anchor)
@@ -668,7 +668,7 @@ class McpScanner(Scanner):
                         continue
                     seen.add(key)
                     dangerous_categories.update(cats)
-                    if len(dangerous) < MAX_EVIDENCE_PER_FINDING:
+                    if len(dangerous) < MAX_EVIDENCE_SCANNED:
                         dangerous.append(ev)
 
     def _scan_code_phrases(
@@ -696,7 +696,7 @@ class McpScanner(Scanner):
                 if key in seen:
                     continue
                 seen.add(key)
-                if len(sink) < MAX_EVIDENCE_PER_FINDING:
+                if len(sink) < MAX_EVIDENCE_SCANNED:
                     sink.append(ev)
 
     def _rule(self, rule_id: str) -> RuleSpec:
@@ -707,7 +707,7 @@ class McpScanner(Scanner):
         return Finding(
             id=rule.id, severity=rule.severity, category=rule.category,
             title=rule.title, description=rule.description,
-            evidence=evidence[:MAX_EVIDENCE_PER_FINDING],
+            evidence=evidence[:MAX_EVIDENCE_SCANNED],
             recommendation=rule.recommendation,
         )
 

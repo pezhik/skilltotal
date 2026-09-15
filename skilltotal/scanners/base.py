@@ -19,8 +19,13 @@ from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.text_normalize import original_span
 
-# Cap evidence kept per finding so a noisy file cannot bloat the report.
+# Cap evidence kept per finding so a noisy file cannot bloat the report. The engine applies it
+# AFTER test/doc/string demotion (engine._cap_evidence).
 MAX_EVIDENCE_PER_FINDING = 25
+# Bound on matches a scanner collects for one finding before demotion. Collecting only the first 25
+# let 25 mentions in a README or a test crowd out a real match in code: the doc matches were
+# demoted, the finding vanished, and the code match was never looked at.
+MAX_EVIDENCE_SCANNED = 500
 
 
 def deobfuscated_spans(
@@ -150,7 +155,7 @@ def _collect_evidence(index: FileIndex, rule: RuleSpec) -> list[Evidence]:
             continue
         seen.add(key)
         evidence.append(ev)
-        if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+        if len(evidence) >= MAX_EVIDENCE_SCANNED:
             break
     return evidence
 
@@ -158,7 +163,8 @@ def _collect_evidence(index: FileIndex, rule: RuleSpec) -> list[Evidence]:
 def _finding_from_rule(rule: RuleSpec, evidence: list[Evidence]) -> Finding:
     description = rule.description
     if len(evidence) > 1:
-        description = f"{description} ({len(evidence)} occurrence(s) shown as evidence)."
+        shown = min(len(evidence), MAX_EVIDENCE_PER_FINDING)
+        description = f"{description} ({shown} occurrence(s) shown as evidence)."
     return Finding(
         id=rule.id,
         severity=rule.severity,

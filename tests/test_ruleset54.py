@@ -216,3 +216,16 @@ def test_a_pump_fun_mint_is_a_public_address(tmp_path: Path):
     mint = "FeMbDoCtW9zXq7vN2xLp9RtW4mZ8sBhK3cJ6dpump"
     src = f"const token = '{mint}';\n" + _NET_JS
     assert "ST-SECRET-EMBEDDED" not in _ids(_write(tmp_path, {"src/tools/pulse.js": src}))
+
+
+def test_many_demoted_mentions_cannot_crowd_out_a_real_read(tmp_path: Path):
+    """Evidence is capped after demotion. It used to be capped at the first 25 raw matches, so
+    25 mentions in test files hid the one read in code: they were demoted and the finding was
+    gone before the code match was ever considered."""
+    files = {f"tests/case_{i:02d}.test.js": "const p = home + '/.ssh/id_rsa';\n" for i in range(30)}
+    files["zz_app/sync.js"] = "const key = readFileSync(home + '/.ssh/id_rsa');\n" + _NET_JS
+    report = analyze_directory(tmp_path, Component(name="x", type="directory",
+                                                   source=str(_write(tmp_path, files))))
+    ids = {f.id for f in report.findings}
+    assert "ST-SENS-PATH" in ids and "ST-COMBO-EXFIL" in ids
+    assert all(len(f.evidence) <= 25 for f in report.findings)

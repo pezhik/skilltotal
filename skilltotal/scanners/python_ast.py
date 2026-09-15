@@ -16,6 +16,7 @@ from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -439,10 +440,11 @@ class PythonAstScanner(Scanner):
         findings: list[Finding] = []
         for rid, evidence in acc.items():
             rule = rules[rid]
-            evidence = _dedupe(evidence)[:MAX_EVIDENCE_PER_FINDING]
+            evidence = _dedupe(evidence)[:MAX_EVIDENCE_SCANNED]
             description = rule.description
             if len(evidence) > 1:
-                description = f"{description} ({len(evidence)} occurrence(s) shown as evidence)."
+                shown = min(len(evidence), MAX_EVIDENCE_PER_FINDING)
+                description = f"{description} ({shown} occurrence(s) shown as evidence)."
             findings.append(
                 Finding(
                     id=rule.id,
@@ -583,12 +585,12 @@ class _CallVisitor(ast.NodeVisitor):
 
     def _add(self, rule_id: str, node: ast.AST) -> None:
         bucket = self.hits.setdefault(rule_id, [])
-        if len(bucket) >= MAX_EVIDENCE_PER_FINDING:
+        if len(bucket) >= MAX_EVIDENCE_SCANNED:
             return
         bucket.append(self._evidence(node))
 
     def _add_dynamic_import(self, node: ast.AST) -> None:
-        if len(self.dynamic_imports) >= MAX_EVIDENCE_PER_FINDING:
+        if len(self.dynamic_imports) >= MAX_EVIDENCE_SCANNED:
             return
         self.dynamic_imports.append(self._evidence(node))
 
@@ -860,7 +862,7 @@ class _TaintVisitor:
         line_end = getattr(node, "end_lineno", line_start) or line_start
         ev = self.file.evidence_for_lines(line_start, line_end)
         span = (ev.file, ev.line_start, ev.line_end)
-        if len(bucket) >= MAX_EVIDENCE_PER_FINDING:
+        if len(bucket) >= MAX_EVIDENCE_SCANNED:
             return
         if all((e.file, e.line_start, e.line_end) != span for e in bucket):
             bucket.append(ev)

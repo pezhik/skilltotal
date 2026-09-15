@@ -13,7 +13,7 @@ import re
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Evidence, Finding, NeedsReview, Severity, ThreatClass
-from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, RuleSpec, Scanner, ScanResult
+from skilltotal.scanners.base import MAX_EVIDENCE_SCANNED, RuleSpec, Scanner, ScanResult
 
 CATEGORY = "secret_exposure"
 
@@ -398,7 +398,7 @@ class SecretsScanner(Scanner):
                     category=rule.category,
                     title=rule.title,
                     description=rule.description,
-                    evidence=evidence[:MAX_EVIDENCE_PER_FINDING],
+                    evidence=evidence[:MAX_EVIDENCE_SCANNED],
                     recommendation=rule.recommendation,
                     threat_class=rule.threat_class,
                 )

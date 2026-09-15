@@ -18,7 +18,7 @@ from pathlib import Path
 from skilltotal.file_index import SKIP_DIRS, FileIndex
 from skilltotal.models import Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -71,7 +71,7 @@ class EncryptedArchiveScanner(Scanner):
                         f"{'y' if count == 1 else 'ies'})>",
                     )
                 )
-                if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+                if len(evidence) >= MAX_EVIDENCE_SCANNED:
                     break
         if evidence:
             return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)])

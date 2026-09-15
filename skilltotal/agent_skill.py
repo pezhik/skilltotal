@@ -15,7 +15,7 @@ import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Component, Evidence, Finding, Severity, ThreatClass
-from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING
+from skilltotal.scanners.base import MAX_EVIDENCE_SCANNED
 
 SKILL_MISMATCH_FINDING_ID = "ST-SKILL-CAP-MISMATCH"
 
@@ -135,7 +135,7 @@ def skill_capability_mismatch(
     evidence: list[Evidence] = [_allowed_tools_evidence(skill)]
     for cap in offending:
         evidence.extend(capabilities.get(cap, [])[:2])
-    evidence = _dedupe(evidence)[:MAX_EVIDENCE_PER_FINDING]
+    evidence = _dedupe(evidence)[:MAX_EVIDENCE_SCANNED]
 
     return Finding(
         id=SKILL_MISMATCH_FINDING_ID,

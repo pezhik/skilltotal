@@ -17,6 +17,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
   Analytics, OpenAI apps domain challenge) are reported for review instead of scored. Hardcoded
   live keys and shipped private keys still score. Every corpus attack and published-technique probe
   is still caught.
+- **Evidence is capped after demotion, not before.** Scanners kept only the first 25 matches of a
+  rule, and the engine then moved test, documentation and string matches to review. When those
+  filled the 25 slots, a real match later in the component was never considered, and the finding
+  disappeared. Scanners now collect up to 500 matches (`MAX_EVIDENCE_SCANNED`) and the engine keeps
+  25 after demotion. Reports still show at most 25 per finding.
 
 ### Added
 - `IndexedFile.string_span_at()`: the span of the Python or C-family string literal around an

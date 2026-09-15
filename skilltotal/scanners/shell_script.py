@@ -13,7 +13,7 @@ import re
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -148,7 +148,7 @@ class ShellScriptScanner(Scanner):
                         continue
                     seen.add(key)
                     evidence.append(ev)
-                    if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+                    if len(evidence) >= MAX_EVIDENCE_SCANNED:
                         break
             if evidence:
                 findings.append(_finding_from_rule(rule, evidence))

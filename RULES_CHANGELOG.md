@@ -32,6 +32,10 @@ change narrows what counts, and each sits next to the attack it must keep catchi
   config, the Maps JavaScript API loader, Paddle.js, the Cloudflare Web Analytics beacon, the OpenAI
   apps domain challenge); a pump.fun mint address; a bundled or default-client Google OAuth secret.
 - **Test code**: a .NET test project directory (`Product.Tests/`) is test code.
+- **Evidence cap after demotion (every rule)**: a rule's matches were cut to the first 25 before
+  test, documentation and string demotion, so 25 demoted mentions could hide a real match in code.
+  Scanners now collect up to 500 and the engine keeps 25 after demotion. This is the one change in
+  ruleset 54 that can add a finding where there was none.
 
 ## ruleset 53 (engine 0.47.2)
 

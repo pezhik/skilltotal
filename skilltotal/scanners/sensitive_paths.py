@@ -23,7 +23,7 @@ import re
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -394,7 +394,7 @@ class SensitivePathScanner(Scanner):
                     cited_files.append(ev.file)
                 continue
             evidence.append(ev)
-            if len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
 
         if guard_files:
@@ -488,7 +488,7 @@ class SensitivePathScanner(Scanner):
             if ev is not None:
                 env_shipped.append(ev)
 
-        evidence = evidence[:MAX_EVIDENCE_PER_FINDING]
+        evidence = evidence[:MAX_EVIDENCE_SCANNED]
         findings: list[Finding] = []
         if evidence:
             description = strong_rule.description
@@ -515,7 +515,7 @@ class SensitivePathScanner(Scanner):
                     category=env_rule.category,
                     title=env_rule.title,
                     description=env_rule.description,
-                    evidence=env_shipped[:MAX_EVIDENCE_PER_FINDING],
+                    evidence=env_shipped[:MAX_EVIDENCE_SCANNED],
                     recommendation=env_rule.recommendation,
                     threat_class=env_rule.threat_class,
                 )

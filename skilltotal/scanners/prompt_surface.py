@@ -13,6 +13,7 @@ from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -370,7 +371,7 @@ class PromptSurfaceScanner(Scanner):
 
         def add(ev: Evidence) -> None:
             key = (ev.file, ev.match_offset)
-            if key in seen or len(evidence) >= MAX_EVIDENCE_PER_FINDING:
+            if key in seen or len(evidence) >= MAX_EVIDENCE_SCANNED:
                 return
             seen.add(key)
             evidence.append(ev)

@@ -25,7 +25,7 @@ import re
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -153,7 +153,7 @@ class AgentConfigScanner(Scanner):
         for f in index.select(suffixes=_CODE_SUFFIXES):
             for _m, ev in f.finditer(_CLI_BYPASS):
                 bypass.append(ev)
-                if len(bypass) >= MAX_EVIDENCE_PER_FINDING:
+                if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
 
         findings = []
