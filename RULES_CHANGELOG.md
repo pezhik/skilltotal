@@ -12,6 +12,11 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 - **`ST-COMBO-EXFIL` inputs are credential-location reads only** (`ST-SENS-PATH`,
   `ST-SENS-PATH-PY`). In the registry survey this combination was reached almost entirely through an
   embedded secret beside an ordinary network call, which describes no theft.
+- **Found after the evidence-cap fix** (credential paths named, not read): whole-line comments in
+  configuration files (`.npmrc`, `.toml`, `.ini`, `.yaml`); denylists kept in `blacklist`/`whitelist`
+  files; deploy keys held in a variable named for them and existence tests (`[ -f … ]`); sentences
+  containing `;` or `&`. `ST-INSTALL-DROPPER` no longer takes its credential payload from a
+  declarative file (a skill's reference page, a manifest).
 
 ## ruleset 54 (engine 0.48.0)
 

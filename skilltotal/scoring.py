@@ -121,7 +121,8 @@ _DECLARATIVE_SUFFIXES = frozenset(
     }
 )
 _IGNORE_FILES = frozenset(
-    {".gitignore", ".hgignore", ".dockerignore", ".npmignore", ".prettierignore", ".eslintignore"}
+    {".gitignore", ".hgignore", ".dockerignore", ".npmignore", ".prettierignore", ".eslintignore",
+     ".npmrc", ".yarnrc", ".pypirc", ".editorconfig"}
 )
 
 
@@ -306,12 +307,17 @@ def install_dropper_finding(findings: list[Finding]) -> Finding | None:
     fires when it co-occurs with an already-suspicious payload.
     """
     hooks = [f for f in findings if f.id in _INSTALL_HOOK_IDS]
-    payloads = [f for f in findings if f.id in _DROPPER_PAYLOAD_IDS]
-    if not hooks or not payloads:
+    payload_evidence = [
+        e
+        for f in findings
+        if f.id in _DROPPER_PAYLOAD_IDS
+        for e in f.evidence
+        if not (f.id == "ST-SENS-PATH" and _is_declarative_file(e.file))
+    ]
+    if not hooks or not payload_evidence:
         return None
     evidence = (
-        _dedupe([e for f in hooks for e in f.evidence])[:2]
-        + _dedupe([e for f in payloads for e in f.evidence])[:3]
+        _dedupe([e for f in hooks for e in f.evidence])[:2] + _dedupe(payload_evidence)[:3]
     )
     return Finding(
         id=INSTALL_DROPPER_FINDING_ID,

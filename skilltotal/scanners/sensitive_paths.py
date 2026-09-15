@@ -116,6 +116,9 @@ _GUARD_PATH_SEGMENTS = frozenset(
         "permissions",
         "security",
         "acl",
+        "blacklist",
+        "whitelist",
+        "ignorelist",
     }
 )
 _GUARD_KEYWORDS = re.compile(
@@ -174,11 +177,19 @@ _SSH_IDENTITY_BEFORE = re.compile(
 # The same key kept in a variable named for it (`SSH_KEY="$HOME/.ssh/deploy"` in a deploy script,
 # `sshKey: get('--ssh-key') ?? '/root/.ssh/id_ed25519'`). The name says what reads it.
 _SSH_KEY_VARIABLE_BEFORE = re.compile(
-    r"(?i)(?:\b|_)(?:ssh[_-]?key(?:[_-]?path)?|identity[_-]?file)\w*[\"']?\s*(?:[:=]|\?\?|\|\||:-)"
+    r"(?i)(?:\b|_)(?:ssh[_-]?key(?:[_-]?path)?|deploy[_-]?key|identity[_-]?file)\w*[\"']?\s*"
+    r"(?:[:=]|\?\?|\|\||:-)"
     r"[^|;&\n]*$"
 )
 # `match = "**/.ssh/*"` in a policy template is a pattern for paths, not a path.
 _POLICY_GLOB_BEFORE = re.compile(r"\*\*/$")
+# `[ -f /root/.ssh/deploy ] || exit 1` checks that the key exists; it does not read it.
+_EXISTS_TEST_BEFORE = re.compile(r"(?:\[\[?|\btest)\s+-[efsr]\s+[\"']?[^\s\"']*$")
+# A whole-line comment in a configuration file (`.npmrc`, `.toml`, `.ini`, `.cfg`, `.conf`).
+_CONFIG_COMMENT_LINE = re.compile(r"^\s*[#;]")
+_CONFIG_SUFFIXES = frozenset(
+    {".npmrc", ".toml", ".ini", ".cfg", ".conf", ".yaml", ".yml", ".properties"}
+)
 # Object keys and attributes whose string value is shown to a person.
 _UI_TEXT_KEY_BEFORE = re.compile(
     r"(?i)\b(?:placeholder|label|hint|description|desc|title|help(?:text)?|tooltip|resolution|"
@@ -188,7 +199,9 @@ _UI_TEXT_KEY_BEFORE = re.compile(
 # (`'Neither KUBECONFIG nor ~/.kube/config exists'`). A path a program opens sits in a short
 # string of its own or in a command; neither reads as five words of prose.
 _PROSE_WORD = re.compile(r"(?<![\w/.~-])[A-Za-z][a-z]+(?![\w/.-])")
-_COMMAND_HINT = re.compile(r"[|;&<>]|\$\(|\b(?:cat|curl|wget|scp|rsync|nc|base64|tar|cp)\s")
+_COMMAND_HINT = re.compile(
+    r"\|\s*\w|&&|>\s*[\"'/~$]|<\s*[\"'/~$]|\$\(|\b(?:cat|curl|wget|scp|rsync|nc|base64|tar|cp)\s"
+)
 _PROSE_MIN_WORDS = 5
 
 
@@ -219,7 +232,11 @@ def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
         return True
     if _SSH_IDENTITY_BEFORE.search(before) or _SSH_KEY_VARIABLE_BEFORE.search(before):
         return True
-    if _POLICY_GLOB_BEFORE.search(before):
+    if _POLICY_GLOB_BEFORE.search(before) or _EXISTS_TEST_BEFORE.search(before):
+        return True
+    name = f.relpath.rsplit("/", 1)[-1].lower()
+    config_suffix = name if name.startswith(".") and "." not in name[1:] else f.suffix
+    if config_suffix in _CONFIG_SUFFIXES and _CONFIG_COMMENT_LINE.match(line_text):
         return True
     if f.string_is_executed(match.start()):
         return False
