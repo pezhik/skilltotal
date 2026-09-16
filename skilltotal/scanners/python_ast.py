@@ -243,7 +243,8 @@ class PythonAstScanner(Scanner):
                 r"\bimport\s+requests\b",
                 r"\bfrom\s+requests\b",
                 r"\brequests\.\w+",
-                r"\bimport\s+urllib\b",
+                r"\bimport\s+urllib\b(?!\s*\.\s*(?:parse|error))",
+                r"\bfrom\s+urllib\.request\b",
                 r"\burllib\.request\b",
                 r"\bimport\s+aiohttp\b",
                 r"\bimport\s+http\.client\b",
@@ -966,14 +967,21 @@ def _open_is_write(node: ast.Call) -> bool:
     return False
 
 
+# `urllib.parse` splits and joins URLs and `urllib.error` holds its exceptions; neither opens a
+# connection. Only `urllib.request` (and the aliases pointing at it) is egress.
+_NON_NETWORK_MODULES = ("urllib.parse", "urllib.error", "urllib.robotparser")
+
+
 def _is_network_module(module: str) -> bool:
-    if not module:
+    if not module or module.startswith(_NON_NETWORK_MODULES):
         return False
     head = module.split(".")[0]
     return head in NETWORK_HEADS or module.startswith(("urllib", "http.client"))
 
 
 def _is_network_call(name: str) -> bool:
+    if name.startswith(_NON_NETWORK_MODULES):
+        return False
     head = name.split(".")[0]
     return head in NETWORK_HEADS or name.startswith(("urllib", "http.client"))
 

@@ -26,6 +26,7 @@ from skilltotal.models import (
     Severity,
     ThreatClass,
 )
+from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
 
 SCORE_CAP = 100
 
@@ -136,6 +137,20 @@ def _is_declarative_file(relpath: str) -> bool:
     )
 
 
+# Writing a credential file is not reading one: a release script puts a token from the environment
+# into `~/.npmrc`, and an installer appends to `~/.ssh/authorized_keys`. Neither can be the read
+# half
+# of an exfiltration path or the payload an install hook steals. ST-SENS-PATH still reports the line
+# (writing `~/.ssh/config` is an SSH-config injection vector).
+_WRITE_REDIRECT = re.compile(r"(?:>>?|\btee\s+(?:-a\s+)?)\s*[\"']?[^\s\"'|;&]*$")
+
+
+def _is_write_target(snippet: str) -> bool:
+    return any(
+        _WRITE_REDIRECT.search(snippet[: m.start()]) for m in _STRONG_PATHS.finditer(snippet)
+    )
+
+
 def _credential_domain(snippet: str) -> str | None:
     """The provider domain a sensitive-path evidence snippet refers to, or None."""
     for pat, dom in _CREDENTIAL_DOMAINS:
@@ -221,6 +236,7 @@ def exfiltration_finding(
         for e in f.evidence
         if not _CLOUD_METADATA_RE.search(e.snippet)  # metadata fetch is network, not a secret read
         and not (f.id == "ST-SENS-PATH" and _is_declarative_file(e.file))
+        and not (f.id == "ST-SENS-PATH" and _is_write_target(e.snippet))
         and not (
             provider_domains
             and f.id in ("ST-SENS-PATH", "ST-SENS-PATH-PY")
@@ -312,7 +328,10 @@ def install_dropper_finding(findings: list[Finding]) -> Finding | None:
         for f in findings
         if f.id in _DROPPER_PAYLOAD_IDS
         for e in f.evidence
-        if not (f.id == "ST-SENS-PATH" and _is_declarative_file(e.file))
+        if not (
+            f.id == "ST-SENS-PATH"
+            and (_is_declarative_file(e.file) or _is_write_target(e.snippet))
+        )
     ]
     if not hooks or not payload_evidence:
         return None

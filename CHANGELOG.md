@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.48.1]
+
+### Fixed
+- **Parsing a URL is not network egress (ruleset 56).** `urllib.parse` and `urllib.error` counted
+  as an HTTP client, so a component that only splits URLs read as "can reach the network" and could
+  supply the egress half of `ST-COMBO-EXFIL`. Only `urllib.request` (and aliases of it) counts now.
+- **Writing a credential file is not reading one (ruleset 56).** A release script putting
+  `$NPM_TOKEN` into `~/.npmrc`, or an installer appending to `~/.ssh/authorized_keys`, fed both
+  `ST-COMBO-EXFIL` and the `ST-INSTALL-DROPPER` payload. A write is excluded from both;
+  `ST-SENS-PATH` still reports the line, because writing `~/.ssh/config` is an injection vector.
+
 ## [0.48.0]
 
 ### Changed

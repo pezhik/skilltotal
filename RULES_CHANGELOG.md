@@ -4,6 +4,17 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 56 (engine 0.48.1)
+
+Both changes come from reading the four critical components of the ruleset-55 survey by hand.
+
+- **`ST-NET-PY` / `network_egress`**: `urllib.parse`, `urllib.error` and `urllib.robotparser` are
+  not egress. They resolve and split URLs; nothing is sent. `urllib.request` is unchanged, so a
+  component that actually fetches still reports the capability.
+- **`ST-COMBO-EXFIL` and `ST-INSTALL-DROPPER`**: a credential path that the line WRITES (a shell
+  redirect or `tee`) is not the read half of an exfiltration path, nor the payload an install hook
+  steals. `ST-SENS-PATH` keeps reporting it.
+
 ## ruleset 55 (engine 0.48.0)
 
 - **`exposure` threat class**: `ST-SECRET-EMBEDDED` and `ST-ENV-SHIPPED` report a credential the
