@@ -192,3 +192,17 @@ def test_a_non_zero_count_never_prints_as_zero_percent():
 def test_report_says_shipped_secrets_do_not_raise_the_level():
     text = sr.render_markdown(sr.summarize(_rows()), _META)
     assert "reports separately as an exposure" in text
+
+
+def test_owasp_table_counts_components_not_verdicts():
+    """AST01 is named "Malicious Skills"; the table must not read as a count of malware."""
+    rows = _rows()
+    rows[0]["owasp"] = ["AST01", "AST03"]
+    rows[1]["owasp"] = ["AST03"]
+    s = sr.summarize(rows)
+    assert s["owasp"]["AST03"] == 2 and s["owasp"]["AST01"] == 1
+    text = sr.render_markdown(s, _META)
+    assert "AST03 Over-Privileged Skills" in text
+    assert "not a verdict" in text
+    # A class nobody carries is left out rather than printed as zero.
+    assert "AST05" not in text

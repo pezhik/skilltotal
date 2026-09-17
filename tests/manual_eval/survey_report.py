@@ -25,6 +25,16 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 OUT_PREFIX_DEFAULT = str(_REPO_ROOT / "docs" / "mcp-registry-survey")
 _LEVELS = ("low", "medium", "high", "critical")
+# OWASP Agentic Skills classes a static scan can evidence (AST06-AST10 need runtime or registry
+# observation, so no rule maps to them). Names come from docs/owasp-agentic-skills-mapping.md.
+# A component counts once per class, however many of its findings map to it.
+_OWASP_LABEL: dict[str, str] = {
+    "AST01": "AST01 Malicious Skills",
+    "AST02": "AST02 Supply Chain Compromise",
+    "AST03": "AST03 Over-Privileged Skills",
+    "AST04": "AST04 Insecure Metadata",
+    "AST05": "AST05 Unsafe Deserialization",
+}
 _UNREACHABLE = "repository or package no longer reachable"
 
 # Capability ids in the order a reader cares about: reach first, then local power.
@@ -92,6 +102,9 @@ def summarize(rows: list[dict]) -> dict:
                                         if "ruleset_version" in r).items())),
         "capabilities": {
             cap: sum(1 for r in ok if cap in r.get("capabilities", [])) for cap in _CAP_LABEL
+        },
+        "owasp": {
+            cls: sum(1 for r in ok if cls in set(r.get("owasp") or ())) for cls in _OWASP_LABEL
         },
         "registry_shape": {
             "git_sources": git_total,
@@ -227,6 +240,25 @@ def render_markdown(s: dict, meta: dict) -> str:
             continue  # a 0.0% row would read as a finding of absence, which a scan cannot make
         add(f"| {label} | {count:,} | **{pct(count, n)}** |")
     add("")
+    owasp = {k: v for k, v in s.get("owasp", {}).items() if v}
+    if owasp:
+        add("## OWASP Agentic Skills Top 10")
+        add("")
+        add(
+            "Every rule that has an honest static fit carries its OWASP class, so the same scan "
+            "answers which classes this population actually exhibits. A class appears here when a "
+            "component carries at least one finding mapped to it; a component can appear in "
+            "several. Classes with no evidence in this population are left out rather than printed "
+            "as zero. A class counts the rules mapped to it, not a verdict: the rules under "
+            "*Malicious Skills* include exfiltration paths and evasion idioms that a legitimate "
+            "tool can carry, and no component in this population carries a malicious indicator."
+        )
+        add("")
+        add("| Class | Components | Share |")
+        add("|---|---:|---:|")
+        for cls, count in sorted(owasp.items(), key=lambda kv: -kv[1]):
+            add(f"| {_OWASP_LABEL[cls]} | {count:,} | {pct(count, n)} |")
+        add("")
     add("## Risk levels")
     add("")
     add(

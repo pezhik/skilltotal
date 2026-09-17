@@ -58,6 +58,13 @@
       "scoped_identity": 80,
       "prompt_surface_risk": 0
     },
+    "owasp": {
+      "AST01": 79,
+      "AST02": 1247,
+      "AST03": 1939,
+      "AST04": 0,
+      "AST05": 55
+    },
     "registry_shape": {
       "git_sources": 7312,
       "distinct_owners": 4325,

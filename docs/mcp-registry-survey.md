@@ -48,6 +48,17 @@ Share of the 15,426 scanned components carrying each capability:
 | evaluates code dynamically | 552 | **3.6%** |
 | uses a scoped, short-lived identity | 80 | **0.5%** |
 
+## OWASP Agentic Skills Top 10
+
+Every rule that has an honest static fit carries its OWASP class, so the same scan answers which classes this population actually exhibits. A class appears here when a component carries at least one finding mapped to it; a component can appear in several. Classes with no evidence in this population are left out rather than printed as zero. A class counts the rules mapped to it, not a verdict: the rules under *Malicious Skills* include exfiltration paths and evasion idioms that a legitimate tool can carry, and no component in this population carries a malicious indicator.
+
+| Class | Components | Share |
+|---|---:|---:|
+| AST03 Over-Privileged Skills | 1,939 | 12.6% |
+| AST02 Supply Chain Compromise | 1,247 | 8.1% |
+| AST01 Malicious Skills | 79 | 0.5% |
+| AST05 Unsafe Deserialization | 55 | 0.4% |
+
 ## Risk levels
 
 SkillTotal scores risky constructs and malicious indicators; a capability on its own contributes zero to the score, and so does a secret the component ships, which the engine reports separately as an exposure. The risk distribution is therefore far flatter than the capability table above, and that difference is the point.
