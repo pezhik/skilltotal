@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "generated": "2026-09-15",
+    "generated": "2026-09-17",
     "population_snapshot": "2026-08-16",
-    "engine": "0.48.0",
-    "ruleset": 55,
+    "engine": "0.48.2",
+    "ruleset": 57,
     "registry_entries": 73460,
     "registry_url": "https://registry.modelcontextprotocol.io/v0/servers",
     "clone_mb": 50,
@@ -11,50 +11,50 @@
   },
   "summary": {
     "population": 17535,
-    "scanned": 15457,
-    "skipped": 2078,
+    "scanned": 15426,
+    "skipped": 2109,
     "skip_reasons": {
-      "larger than the size bound": 157,
+      "larger than the size bound": 174,
       "repository or package no longer reachable": 1635,
-      "other": 64,
+      "other": 63,
       "access denied": 2,
-      "slower than the time bound": 220
+      "slower than the time bound": 235
     },
     "by_ecosystem": {
       "git": {
         "total": 7312,
-        "scanned": 5456
+        "scanned": 5439
       },
       "npm": {
         "total": 7152,
-        "scanned": 7011
+        "scanned": 6999
       },
       "pypi": {
         "total": 3071,
-        "scanned": 2990
+        "scanned": 2988
       }
     },
     "risk_level": {
-      "low": 15293,
-      "medium": 127,
-      "high": 33,
+      "low": 15285,
+      "medium": 110,
+      "high": 27,
       "critical": 4
     },
     "malicious_indicators": 0,
     "rulesets": {
-      "54": 15203,
-      "55": 254
+      "56": 15358,
+      "57": 68
     },
     "capabilities": {
-      "mcp_tools_detected": 13644,
-      "network_egress": 10169,
-      "shell_execution": 4708,
-      "filesystem_read": 3932,
-      "filesystem_write": 3288,
-      "install_time_execution": 1162,
-      "delegated_authentication": 938,
-      "dynamic_code_execution": 564,
-      "scoped_identity": 87,
+      "mcp_tools_detected": 13609,
+      "network_egress": 10028,
+      "shell_execution": 4679,
+      "filesystem_read": 3899,
+      "filesystem_write": 3262,
+      "install_time_execution": 1158,
+      "delegated_authentication": 923,
+      "dynamic_code_execution": 552,
+      "scoped_identity": 80,
       "prompt_surface_risk": 0
     },
     "registry_shape": {
