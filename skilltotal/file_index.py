@@ -562,8 +562,9 @@ _SHELL_SHEBANG = re.compile(r"#!\S*(?:/|\s)(?:env\s+)?(?:ba|z|da|k)?sh\b")
 # Commands whose argument is text for a person to read, not something the line executes.
 _PRINT_COMMAND = re.compile(
     r"(?:^|[;&|(]\s*|\$\()\s*(?:echo|printf|print|puts|Write-Host|Write-Output|Write-Information|"
-    r"console\.(?:log|info|warn|error))\b[^\"'`]*$"
+    r"console\.(?:log|info|warn|error))\b[^;&|]*$"
 )
+_QUOTED_ARG = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
 # JSX attributes whose value is text shown to a person.
 _JSX_UI_ATTRIBUTE = re.compile(
     r"\b(?:placeholder|title|label|aria-label|aria-description|alt|helperText|hint|tooltip|"
@@ -1149,7 +1150,8 @@ class IndexedFile:
             if quote:
                 if ch == quote:
                     if start <= col < k:
-                        return bool(_PRINT_COMMAND.search(line[: start - 1]))
+                        prefix = _QUOTED_ARG.sub(" ", line[: start - 1])
+                        return bool(_PRINT_COMMAND.search(prefix))
                     quote = ""
             elif ch in ("'", '"', "`"):
                 quote, start = ch, k + 1
@@ -1244,7 +1246,10 @@ class IndexedFile:
     def is_shell_like(self) -> bool:
         """Shell scripts and Makefiles, whose `#` comments and quoted arguments are not code."""
         name = self.relpath.rsplit("/", 1)[-1].lower()
-        if self.suffix in (".sh", ".bash", ".zsh", ".mk") or name in ("makefile", "gnumakefile"):
+        if self.suffix in (".sh", ".bash", ".zsh", ".mk", ".ps1", ".psm1") or name in (
+            "makefile",
+            "gnumakefile",
+        ):
             return True
         # A suffix-less script with a shell shebang (`cli/rustok`, `#!/bin/sh`): its `#` lines are
         # comments too.

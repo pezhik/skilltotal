@@ -52,7 +52,7 @@ class ShellEvasionScanner(PatternScanner):
                 r"(?:powershell|pwsh)\b[^\n]{0,80}-enc\b",
                 r"-windowstyle\s+hidden\b",
                 r"codesign\b[^\n]*--force[^\n]*--deep",
-                r"\bnohup\b[^\n]*\s/tmp/\S",
+                r"\bnohup\b(?:[^\n>]|>(?!\s*/tmp/))*\s/tmp/\S",
                 r"\bchmod\s+\+x\b[^\n]*(?:/tmp/|/dev/shm/)",
                 r"(?:iex|invoke-expression)\b[^\n]*"
                 r"(?:downloadstring|invoke-webrequest|\biwr\b|net\.webclient)",

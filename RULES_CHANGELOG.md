@@ -4,6 +4,19 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 58 (engine 0.48.3)
+
+From the 27 high components of the ruleset-57 survey, read by hand.
+
+- **Printed commands**: the print may take several arguments, so the prefix is judged with its own
+  quoted arguments removed; and PowerShell scripts (`.ps1`, `.psm1`) have `#` comments like a shell.
+- **Prose in Chinese or Japanese** (`ST-SENS-PATH`): four ideographs are a sentence, and a file with
+  no string lexer (`.astro`, `.vue`) is judged by its line.
+- **A name compared against a literal** (`lower == "id_rsa"`, `strcmp(lower, "id_rsa")`) is a check,
+  joining the denylist/guardrail contexts.
+- **`ST-SHELL-EVASION`**: `nohup … > /tmp/app.log &` redirects a log; the idiom is running a payload
+  from `/tmp`.
+
 ## ruleset 57 (engine 0.48.2)
 
 From the six critical components of the ruleset-56 survey, read by hand.

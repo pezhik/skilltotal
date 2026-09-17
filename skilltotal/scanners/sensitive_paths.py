@@ -141,6 +141,9 @@ _TRAILING_COMMENT = re.compile(r"\s+(?://|#).*$")
 # e.g. `/id_rsa/,`, `/credentials/i,`, `/\.pem$/,`. A regex literal is a PATTERN that matches
 # against paths, never a path being accessed — so a credential token inside one is a detector's
 # denylist entry (as in a `SENSITIVE_PATHS = [ /id_rsa/, ... ]` array), not exfiltration.
+_NAME_COMPARISON = re.compile(
+    r"""(?:[=!]==?\s*["'`]$|\bstrn?casecmp\s*\(|\bstrcmp\s*\(|\bequals(?:IgnoreCase)?\s*\()"""
+)
 _BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:\[[^\]\n]*\]|[^/\\\n\[]|\\.)+/[gimsuvy]*\s*,?\s*$")
 
 
@@ -162,11 +165,12 @@ def _guard_segment(relpath: str) -> bool:
     return False
 
 
-def _is_guardlist_context(relpath: str, line_text: str) -> bool:
+def _is_guardlist_context(relpath: str, line_text: str, matched: str = "") -> bool:
     """True if a sensitive-path match is a defensive denylist/guardrail mention, not access."""
     bare = _TRAILING_COMMENT.sub("", line_text)
     return (
         _guard_segment(relpath)
+        or bool(_NAME_COMPARISON.search(bare[: bare.find(matched)] if matched in bare else ""))
         or bool(_GUARD_KEYWORDS.search(line_text))
         or bool(_BARE_LIST_ELEMENT.match(bare))
         or bool(_BARE_REGEX_ELEMENT.match(bare))
@@ -227,7 +231,7 @@ _PROSE_MIN_WORDS = 5
 
 
 _CJK_LETTERS = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
-_PROSE_MIN_CJK = 8
+_PROSE_MIN_CJK = 4
 
 
 def _is_prose_string(literal: str) -> bool:
@@ -287,6 +291,10 @@ def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
         quoted = _line_quoted_segment(line_text, col)
         if quoted is not None and _is_prose_string(quoted):
             return True
+    elif len(_CJK_LETTERS.findall(line_text)) >= _PROSE_MIN_CJK:
+        # No string lexer for this file type (.astro, .vue): a line of Chinese or Japanese around
+        # the path is a sentence wherever it sits.
+        return True
     return f.in_rendered_markup_text(match.start())
 
 
@@ -430,7 +438,7 @@ class SensitivePathScanner(Scanner):
                 continue
             seen_ev.add(key)
             line_text = f.line_text(ev.line_start)
-            if _is_guardlist_context(ev.file, line_text):
+            if _is_guardlist_context(ev.file, line_text, _m.group(0)):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
                 continue

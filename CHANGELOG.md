@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.48.3]
+
+### Fixed
+- **The high tier of the registry survey, read by hand (ruleset 58).** Five shapes still read as
+  behaviour: a command printed through several arguments (`printf "%s" "$C" "curl … | bash"`), a
+  PowerShell `#` comment, a sentence in Chinese or Japanese around a credential path, a filename
+  compared against a literal (`strcmp(lower, "id_rsa")`), and a log redirected into `/tmp`
+  (`nohup … > /tmp/x.log &`, where the idiom is running FROM /tmp).
+
 ## [0.48.2]
 
 ### Fixed
