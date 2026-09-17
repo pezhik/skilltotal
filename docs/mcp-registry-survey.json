@@ -2,8 +2,8 @@
   "metadata": {
     "generated": "2026-09-17",
     "population_snapshot": "2026-08-16",
-    "engine": "0.48.2",
-    "ruleset": 57,
+    "engine": "0.48.3",
+    "ruleset": 58,
     "registry_entries": 73460,
     "registry_url": "https://registry.modelcontextprotocol.io/v0/servers",
     "clone_mb": 50,
@@ -35,21 +35,22 @@
       }
     },
     "risk_level": {
-      "low": 15285,
+      "low": 15289,
       "medium": 110,
-      "high": 27,
+      "high": 23,
       "critical": 4
     },
     "malicious_indicators": 0,
     "rulesets": {
       "56": 15358,
-      "57": 68
+      "57": 18,
+      "58": 50
     },
     "capabilities": {
       "mcp_tools_detected": 13609,
       "network_egress": 10028,
       "shell_execution": 4679,
-      "filesystem_read": 3899,
+      "filesystem_read": 3897,
       "filesystem_write": 3262,
       "install_time_execution": 1158,
       "delegated_authentication": 923,
