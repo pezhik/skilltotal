@@ -22,7 +22,10 @@ from skilltotal.scanners.base import (
     ScanResult,
     alternation,
 )
-from skilltotal.scanners.sensitive_paths import _STRONG_PATHS  # reuse the credential-path set
+from skilltotal.scanners.sensitive_paths import (  # reuse the credential-path set
+    _STRONG_PATHS,
+    is_metadata_without_credentials,
+)
 
 PY_SUFFIXES = (".py", ".pyw")
 
@@ -545,7 +548,7 @@ class _CallVisitor(ast.NodeVisitor):
         # network call is a real sensitive-data access (e.g. open("~/.aws/credentials"),
         # expanduser("~/.ssh/id_rsa"), subprocess.run(["cat", "~/.ssh/id_rsa"])).
         if _is_path_consumer(name) and any(
-            _STRONG_PATHS.search(s) for s in _iter_string_consts(node)
+            _is_credential_path(s) for s in _iter_string_consts(node)
         ):
             self._add(R_SENS_PY, node)
 
@@ -560,7 +563,7 @@ class _CallVisitor(ast.NodeVisitor):
                 if (
                     isinstance(operand, ast.Constant)
                     and isinstance(operand.value, str)
-                    and _STRONG_PATHS.search(operand.value)
+                    and _is_credential_path(operand.value)
                 ):
                     self._add(R_SENS_PY, node)
                     break
@@ -970,6 +973,12 @@ def _open_is_write(node: ast.Call) -> bool:
 # `urllib.parse` splits and joins URLs and `urllib.error` holds its exceptions; neither opens a
 # connection. Only `urllib.request` (and the aliases pointing at it) is egress.
 _NON_NETWORK_MODULES = ("urllib.parse", "urllib.error", "urllib.robotparser")
+
+
+def _is_credential_path(value: str) -> bool:
+    """A strong credential path, except an instance-metadata URL that asks for no credentials."""
+    m = _STRONG_PATHS.search(value)
+    return bool(m) and not is_metadata_without_credentials(m.group(0), value)
 
 
 def _is_network_module(module: str) -> bool:

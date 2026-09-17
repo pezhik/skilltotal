@@ -4,6 +4,18 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 57 (engine 0.48.2)
+
+From the six critical components of the ruleset-56 survey, read by hand.
+
+- **Printed commands** (`IndexedFile.in_printed_command`): a quoted string that `echo`, `printf`,
+  `print`, `puts`, `Write-Host`/`Write-Output` or `console.log` outputs is text for a person.
+  Demoted for every rule whose `code_context` already demotes strings or comments, which covers
+  `ST-SHELL-PIPE-EXEC` and `ST-SHELL-EVASION` in installer scripts.
+- **Cloud instance metadata** (`ST-SENS-PATH`, `ST-SENS-PATH-PY`): 169.254.169.254 counts as a
+  credential location only when the line asks for credentials. Asking for the instance id, the
+  region or an IMDSv2 session token is what provisioning code does on its own host.
+
 ## ruleset 56 (engine 0.48.1)
 
 Both changes come from reading the four critical components of the ruleset-55 survey by hand.

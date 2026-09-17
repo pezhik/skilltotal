@@ -726,6 +726,10 @@ def _is_noncode_context(
         return False
     if rule_id in _AGENT_TEXT_RULES and f.in_agent_facing_string(e.match_offset):
         return False
+    # A command inside an `echo` / `Write-Host` argument is printed for a person to run, in every
+    # language: an installer that prints `curl … | sh` as a hint does not pipe anything itself.
+    if f.in_printed_command(e.match_offset):
+        return True
     if f.suffix in (".py", ".pyw"):
         if f.in_comment(e.match_offset):
             return True

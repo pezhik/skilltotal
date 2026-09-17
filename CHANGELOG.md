@@ -4,6 +4,18 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.48.2]
+
+### Fixed
+- **A command printed for a person is not a command the line runs (ruleset 57).** An installer that
+  prints `curl … | sh` or `powershell -c "irm … | iex"` as a hint (`echo`, `Write-Host`, `print`,
+  `console.log`) scored as remote pipe-to-shell and as a defense-evasion idiom. A match inside such
+  an argument is demoted for every rule that already treats strings as non-code.
+- **Instance metadata is a credential read only when it asks for credentials (ruleset 57).** A
+  node's own bootstrap script reads its instance id, region or an IMDSv2 session token from
+  169.254.169.254. `ST-SENS-PATH` / `ST-SENS-PATH-PY` now need the request to target the role's
+  credentials (`iam/security-credentials`, a service-account token, the Azure identity endpoint).
+
 ## [0.48.1]
 
 ### Fixed

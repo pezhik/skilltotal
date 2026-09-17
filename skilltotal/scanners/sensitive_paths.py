@@ -144,6 +144,15 @@ _TRAILING_COMMENT = re.compile(r"\s+(?://|#).*$")
 _BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:\[[^\]\n]*\]|[^/\\\n\[]|\\.)+/[gimsuvy]*\s*,?\s*$")
 
 
+def is_metadata_without_credentials(matched: str, text: str) -> bool:
+    """True for an instance-metadata reference that does not ask for the role's credentials.
+
+    A node's own bootstrap script reads its instance id, region or an IMDSv2 session token from
+    169.254.169.254; a thief reads `iam/security-credentials` (or a service-account token).
+    """
+    return bool(_METADATA_MATCH.match(matched)) and not _METADATA_CREDENTIAL.search(text)
+
+
 def _guard_segment(relpath: str) -> bool:
     # Tokenize each path segment on `._-` so guard code is recognized whether it's a directory
     # (policies/) or a filename (net_guard.rs, path_guard.rs, denylist.go).
@@ -186,6 +195,15 @@ _SSH_KEY_VARIABLE_BEFORE = re.compile(
 )
 # `match = "**/.ssh/*"` in a policy template is a pattern for paths, not a path.
 _POLICY_GLOB_BEFORE = re.compile(r"\*\*/$")
+# The cloud instance-metadata service answers two very different questions. Asking it for the
+# instance id, region or an IMDSv2 session token is what a node's own bootstrap script does; asking
+# it for the role's credentials (`iam/security-credentials`, a service-account token, the Azure
+# identity endpoint) is the theft that made the address worth flagging.
+_METADATA_MATCH = re.compile(r"^169\.254\.169\.254$")
+_METADATA_CREDENTIAL = re.compile(
+    r"(?i)iam/security-credentials|service-accounts/[^/\s]+/(?:token|identity)|"
+    r"metadata/identity/oauth2/token|/latest/meta-data/iam\b"
+)
 # `[ -f /root/.ssh/deploy ] || exit 1` checks that the key exists; it does not read it.
 _EXISTS_TEST_BEFORE = re.compile(r"(?:\[\[?|\btest)\s+-[efsr]\s+[\"']?[^\s\"']*$")
 # A whole-line comment in a configuration file (`.npmrc`, `.toml`, `.ini`, `.cfg`, `.conf`).
@@ -245,6 +263,8 @@ def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
     if _SSH_IDENTITY_BEFORE.search(before) or _SSH_KEY_VARIABLE_BEFORE.search(before):
         return True
     if _POLICY_GLOB_BEFORE.search(before) or _EXISTS_TEST_BEFORE.search(before):
+        return True
+    if is_metadata_without_credentials(match.group(0), line_text):
         return True
     name = f.relpath.rsplit("/", 1)[-1].lower()
     config_suffix = name if name.startswith(".") and "." not in name[1:] else f.suffix

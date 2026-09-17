@@ -559,6 +559,11 @@ _JS_EXEC_SINK = re.compile(
 # Builtins only: `re.compile(r"...")` is a pattern, not code (a jailbreak-phrase filter scored).
 _PY_EXEC_SINK = re.compile(r"(?<![\w.])(?:exec|eval|compile)\s*\(\s*$")
 _SHELL_SHEBANG = re.compile(r"#!\S*(?:/|\s)(?:env\s+)?(?:ba|z|da|k)?sh\b")
+# Commands whose argument is text for a person to read, not something the line executes.
+_PRINT_COMMAND = re.compile(
+    r"(?:^|[;&|(]\s*|\$\()\s*(?:echo|printf|print|puts|Write-Host|Write-Output|Write-Information|"
+    r"console\.(?:log|info|warn|error))\b[^\"'`]*$"
+)
 # JSX attributes whose value is text shown to a person.
 _JSX_UI_ATTRIBUTE = re.compile(
     r"\b(?:placeholder|title|label|aria-label|aria-description|alt|helperText|hint|tooltip|"
@@ -1128,6 +1133,27 @@ class IndexedFile:
             if start <= offset < end:
                 return start, end
         return None
+
+    def in_printed_command(self, offset: int) -> bool:
+        """True if ``offset`` sits in a quoted string that an output command prints.
+
+        `echo "  curl -LsSf https://astral.sh/uv/install.sh | sh"` and
+        `Write-Host "  powershell -c \"irm … | iex\""` show a person what to run; an installer
+        that prints its own instructions is not running them.
+        """
+        line_no = self.line_of_offset(offset)
+        line = self._line_text(line_no)
+        col = offset - self._line_starts[line_no - 1]
+        quote, start = "", -1
+        for k, ch in enumerate(line):
+            if quote:
+                if ch == quote:
+                    if start <= col < k:
+                        return bool(_PRINT_COMMAND.search(line[: start - 1]))
+                    quote = ""
+            elif ch in ("'", '"', "`"):
+                quote, start = ch, k + 1
+        return False
 
     def in_js_regex(self, offset: int) -> bool:
         """True if ``offset`` falls inside a JavaScript-family regex literal (``/…/flags``).
