@@ -58,7 +58,6 @@ that produced them.
   [Raw JSON](docs/mcp-registry-survey.json) · [the harness](tests/manual_eval/survey_registry.py).
 - **[Detection efficacy](docs/efficacy-report.md)** — recall and precision on a labelled corpus,
   regenerated every release and enforced by CI as a floor.
-- **[Corpus report](docs/corpus-report.md)** — full findings across real published AI components.
 
 Every one of these reproduces: same input, same engine, same output. Nothing is executed and no
 LLM is involved.

@@ -159,6 +159,20 @@ def test_json_and_markdown_come_from_one_dataset(tmp_path):
     assert f"{data['summary']['scanned']:,}" in text
 
 
+def test_rerendering_a_dataset_later_keeps_the_scan_date(tmp_path):
+    """The heading says "scanned on <date>"; a re-render must not move it onto the render date."""
+    survey = tmp_path / "survey.jsonl"
+    survey.write_text("\n".join(json.dumps(r) for r in _rows()) + "\n", encoding="utf-8")
+    prefix = tmp_path / "out"
+    sr.main([
+        str(survey), "--out-prefix", str(prefix), "--engine", "0.48.3", "--ruleset", "58",
+        "--registry-entries", "73460", "--scanned", "2026-09-17",
+    ])
+    data = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert data["metadata"]["generated"] == "2026-09-17"
+    assert "2026-09-17" in (tmp_path / "out.md").read_text(encoding="utf-8")
+
+
 def test_report_makes_no_claim_of_absence():
     """Zero indicators is what the rules matched, not a verdict that the registry is clean."""
     rows = [r for r in _rows() if not r.get("malicious")]
@@ -192,6 +206,29 @@ def test_a_non_zero_count_never_prints_as_zero_percent():
 def test_report_says_shipped_secrets_do_not_raise_the_level():
     text = sr.render_markdown(sr.summarize(_rows()), _META)
     assert "reports separately as an exposure" in text
+
+
+def test_top_rules_counts_each_component_once_per_rule():
+    """A component tripping one rule in forty files is one component, not forty."""
+    rows = _rows()
+    rows[0]["rules"] = ["ST-NET-PY", "ST-SHELL-PY", "ST-NET-PY"]
+    rows[1]["rules"] = ["ST-NET-PY"]
+    s = sr.summarize(rows)
+    assert s["top_rules"]["ST-NET-PY"] == 2
+    assert s["top_rules"]["ST-SHELL-PY"] == 1
+    # Ordered by frequency, so the markdown can take the head of the list.
+    assert list(s["top_rules"]) == ["ST-NET-PY", "ST-SHELL-PY"]
+    text = sr.render_markdown(s, _META)
+    assert "## Which rules fired" in text
+    assert "`ST-NET-PY` | 2" in text
+    # The reader must not read a rule count as a count of misbehaving components.
+    assert "describes what the code does, not what it intends" in text
+
+
+def test_rule_table_is_absent_when_no_rule_fired():
+    """An empty table would read as a finding of absence, like a 0.0% capability row."""
+    text = sr.render_markdown(sr.summarize(_rows()), _META)
+    assert "Which rules fired" not in text
 
 
 def test_owasp_table_counts_components_not_verdicts():

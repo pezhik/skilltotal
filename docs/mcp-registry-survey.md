@@ -59,6 +59,28 @@ Every rule that has an honest static fit carries its OWASP class, so the same sc
 | AST01 Malicious Skills | 79 | 0.5% |
 | AST05 Unsafe Deserialization | 55 | 0.4% |
 
+## Which rules fired
+
+38 rules matched something in this population; the 15 most frequent are below, and the count for every rule is in the JSON beside this file. A rule firing describes what the code does, not what it intends — most of the traffic here is capability rules, which add nothing to the risk score. That is precisely why the risk table below is so much flatter than the capability table above. `skilltotal rules list` documents every id.
+
+| Rule | Components | Share |
+|---|---:|---:|
+| `ST-MCP-DETECTED` | 13,609 | 88.2% |
+| `ST-NET-NODE` | 7,505 | 48.7% |
+| `ST-SHELL-NODE` | 3,613 | 23.4% |
+| `ST-NET-PY` | 2,801 | 18.2% |
+| `ST-FS-PY-READ` | 2,375 | 15.4% |
+| `ST-FS-PY-WRITE` | 1,991 | 12.9% |
+| `ST-FS-NODE-READ` | 1,593 | 10.3% |
+| `ST-EXPOSE-BIND` | 1,388 | 9.0% |
+| `ST-FS-NODE-WRITE` | 1,352 | 8.8% |
+| `ST-MCP-DANGEROUS-TOOL` | 1,315 | 8.5% |
+| `ST-SHELL-PY` | 1,173 | 7.6% |
+| `ST-AUTH-DELEGATED` | 923 | 6.0% |
+| `ST-INSTALL-NPM-PREPARE` | 759 | 4.9% |
+| `ST-MCP-SERVER-EXEC` | 716 | 4.6% |
+| `ST-DYN-NODE` | 445 | 2.9% |
+
 ## Risk levels
 
 SkillTotal scores risky constructs and malicious indicators; a capability on its own contributes zero to the score, and so does a secret the component ships, which the engine reports separately as an exposure. The risk distribution is therefore far flatter than the capability table above, and that difference is the point.

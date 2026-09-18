@@ -36,6 +36,9 @@ _OWASP_LABEL: dict[str, str] = {
     "AST05": "AST05 Unsafe Deserialization",
 }
 _UNREACHABLE = "repository or package no longer reachable"
+# Rules are listed by how many components carry them. The markdown shows the head of the list; the
+# JSON carries every rule, because the point of publishing it is that someone can recompute it.
+_TOP_RULES_SHOWN = 15
 
 # Capability ids in the order a reader cares about: reach first, then local power.
 _CAP_LABEL: dict[str, str] = {
@@ -106,6 +109,11 @@ def summarize(rows: list[dict]) -> dict:
         "owasp": {
             cls: sum(1 for r in ok if cls in set(r.get("owasp") or ())) for cls in _OWASP_LABEL
         },
+        # Components per rule, not matches per rule: a component that trips one rule in forty files
+        # is still one component, and dict.fromkeys collapses any repeat within a row.
+        "top_rules": dict(
+            Counter(rule for r in ok for rule in dict.fromkeys(r.get("rules") or ())).most_common()
+        ),
         "registry_shape": {
             "git_sources": git_total,
             "distinct_owners": len(owners),
@@ -259,6 +267,25 @@ def render_markdown(s: dict, meta: dict) -> str:
         for cls, count in sorted(owasp.items(), key=lambda kv: -kv[1]):
             add(f"| {_OWASP_LABEL[cls]} | {count:,} | {pct(count, n)} |")
         add("")
+    top_rules = s.get("top_rules") or {}
+    if top_rules:
+        shown = min(_TOP_RULES_SHOWN, len(top_rules))
+        add("## Which rules fired")
+        add("")
+        add(
+            f"{len(top_rules)} rules matched something in this population; the {shown} most "
+            f"frequent are below, and the count for every rule is in the JSON beside this file. "
+            f"A rule firing describes what the code does, not what it intends — most of the "
+            f"traffic here is capability rules, which add nothing to the risk score. That is "
+            f"precisely why the risk table below is so much flatter than the capability table "
+            f"above. `skilltotal rules list` documents every id."
+        )
+        add("")
+        add("| Rule | Components | Share |")
+        add("|---|---:|---:|")
+        for rule, count in list(top_rules.items())[:shown]:
+            add(f"| `{rule}` | {count:,} | {pct(count, n)} |")
+        add("")
     add("## Risk levels")
     add("")
     add(
@@ -347,10 +374,16 @@ def main(argv: list[str] | None = None) -> int:
         "--population-snapshot", default="",
         help="date (YYYY-MM-DD) the registry population was captured; defaults to the run date",
     )
+    ap.add_argument(
+        "--scanned", default="",
+        help="date (YYYY-MM-DD) the survey itself ran; defaults to today. The report says "
+             "'scanned on <date>', so re-rendering an existing dataset the next day must not "
+             "move that date onto the render.",
+    )
     args = ap.parse_args(argv)
 
     summary = summarize(load(Path(args.survey)))
-    generated = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    generated = args.scanned or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     meta = {
         "generated": generated,
         "population_snapshot": args.population_snapshot or generated,
