@@ -4,6 +4,17 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 59 (engine 0.49.0)
+
+From the first day of public scans: a research repository on ASCII smuggling came back malicious.
+
+- **`ST-SHELL-NODE` / `ST-CMDI-NODE`**: a call site counts only when it is tied to `child_process`
+  (spelled out; or, in a file that imports it, a bare call or a call through the bound alias).
+  `re.exec(`, `db.exec(`, `query.exec()` and other methods named `exec`/`spawn` no longer match.
+  `Bun.spawn(` is matched explicitly.
+- **Data corpora**: `experiments/` and `experiment/` are data-corpus directories (non-code files
+  only), so recorded model outputs no longer feed `ST-HIDDEN-UNICODE` or any other rule.
+
 ## ruleset 58 (engine 0.48.3)
 
 From the 27 high components of the ruleset-57 survey, read by hand.

@@ -17,6 +17,8 @@ LLM and live in the paid Deep Analysis layer, not here.
 from __future__ import annotations
 
 import unicodedata
+from array import array
+from collections.abc import Sequence
 
 # Characters removed entirely before matching: zero-width, bidi controls, and other format
 # characters used to splice or visually reorder text. Kept in sync with the smuggling set in
@@ -61,7 +63,7 @@ _CONFUSABLES = {
 }
 
 
-def normalize_with_map(text: str) -> tuple[str, list[int]]:
+def normalize_with_map(text: str) -> tuple[str, array[int]]:
     """Return ``(normalized_text, index_map)``.
 
     ``index_map[i]`` is the offset in ``text`` of the character that produced
@@ -73,12 +75,23 @@ def normalize_with_map(text: str) -> tuple[str, list[int]]:
     ``normalized == text`` as "nothing to fold" without touching the map. The fast path matters:
     the per-character loop below is orders of magnitude slower than ``str.isascii`` (one C scan),
     and scanning a large ordinary repo used to burn minutes normalizing plain-ASCII sources.
+
+    The map is an ``array('I')``, not a list. It holds one entry per character and is cached for
+    every non-ASCII file of a scan, so as a list of ints it cost ~36 bytes per character: a 22 MB
+    repository peaked at 338 MB, 180 MB of it these maps, and the hosted scan died at its 400 MB
+    cap with "may be too large". Packed, an entry is 4 bytes. The same file-level fast path applies
+    per character: an ASCII character is its own NFKD form, so it skips ``unicodedata`` entirely —
+    most non-ASCII files are ASCII but for a handful of characters.
     """
+    idx: array[int] = array("I")
     if text.isascii():
-        return text, []
+        return text, idx
     out: list[str] = []
-    idx: list[int] = []
     for j, ch in enumerate(text):
+        if ch < "\x80":
+            out.append(ch)
+            idx.append(j)
+            continue
         if ord(ch) in _REMOVABLE:
             continue
         folded = _CONFUSABLES.get(ch, ch)
@@ -91,7 +104,7 @@ def normalize_with_map(text: str) -> tuple[str, list[int]]:
     return "".join(out), idx
 
 
-def original_span(index_map: list[int], start: int, end: int) -> tuple[int, int]:
+def original_span(index_map: Sequence[int], start: int, end: int) -> tuple[int, int]:
     """Map a ``[start, end)`` span on the normalized text to a span in the original text.
 
     ``end`` is exclusive; the original end is the origin of the last matched character + 1, so

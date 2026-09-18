@@ -15,7 +15,7 @@ import fnmatch
 import io
 import re
 import tokenize
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -173,6 +173,10 @@ _DATA_CORPUS_SEGMENTS: frozenset[str] = frozenset(
         # Security-testing payload lists (`payloads/llm_testing/adversarial_prompts.txt`,
         # `payloads/csp_bypass/waf_specific_bypasses.txt`): attack strings kept as data.
         "payloads",
+        # Recorded research runs (`experiments/results/*.json`): an ASCII-smuggling study stores
+        # the model outputs it measured, hidden tag characters included, and those scored as a
+        # malicious indicator against the study itself. The experiment CODE is still scanned.
+        "experiments", "experiment",
     }
 )
 # Executable code suffixes. Evidence in these is NEVER treated as inert corpus data, even inside
@@ -896,7 +900,7 @@ class IndexedFile:
     # Lazily-computed de-obfuscation result: None until computed; (None,) once computed as
     # identity; ((norm, idx),) once computed with a real change. The 1-tuple wrapper
     # distinguishes "not yet computed" from "computed: identity".
-    _norm_cache: tuple[tuple[str, list[int]] | None] | None = field(
+    _norm_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
         default=None, repr=False, compare=False
     )
 

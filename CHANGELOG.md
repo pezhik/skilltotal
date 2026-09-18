@@ -4,6 +4,29 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.49.0]
+
+### Fixed
+- **A method named `exec` is not a shell (ruleset 59).** `ST-SHELL-NODE` matched any `exec(` or
+  `spawn(`, so `re.exec(text)` — `RegExp.prototype.exec` — and database calls such as
+  better-sqlite3's `db.exec` and mongoose's `query.exec()` were reported as Node.js shell execution.
+  A call site now counts only where it can be tied to `child_process`: spelled out, or in a file
+  that imports it, as a bare call or through the alias that file bound. `ST-CMDI-NODE` takes the
+  same call sites, so `db.exec(\`CREATE TABLE ${t}\`)` is no longer command injection. `Bun.spawn`
+  is matched explicitly.
+- **Recorded experiment output is data (ruleset 59).** `experiments/` joins the data-corpus
+  directories: its non-code files are demoted to needs_review, as under `eval/` or `fixtures/`. An
+  ASCII-smuggling study was verdicted malicious on the model outputs it had measured. Code in the
+  same tree is still scanned and scored.
+
+### Performance
+- **Scans of non-ASCII text use a fraction of the memory.** The de-obfuscation offset map held a
+  Python int per character and was cached for every non-ASCII file: a 22 MB repository peaked at
+  338 MB and failed the hosted scan's 400 MB cap. The map is now a packed `array('I')`, and ASCII
+  characters skip Unicode normalization. The same repository peaks at about 155 MB, and
+  normalization itself runs 3–4× faster; results are unchanged, which a test pins against the
+  previous implementation.
+
 ## [0.48.3]
 
 ### Fixed
