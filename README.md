@@ -53,7 +53,7 @@ that produced them.
 
 - **[The whole MCP registry, scanned](docs/mcp-registry-survey.md)** — every distinct component in
   the official registry, 17,535 of them, in one deterministic run.
-  88.2% expose tools to an agent, 65.0% can reach the network, 30.3% can execute shell commands —
+  88.2% expose tools to an agent, 64.8% can reach the network, 21.1% can execute shell commands —
   and the risk distribution underneath is far flatter, because a capability scores zero here.
   [Raw JSON](docs/mcp-registry-survey.json) · [the harness](tests/manual_eval/survey_registry.py).
 - **[Detection efficacy](docs/efficacy-report.md)** — recall and precision on a labelled corpus,

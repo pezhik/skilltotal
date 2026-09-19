@@ -1,6 +1,6 @@
 # The MCP registry, measured
 
-A deterministic static scan of every distinct component in the public MCP registry — 17,535 of them — scanned on 2026-09-17 against the registry as of 2026-08-16 with SkillTotal 0.48.3 (ruleset 58).
+A deterministic static scan of every distinct component in the public MCP registry — 17,535 of them — scanned on 2026-09-19 against the registry as of 2026-08-16 with SkillTotal 0.49.0 (ruleset 59).
 
 ## How to read this
 
@@ -13,40 +13,40 @@ The registry lists a server per published *version*, so its 73,460 entries colla
 | | |
 |---|---|
 | Distinct components | 17,535 |
-| Scanned | **15,426** (88.0%) |
-| Not scanned | 2,109 (12.0%) |
+| Scanned | **15,341** (87.5%) |
+| Not scanned | 2,194 (12.5%) |
 
 Nothing was dropped silently — every exclusion is counted:
 
 | Why a component was not scanned | Components | Share of population |
 |---|---:|---:|
-| repository or package no longer reachable | 1,635 | 9.3% |
-| slower than the time bound | 235 | 1.3% |
-| larger than the size bound | 174 | 1.0% |
-| other | 63 | 0.4% |
+| repository or package no longer reachable | 1,637 | 9.3% |
+| slower than the time bound | 302 | 1.7% |
+| larger than the size bound | 188 | 1.1% |
+| other | 65 | 0.4% |
 | access denied | 2 | 0.0% |
 
 | Ecosystem | Scanned | Listed | Coverage |
 |---|---:|---:|---:|
-| git | 5,439 | 7,312 | 74.4% |
-| npm | 6,999 | 7,152 | 97.9% |
-| pypi | 2,988 | 3,071 | 97.3% |
+| git | 5,389 | 7,312 | 73.7% |
+| npm | 6,967 | 7,152 | 97.4% |
+| pypi | 2,985 | 3,071 | 97.2% |
 
 ## What these components can do
 
-Share of the 15,426 scanned components carrying each capability:
+Share of the 15,341 scanned components carrying each capability:
 
 | Capability | Components | Share |
 |---|---:|---:|
-| exposes MCP tools | 13,609 | **88.2%** |
-| can reach the network | 10,028 | **65.0%** |
-| can execute shell commands | 4,679 | **30.3%** |
-| reads the filesystem | 3,897 | **25.3%** |
-| writes the filesystem | 3,262 | **21.1%** |
-| runs code at install time | 1,158 | **7.5%** |
-| uses delegated (OAuth/OIDC) authentication | 923 | **6.0%** |
-| evaluates code dynamically | 552 | **3.6%** |
-| uses a scoped, short-lived identity | 80 | **0.5%** |
+| exposes MCP tools | 13,524 | **88.2%** |
+| can reach the network | 9,938 | **64.8%** |
+| can execute shell commands | 3,230 | **21.1%** |
+| reads the filesystem | 3,828 | **25.0%** |
+| writes the filesystem | 3,206 | **20.9%** |
+| runs code at install time | 1,134 | **7.4%** |
+| uses delegated (OAuth/OIDC) authentication | 895 | **5.8%** |
+| evaluates code dynamically | 475 | **3.1%** |
+| uses a scoped, short-lived identity | 81 | **0.5%** |
 
 ## OWASP Agentic Skills Top 10
 
@@ -54,10 +54,10 @@ Every rule that has an honest static fit carries its OWASP class, so the same sc
 
 | Class | Components | Share |
 |---|---:|---:|
-| AST03 Over-Privileged Skills | 1,939 | 12.6% |
-| AST02 Supply Chain Compromise | 1,247 | 8.1% |
-| AST01 Malicious Skills | 79 | 0.5% |
-| AST05 Unsafe Deserialization | 55 | 0.4% |
+| AST03 Over-Privileged Skills | 1,905 | 12.4% |
+| AST02 Supply Chain Compromise | 1,216 | 7.9% |
+| AST01 Malicious Skills | 73 | 0.5% |
+| AST05 Unsafe Deserialization | 53 | 0.3% |
 
 ## Which rules fired
 
@@ -65,21 +65,21 @@ Every rule that has an honest static fit carries its OWASP class, so the same sc
 
 | Rule | Components | Share |
 |---|---:|---:|
-| `ST-MCP-DETECTED` | 13,609 | 88.2% |
-| `ST-NET-NODE` | 7,505 | 48.7% |
-| `ST-SHELL-NODE` | 3,613 | 23.4% |
-| `ST-NET-PY` | 2,801 | 18.2% |
-| `ST-FS-PY-READ` | 2,375 | 15.4% |
-| `ST-FS-PY-WRITE` | 1,991 | 12.9% |
-| `ST-FS-NODE-READ` | 1,593 | 10.3% |
-| `ST-EXPOSE-BIND` | 1,388 | 9.0% |
-| `ST-FS-NODE-WRITE` | 1,352 | 8.8% |
-| `ST-MCP-DANGEROUS-TOOL` | 1,315 | 8.5% |
-| `ST-SHELL-PY` | 1,173 | 7.6% |
-| `ST-AUTH-DELEGATED` | 923 | 6.0% |
-| `ST-INSTALL-NPM-PREPARE` | 759 | 4.9% |
-| `ST-MCP-SERVER-EXEC` | 716 | 4.6% |
-| `ST-DYN-NODE` | 445 | 2.9% |
+| `ST-MCP-DETECTED` | 13,524 | 88.2% |
+| `ST-NET-NODE` | 7,417 | 48.3% |
+| `ST-NET-PY` | 2,782 | 18.1% |
+| `ST-FS-PY-READ` | 2,343 | 15.3% |
+| `ST-SHELL-NODE` | 2,121 | 13.8% |
+| `ST-FS-PY-WRITE` | 1,964 | 12.8% |
+| `ST-FS-NODE-READ` | 1,547 | 10.1% |
+| `ST-EXPOSE-BIND` | 1,363 | 8.9% |
+| `ST-FS-NODE-WRITE` | 1,312 | 8.6% |
+| `ST-MCP-DANGEROUS-TOOL` | 1,298 | 8.5% |
+| `ST-SHELL-PY` | 1,149 | 7.5% |
+| `ST-AUTH-DELEGATED` | 895 | 5.8% |
+| `ST-INSTALL-NPM-PREPARE` | 749 | 4.9% |
+| `ST-MCP-SERVER-EXEC` | 695 | 4.5% |
+| `ST-INSTALL-NPM` | 375 | 2.4% |
 
 ## Risk levels
 
@@ -87,9 +87,9 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 
 | Level | Components | Share |
 |---|---:|---:|
-| low | 15,289 | 99.1% |
-| medium | 110 | 0.7% |
-| high | 23 | 0.2% |
+| low | 15,225 | 99.3% |
+| medium | 90 | 0.6% |
+| high | 22 | 0.1% |
 | critical | 4 | <0.1% |
 | carrying a malicious indicator | 0 | 0.0% |
 
@@ -109,8 +109,8 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 
 ## Method
 
-- Engine 0.48.3, ruleset 58 — deterministic regex and AST analysis. The component is never executed and no LLM is involved, so the run reproduces.
-- Scanned components by ruleset: 15,358 with ruleset 56, 18 with ruleset 57, 50 with ruleset 58. The later ruleset re-scanned only the components whose result its changes could affect, plus those that exceeded a bound on the first pass.
+- Engine 0.49.0, ruleset 59 — deterministic regex and AST analysis. The component is never executed and no LLM is involved, so the run reproduces.
+- Scanned components by ruleset: 11,774 with ruleset 56, 9 with ruleset 57, 30 with ruleset 58, 3,528 with ruleset 59. The later ruleset re-scanned only the components whose result its changes could affect, plus those that exceeded a bound on the first pass. Ruleset 59 tied the Node.js shell-execution rule to an actual `child_process` import, after a hand-checked sample showed most of its earlier hits were regular-expression and database `.exec()` calls; every component that carried a shell finding was re-scanned, which is why the shell-execution share fell from 30.3% (ruleset 58) to 21.1%. The other capability figures moved by 1-2% only because 85 components that scanned on the first pass exceeded a bound (mostly the time bound) on the re-scan and left the scanned set.
 - Population: `https://registry.modelcontextprotocol.io/v0/servers` as of 2026-08-16, deduplicated by source.
 - Two bounds, both disclosed above: 50 MB per fetch and 60s of wall clock per component.
 - Harness: `tests/manual_eval/survey_registry.py`. This report: `tests/manual_eval/survey_report.py`. Both ship in this repository.
