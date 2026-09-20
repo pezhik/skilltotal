@@ -16,9 +16,12 @@ LLM and live in the paid Deep Analysis layer, not here.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from array import array
 from collections.abc import Sequence
+
+_NON_ASCII_RUN = re.compile(r"[^\x00-\x7f]+")
 
 # Characters removed entirely before matching: zero-width, bidi controls, and other format
 # characters used to splice or visually reorder text. Kept in sync with the smuggling set in
@@ -86,21 +89,31 @@ def normalize_with_map(text: str) -> tuple[str, array[int]]:
     idx: array[int] = array("I")
     if text.isascii():
         return text, idx
+    # ASCII runs are copied in one piece (a C slice + a range), so the per-character work is
+    # spent only on the non-ASCII runs: a CJK document is still mostly ASCII markup, and the
+    # character loop over a 16 MB repository cost a minute of a hosted scan.
     out: list[str] = []
-    for j, ch in enumerate(text):
-        if ch < "\x80":
-            out.append(ch)
-            idx.append(j)
-            continue
-        if ord(ch) in _REMOVABLE:
-            continue
-        folded = _CONFUSABLES.get(ch, ch)
-        # NFKD: full-width/compatibility forms -> ASCII, precomposed accents -> base + mark.
-        for d in unicodedata.normalize("NFKD", folded):
-            if unicodedata.combining(d):
-                continue  # drop diacritics (café -> cafe)
-            out.append(d)
-            idx.append(j)
+    pos = 0
+    for run in _NON_ASCII_RUN.finditer(text):
+        start, end = run.span()
+        if start > pos:
+            out.append(text[pos:start])
+            idx.extend(range(pos, start))
+        for j in range(start, end):
+            ch = text[j]
+            if ord(ch) in _REMOVABLE:
+                continue
+            folded = _CONFUSABLES.get(ch, ch)
+            # NFKD: full-width/compatibility forms -> ASCII, precomposed accents -> base + mark.
+            for d in unicodedata.normalize("NFKD", folded):
+                if unicodedata.combining(d):
+                    continue  # drop diacritics (café -> cafe)
+                out.append(d)
+                idx.append(j)
+        pos = end
+    if pos < len(text):
+        out.append(text[pos:])
+        idx.extend(range(pos, len(text)))
     return "".join(out), idx
 
 

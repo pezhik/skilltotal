@@ -51,6 +51,14 @@ _SPLICE = re.compile("[A-Za-z][\u200b\u200c\u200d\u2060\ufeff]+(?=[A-Za-z])")
 _SPLICES_PER_LINE = 6
 
 
+# Every code point this scanner acts on, as one character class: a file or a line without any
+# of them cannot yield evidence or a review, so one C-speed search replaces the per-character
+# Python loops below. Built from the same sets, so the two can't drift apart.
+_HUNTED = re.compile(
+    "[\U000E0000-\U000E007F" + "".join(chr(cp) for cp in sorted(_REVIEW)) + "]"
+)
+
+
 def _is_tag(cp: int) -> bool:
     return 0xE0000 <= cp <= 0xE007F
 
@@ -121,9 +129,11 @@ class InvisibleUnicodeScanner(Scanner):
             # Every character this scanner hunts (tag chars, bidi controls, zero-width) is
             # non-ASCII, so a pure-ASCII file cannot contain any. One C-speed check skips the
             # per-line/per-char Python loops below for the overwhelmingly common case.
-            if f.text.isascii():
+            if f.text.isascii() or not _HUNTED.search(f.text):
                 continue
             for lineno, raw_line in enumerate(f.text.splitlines(), start=1):
+                if not _HUNTED.search(raw_line):
+                    continue  # nothing this scanner acts on (most lines of a CJK document)
                 # Strip valid emoji tag sequences (subdivision flags) so the tag-character
                 # check below only sees tag chars with no legitimate reading.
                 line = (_EMOJI_TAG_SEQ.sub("", raw_line)

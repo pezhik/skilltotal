@@ -18,6 +18,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
   help. The size check now measures the folder, and the clone is a sparse checkout of it — on
   GitHub and GitLab a partial clone (`--filter=blob:none`) that downloads only its files.
 
+### Performance
+- **Non-ASCII text no longer costs a character at a time.** `normalize_with_map` copies ASCII
+  runs in one piece and loops only over the non-ASCII runs; the hidden-Unicode scanner skips files
+  and lines that hold none of the code points it acts on (one regex search instead of a Python
+  loop per character). Output is identical; on a 24 MB, mostly-CJK repository the two accounted
+  for 200 s of a 500 s scan.
+
 ## [0.49.0]
 
 ### Fixed
