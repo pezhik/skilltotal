@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.50.0]
+
+### Fixed
+- **A repository is measured by what will be scanned, not by its history.** The pre-clone size
+  check read GitHub's `size`, which is the whole history: a 24 MB checkout behind a 202 MB history
+  was refused as "too large". The check now sums the blobs of the requested branch (GitHub trees
+  API) and falls back to the history size only when the tree cannot be listed. The mid-clone
+  watchdog no longer counts `.git/` toward the limit either (a shallow clone's pack is a second,
+  compressed copy of the tree); the pack itself stays bounded at twice the limit.
+- **A subfolder link costs that folder.** `/tree/<ref>/<path>` and `/blob/<ref>/<file>` links
+  used to clone the whole repository and measure all of it, so "try a specific subfolder" did not
+  help. The size check now measures the folder, and the clone is a sparse checkout of it — on
+  GitHub and GitLab a partial clone (`--filter=blob:none`) that downloads only its files.
+
 ## [0.49.0]
 
 ### Fixed

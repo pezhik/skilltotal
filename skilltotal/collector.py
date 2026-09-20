@@ -62,7 +62,12 @@ _MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
 _CLONE_POLL_SECONDS = 1.5
 # Web hosts whose browser URLs we understand (branch / subfolder / file / commit links).
 _WEB_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "huggingface.co")
+# Hosts known to serve partial clones (`--filter=blob:none`): a subfolder link then downloads
+# only that folder's files. Elsewhere the checkout is still sparse, but the pack is whole.
+_PARTIAL_CLONE_HOSTS = {"github.com", "gitlab.com"}
 _SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
+# A branch/tag name that can go into a GitHub API path as-is (no traversal, no query).
+_SAFE_REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 # Hugging Face repo-type prefixes: a model is `hf.co/<org>/<name>`, but datasets and spaces nest
 # under `hf.co/datasets/<org>/<name>` and `hf.co/spaces/<org>/<name>`.
 _HF_REPO_PREFIXES = ("datasets", "spaces")
@@ -323,10 +328,17 @@ def parse_git_url(url: str) -> tuple[str, str | None, str | None, str | None]:
     return clone_url, None, None, note
 
 
-def _dir_size_bytes(root: Path) -> int:
-    """Total size of regular files under ``root`` (best-effort; races during a clone are fine)."""
+def _dir_size_bytes(root: Path, *, skip_git: bool = False) -> int:
+    """Total size of regular files under ``root`` (best-effort; races during a clone are fine).
+
+    ``skip_git`` leaves out ``.git/``: the scan reads the working tree, and a shallow clone's
+    pack is roughly a compressed second copy of it, so counting both made a 168 MB checkout
+    read as 234 MB and fail the 200 MB limit.
+    """
     total = 0
     for p in root.rglob("*"):
+        if skip_git and ".git" in p.relative_to(root).parts:
+            continue
         try:
             if p.is_file() and not p.is_symlink():
                 total += p.stat().st_size
@@ -335,24 +347,75 @@ def _dir_size_bytes(root: Path) -> int:
     return total
 
 
-def _reject_if_too_large(clone_url: str) -> None:
-    """Fast pre-clone size check via the GitHub API; no-op for other hosts or on any API error."""
+def _github_api(url: str) -> dict | None:
+    """One GitHub REST call; ``None`` when rate-limited, private, offline or not JSON."""
+    try:
+        req = urllib.request.Request(
+            url,
+            headers={"User-Agent": "skilltotal-scanner", "Accept": "application/vnd.github+json"},
+        )
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
+            data = json.loads(resp.read(_MAX_ARCHIVE_BYTES + 1))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _github_tree_bytes(path: str, ref: str, subpath: str | None) -> int | None:
+    """Bytes the checkout will hold: blob sizes on ``ref``, under ``subpath`` when one is linked.
+
+    ``None`` when the answer cannot be trusted (API error, or a tree so large the API truncated
+    it) — the caller then falls back to the history size, which can only over-reject.
+    """
+    if not _SAFE_REF_RE.match(ref) or ".." in ref:
+        return None
+    data = _github_api(f"https://api.github.com/repos/{path}/git/trees/{ref}?recursive=1")
+    if not data or data.get("truncated") or not isinstance(data.get("tree"), list):
+        return None
+    prefix = subpath.strip("/") + "/" if subpath else ""
+    total = 0
+    for entry in data["tree"]:
+        if not isinstance(entry, dict) or entry.get("type") != "blob":
+            continue
+        entry_path = str(entry.get("path", ""))
+        if prefix and not entry_path.startswith(prefix):
+            continue
+        size = entry.get("size")
+        if isinstance(size, (int, float)):
+            total += int(size)
+    return total
+
+
+def _reject_if_too_large(
+    clone_url: str, ref: str | None = None, subpath: str | None = None
+) -> None:
+    """Pre-clone size check via the GitHub API; no-op for other hosts or on any API error.
+
+    What is measured is what will be scanned: the working tree of ``ref`` (the default branch
+    when none is linked), narrowed to ``subpath`` for a subfolder link. The repository's ``size``
+    — its whole history — is only the fallback when the tree cannot be listed: a 24 MB checkout
+    behind a 202 MB history used to be refused.
+    """
     parsed = urlparse(clone_url)
     if (parsed.hostname or "").lower() != "github.com":
         return
     path = parsed.path.removesuffix(".git").strip("/")
     if path.count("/") != 1:
         return
-    api = f"https://api.github.com/repos/{path}"
-    try:
-        req = urllib.request.Request(
-            api,
-            headers={"User-Agent": "skilltotal-scanner", "Accept": "application/vnd.github+json"},
-        )
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
-            meta = json.loads(resp.read(_MAX_ARCHIVE_BYTES + 1))
-    except (OSError, ValueError):
+    meta = _github_api(f"https://api.github.com/repos/{path}")
+    if meta is None:
         return  # rate-limited / private / offline -> rely on the mid-clone watchdog
+    cap = _MAX_CLONE_MB * 1024 * 1024
+    tree_ref = ref or str(meta.get("default_branch") or "HEAD")
+    tree_bytes = _github_tree_bytes(path, tree_ref, subpath)
+    if tree_bytes is not None:
+        if tree_bytes > cap:
+            where = f"{path}/{subpath.strip('/')}" if subpath else path
+            raise SourceTooLargeError(
+                f"working tree is ~{round(tree_bytes / 1024 / 1024)} MB, which exceeds the "
+                f"{_MAX_CLONE_MB} MB scan limit ({where})."
+            )
+        return
     size_kb = meta.get("size")
     if isinstance(size_kb, (int, float)) and size_kb / 1024 > _MAX_CLONE_MB:
         raise SourceTooLargeError(
@@ -374,8 +437,12 @@ def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
     exceeded = {"hit": False}
 
     def _watch() -> None:
+        # The limit is on the working tree (what gets scanned). The pack under .git is bounded
+        # too, at twice the limit, so an unlisted giant cannot fill the disk during the fetch.
         while proc.poll() is None:
-            if dest.exists() and _dir_size_bytes(dest) > cap:
+            if dest.exists() and (
+                _dir_size_bytes(dest, skip_git=True) > cap or _dir_size_bytes(dest) > 2 * cap
+            ):
                 exceeded["hit"] = True
                 proc.kill()
                 return
@@ -399,6 +466,41 @@ def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
         raise CollectionError(f"git clone failed for {url}: {(stderr or '').strip()}")
 
 
+def _git(dest: Path, args: list[str], env: dict, *, timeout: int) -> None:
+    """A bounded, non-interactive git command inside ``dest`` (errors surface to the caller)."""
+    subprocess.run(  # nosec B603 B607
+        ["git", "-C", str(dest), *args],
+        check=True, capture_output=True, text=True, timeout=timeout, env=env,
+    )
+
+
+def _clone(clone_url: str, ref: str | None, subpath: str | None, dest: Path, env: dict,
+           url: str) -> None:
+    """Shallow-clone ``ref`` of ``clone_url`` into ``dest``; a linked ``subpath`` is checked out
+    sparsely (and, on hosts that serve partial clones, its files are the only ones fetched), so
+    "scan this folder" costs that folder, not the repository around it."""
+    is_sha = bool(ref and _SHA_RE.match(ref))
+    args = ["git", "clone", "--depth", "1"]
+    if subpath:
+        args.append("--sparse")
+        if (urlparse(clone_url).hostname or "").lower() in _PARTIAL_CLONE_HOSTS:
+            args.append("--filter=blob:none")
+    if ref and not is_sha:  # branch or tag
+        args += ["--branch", ref]
+    _run_git([*args, clone_url, str(dest)], dest, env, url)
+    if subpath:
+        try:
+            _git(dest, ["sparse-checkout", "set", subpath.strip("/")], env, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise CollectionError(f"could not narrow the checkout to '{subpath}'") from exc
+    if is_sha:  # fetch + check out the requested commit (GitHub allows reachable SHAs)
+        try:
+            _git(dest, ["fetch", "--depth", "1", "origin", ref], env, timeout=_CLONE_TIMEOUT)
+            _git(dest, ["checkout", "--force", ref], env, timeout=60)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise CollectionError(f"commit '{ref}' not found in {clone_url}") from exc
+
+
 def _collect_remote(url: str) -> SourceContext:
     """Resolve a git/browser URL into a local checkout (shallow, size-bounded).
 
@@ -408,33 +510,14 @@ def _collect_remote(url: str) -> SourceContext:
     if shutil.which("git") is None:
         raise CollectionError("git is required to analyze remote URLs but was not found on PATH.")
     clone_url, ref, subpath, note = parse_git_url(url)
-    _reject_if_too_large(clone_url)
+    _reject_if_too_large(clone_url, ref, subpath)
 
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     dest = Path(tmp.name) / "repo"
     # Non-interactive (no credential prompt that could block) and bounded in time + size.
     clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
-    is_sha = bool(ref and _SHA_RE.match(ref))
     try:
-        if ref and not is_sha:  # branch or tag
-            _run_git(["git", "clone", "--depth", "1", "--branch", ref, clone_url, str(dest)],
-                     dest, clone_env, url)
-        else:
-            _run_git(["git", "clone", "--depth", "1", clone_url, str(dest)], dest, clone_env, url)
-            if is_sha:  # fetch + check out the requested commit (GitHub allows reachable SHAs)
-                try:
-                    subprocess.run(  # nosec B603 B607
-                        ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", ref],
-                        check=True, capture_output=True, text=True,
-                        timeout=_CLONE_TIMEOUT, env=clone_env,
-                    )
-                    subprocess.run(  # nosec B603 B607
-                        ["git", "-C", str(dest), "checkout", "--force", ref],
-                        check=True, capture_output=True, text=True, timeout=60, env=clone_env,
-                    )
-                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-                    tmp.cleanup()
-                    raise CollectionError(f"commit '{ref}' not found in {clone_url}") from exc
+        _clone(clone_url, ref, subpath, dest, clone_env, url)
     except CollectionError:
         tmp.cleanup()
         raise

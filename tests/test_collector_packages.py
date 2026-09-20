@@ -199,7 +199,7 @@ def test_git_clone_timeout_becomes_collection_error(monkeypatch, tmp_path):
     """A hung/slow clone (subprocess timeout) surfaces as a clean CollectionError, not a hang."""
     import subprocess
 
-    monkeypatch.setattr(collector, "_reject_if_too_large", lambda _u: None)  # no network
+    monkeypatch.setattr(collector, "_reject_if_too_large", lambda *_a, **_k: None)  # no network
 
     class _Proc:
         returncode = None

@@ -169,7 +169,7 @@ def test_pre_check_silent_on_api_error(monkeypatch):
 def test_watchdog_aborts_oversized_clone(monkeypatch, tmp_path):
     monkeypatch.setattr(collector, "_CLONE_POLL_SECONDS", 0.01)
     monkeypatch.setattr(
-        collector, "_dir_size_bytes", lambda _root: collector._MAX_CLONE_MB * 1024 * 1024 + 1
+        collector, "_dir_size_bytes", lambda _root, **_k: collector._MAX_CLONE_MB * 1024 * 1024 + 1
     )
 
     class _FakeProc:
