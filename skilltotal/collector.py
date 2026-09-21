@@ -80,7 +80,20 @@ class CollectionError(Exception):
 
 
 class SourceTooLargeError(CollectionError):
-    """Raised when a repository exceeds the configured size cap (pre-clone or mid-clone)."""
+    """Raised when a repository exceeds the configured size cap (pre-clone or mid-clone).
+
+    ``measured_mb`` and ``limit_mb`` carry the numbers as data, not only inside the message, so a
+    caller can tell someone how far over they are. "Too large" alone is a dead end: a visitor
+    whose repository came to 202 MB against a 200 MB limit has no way to know it was two
+    megabytes and that a subfolder would work. ``measured_mb`` is None when the clone was aborted
+    mid-transfer, where the total is genuinely unknown.
+    """
+
+    def __init__(self, message: str, *, measured_mb: int | None = None,
+                 limit_mb: int | None = None) -> None:
+        super().__init__(message)
+        self.measured_mb = measured_mb
+        self.limit_mb = limit_mb if limit_mb is not None else _MAX_CLONE_MB
 
 
 @dataclass
@@ -413,14 +426,16 @@ def _reject_if_too_large(
             where = f"{path}/{subpath.strip('/')}" if subpath else path
             raise SourceTooLargeError(
                 f"working tree is ~{round(tree_bytes / 1024 / 1024)} MB, which exceeds the "
-                f"{_MAX_CLONE_MB} MB scan limit ({where})."
+                f"{_MAX_CLONE_MB} MB scan limit ({where}).",
+                measured_mb=round(tree_bytes / 1024 / 1024),
             )
         return
     size_kb = meta.get("size")
     if isinstance(size_kb, (int, float)) and size_kb / 1024 > _MAX_CLONE_MB:
         raise SourceTooLargeError(
             f"repository is ~{round(size_kb / 1024)} MB, which exceeds the "
-            f"{_MAX_CLONE_MB} MB scan limit ({path})."
+            f"{_MAX_CLONE_MB} MB scan limit ({path}).",
+            measured_mb=round(size_kb / 1024),
         )
 
 

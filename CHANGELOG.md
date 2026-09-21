@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.50.2]
+
+### Changed
+- **A repository that is too large now says how large.** `SourceTooLargeError` carries
+  `measured_mb` and `limit_mb` as data rather than only inside its message, so a caller can tell
+  someone they are 2 MB over a 200 MB limit instead of "too large" — which, for the visitor whose
+  repository came to 202 MB, was a dead end with a working answer one folder away.
+
 ## [0.50.1]
 
 ### Fixed
