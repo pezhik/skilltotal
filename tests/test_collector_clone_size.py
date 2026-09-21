@@ -175,3 +175,55 @@ def test_whole_repository_clone_is_unchanged(tmp_path):
                      "https://example.test/o/r")
     assert (dest / "media" / "big.bin").is_file()
     assert (dest / "skills" / "x" / "SKILL.md").is_file()
+
+
+# --- Windows path limits ----------------------------------------------------------------
+# A real repository can hold a file name past Windows' ~260-character path limit (one result file
+# per model combination gets there in a single name). Without core.longpaths the clone dies with
+# "unable to create file" and the scan looks broken, while the same repository scans fine on Linux
+# — observed 2026-09-21 on elder-plinius/GLOSSOPETRAE.
+
+
+def _captured_git_args(monkeypatch, tmp_path, subpath=None, ref=None):
+    """Every git argv the collector would run for a clone."""
+    seen: list[list[str]] = []
+
+    def fake_run_git(args, dest, env, url):
+        seen.append(list(args))
+        Path(dest).mkdir(parents=True, exist_ok=True)
+
+    def fake_git(dest, args, env, *, timeout):
+        seen.append(["git", *collector._GIT_LONG_PATHS, "-C", str(dest), *args])
+
+    monkeypatch.setattr(collector, "_run_git", fake_run_git)
+    monkeypatch.setattr(collector, "_git", fake_git)
+    collector._clone("https://github.com/o/r", ref, subpath, tmp_path / "repo", {}, "url")
+    return seen
+
+
+def test_clone_asks_git_to_accept_long_paths(monkeypatch, tmp_path):
+    args = _captured_git_args(monkeypatch, tmp_path)[0]
+    assert args[:3] == ["git", "-c", "core.longpaths=true"]
+    assert "clone" in args
+
+
+def test_the_option_comes_before_the_subcommand(monkeypatch, tmp_path):
+    # `-c` is a git-level flag: after the subcommand it is an argument to that subcommand instead.
+    args = _captured_git_args(monkeypatch, tmp_path)[0]
+    assert args.index("-c") < args.index("clone")
+
+
+def test_every_command_that_writes_files_carries_it(monkeypatch, tmp_path):
+    # sparse-checkout and checkout create the working tree too, so the clone alone is not enough.
+    for cmds in (_captured_git_args(monkeypatch, tmp_path, subpath="skills/x"),
+                 _captured_git_args(monkeypatch, tmp_path, ref="a" * 40)):
+        assert len(cmds) > 1
+        for argv in cmds:
+            assert "core.longpaths=true" in argv, argv
+
+
+def test_the_machines_own_git_configuration_is_never_written(monkeypatch, tmp_path):
+    # A scanner changes no settings on the machine it runs on: the option is per command.
+    for argv in _captured_git_args(monkeypatch, tmp_path, subpath="a"):
+        assert "--global" not in argv
+        assert "config" not in argv

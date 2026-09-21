@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.50.1]
+
+### Fixed
+- **Cloning a repository that contains a very long path no longer fails on Windows.** Real
+  projects hold file names past Windows' ~260-character limit — one machine-learning repository
+  reaches it with a single result file named after five models — and `git clone` refused them with
+  "unable to create file". The same scan succeeded on Linux and macOS, so the failure read as a
+  broken tool rather than a platform limit. Every git command the collector runs now carries
+  `core.longpaths`, passed per command so the machine's own git configuration is left untouched.
+
 ## [0.50.0]
 
 ### Fixed

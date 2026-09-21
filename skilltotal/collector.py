@@ -466,10 +466,20 @@ def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
         raise CollectionError(f"git clone failed for {url}: {(stderr or '').strip()}")
 
 
+# Windows refuses to create a path much over 260 characters, and real repositories contain them:
+# a machine-learning project with one result file per model combination reaches that in a single
+# name. Without this, cloning such a repository dies with "unable to create file", which reads as
+# a broken tool rather than a platform limit — the same scan succeeds on Linux and macOS. Passed
+# per command instead of being written to the user's git configuration, because a scanner should
+# not change the settings of the machine it runs on. The option is Windows-only in effect and is
+# accepted and ignored elsewhere, so there is no platform branch to get wrong.
+_GIT_LONG_PATHS = ["-c", "core.longpaths=true"]
+
+
 def _git(dest: Path, args: list[str], env: dict, *, timeout: int) -> None:
     """A bounded, non-interactive git command inside ``dest`` (errors surface to the caller)."""
     subprocess.run(  # nosec B603 B607
-        ["git", "-C", str(dest), *args],
+        ["git", *_GIT_LONG_PATHS, "-C", str(dest), *args],
         check=True, capture_output=True, text=True, timeout=timeout, env=env,
     )
 
@@ -480,7 +490,7 @@ def _clone(clone_url: str, ref: str | None, subpath: str | None, dest: Path, env
     sparsely (and, on hosts that serve partial clones, its files are the only ones fetched), so
     "scan this folder" costs that folder, not the repository around it."""
     is_sha = bool(ref and _SHA_RE.match(ref))
-    args = ["git", "clone", "--depth", "1"]
+    args = ["git", *_GIT_LONG_PATHS, "clone", "--depth", "1"]
     if subpath:
         args.append("--sparse")
         if (urlparse(clone_url).hostname or "").lower() in _PARTIAL_CLONE_HOSTS:
