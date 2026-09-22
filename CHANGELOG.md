@@ -4,6 +4,22 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.51.0]
+
+### Added
+- **`collect()` can report how much work a scan is about to be.** A new optional `on_size`
+  callback is handed a `TreeSize` — the bytes of the checkout, and the subset an index will
+  actually read — once a GitHub repository has passed the size check and before the clone
+  starts. It exists so a caller running scans as jobs can tell someone waiting roughly how long
+  is left; the library still neither prints nor blocks. The callback is not invoked for a local
+  directory, a registry package, a non-GitHub host, a refused repository, or when the API cannot
+  answer, so callers must treat its absence as ordinary.
+
+  Readable bytes are reported because the size of a checkout does not predict how long scanning
+  it takes. Measured over five real repositories: 257 MB scanned in 47 seconds while 104 MB took
+  326, because the first is video and the second is source. Readable bytes predict the same five
+  to within a factor of two. The **size limit is unchanged** and still applies to the whole tree.
+
 ## [0.50.2]
 
 ### Changed

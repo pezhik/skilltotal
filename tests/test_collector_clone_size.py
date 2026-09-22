@@ -227,3 +227,85 @@ def test_the_machines_own_git_configuration_is_never_written(monkeypatch, tmp_pa
     for argv in _captured_git_args(monkeypatch, tmp_path, subpath="a"):
         assert "--global" not in argv
         assert "config" not in argv
+
+# --- what a scan will actually read -------------------------------------------------------
+#
+# Measured on five real repositories (2026-09-22): tree size does not predict scan time at all
+# -- 257 MB scanned in 47 s while 104 MB took 326 s -- but readable bytes predict it to within a
+# factor of two across a 36x range. That is the number a caller can turn into "about a minute
+# left"; it is deliberately NOT the number the size limit is applied to.
+
+
+def _sizes(monkeypatch, tree):
+    """Run the pre-clone check over ``tree`` and return the TreeSize handed to the callback."""
+    _mock_github(monkeypatch, history_kb=1024, tree=tree)
+    seen: list[collector.TreeSize] = []
+    collector._reject_if_too_large("https://github.com/o/r.git", on_size=seen.append)
+    return seen
+
+
+def test_media_does_not_count_as_work_to_be_done(monkeypatch):
+    seen = _sizes(monkeypatch, [
+        _blob("assets/clip.mp4", 40 * MB),
+        _blob("assets/font.woff2", 5 * MB),
+        _blob("src/main.py", 300_000),
+        _blob("README.md", 2_000),
+    ])
+    assert len(seen) == 1
+    assert seen[0].total == 45 * MB + 302_000
+    assert seen[0].readable == 302_000
+
+
+def test_a_file_the_index_would_skip_is_not_counted(monkeypatch):
+    """Over MAX_FILE_BYTES the index skips the file whatever it holds, so it is free."""
+    seen = _sizes(monkeypatch, [
+        _blob("data/huge.jsonl", collector._MAX_INDEXED_FILE_BYTES + 1),
+        _blob("data/small.jsonl", 1_000),
+    ])
+    assert seen[0].readable == 1_000
+
+
+def test_an_extensionless_file_is_assumed_readable(monkeypatch):
+    # LICENSE, Dockerfile, Makefile: no suffix, all text, all scanned.
+    seen = _sizes(monkeypatch, [_blob("Dockerfile", 900), _blob("LICENSE", 1_100)])
+    assert seen[0].readable == 2_000
+
+
+def test_the_measurement_is_reported_only_for_a_scan_that_will_run(monkeypatch):
+    """A refused repository reports nothing: there is no progress to show for it."""
+    cap = collector._MAX_CLONE_MB
+    _mock_github(monkeypatch, history_kb=1024, tree=[_blob("assets/v.mp4", (cap + 1) * MB)])
+    seen: list[collector.TreeSize] = []
+    with pytest.raises(SourceTooLargeError):
+        collector._reject_if_too_large("https://github.com/o/r.git", on_size=seen.append)
+    assert seen == []
+
+
+def test_nothing_is_reported_when_the_api_cannot_answer(monkeypatch):
+    """Rate-limited or truncated: the scan still runs, the caller simply gets no estimate."""
+    _mock_github(monkeypatch, history_kb=1024, tree=None)
+    seen: list[collector.TreeSize] = []
+    collector._reject_if_too_large("https://github.com/o/r.git", on_size=seen.append)
+    assert seen == []
+
+
+def test_the_limit_is_still_applied_to_the_whole_tree(monkeypatch):
+    """Guards the boundary between the two numbers.
+
+    A repository of video is cheap to SCAN and still too big to CLONE. If the gate ever starts
+    reading `readable`, this repository would be admitted and the 200 MB clone bound would mean
+    nothing -- so the gate keeps reading `total` until that is a decision someone made on purpose.
+    """
+    cap = collector._MAX_CLONE_MB
+    _mock_github(monkeypatch, history_kb=1024, tree=[
+        _blob("assets/clip.mp4", (cap + 1) * MB),
+        _blob("src/main.py", 1_000),
+    ])
+    with pytest.raises(SourceTooLargeError, match="working tree"):
+        collector._reject_if_too_large("https://github.com/o/r.git")
+
+
+def test_the_callback_is_optional_and_failure_free_without_it(monkeypatch):
+    """The default path must behave exactly as it did before the callback existed."""
+    _mock_github(monkeypatch, history_kb=1024, tree=[_blob("src/a.py", 10 * MB)])
+    collector._reject_if_too_large("https://github.com/o/r.git")  # no raise, nothing to report

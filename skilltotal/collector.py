@@ -20,9 +20,13 @@ import threading
 import time
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import quote, urlparse
+
+from skilltotal.file_index import MAX_FILE_BYTES
 
 try:  # Python 3.11+
     import tomllib
@@ -59,6 +63,9 @@ _CLONE_TIMEOUT = int(os.environ.get("SKILLTOTAL_CLONE_TIMEOUT", "300"))
 # during the clone (a watchdog kills git if the working tree blows past the cap) so a huge repo
 # can neither hang nor fill the disk / OOM the box. Overridable via env.
 _MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
+# The index refuses any single file this big, whatever it holds, so a pre-clone estimate of the
+# work ahead must not count those bytes either. Imported rather than repeated: one number.
+_MAX_INDEXED_FILE_BYTES = MAX_FILE_BYTES
 _CLONE_POLL_SECONDS = 1.5
 # Web hosts whose browser URLs we understand (branch / subfolder / file / commit links).
 _WEB_HOSTS = ("github.com", "gitlab.com", "bitbucket.org", "huggingface.co")
@@ -186,12 +193,18 @@ def pypi_package_name(source: str) -> str | None:
     return pypi_package_spec(source)[0]
 
 
-def collect(source: str) -> SourceContext:
+def collect(source: str, *, on_size: Callable[[TreeSize], None] | None = None) -> SourceContext:
     """Resolve ``source`` into a :class:`SourceContext`.
 
     Supports a local directory, a git URL (shallow clone), and npm / PyPI packages
     (`npm:<name>` / `pypi:<name>` specs or npmjs.com / pypi.org URLs — the latest published
     release is downloaded from the registry and extracted).
+
+    ``on_size`` is called once, before the clone starts, with the :class:`TreeSize` of a GitHub
+    repository whose tree the API could list. It exists so a caller running this as a job can
+    tell someone waiting how much work is ahead; the library itself neither prints nor blocks on
+    it. It is not called for a local directory, for a registry package, for a non-GitHub host, or
+    when the API is unavailable — a caller must treat its absence as normal, not as an error.
     """
     kind = classify_source(source)
     if kind == "npm":
@@ -199,7 +212,7 @@ def collect(source: str) -> SourceContext:
     if kind == "pypi":
         return _collect_pypi(source)
     if kind == "git":
-        return _collect_remote(source)
+        return _collect_remote(source, on_size=on_size)
     return _collect_local(source)
 
 
@@ -374,7 +387,50 @@ def _github_api(url: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
-def _github_tree_bytes(path: str, ref: str, subpath: str | None) -> int | None:
+# Suffixes a pre-clone estimate treats as unreadable. The index itself decides by sniffing for
+# NUL bytes rather than trusting a name, but before the clone there are only paths. Being wrong
+# here costs nothing in either direction: the size GATE is applied to ``total``, and ``readable``
+# is only ever an estimate of the work ahead.
+_NON_TEXT_SUFFIXES: frozenset[str] = frozenset(
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".tiff", ".psd",
+        ".mp4", ".mov", ".avi", ".mkv", ".webm", ".mp3", ".wav", ".flac", ".ogg", ".m4a",
+        ".zip", ".gz", ".tar", ".bz2", ".xz", ".7z", ".rar", ".pdf",
+        ".woff", ".woff2", ".ttf", ".otf", ".eot",
+        ".bin", ".so", ".dll", ".dylib", ".exe", ".o", ".a", ".pyc", ".pyd", ".class", ".jar",
+        ".wasm", ".safetensors", ".pt", ".pth", ".onnx", ".ckpt", ".h5", ".npy", ".npz",
+        ".parquet", ".db", ".sqlite",
+    }
+)
+
+
+class TreeSize(NamedTuple):
+    """Bytes on a ref: everything in the checkout, and the part an index would actually read.
+
+    The two differ by more than an order of magnitude on real components, and it is ``readable``
+    that predicts how long a scan takes. A 202 MB repository of video and fonts holds 3.8 MB of
+    readable text and scans in 28 seconds; a 104 MB repository that is almost all source holds
+    100 MB and takes five minutes. ``total`` is what the size limit is applied to.
+    """
+
+    total: int
+    readable: int
+
+
+def _readable_bytes(entry_path: str, size: int) -> int:
+    """``size`` if an index would read this file, else 0.
+
+    Two reasons it would not: a suffix that is never text, and a file over ``MAX_FILE_BYTES``,
+    which the index skips whatever it contains.
+    """
+    name = entry_path.rsplit("/", 1)[-1].lower()
+    suffix = name[name.rfind(".") :] if "." in name else ""
+    if suffix in _NON_TEXT_SUFFIXES or size > _MAX_INDEXED_FILE_BYTES:
+        return 0
+    return size
+
+
+def _github_tree_bytes(path: str, ref: str, subpath: str | None) -> TreeSize | None:
     """Bytes the checkout will hold: blob sizes on ``ref``, under ``subpath`` when one is linked.
 
     ``None`` when the answer cannot be trusted (API error, or a tree so large the API truncated
@@ -387,6 +443,7 @@ def _github_tree_bytes(path: str, ref: str, subpath: str | None) -> int | None:
         return None
     prefix = subpath.strip("/") + "/" if subpath else ""
     total = 0
+    readable = 0
     for entry in data["tree"]:
         if not isinstance(entry, dict) or entry.get("type") != "blob":
             continue
@@ -396,11 +453,15 @@ def _github_tree_bytes(path: str, ref: str, subpath: str | None) -> int | None:
         size = entry.get("size")
         if isinstance(size, (int, float)):
             total += int(size)
-    return total
+            readable += _readable_bytes(entry_path, int(size))
+    return TreeSize(total=total, readable=readable)
 
 
 def _reject_if_too_large(
-    clone_url: str, ref: str | None = None, subpath: str | None = None
+    clone_url: str,
+    ref: str | None = None,
+    subpath: str | None = None,
+    on_size: Callable[[TreeSize], None] | None = None,
 ) -> None:
     """Pre-clone size check via the GitHub API; no-op for other hosts or on any API error.
 
@@ -420,15 +481,19 @@ def _reject_if_too_large(
         return  # rate-limited / private / offline -> rely on the mid-clone watchdog
     cap = _MAX_CLONE_MB * 1024 * 1024
     tree_ref = ref or str(meta.get("default_branch") or "HEAD")
-    tree_bytes = _github_tree_bytes(path, tree_ref, subpath)
-    if tree_bytes is not None:
-        if tree_bytes > cap:
+    tree = _github_tree_bytes(path, tree_ref, subpath)
+    if tree is not None:
+        if tree.total > cap:
             where = f"{path}/{subpath.strip('/')}" if subpath else path
             raise SourceTooLargeError(
-                f"working tree is ~{round(tree_bytes / 1024 / 1024)} MB, which exceeds the "
+                f"working tree is ~{round(tree.total / 1024 / 1024)} MB, which exceeds the "
                 f"{_MAX_CLONE_MB} MB scan limit ({where}).",
-                measured_mb=round(tree_bytes / 1024 / 1024),
+                measured_mb=round(tree.total / 1024 / 1024),
             )
+        # Reported only once the size is accepted: a caller wanting to show progress has no use
+        # for the measurement of a scan that is about to be refused.
+        if on_size is not None:
+            on_size(tree)
         return
     size_kb = meta.get("size")
     if isinstance(size_kb, (int, float)) and size_kb / 1024 > _MAX_CLONE_MB:
@@ -526,7 +591,9 @@ def _clone(clone_url: str, ref: str | None, subpath: str | None, dest: Path, env
             raise CollectionError(f"commit '{ref}' not found in {clone_url}") from exc
 
 
-def _collect_remote(url: str) -> SourceContext:
+def _collect_remote(
+    url: str, *, on_size: Callable[[TreeSize], None] | None = None
+) -> SourceContext:
     """Resolve a git/browser URL into a local checkout (shallow, size-bounded).
 
     Parses branch/tag/commit/subfolder links, rejects oversized repositories, and clones only
@@ -535,7 +602,7 @@ def _collect_remote(url: str) -> SourceContext:
     if shutil.which("git") is None:
         raise CollectionError("git is required to analyze remote URLs but was not found on PATH.")
     clone_url, ref, subpath, note = parse_git_url(url)
-    _reject_if_too_large(clone_url, ref, subpath)
+    _reject_if_too_large(clone_url, ref, subpath, on_size=on_size)
 
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     dest = Path(tmp.name) / "repo"
