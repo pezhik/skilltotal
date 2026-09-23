@@ -4,6 +4,28 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.52.0]
+
+### Added
+- **A second size limit, on the readable text rather than the checkout**
+  (`SKILLTOTAL_MAX_READABLE_MB`). The existing limit bounds the clone — disk, bandwidth, the
+  time git spends — and the new one bounds the scan, because the two are not the same
+  constraint and one number cannot serve both. A repository of video is expensive to clone and
+  trivial to scan; one of pure source is the reverse, and scan time tracks only the part an
+  index opens.
+
+  It defaults to the clone limit, where it can never fire on its own (readable bytes are a
+  subset of the tree), so the offline CLI is unchanged unless it is set. What it is for is a
+  deployment that kills a scan at a wall clock: without it such a host accepts a repository it
+  has no chance of finishing and times out, which reads as a broken scanner rather than a
+  repository that is too big. The gap is real and not hypothetical — `apache/spark` is a 196 MB
+  checkout, comfortably inside a 200 MB clone limit, holding 169 MB of text, which at the rate a
+  long scan runs is about sixteen minutes.
+
+  The estimate stays conservative in the safe direction: a file whose suffix is not recognised
+  counts as readable, so the limit can refuse a scan that would have run but never admits one
+  that cannot finish.
+
 ## [0.51.0]
 
 ### Added

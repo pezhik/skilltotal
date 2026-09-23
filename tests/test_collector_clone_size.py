@@ -309,3 +309,49 @@ def test_the_callback_is_optional_and_failure_free_without_it(monkeypatch):
     """The default path must behave exactly as it did before the callback existed."""
     _mock_github(monkeypatch, history_kb=1024, tree=[_blob("src/a.py", 10 * MB)])
     collector._reject_if_too_large("https://github.com/o/r.git")  # no raise, nothing to report
+
+
+def test_a_tree_of_pure_source_is_refused_by_the_work_limit(monkeypatch):
+    """The limit a host with a wall clock actually needs.
+
+    242 MB of repository holding 139 MB of text is small enough to clone and, at the rate a long
+    scan runs, takes about thirteen minutes -- past any wall a hosted scan is given. Before this
+    limit existed such a repository was accepted and then killed at the wall, which reads as a
+    broken scanner rather than a repository that is too big.
+    """
+    monkeypatch.setattr(collector, "_MAX_READABLE_MB", 120)
+    # Spread over many files, because the index refuses any single file over its own per-file
+    # cap: one 130 MB blob would contribute 2 MB of work, not 130.
+    _mock_github(monkeypatch, history_kb=1024, tree=(
+        [_blob(f"src/mod{i}.ts", MB) for i in range(130)]
+        + [_blob("assets/demo.mp4", 60 * MB)]
+    ))
+    with pytest.raises(SourceTooLargeError, match="readable text") as exc:
+        collector._reject_if_too_large("https://github.com/o/r.git")
+    assert exc.value.measured_mb == 130  # the text, not the 190 MB tree it sits in
+    # The limit travels too: a caller telling someone "139 MB against a 200 MB limit"
+    # would be naming the limit that did not refuse them.
+    assert exc.value.limit_mb == 120
+
+
+def test_media_weighs_nothing_against_the_work_limit(monkeypatch):
+    """The repository the whole distinction exists for: huge to clone, quick to scan."""
+    monkeypatch.setattr(collector, "_MAX_READABLE_MB", 120)
+    _mock_github(monkeypatch, history_kb=1024, tree=(
+        [_blob("assets/clip.mp4", 190 * MB)]
+        + [_blob(f"src/mod{i}.py", MB) for i in range(4)]
+    ))
+    collector._reject_if_too_large("https://github.com/o/r.git")  # no raise
+
+
+def test_the_work_limit_cannot_fire_on_its_own_by_default(monkeypatch):
+    """Default is the clone limit, so an offline CLI behaves exactly as it did before.
+
+    Readable bytes are a subset of the tree, so a limit equal to the clone limit is unreachable
+    without the clone limit tripping first. Only a host that sets it opts into the second refusal.
+    """
+    assert collector._MAX_READABLE_MB == collector._MAX_CLONE_MB
+    cap = collector._MAX_CLONE_MB
+    _mock_github(monkeypatch, history_kb=1024,
+                 tree=[_blob(f"src/mod{i}.ts", MB) for i in range(cap)])
+    collector._reject_if_too_large("https://github.com/o/r.git")  # no raise

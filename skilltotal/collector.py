@@ -63,6 +63,14 @@ _CLONE_TIMEOUT = int(os.environ.get("SKILLTOTAL_CLONE_TIMEOUT", "300"))
 # during the clone (a watchdog kills git if the working tree blows past the cap) so a huge repo
 # can neither hang nor fill the disk / OOM the box. Overridable via env.
 _MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
+# The second limit bounds WORK rather than bytes: the readable text an index will actually open.
+# The two are not the same constraint and a single number cannot serve both -- a repository of
+# video is enormous to clone and trivial to scan, while one of pure source is the reverse, and
+# scan time tracks the readable part alone. It defaults to the clone limit, where it can never
+# fire on its own (readable bytes are a subset of the tree), so the offline CLI is unchanged. A
+# deployment that kills a scan at a wall clock sets it to whatever fits inside that wall; without
+# it, such a host accepts a repository it cannot finish and times out instead of saying no.
+_MAX_READABLE_MB = int(os.environ.get("SKILLTOTAL_MAX_READABLE_MB", str(_MAX_CLONE_MB)))
 # The index refuses any single file this big, whatever it holds, so a pre-clone estimate of the
 # work ahead must not count those bytes either. Imported rather than repeated: one number.
 _MAX_INDEXED_FILE_BYTES = MAX_FILE_BYTES
@@ -388,9 +396,10 @@ def _github_api(url: str) -> dict | None:
 
 
 # Suffixes a pre-clone estimate treats as unreadable. The index itself decides by sniffing for
-# NUL bytes rather than trusting a name, but before the clone there are only paths. Being wrong
-# here costs nothing in either direction: the size GATE is applied to ``total``, and ``readable``
-# is only ever an estimate of the work ahead.
+# NUL bytes rather than trusting a name, but before the clone there are only paths. Since the
+# work limit reads this number, being wrong is no longer free, so the list stays conservative:
+# it holds only suffixes that are binary by definition. Anything unrecognised counts as readable,
+# which can refuse a scan that would have run but never admits one that cannot finish.
 _NON_TEXT_SUFFIXES: frozenset[str] = frozenset(
     {
         ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".tiff", ".psd",
@@ -410,7 +419,8 @@ class TreeSize(NamedTuple):
     The two differ by more than an order of magnitude on real components, and it is ``readable``
     that predicts how long a scan takes. A 202 MB repository of video and fonts holds 3.8 MB of
     readable text and scans in 28 seconds; a 104 MB repository that is almost all source holds
-    100 MB and takes five minutes. ``total`` is what the size limit is applied to.
+    100 MB and takes five minutes. Each bounds a different thing: ``total`` the clone (disk,
+    bandwidth, the mid-clone watchdog), ``readable`` the scan itself.
     """
 
     total: int
@@ -483,12 +493,19 @@ def _reject_if_too_large(
     tree_ref = ref or str(meta.get("default_branch") or "HEAD")
     tree = _github_tree_bytes(path, tree_ref, subpath)
     if tree is not None:
+        where = f"{path}/{subpath.strip('/')}" if subpath else path
         if tree.total > cap:
-            where = f"{path}/{subpath.strip('/')}" if subpath else path
             raise SourceTooLargeError(
                 f"working tree is ~{round(tree.total / 1024 / 1024)} MB, which exceeds the "
                 f"{_MAX_CLONE_MB} MB scan limit ({where}).",
                 measured_mb=round(tree.total / 1024 / 1024),
+            )
+        if tree.readable > _MAX_READABLE_MB * 1024 * 1024:
+            raise SourceTooLargeError(
+                f"working tree holds ~{round(tree.readable / 1024 / 1024)} MB of readable text, "
+                f"which exceeds the {_MAX_READABLE_MB} MB scan limit ({where}).",
+                measured_mb=round(tree.readable / 1024 / 1024),
+                limit_mb=_MAX_READABLE_MB,
             )
         # Reported only once the size is accepted: a caller wanting to show progress has no use
         # for the measurement of a scan that is about to be refused.
