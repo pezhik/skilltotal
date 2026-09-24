@@ -4,6 +4,14 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 60 (engine 0.53.0)
+
+- **`ST-SECRET-EMBEDDED`**: a token whose body behind a provider prefix is one or two repeated
+  characters (`ghp_aaaa…`, `github_pat_0000…`, `sk-ant-zzzz…`) is a placeholder and is not
+  reported. The distinct-character test previously counted the prefix itself, so `ghp_` plus
+  one repeated letter passed as a live credential. Reported from a redaction linter's sample
+  line, 2026-09-24. No change for a random body.
+
 ## ruleset 59 (engine 0.49.0)
 
 From the first day of public scans: a research repository on ASCII smuggling came back malicious.

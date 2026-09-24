@@ -89,6 +89,11 @@ _ENV_VAR_NAME = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}$")
 _HUMAN_WORDS = re.compile(r"^[a-z]{2,}\d{0,4}(?:[-_.][a-z]{2,}\d{0,4}){2,}$")
 
 
+# The fixed prefix a provider puts in front of its tokens (`ghp_`, `github_pat_`, `sk-ant-`,
+# `xoxb-`): letters joined by `_`/`-`, ending in one. Only the body behind it is random.
+_PROVIDER_PREFIX = re.compile(r"^[A-Za-z]{1,12}(?:[_-][A-Za-z]{1,12}){0,3}[_-]")
+
+
 def _is_non_credential_value(value: str) -> bool:
     """True when the matched value cannot be a live credential.
 
@@ -107,8 +112,12 @@ def _is_non_credential_value(value: str) -> bool:
     # `mcp-agent-password`); a generated credential is not spelled that way.
     if _HUMAN_WORDS.match(value):
         return True
-    # Single repeated character (xxxxxxxx, 00000000) or too few distinct chars.
-    return len(set(value)) <= 4
+    # Single repeated character (xxxxxxxx, 00000000) or too few distinct chars. Judged on the
+    # body behind a provider prefix as well as on the whole: `ghp_` followed by 36 copies of one
+    # letter has five distinct characters in all, four of them the prefix, and passed this test
+    # as a live token -- a redaction linter's own sample line, reported by its author (2026-09-24).
+    body = _PROVIDER_PREFIX.sub("", value, count=1)
+    return len(set(value)) <= 4 or (len(body) >= 8 and len(set(body)) <= 2)
 
 
 # Algolia DocSearch search-only keys are public by design (shipped in client-side docs search)

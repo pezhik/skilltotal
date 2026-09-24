@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.53.0]
+
+### Fixed
+- **A provider token made of one repeated character is a placeholder, whatever its prefix.**
+  `ghp_` followed by 36 copies of one letter was reported as a live credential: the
+  "too few distinct characters" test counted the prefix, and `ghp_` alone contributes four of
+  the five. Found in a redaction linter's own sample line, reported by its author. The body
+  behind a provider prefix (`ghp_`, `github_pat_`, `sk-ant-`, `xoxb-`, ...) is now judged on its
+  own as well; a real token's body is random and is unaffected. Ruleset 60.
+
 ## [0.52.0]
 
 ### Added
