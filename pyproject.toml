@@ -47,6 +47,11 @@ dev = [
     "twine>=5.0",
     "pre-commit>=3.5",
     "detect-secrets>=1.5",
+    # Direct floor pins on transitive deps: urllib3 (via twine/detect-secrets) fixes
+    # CVE-2026-97687 / CVE-2026-97688 / CVE-2026-97689; virtualenv (via pre-commit) fixes
+    # PYSEC-2026-4011 / 4012 / 4013 / 4014.
+    "urllib3>=2.8.0",
+    "virtualenv>=21.7.13",
 ]
 
 [project.scripts]

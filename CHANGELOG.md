@@ -6,6 +6,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ## [0.53.0]
 
+### Changed
+- **Dev-only floor pins on `urllib3` (>=2.8.0) and `virtualenv` (>=21.7.13)**, pulled in
+  transitively by `twine`/`detect-secrets` and `pre-commit`. Fixes CVE-2026-97687/88/89 and
+  PYSEC-2026-4011/4012/4013/4014 in the dev toolchain; the published package stays
+  zero-runtime-dependency and is unaffected.
+
 ### Fixed
 - **A provider token made of one repeated character is a placeholder, whatever its prefix.**
   `ghp_` followed by 36 copies of one letter was reported as a live credential: the
