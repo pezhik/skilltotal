@@ -252,9 +252,13 @@ _CONTEXT_SURFACE = re.compile(
     r"\bstdio_server\s*\("
 )
 # Tool names in those shapes, for the same name classification as decorated functions.
+# No two whitespace runs may meet across an optional token: `\s*\)?\s*` backtracked
+# quadratically on "Tool" followed by a long run of spaces (20k spaces took 2.3 s; a 2 MiB file
+# would have taken hours). Real code has no space at those points: `Tool(name=`, `@Tool({`,
+# compiled `.Tool)({`. `test_mcp_patterns_stay_linear` holds every pattern to linear time.
 _CONTEXT_TOOL_NAME = re.compile(
-    r"\bTool\s*\(\s*name\s*=\s*['\"]([\w.-]+)['\"]|"
-    r"\bTool\s*\)?\s*\(\s*\{\s*name\s*:\s*['\"]([\w.-]+)['\"]"
+    r"\bTool\(\s*name\s*=\s*['\"]([\w.-]+)['\"]|"
+    r"\bTool\)?\(\s*\{\s*name\s*:\s*['\"]([\w.-]+)['\"]"
 )
 
 CODE_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")

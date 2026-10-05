@@ -240,3 +240,34 @@ def test_python_stdio_server_counts_only_with_a_server_import(tmp_path):
     assert "ST-MCP-DETECTED" in _ids(served)
     unrelated = _mcp(tmp_path / "b", {"main.py": "def stdio_server():\n    return None\n"})
     assert "ST-MCP-DETECTED" not in _ids(unrelated)
+
+
+def test_mcp_patterns_stay_linear():
+    """Every MCP surface pattern on adversarial input of each shape it could backtrack over.
+
+    `\s*\)?\s*` in the tool-name pattern was quadratic: "Tool" + 20k spaces took 2.3 s, and a
+    file can be 2 MiB. Doubling the input must not much more than double the time.
+    """
+    import time
+
+    from skilltotal.scanners import mcp
+
+    patterns = [mcp._CODE_SURFACE, mcp._MCP_IMPORT, mcp._CONTEXT_SURFACE, mcp._CONTEXT_TOOL_NAME]
+    fillers = [" ", "\t", "\n", " \n", "(", ")", "{", "@", "@x.", "Tool", "Tool(", "Tool)", "name"]
+
+    def worst(n: int) -> float:
+        slowest = 0.0
+        for filler in fillers:
+            for head in ("Tool", "@server.", "add_request_handler(", "mcp.server", "new "):
+                text = head + filler * n + "!"
+                start = time.perf_counter()
+                for pat in patterns:
+                    for _ in pat.finditer(text):
+                        pass
+                slowest = max(slowest, time.perf_counter() - start)
+        return slowest
+
+    small, large = worst(5_000), worst(40_000)
+    # 8x the input: linear is ~8x, quadratic ~64x. Generous bound for a noisy CI machine.
+    assert large < 1.0, f"{large:.2f}s on 40k-character input"
+    assert large < max(small, 0.002) * 25, f"{small:.4f}s -> {large:.4f}s"
