@@ -4,6 +4,39 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 61 (engine 0.54.0)
+
+From the hosted catalog, 2026-10-05: 10 of its 65 MCP servers produced no `ST-MCP-DETECTED`,
+three of them the official reference servers (git, time, fetch), and the git server reported no
+capability at all although it commits, resets and checks out through GitPython.
+
+- **`ST-MCP-DETECTED` / `ST-MCP-DANGEROUS-TOOL`**: MCP server shapes beyond the SDK quick-starts.
+  - The low-level SDK API: Python `@server.list_tools()` / `@server.call_tool()` (a decorator at
+    the start of a line, never a comment that names one), Python SDK 2.0
+    `server.add_request_handler("tools/list", ...)`, JS
+    `setRequestHandler(ListToolsRequestSchema, ...)`.
+  - The SDK's server-side transports (`new StdioServerTransport(`, ...), which is all a proxy
+    such as mcp-remote registers.
+  - Only in a file that imports an MCP *server* library (`fastmcp`, `mcp.server`,
+    `@modelcontextprotocol/sdk/server`, mcp-nest): `mcp.add_tool(...)`, `Tool(name=...)`,
+    `@Tool({ name })` and its compiled form `(0, x.Tool)({ name })`, and Python
+    `stdio_server()`. The names in `Tool(name=...)` / `Tool({ name })` are classified like
+    decorated functions. A client of MCP servers that builds LangChain tools is not matched.
+- **Note, never scored**: a `package.json` that declares an MCP server (`mcpName`) with no MCP
+  tool surface in its JavaScript/TypeScript/Python code gets one `needs_review` entry ("MCP
+  server code not found in the analyzed files") instead of an empty report that reads as clean.
+  It typically launches a native binary or another package, or is written in a language the
+  engine does not analyze yet.
+- **`ST-SHELL-PY`**: importing GitPython (`git`) is command execution, like `sh`/`plumbum`: every
+  `repo.git.<command>(...)` runs the git binary with caller-supplied arguments. An import of a
+  *relative* module with one of these names (`from .git import x`, `from .sh import y`) no
+  longer counts; it was the package's own module.
+- **`ST-SHELL-NODE`**: `simple-git` joins the process-spawning libraries.
+
+Calibration: the whole catalog (225 components) re-scanned and compared rule by rule with its
+ruleset-60 reports. No risk level or malicious verdict changed and no finding was removed; every
+added finding was read against its evidence.
+
 ## ruleset 60 (engine 0.53.0)
 
 - **`ST-SECRET-EMBEDDED`**: a token whose body behind a provider prefix is one or two repeated

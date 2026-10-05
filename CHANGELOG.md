@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.54.0]
+
+### Fixed
+- **MCP servers written on the SDK's low-level API were not recognised as MCP servers**,
+  including the official git, time and fetch reference servers, Python SDK 2.0 servers, proxies
+  such as mcp-remote, FastMCP servers that register tools with `add_tool`, and NestJS mcp-nest
+  servers. Ruleset 61.
+- **Running git through GitPython or simple-git now counts as command execution**; the git
+  reference server previously reported no capability at all.
+- **`from .sh import x` / `from .git import x`** (a package's own module) no longer reads as a
+  process-spawning library.
+
+### Added
+- **A note when an MCP package ships no server code the engine can read** (a launcher for a
+  native binary or another package, or a server in a language not analyzed yet), so the report
+  no longer looks empty and clean. It is a `needs_review` entry and never affects the score.
+
 ## [0.53.0]
 
 ### Changed

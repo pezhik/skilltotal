@@ -45,8 +45,10 @@ SHELL_CALLS = frozenset(
     }
 )
 # Third-party libraries whose whole purpose is running OS processes; importing one is a
-# shell-execution signal even without a direct subprocess call.
-SHELL_MODULES = frozenset({"sh", "plumbum", "pexpect", "invoke", "fabric"})
+# shell-execution signal even without a direct subprocess call. `git` is GitPython: every
+# `repo.git.<command>(...)` runs the git binary, with arguments the caller supplies (the official
+# git MCP server checks out, resets and logs through it and reported no capability at all).
+SHELL_MODULES = frozenset({"sh", "plumbum", "pexpect", "invoke", "fabric", "git"})
 # True arbitrary-code execution: a confirmed finding.
 DYNAMIC_CALLS = frozenset({"eval", "exec", "compile"})
 # Dynamic *module import* by name. Extremely common in legitimate code (optional
@@ -502,7 +504,9 @@ class _CallVisitor(ast.NodeVisitor):
             self.from_imports[local] = f"{module}.{alias.name}" if module else alias.name
         if _is_network_module(module):
             self._add(R_NET, node)
-        if module.split(".")[0] in SHELL_MODULES:
+        # Only an absolute import names the library: `from .git import x` is the package's own
+        # module, which happens to share the name.
+        if node.level == 0 and module.split(".")[0] in SHELL_MODULES:
             self._add(R_SHELL, node)
         self.generic_visit(node)
 

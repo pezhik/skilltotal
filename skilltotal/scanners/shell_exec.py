@@ -36,7 +36,8 @@ NODE_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 CATEGORY = "shell_execution"
 
 _CP = r"['\"](?:node:)?child_process['\"]"
-_SPAWN_LIBS = r"['\"](?:execa|zx|shelljs|cross-spawn|spawn-rx|tinyexec|node-pty)['\"]"
+# simple-git runs the git binary for every call, like GitPython on the Python side.
+_SPAWN_LIBS = r"['\"](?:execa|zx|shelljs|cross-spawn|spawn-rx|tinyexec|node-pty|simple-git)['\"]"
 _IDENT = r"[A-Za-z_$][\w$]*"
 # Not preceded by an identifier character or a dot: a bare call, never a method on something else.
 _BARE = r"(?<![\w$.])"

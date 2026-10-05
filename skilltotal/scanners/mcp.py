@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 
-from skilltotal.file_index import FileIndex, IndexedFile
+from skilltotal.file_index import FileIndex, IndexedFile, is_doc_path, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -222,7 +222,39 @@ def _is_broad_scope(value: object) -> bool:
 # `_TS_TOOL_NAME`, which is why the gap hid behind the dangerous-tool tests.)
 _CODE_SURFACE = re.compile(
     r"@(?:mcp|server|app)\.tool\b|FastMCP\s*\(|\bnew\s+(?:Mcp)?Server\s*\(|\.registerTool\s*\(|"
-    r"\.tool\s*\(\s*['\"]|@tool\b",
+    r"\.tool\s*\(\s*['\"]|@tool\b|"
+    # The SDKs' low-level server API. Python: `@server.list_tools()` / `@server.call_tool()` over
+    # `Server("name")` -- the shape of the official reference servers (git, time, fetch), none of
+    # which was recognised before 2026-10-05. JS: `setRequestHandler(ListToolsRequestSchema, ...)`.
+    # At the start of a line: a decorator, not a comment or changelog that names one.
+    r"(?m:^[ \t]*@\w+\.(?:list_tools|call_tool)\s*\()|"
+    # Python SDK 2.0 dropped those decorators for `server.add_request_handler("tools/list", ...)`.
+    r"\.add_request_handler\s*\(\s*['\"]tools/(?:list|call)['\"]|"
+    r"\.setRequestHandler\s*\(\s*(?:ListTools|CallTool)RequestSchema\b|"
+    # The SDK's server-side transports: what a proxy such as mcp-remote serves its client over,
+    # with no tool of its own to register.
+    r"\bnew\s+(?:Stdio|StreamableHTTP|SSE)ServerTransport\s*\(",
+)
+
+# Shapes that only mean "MCP tool" in a file visibly written against an MCP SERVER library:
+# `mcp.add_tool(...)` (FastMCP programmatic registration), `Tool(name=...)` (the Python SDK's
+# tool type) and a `Tool({ name })` decorator (NestJS mcp-nest; `(0, x.Tool)({` once compiled).
+# Each is a common name elsewhere -- LangChain has `Tool(name=...)`, agent kits have `add_tool`
+# and `@Tool` -- so they count only next to an MCP import.
+# SERVER-side libraries only: an agent that connects to MCP servers as a client (`from mcp import
+# ClientSession`) and builds LangChain `Tool(name=...)` objects in the same file is not a server.
+_MCP_IMPORT = re.compile(
+    r"\bfastmcp\b|\bmcp\.server\b|@modelcontextprotocol/sdk/server|mcp[-_]nest"
+)
+_CONTEXT_SURFACE = re.compile(
+    r"\.add_tool\s*\(|\bTool\s*\(\s*name\s*=|@Tool\s*\(\s*\{|\bTool\s*\)\s*\(\s*\{|"
+    # The Python SDK's server-side stdio transport (`async with stdio_server() as ...`).
+    r"\bstdio_server\s*\("
+)
+# Tool names in those shapes, for the same name classification as decorated functions.
+_CONTEXT_TOOL_NAME = re.compile(
+    r"\bTool\s*\(\s*name\s*=\s*['\"]([\w.-]+)['\"]|"
+    r"\bTool\s*\)?\s*\(\s*\{\s*name\s*:\s*['\"]([\w.-]+)['\"]"
 )
 
 CODE_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
@@ -430,6 +462,25 @@ class McpScanner(Scanner):
             detected.append(ev)
             if len(detected) >= MAX_EVIDENCE_SCANNED:
                 break
+        if len(detected) < MAX_EVIDENCE_SCANNED:
+            for f in self._mcp_code_files(index):
+                for m in _CONTEXT_SURFACE.finditer(f.text):
+                    detected.append(f.evidence_for_span(m.start(), m.end()))
+                    break  # one anchor per file is enough to show the surface
+                if len(detected) >= MAX_EVIDENCE_SCANNED:
+                    break
+        # Shipped code only: a README example or a test that builds a server says nothing about
+        # whether this package contains one (@playwright/mcp documents the SDK in its README).
+        shipped = [
+            ev for ev in detected
+            if ev.file.lower().endswith(CODE_SUFFIXES)
+            and not is_test_path(ev.file)
+            and not is_doc_path(ev.file)
+        ]
+        if not shipped:
+            launcher = self._launcher_note(index)
+            if launcher is not None:
+                needs_review.append(launcher)
 
         # Classify the names of tools defined in code (not just JSON manifests).
         self._classify_code_tools(index, dangerous, dangerous_categories)
@@ -648,6 +699,43 @@ class McpScanner(Scanner):
                         if anchor:
                             poisoning.append(anchor)
 
+    @staticmethod
+    def _mcp_code_files(index: FileIndex) -> list[IndexedFile]:
+        """Code files written against an MCP library (see `_MCP_IMPORT`)."""
+        return [f for f in index.select(suffixes=CODE_SUFFIXES) if _MCP_IMPORT.search(f.text)]
+
+    @staticmethod
+    def _launcher_note(index: FileIndex) -> NeedsReview | None:
+        """A package that declares itself an MCP server but ships none of the server's code.
+
+        Several registry servers publish only a launcher: a script that starts a per-platform
+        native binary (an optionalDependency) or another package. A static scan then finds no
+        tool surface and reads as an empty, clean report -- which says more than the scan saw.
+        Said once, as a note: it never moves the score.
+        """
+        for f in index.select(names=("package.json",)):
+            if f.relpath.count("/") > 1:
+                continue
+            try:
+                data = json.loads(f.text)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            if isinstance(data, dict) and isinstance(data.get("mcpName"), str):
+                return NeedsReview(
+                    category=CATEGORY,
+                    title="MCP server code not found in the analyzed files",
+                    reason=(
+                        "package.json declares an MCP server (mcpName), but no MCP tool surface "
+                        "is in the JavaScript/TypeScript/Python code analyzed here. The package "
+                        "may launch a native binary or another package, or the server may be "
+                        "written in a language this scan does not cover. Its tools were not "
+                        "reviewed."
+                    ),
+                    file=f.relpath,
+                    line=None,
+                )
+        return None
+
     def _classify_code_tools(
         self,
         index: FileIndex,
@@ -656,10 +744,15 @@ class McpScanner(Scanner):
     ) -> None:
         """Find tools defined in code and classify dangerous ones by their name."""
         seen: set[tuple[str, int]] = set()
+        mcp_files = {f.relpath for f in self._mcp_code_files(index)}
         for f in index.select(suffixes=CODE_SUFFIXES):
-            for pat in (_TS_TOOL_NAME, _PY_TOOL_DEF, _PY_TOOL_NAME_ARG):
+            patterns = [_TS_TOOL_NAME, _PY_TOOL_DEF, _PY_TOOL_NAME_ARG]
+            if f.relpath in mcp_files:
+                patterns.append(_CONTEXT_TOOL_NAME)
+            for pat in patterns:
                 for m in pat.finditer(f.text):
-                    cats = _match_categories(m.group(1))
+                    tool_name = next(g for g in m.groups() if g)
+                    cats = _match_categories(tool_name)
                     if not cats:
                         continue
                     ev = f.evidence_for_span(m.start(), m.end())
