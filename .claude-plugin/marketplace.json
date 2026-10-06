@@ -1,0 +1,14 @@
+{
+  "name": "skilltotal",
+  "owner": {
+    "name": "SkillTotal",
+    "url": "https://www.skilltotal.ai"
+  },
+  "plugins": [
+    {
+      "name": "skilltotal",
+      "source": "./",
+      "description": "Scan packages before the agent installs them."
+    }
+  ]
+}

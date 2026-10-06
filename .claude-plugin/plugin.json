@@ -1,0 +1,27 @@
+{
+  "name": "skilltotal",
+  "displayName": "SkillTotal",
+  "description": "Scans each package the agent is about to install (npx, npm, pip, uvx, claude mcp add) with SkillTotal's deterministic scanner, denies malicious ones and asks you before high-risk ones.",
+  "author": {
+    "name": "SkillTotal",
+    "url": "https://www.skilltotal.ai"
+  },
+  "homepage": "https://www.skilltotal.ai",
+  "repository": "https://github.com/pezhik/skilltotal",
+  "license": "Apache-2.0",
+  "keywords": [
+    "security",
+    "mcp",
+    "supply-chain",
+    "static-analysis",
+    "prompt-injection"
+  ],
+  "mcpServers": {
+    "skilltotal": {
+      "command": "skilltotal",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

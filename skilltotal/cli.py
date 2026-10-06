@@ -24,6 +24,10 @@ Commands:
     skilltotal mcp
         run SkillTotal as an MCP server on stdio, so agents can scan components before
         installing them (register: {"command": "skilltotal", "args": ["mcp"]}).
+    skilltotal hook claude-code
+        Claude Code PreToolUse hook (used by the SkillTotal plugin): reads the hook event on
+        stdin, scans any package the Bash command would install, and prints the decision.
+        Always exits 0; a failed scan never blocks the install.
 
 Exit codes:
     0  success
@@ -35,7 +39,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
 from pathlib import Path
 
 from skilltotal import __version__
@@ -257,6 +263,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    hook = sub.add_parser(
+        "hook",
+        help="Agent hook entry points (used by the SkillTotal Claude Code plugin).",
+    )
+    hook.add_argument("agent", choices=["claude-code"], help="Which agent's hook format.")
+
     return parser
 
 
@@ -276,6 +288,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_rules(args)
     if args.command == "mcp":
         return _cmd_mcp()
+    if args.command == "hook":
+        return _cmd_hook()
     parser.error("unknown command")  # pragma: no cover
     return EXIT_ERROR
 
@@ -508,6 +522,101 @@ def _cmd_mcp() -> int:
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     serve(sys.stdin, sys.stdout)
     return EXIT_OK
+
+
+def _cmd_hook() -> int:
+    from skilltotal.agent_hook import hook_response
+
+    if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")
+    try:
+        event = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        return EXIT_OK  # not a hook event we can read: stay out of the agent's way
+    try:
+        budget = float(os.environ.get("SKILLTOTAL_HOOK_BUDGET", HOOK_BUDGET_S))
+    except ValueError:
+        budget = HOOK_BUDGET_S
+    answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget)
+    if answer is not None:
+        print(json.dumps(answer))
+    return EXIT_OK
+
+
+# How long the agent waits for the checks of one install command, and how long a verdict is reused.
+HOOK_BUDGET_S = 20.0
+HOOK_CACHE_TTL_S = 24 * 3600
+
+
+def _hook_cache_path() -> Path:
+    base = (os.environ.get("SKILLTOTAL_CACHE_DIR") or os.environ.get("XDG_CACHE_HOME")
+            or os.environ.get("LOCALAPPDATA") or str(Path.home() / ".cache"))
+    root = Path(base) if os.environ.get("SKILLTOTAL_CACHE_DIR") else Path(base) / "skilltotal"
+    return root / "hook-cache.json"
+
+
+def _hook_scan_cached(source: str, timeout: float) -> dict:
+    """``_hook_scan``, reusing a verdict for a day. Agents run the same ``npx tsc`` again and again,
+    and each must not cost a scan; a new engine version or a day (a new release) rescans."""
+    path = _hook_cache_path()
+    try:
+        cache = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(cache, dict):
+            cache = {}
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(source)
+    if (isinstance(hit, dict) and hit.get("engine") == __version__
+            and time.time() - float(hit.get("at", 0)) < HOOK_CACHE_TTL_S):
+        return hit["report"]
+    report = _hook_scan(source, timeout)  # raises on failure/timeout: nothing is cached then
+    verdict = report.get("verdict") or {}
+    cache[source] = {
+        "engine": __version__,
+        "at": time.time(),
+        "report": {
+            "risk_level": report.get("risk_level"),
+            "risk_score": report.get("risk_score"),
+            "verdict": {
+                "has_malicious_indicators": bool(verdict.get("has_malicious_indicators")),
+                "headline": verdict.get("headline", ""),
+            },
+        },
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(cache), encoding="utf-8")
+        tmp.replace(path)  # atomic: two hooks at once must not leave half a file
+    except OSError:
+        pass  # no cache this time; the verdict itself is still good
+    return cache[source]["report"]
+
+
+def _hook_scan(source: str, timeout: float) -> dict:
+    """Scan ``source`` in a child process the hook can kill at its deadline.
+
+    A scan that overruns is killed with its downloaded package still open, so it gets a temp dir of
+    its own that is removed here whatever happened. Raises TimeoutError when it overruns.
+    """
+    import os
+    import shutil
+    import subprocess  # nosec B404 - runs this same CLI with fixed arguments
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="skilltotal_hook_")
+    env = {**os.environ, "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp, "PYTHONIOENCODING": "utf-8"}
+    try:
+        proc = subprocess.run(  # nosec B603 - sys.executable and a parsed package name, no shell
+            [sys.executable, "-m", "skilltotal", "scan", source, "--json"],
+            capture_output=True, timeout=timeout, env=env, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise TimeoutError(source) from exc
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return json.loads(proc.stdout.decode("utf-8"))
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:

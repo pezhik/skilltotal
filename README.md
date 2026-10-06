@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.55.0
+      - uses: pezhik/skilltotal@v0.56.0
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail the build on a high/critical finding (or 'none')
@@ -262,7 +262,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.55.0
+    rev: v0.56.0
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -270,6 +270,33 @@ repos:
 
 Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
 on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`).
+
+### Use as a Claude Code plugin
+
+The plugin checks the packages your agent is about to install, before the install command runs.
+The repository doubles as a plugin marketplace, so inside Claude Code run:
+
+```
+/plugin marketplace add pezhik/skilltotal
+/plugin install skilltotal@skilltotal
+```
+
+The plugin calls the CLI, so you also need `pip install skilltotal` (0.56.0 or later). Without
+it the plugin stays silent and blocks nothing.
+
+Before each Bash command the agent runs, a hook looks for packages the command would install:
+`npx`, `bunx`, `pnpm dlx`, `npm`/`pnpm`/`yarn`/`bun` add or install, `pip`, `uv`, `uvx`, `pipx`,
+and `claude mcp add … -- <command>`. Other commands pass straight through. If a package has
+malicious indicators, the command is denied and the agent sees why. A high- or critical-risk
+package needs your approval. A clean one installs as usual, and the agent gets a one-line note
+with its score.
+
+All checks for one command share a 20-second budget (set `SKILLTOTAL_HOOK_BUDGET` to change
+it). A package that isn't checked in time, or whose check fails, never blocks the install, and
+the agent is told it wasn't checked. Verdicts are reused for 24 hours and redone when the engine
+version changes, so repeated `npx tsc` or `npx prettier` calls don't trigger a rescan. The
+plugin also adds a `/skilltotal:scan <target>` command and registers the MCP server described
+below.
 
 ### Use as an MCP server
 

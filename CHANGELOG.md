@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.56.0]
+
+### Added
+- **Claude Code plugin.** The repository is now also a plugin marketplace
+  (`/plugin marketplace add pezhik/skilltotal`). The plugin's hook checks each package the agent
+  is about to install through `npx`, `bunx`, `pnpm dlx`, `npm`, `pnpm`, `yarn`, `bun`, `pip`,
+  `uv`, `uvx`, `pipx` or `claude mcp add`. Packages with malicious indicators are denied, high-
+  and critical-risk ones need approval, and clean ones run with a one-line note showing the
+  score. All checks for one command share a 20-second budget (`SKILLTOTAL_HOOK_BUDGET`). A check
+  that runs out of time or fails never blocks the install. Verdicts are cached for 24 hours per
+  engine version. The plugin also adds `/skilltotal:scan` and registers the SkillTotal MCP
+  server. It needs the CLI (`pip install skilltotal`).
+- **`skilltotal hook claude-code`**, the CLI entry point behind the plugin's hook. It reads the
+  hook event on stdin, prints Claude Code's hook answer and always exits 0.
+
 ## [0.55.0]
 
 ### Added
