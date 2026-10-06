@@ -1,10 +1,12 @@
 #!/bin/sh
 # SkillTotal plugin: runs before every Bash command the agent wants to execute.
-# Most commands install nothing, so they are let through here without starting Python.
-# The real parsing and the decision live in `skilltotal hook claude-code`.
+# Commands that never name a package manager are let through here without starting Python. The
+# match is on the manager's name, not on "npm install": flags, extra spaces and wrappers
+# (`npm --silent install`, `bash -c '...'`) must still reach the real parser.
+# The parsing and the decision live in `skilltotal hook claude-code`.
 input=$(cat)
 case "$input" in
-  *npx*|*bunx*|*"npm i"*|*"npm add"*|*"pnpm add"*|*"pnpm i"*|*"pnpm dlx"*|*"yarn add"*|  *"bun add"*|*"bun i"*|*"pip install"*|*"pip3 install"*|*"uv add"*|*"uv pip install"*|  *uvx*|*"pipx install"*|*"pipx run"*|*"mcp add"*) ;;
+  *npm*|*npx*|*pnp*|*yarn*|*bun*|*pip*|*uv*|*python*|*"py "*|*mcp*) ;;
   *) exit 0 ;;
 esac
 # Without the CLI there is nothing to check with; never block the agent for that.

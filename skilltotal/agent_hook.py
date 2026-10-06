@@ -6,11 +6,17 @@ packages an install command would bring in (``npx``, ``npm install``, ``pip inst
 
 * a package with malicious indicators: ``deny``, with the reason shown to the agent;
 * a package whose scored risk is high or critical: ``ask``, so the person decides;
+* a package the scanner cannot see (a custom registry or index, a remote archive): ``ask``,
+  because scanning the public copy would vouch for code that is not the code being installed;
 * everything clean: no decision (the normal permission flow applies) plus a one-line note for the
   agent.
 
-A scan that fails (registry down, package not found) never blocks the install: the hook guards the
-person's work, it must not break it. Pure library code: the CLI reads stdin and prints the answer.
+A scan that fails or runs out of time never blocks the install: the hook guards the person's work,
+it must not break it. The parser errs toward finding installs: a shell that would install a package
+must not slip past it through a global flag, a full path, a wrapper (``bash -c``, ``sudo``,
+``env``, ``timeout``...), a command substitution or an alias of the subcommand. It is still a
+static reading of a command line, a guardrail rather than a sandbox. Pure library code: the CLI
+reads stdin and prints the answer.
 """
 
 from __future__ import annotations
@@ -19,6 +25,7 @@ import re
 import shlex
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from skilltotal.guard import evaluate
@@ -27,166 +34,387 @@ MAX_TARGETS = 5
 # How long the agent waits for all checks of one command. A large package can take longer to scan
 # than anyone will wait before every install; past this the install goes ahead, marked unchecked.
 DEFAULT_BUDGET_S = 30.0
+_MAX_DEPTH = 4  # nested `bash -c "$(...)"`; deeper than this is not an honest install command
 
-# Commands that bring in npm packages: the subcommand that installs, or a runner that fetches.
-_NPM_INSTALL = {"npm": {"install", "i", "add", "isntall"}, "pnpm": {"add", "install", "i"},
-                "yarn": {"add"}, "bun": {"add", "install", "i"}}
-_NPM_RUNNERS = {"npx", "bunx"}
-_PY_INSTALLERS = {"pip", "pip3"}
 
-# Flags whose next token is a value, not a package.
-_NPM_VALUE_FLAGS = {"--registry", "--prefix", "--cache", "--tag", "-w", "--workspace",
-                    "--userconfig"}
-_PIP_VALUE_FLAGS = {"-r", "--requirement", "-c", "--constraint", "-e", "--editable", "-i",
-                    "--index-url", "--extra-index-url", "-t", "--target", "--prefix", "-f",
-                    "--find-links", "--python", "--root", "--platform", "--python-version"}
-_UV_VALUE_FLAGS = {"--python", "-p", "--with", "--index", "--index-url", "--extra-index-url",
-                   "--group", "--extra", "--package"}
+@dataclass(frozen=True)
+class Install:
+    """One thing an install command brings in: a scannable ``source``, or why it cannot be one."""
 
-_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n]")
+    source: str | None
+    unverifiable: str | None = None  # e.g. "pkg from https://registry.example"
+
+
+_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|&\n]")
+_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)")
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_DRIVE = re.compile(r"^[A-Za-z]:")
 _PY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _NPM_NAME = re.compile(r"^(?:@[a-z0-9][\w.-]*/)?[a-z0-9][\w.-]*$", re.IGNORECASE)
+_GH_SHORTHAND = re.compile(r"^(?:github:)?([A-Za-z0-9][\w.-]*)/([A-Za-z0-9][\w.-]*?)(?:#.*)?$")
+_GH_URL = re.compile(r"^(?:git\+)?(?:https?|ssh|git)://(?:[^@/]+@)?github\.com[/:]"
+                     r"([\w.-]+)/([\w.-]+?)(?:\.git)?(?:[@#].*)?/?$")
+
+# Wrappers that run the rest of the line as a command, with the flags of theirs that take a value.
+_WRAPPERS: dict[str, set[str]] = {
+    "sudo": {"-u", "-g", "-C", "-h", "-p", "-r", "-t", "-U", "-D"},
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "-S", "--unset", "--chdir"},
+    "exec": {"-a"},
+    "nohup": set(),
+    "time": {"-f", "-o"},
+    "command": set(),
+    "builtin": set(),
+    "nice": {"-n"},
+    "stdbuf": {"-i", "-o", "-e"},
+    "timeout": {"-s", "-k", "--signal", "--kill-after"},
+}
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+
+# npm-family subcommands that install the named packages (npm's own aliases and typo-tolerance).
+_NPM_INSTALL = {"install", "i", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal",
+                "isntall", "add", "install-test", "it"}
+_NPM_RUNNERS = {"npx", "bunx", "pnpx"}
+# Global flags of a package manager that take a value (so the value is not the subcommand).
+_NPM_VALUE_FLAGS = {"--registry", "--prefix", "--cache", "--tag", "-w", "--workspace",
+                    "--userconfig", "--globalconfig", "-C", "--dir", "--cwd", "--filter", "-F",
+                    "--loglevel", "--location", "--before", "--otp", "-p", "--package"}
+_PIP_VALUE_FLAGS = {"-r", "--requirement", "-c", "--constraint", "-e", "--editable", "-i",
+                    "--index-url", "--extra-index-url", "-t", "--target", "--prefix", "-f",
+                    "--find-links", "--python", "--root", "--platform", "--python-version",
+                    "--log", "--cache-dir", "--proxy", "--retries", "--timeout", "--src",
+                    "--upgrade-strategy", "--implementation", "--abi", "--progress-bar"}
+_UV_VALUE_FLAGS = {"--python", "-p", "--with", "--index", "--index-url", "--extra-index-url",
+                   "--default-index", "--group", "--extra", "--package", "--directory",
+                   "--project", "--cache-dir", "--config-file", "--color", "-f", "--find-links",
+                   "--from", "--with-editable", "--with-requirements"}
+_PY_VALUE_FLAGS = {"-X", "-W", "-c"}
+# Flags that make the package come from somewhere the public-registry scan does not cover.
+_NPM_SOURCE_FLAGS = {"--registry"}
+_PIP_SOURCE_FLAGS = {"-i", "--index-url", "--extra-index-url", "-f", "--find-links", "--index",
+                     "--default-index"}
 
 
 def install_targets(command: str) -> list[str]:
-    """Package sources (``npm:name`` / ``pypi:name``) an install command would bring in."""
-    found: list[str] = []
-    for segment in _SEGMENT_SPLIT.split(command or ""):
-        try:
-            tokens = shlex.split(segment, posix=True)
-        except ValueError:
-            continue  # unbalanced quotes: not something we can read reliably
-        for source in _targets_in(_strip_prefix(tokens)):
-            if source not in found:
-                found.append(source)
+    """Scannable sources (``npm:name``, ``pypi:name``, a GitHub URL) an install would bring in."""
+    return [i.source for i in parse_installs(command) if i.source]
+
+
+def parse_installs(command: str, _depth: int = 0) -> list[Install]:
+    """Everything an install command would bring in, scannable or not (capped at MAX_TARGETS)."""
+    found: list[Install] = []
+    if _depth > _MAX_DEPTH or not command:
+        return found
+    # A command substitution runs too: `echo $(npm install x)` installs x.
+    pieces = [command] + [next(g for g in m.groups() if g is not None)
+                          for m in _SUBSTITUTION.finditer(command)]
+    for piece in pieces:
+        for segment in _SEGMENT_SPLIT.split(piece):
+            try:
+                tokens = shlex.split(segment, posix=True)
+            except ValueError:
+                continue  # unbalanced quotes: not something we can read reliably
+            for item in _installs_in(_unwrap(tokens), _depth):
+                if item not in found:
+                    found.append(item)
     return found[:MAX_TARGETS]
 
 
-def _strip_prefix(tokens: list[str]) -> list[str]:
-    i = 0
-    while i < len(tokens) and (_ENV_ASSIGN.match(tokens[i]) or tokens[i] in ("sudo", "env")):
-        i += 1
-    return tokens[i:]
+def _base(token: str) -> str:
+    """``/usr/bin/npm`` / ``C:\\nodejs\\npm.cmd`` -> ``npm``."""
+    name = re.split(r"[\\/]", token)[-1].lower()
+    for ext in (".exe", ".cmd", ".bat", ".ps1"):
+        if name.endswith(ext):
+            return name[: -len(ext)]
+    return name
 
 
-def _targets_in(tokens: list[str]) -> list[str]:
+def _unwrap(tokens: list[str]) -> list[str]:
+    """Drop ``VAR=x``, ``sudo -u root``, ``env -i``, ``timeout 60``... in front of the command."""
+    while tokens:
+        if _ENV_ASSIGN.match(tokens[0]):
+            tokens = tokens[1:]
+            continue
+        head = _base(tokens[0])
+        if head not in _WRAPPERS:
+            return tokens
+        value_flags = _WRAPPERS[head]
+        i = 1
+        while i < len(tokens) and (tokens[i].startswith("-") or _ENV_ASSIGN.match(tokens[i])):
+            i += 2 if tokens[i] in value_flags else 1
+        if head == "timeout" and i < len(tokens):
+            i += 1  # the duration
+        tokens = tokens[i:]
+    return tokens
+
+
+def _installs_in(tokens: list[str], depth: int) -> list[Install]:
     if not tokens:
         return []
-    head, rest = tokens[0], tokens[1:]
+    head, rest = _base(tokens[0]), tokens[1:]
+
+    inner = _inner_command(head, rest)
+    if inner is not None:
+        return parse_installs(inner, depth + 1)
     if head == "claude" and rest[:2] == ["mcp", "add"] and "--" in rest:
-        return _targets_in(_strip_prefix(rest[rest.index("--") + 1:]))
+        return _installs_in(_unwrap(rest[rest.index("--") + 1:]), depth)
     if head in _NPM_RUNNERS:
         return _npx(rest)
-    if head == "pnpm" and rest[:1] == ["dlx"]:
-        return _npx(rest[1:])
-    if head in _NPM_INSTALL and rest and rest[0] in _NPM_INSTALL[head]:
-        return [f"npm:{n}" for n in _npm_args(rest[1:])]
-    if head in ("python", "python3", "py") and rest[:3] == ["-m", "pip", "install"]:
-        return [f"pypi:{n}" for n in _pip_args(rest[3:], _PIP_VALUE_FLAGS)]
-    if head in _PY_INSTALLERS and rest[:1] == ["install"]:
-        return [f"pypi:{n}" for n in _pip_args(rest[1:], _PIP_VALUE_FLAGS)]
-    if head == "uv" and rest[:2] == ["pip", "install"]:
-        return [f"pypi:{n}" for n in _pip_args(rest[2:], _PIP_VALUE_FLAGS)]
-    if head == "uv" and rest[:1] == ["add"]:
-        return [f"pypi:{n}" for n in _pip_args(rest[1:], _UV_VALUE_FLAGS)]
+    if head in ("npm", "pnpm", "yarn", "bun"):
+        return _node_manager(head, rest)
+    if re.fullmatch(r"pip\d*(?:\.\d+)?", head):
+        sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
+        return _pip_install(args) if sub == "install" else []
+    if re.fullmatch(r"(?:python|py)\d*(?:\.\d+)?", head):
+        return _python_module(rest)
+    if head == "uv":
+        return _uv(rest)
     if head == "uvx":
         return _uvx(rest)
-    if head == "pipx" and rest[:1] in (["install"], ["run"]):
-        names = _pip_args(rest[1:], _UV_VALUE_FLAGS)
-        return [f"pypi:{names[0]}"] if names else []
+    if head == "pipx":
+        return _pipx(rest)
     return []
 
 
-def _npx(args: list[str]) -> list[str]:
+def _inner_command(head: str, rest: list[str]) -> str | None:
+    """The command string a shell would run: ``bash -lc '...'``, ``cmd /c ...``, ``pwsh -c ...``."""
+    if head in _SHELLS:
+        for i, arg in enumerate(rest):
+            if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
+                return rest[i + 1] if i + 1 < len(rest) else None
+        return None
+    if head == "cmd":
+        for i, arg in enumerate(rest):
+            if arg.lower() in ("/c", "/k"):
+                return " ".join(rest[i + 1:])
+        return None
+    if head in ("powershell", "pwsh"):
+        for i, arg in enumerate(rest):
+            if arg.lower() in ("-command", "-c", "/command"):
+                return " ".join(rest[i + 1:])
+        return None
+    return None
+
+
+def _subcommand(args: list[str], value_flags: set[str]) -> tuple[str | None, list[str]]:
+    """Skip global options (and their values) to the subcommand: ``npm --silent install x``."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            i += 1
+            continue
+        if arg.startswith("-"):
+            i += 2 if (arg in value_flags and "=" not in arg) else 1
+            continue
+        return arg.lower(), args[i + 1:]
+    return None, []
+
+
+def _node_manager(head: str, rest: list[str]) -> list[Install]:
+    sub, args = _subcommand(rest, _NPM_VALUE_FLAGS)
+    if head == "yarn" and sub == "global":
+        sub, args = _subcommand(args, _NPM_VALUE_FLAGS)
+    if sub in ("exec", "x", "dlx") and not (head == "pnpm" and sub == "exec"):
+        return _npx(args)
+    if head == "yarn" and sub != "add":
+        return []  # `yarn install` installs the lockfile only
+    if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
+        return _npm_packages(args, _flag_value(rest, _NPM_SOURCE_FLAGS))
+    return []
+
+
+def _npx(args: list[str]) -> list[Install]:
     """``npx [-y] [-p pkg] pkg args``: the explicit ``-p`` package, else the first positional."""
+    registry = _flag_value(args, _NPM_SOURCE_FLAGS)
     i = 0
     while i < len(args):
         arg = args[i]
         if arg in ("-p", "--package") and i + 1 < len(args):
-            name = _npm_name(args[i + 1])
-            return [f"npm:{name}"] if name else []
+            return _npm_spec(args[i + 1], registry)
         if arg.startswith("--package="):
-            name = _npm_name(arg.split("=", 1)[1])
-            return [f"npm:{name}"] if name else []
+            return _npm_spec(arg.split("=", 1)[1], registry)
         if arg.startswith("-"):
-            i += 1
+            i += 2 if (arg in _NPM_VALUE_FLAGS and "=" not in arg) else 1
             continue
-        name = _npm_name(arg)
-        return [f"npm:{name}"] if name else []
+        return _npm_spec(arg, registry)
     return []
 
 
-def _npm_args(args: list[str]) -> list[str]:
-    names: list[str] = []
+def _npm_packages(args: list[str], registry: str | None) -> list[Install]:
+    """Every package named after the install subcommand, wherever the flags sit."""
+    out: list[Install] = []
     skip = False
     for arg in args:
         if skip:
             skip = False
             continue
-        if arg in _NPM_VALUE_FLAGS:
-            skip = True
-            continue
         if arg.startswith("-"):
+            skip = arg in _NPM_VALUE_FLAGS and "=" not in arg
             continue
-        name = _npm_name(arg)
-        if name:
-            names.append(name)
-    return names
+        out.extend(_npm_spec(arg, registry))
+    return out
 
 
-def _npm_name(spec: str) -> str | None:
-    """``@scope/name@1.2`` -> ``@scope/name``; a path, URL or git spec is not a registry name."""
-    if spec.startswith((".", "/", "~", "file:", "git", "http", "link:", "workspace:")):
-        return None
+def _npm_spec(spec: str, registry: str | None) -> list[Install]:
+    """A registry name, a GitHub source, an unscannable remote, or a local path (ignored)."""
+    if spec.startswith((".", "/", "~", "file:", "link:", "workspace:")) or _DRIVE.match(spec):
+        return []  # the person's own code on disk
+    gh = _github(spec)
+    if gh:
+        return [Install(gh)]
+    if "://" in spec or spec.startswith(("git+", "git:")):
+        return [Install(None, f"{spec} (a remote archive or repository)")]
     name = spec.rsplit("@", 1)[0] if spec.count("@") > (1 if spec.startswith("@") else 0) else spec
-    return name if _NPM_NAME.match(name) else None
+    if not _NPM_NAME.match(name):
+        return []
+    if registry:
+        return [Install(None, f"{name} from {registry}")]
+    return [Install(f"npm:{name}")]
 
 
-def _pip_args(args: list[str], value_flags: set[str]) -> list[str]:
-    names: list[str] = []
+def _github(spec: str) -> str | None:
+    """``github:o/r``, ``o/r``, ``git+https://github.com/o/r.git@main`` -> the repository URL."""
+    m = _GH_URL.match(spec)
+    if m:
+        return f"https://github.com/{m.group(1)}/{m.group(2)}"
+    if spec.startswith(("@", "git+", "git:")) or "://" in spec:
+        return None  # a scoped npm name, or a non-GitHub remote
+    m = _GH_SHORTHAND.match(spec)
+    if m:
+        return f"https://github.com/{m.group(1)}/{m.group(2)}"
+    return None
+
+
+def _flag_value(args: list[str], flags: set[str]) -> str | None:
+    for i, arg in enumerate(args):
+        if arg in flags and i + 1 < len(args):
+            return args[i + 1]
+        key, _, value = arg.partition("=")
+        if value and key in flags:
+            return value
+    return None
+
+
+def _pip_install(args: list[str]) -> list[Install]:
+    index = _flag_value(args, _PIP_SOURCE_FLAGS)
+    out: list[Install] = []
     skip = False
     for arg in args:
         if skip:
             skip = False
             continue
-        if arg in value_flags:
-            skip = True
-            continue
         if arg.startswith("-"):
+            skip = (arg in _PIP_VALUE_FLAGS or arg in _UV_VALUE_FLAGS) and "=" not in arg
             continue
-        name = _py_name(arg)
-        if name:
-            names.append(name)
-    return names
+        out.extend(_py_spec(arg, index))
+    return out
 
 
-def _py_name(spec: str) -> str | None:
-    """``fastapi[standard]>=0.110`` -> ``fastapi``; a path, URL, wheel or VCS spec is skipped."""
-    if spec.startswith((".", "/", "~")) or "://" in spec or spec.startswith("git+"):
-        return None
+def _py_spec(spec: str, index: str | None) -> list[Install]:
+    """``fastapi[standard]>=0.110`` -> pypi:fastapi; a GitHub VCS spec is scanned from GitHub."""
+    if not spec or spec.startswith((".", "/", "~")) or _DRIVE.match(spec):
+        return []
+    gh = _github(spec) if ("://" in spec or spec.startswith("git+")) else None
+    if gh:
+        return [Install(gh)]
+    if "://" in spec or spec.startswith("git+"):
+        return [Install(None, f"{spec} (a remote archive or repository)")]
     if spec.endswith((".whl", ".tar.gz", ".zip")) or "/" in spec or "\\" in spec:
-        return None
+        return []  # a local file
     m = _PY_NAME.match(spec)
-    return m.group(0) if m else None
+    if not m:
+        return []
+    if index:
+        return [Install(None, f"{m.group(0)} from {index}")]
+    return [Install(f"pypi:{m.group(0)}")]
 
 
-def _uvx(args: list[str]) -> list[str]:
-    """``uvx [--from pkg] tool args``: ``--from`` names the package, else the tool does."""
+def _python_module(rest: list[str]) -> list[Install]:
+    """``python [-I] [-X opt] -m pip install x`` (and ``-m pipx`` / ``-m uv``)."""
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "-m" and i + 1 < len(rest):
+            module, args = _base(rest[i + 1]), rest[i + 2:]
+            if re.fullmatch(r"pip\d*", module):
+                sub, sub_args = _subcommand(args, _PIP_VALUE_FLAGS)
+                return _pip_install(sub_args) if sub == "install" else []
+            if module == "pipx":
+                return _pipx(args)
+            if module == "uv":
+                return _uv(args)
+            return []
+        if arg.startswith("-"):
+            i += 2 if arg in _PY_VALUE_FLAGS else 1
+            continue
+        return []  # `python script.py`
+    return []
+
+
+def _uv(rest: list[str]) -> list[Install]:
+    sub, args = _subcommand(rest, _UV_VALUE_FLAGS)
+    if sub == "add":
+        return _pip_install(args)
+    if sub == "pip":
+        sub2, args2 = _subcommand(args, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
+        return _pip_install(args2) if sub2 == "install" else []
+    if sub == "tool":
+        sub2, args2 = _subcommand(args, _UV_VALUE_FLAGS)
+        if sub2 == "install":
+            return _first_py(args2) + _with_values(args2)
+        if sub2 == "run":
+            return _uvx(args2)
+        return []
+    if sub == "run":
+        return _with_values(args)  # `uv run --with pkg script.py` installs pkg
+    return []
+
+
+def _uvx(args: list[str]) -> list[Install]:
+    """``uvx [--from pkg] [--with dep] tool args``: ``--from`` names the package, else the tool."""
+    found = _with_values(args)
+    source = _flag_value(args, {"--from"})
+    if source:
+        return _py_spec(source, _flag_value(args, _PIP_SOURCE_FLAGS)) + found
+    return _first_py(args) + found
+
+
+def _with_values(args: list[str]) -> list[Install]:
+    index = _flag_value(args, _PIP_SOURCE_FLAGS)
+    out: list[Install] = []
+    for i, arg in enumerate(args):
+        value = None
+        if arg == "--with" and i + 1 < len(args):
+            value = args[i + 1]
+        elif arg.startswith("--with="):
+            value = arg.split("=", 1)[1]
+        for spec in (value or "").split(","):
+            out.extend(_py_spec(spec.strip(), index))
+    return out
+
+
+def _first_py(args: list[str]) -> list[Install]:
+    """The first positional (the tool or package), skipping flags and their values."""
+    index = _flag_value(args, _PIP_SOURCE_FLAGS)
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg == "--from" and i + 1 < len(args):
-            name = _py_name(args[i + 1])
-            return [f"pypi:{name}"] if name else []
-        if arg in _UV_VALUE_FLAGS:
-            i += 2
-            continue
         if arg.startswith("-"):
-            i += 1
+            i += 2 if (arg in _UV_VALUE_FLAGS and "=" not in arg) else 1
             continue
-        name = _py_name(arg)
-        return [f"pypi:{name}"] if name else []
+        return _py_spec(arg, index)
+    return []
+
+
+def _pipx(rest: list[str]) -> list[Install]:
+    sub, args = _subcommand(rest, _UV_VALUE_FLAGS | _PIP_VALUE_FLAGS)
+    if sub in ("install", "run"):
+        return _first_py(args)
+    if sub == "inject":
+        positional = [a for a in args if not a.startswith("-")]
+        index = _flag_value(args, _PIP_SOURCE_FLAGS)
+        return [x for spec in positional[1:] for x in _py_spec(spec, index)]
     return []
 
 
@@ -205,8 +433,8 @@ def hook_response(
     if event.get("tool_name") != "Bash":
         return None
     command = str((event.get("tool_input") or {}).get("command", ""))
-    targets = install_targets(command)
-    if not targets:
+    installs = parse_installs(command)
+    if not installs:
         return None
 
     denied: list[str] = []
@@ -215,7 +443,11 @@ def hook_response(
     failed: list[str] = []
     late: list[str] = []
     deadline = time.monotonic() + budget_s
-    for source in targets:
+    for item in installs:
+        if item.source is None:
+            asked.append(f"{item.unverifiable}: SkillTotal can't check what this would install.")
+            continue
+        source = item.source
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             late.append(source)
@@ -244,7 +476,7 @@ def hook_response(
         reason = "SkillTotal found malicious indicators before install. " + " ".join(denied)
         return _answer(permission="deny", reason=f"{reason} {details}")
     if asked:
-        reason = "SkillTotal rates this package high risk. " + " ".join(asked)
+        reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
         return _answer(permission="ask", reason=f"{reason} {details}")
     notes = []
     if clean:

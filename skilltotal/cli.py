@@ -43,30 +43,16 @@ import os
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from skilltotal import __version__
-from skilltotal.baseline import build_baseline, load_baseline
-from skilltotal.collector import CollectionError
-from skilltotal.config import Config, find_config, load_config
-from skilltotal.diff import diff_reports, max_new_severity
-from skilltotal.engine import analyze
 from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
-from skilltotal.inventory import discover
-from skilltotal.models import Severity
-from skilltotal.report import (
-    render_diff_json,
-    render_diff_text,
-    render_guard_json,
-    render_guard_text,
-    render_inventory_json,
-    render_inventory_text,
-    render_json,
-    render_rules_json,
-    render_rules_text,
-    render_text,
-)
-from skilltotal.rules import get_rules
-from skilltotal.sarif import render_sarif
+
+# The engine, the collector and the scanners are imported inside the commands that use them:
+# the Claude Code hook starts this CLI before every install-like Bash command the agent runs, and
+# loading the whole engine for a command that turns out to install nothing costs most of a second.
+if TYPE_CHECKING:
+    from skilltotal.config import Config
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -295,6 +281,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
+    from skilltotal.baseline import build_baseline, load_baseline
+    from skilltotal.collector import CollectionError
+    from skilltotal.engine import analyze
+    from skilltotal.report import render_json, render_text
+    from skilltotal.sarif import render_sarif
+
     config = _load_config(args)
 
     baseline_path = args.baseline or config.baseline
@@ -367,6 +359,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_diff(args: argparse.Namespace) -> int:
+    from skilltotal.collector import CollectionError
+    from skilltotal.diff import diff_reports, max_new_severity
+    from skilltotal.models import Severity
+    from skilltotal.report import render_diff_json, render_diff_text
+
     config = _load_config(args)
     exclude = [*config.exclude, *args.exclude]
 
@@ -400,6 +397,8 @@ def _cmd_diff(args: argparse.Namespace) -> int:
 
 def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
     """Resolve one diff side: a saved JSON report is loaded, anything else is scanned."""
+    from skilltotal.engine import analyze
+
     path = Path(source)
     if path.is_file() and path.suffix.lower() == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -412,6 +411,10 @@ def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
 
 
 def _cmd_guard(args: argparse.Namespace) -> int:
+    from skilltotal.collector import CollectionError
+    from skilltotal.engine import analyze
+    from skilltotal.report import render_guard_json, render_guard_text
+
     if args.installed == bool(args.source):
         print("error: pass a source to check, or --installed (not both)", file=sys.stderr)
         return EXIT_ERROR
@@ -433,6 +436,10 @@ def _cmd_guard(args: argparse.Namespace) -> int:
 
 def _guard_installed(args: argparse.Namespace) -> int:
     """Guard every installed AI component; block if any of them blocks."""
+    from skilltotal.engine import analyze
+    from skilltotal.inventory import discover
+    from skilltotal.report import render_inventory_json
+
     components = discover(project=Path(args.project) if args.project else None)
     items: list[dict] = []
     blocked: list[str] = []
@@ -476,6 +483,11 @@ def _guard_installed(args: argparse.Namespace) -> int:
 
 
 def _cmd_inventory(args: argparse.Namespace) -> int:
+    from skilltotal.collector import CollectionError
+    from skilltotal.engine import analyze
+    from skilltotal.inventory import discover
+    from skilltotal.report import render_inventory_json, render_inventory_text
+
     project = Path(args.project) if args.project else None
     components = discover(project=project)
 
@@ -620,6 +632,9 @@ def _hook_scan(source: str, timeout: float) -> dict:
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:
+    from skilltotal.report import render_rules_json, render_rules_text
+    from skilltotal.rules import get_rules
+
     if args.rules_command == "list":
         rules = get_rules()
         if args.json:
@@ -632,6 +647,8 @@ def _cmd_rules(args: argparse.Namespace) -> int:
 
 def _load_config(args: argparse.Namespace) -> Config:
     """Load .skilltotal.toml (explicit --config or auto-discovered); empty config if none."""
+    from skilltotal.config import Config, find_config, load_config
+
     path = Path(args.config) if args.config else find_config()
     if path is None:
         return Config()
@@ -652,6 +669,8 @@ def _fails_gate(
     threshold (explicit accept-but-show). The aggregate `fail_on_score` gate is unaffected —
     warn findings still count toward the risk score.
     """
+    from skilltotal.models import Severity
+
     policy = policy or {}
     if any(policy.get(f.id) == "block" for f in report.findings):
         return True

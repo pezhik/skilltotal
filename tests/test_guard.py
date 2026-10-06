@@ -129,7 +129,7 @@ def test_cli_guard_installed_sweep(tmp_path: Path, capsys, monkeypatch):
             source=None, scannable=False, note="docker launcher",
         ),
     ]
-    monkeypatch.setattr("skilltotal.cli.discover", lambda project=None: fake)
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
 
     code = main(["guard", "--installed"])
     out = capsys.readouterr().out
@@ -140,7 +140,7 @@ def test_cli_guard_installed_sweep(tmp_path: Path, capsys, monkeypatch):
     assert "BLOCK: 1 component(s) failed the guard: bad-skill" in out
 
     # The sweep allows when nothing blocks.
-    monkeypatch.setattr("skilltotal.cli.discover", lambda project=None: fake[1:])
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake[1:])
     code = main(["guard", "--installed"])
     out = capsys.readouterr().out
     assert code == EXIT_OK

@@ -75,7 +75,7 @@ def test_cli_inventory_json_no_scan(tmp_path, capsys, monkeypatch):
     home = tmp_path / "home"
     cfg = {"mcpServers": {"git": {"command": "uvx", "args": ["mcp-server-git"]}}}
     _write(home / ".cursor" / "mcp.json", cfg)
-    monkeypatch.setattr(cli, "discover", lambda **kw: discover(home=home))
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda **kw: discover(home=home))
 
     rc = cli.main(["inventory", "--json", "--no-scan"])
     assert rc == 0

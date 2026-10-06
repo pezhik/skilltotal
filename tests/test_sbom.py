@@ -80,7 +80,7 @@ def test_cli_inventory_sbom(tmp_path: Path, capsys, monkeypatch):
             source=str(root), scannable=True,
         )
     ]
-    monkeypatch.setattr("skilltotal.cli.discover", lambda project=None: fake)
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
 
     code = main(["inventory", "--sbom"])
     out = capsys.readouterr().out
