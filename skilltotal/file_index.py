@@ -626,6 +626,19 @@ def _python_agent_facing_spans(
                     for kw in dec.keywords:
                         if kw.arg in ("description", "title"):
                             spans.append(span(kw.value))
+            # The tool's return value is exactly what an MCP client hands back to the model as
+            # the call result -- a poisoning phrase built there at runtime (not just in the
+            # static description) still reaches the agent (Deadbugz, August 2026: a server stays
+            # harmless for its first calls, then starts handing the agent credential-hunting
+            # instructions once a call-count trigger is hit).
+            for ret in ast.walk(node):
+                if not isinstance(ret, ast.Return) or ret.value is None:
+                    continue
+                for sub in ast.walk(ret.value):
+                    if isinstance(sub, ast.JoinedStr) or (
+                        isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+                    ):
+                        spans.append(span(sub))
         samples = any(
             isinstance(call, ast.Call)
             and isinstance(call.func, ast.Attribute)
@@ -1065,14 +1078,18 @@ class IndexedFile:
     def in_agent_facing_string(self, offset: int) -> bool:
         """True if ``offset`` is inside a Python string that a model reads as text.
 
-        String literals are normally demoted as pattern definitions, but three kinds are the
+        String literals are normally demoted as pattern definitions, but four kinds are the
         opposite: they are exactly what an MCP client hands to the model.
 
         * the docstring of a function decorated as a tool or prompt (``@mcp.tool()``,
           ``@server.prompt``) -- FastMCP publishes it as the description;
         * a ``description=``/``title=`` keyword in that decorator;
         * every string in a function that calls ``create_message`` -- MCP sampling, where the
-          server makes the client's model run a prompt the server wrote.
+          server makes the client's model run a prompt the server wrote;
+        * a string returned by a tool/prompt function -- the call *result*, handed to the model
+          exactly like the static description. A tool can stay quiet on its first few calls and
+          only start returning agent-directed instructions once a runtime trigger fires; the
+          text is no less agent-facing for being built at call time instead of declared upfront.
         """
         if self.suffix not in (".py", ".pyw"):
             return False
@@ -1345,10 +1362,15 @@ class FileIndex:
         files: list[IndexedFile],
         stats: dict[str, int],
         minified: list[str] | None = None,
+        git_config: IndexedFile | None = None,
     ):
         self.root = root
         self.files = files
         self.stats = stats
+        # `.git/config`, read for the GitSpawn check only and kept out of `files`: it belongs to
+        # whoever cloned the project (their remote URL, maybe with a token in it), not to what the
+        # component ships, so no other rule may treat it as component content.
+        self.git_config = git_config
         # Relative paths of shipped bundles that were deliberately not indexed (see _is_minified).
         self.minified = minified or []
 
@@ -1364,6 +1386,7 @@ class FileIndex:
         root = Path(root).resolve()
         files: list[IndexedFile] = []
         minified: list[str] = []
+        git_config: IndexedFile | None = None
         stats = {
             "indexed": 0,
             "skipped_binary": 0,
@@ -1396,6 +1419,14 @@ class FileIndex:
             # unaffected.
             if text.startswith("\ufeff"):
                 text = text[1:]
+            if path.relative_to(root).parts == (".git", "config"):
+                git_config = IndexedFile(
+                    path=path,
+                    relpath=".git/config",
+                    text=text,
+                    _line_starts=cls._compute_line_starts(text),
+                )
+                continue
             if _is_minified(path.name, text):
                 stats["skipped_minified"] += 1
                 minified.append(path.relative_to(root).as_posix())
@@ -1411,7 +1442,7 @@ class FileIndex:
             stats["indexed"] += 1
 
         files.sort(key=lambda f: f.relpath)
-        return cls(root, files, stats, sorted(minified))
+        return cls(root, files, stats, sorted(minified), git_config)
 
     @staticmethod
     def _walk(
@@ -1421,7 +1452,13 @@ class FileIndex:
             if not path.is_file():
                 continue
             rel = path.relative_to(root)
-            if any(
+            # `.git/config` is the one file under a skipped VCS directory whose own content is
+            # an auto-exec surface: `core.fsmonitor` names a command git runs on every `status`/
+            # `diff`, before an agent shows a trust prompt (GitSpawn, 2026). Everything else
+            # inside `.git` (objects, refs, hook samples, ...) stays skipped.
+            if rel.parts == (".git", "config"):
+                pass
+            elif any(
                 _is_skipped_dir(part, skip_build_output=skip_build_output) for part in rel.parts
             ):
                 continue

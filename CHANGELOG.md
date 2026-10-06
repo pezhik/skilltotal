@@ -4,6 +4,27 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.55.0]
+
+### Added
+- **A component's `.git/config` is checked for `core.fsmonitor`** (GitSpawn, 2026): git runs that
+  command on ordinary `status`/`diff` calls, which several AI coding agents make at session
+  startup. The file is read for this check only and is not component content for any other rule,
+  so a token in the remote URL of a project being scanned locally is never reported as an embedded
+  secret. Ruleset 62.
+- **A Claude Code plugin's own hook manifest is read** (`hooks/hooks.json`,
+  `.claude-plugin/plugin.json`; HookPry, 2026). A hook that fetches or decodes code and runs it is
+  a malicious indicator; an ordinary hook is listed for review with its commands and is not
+  scored. Ruleset 62.
+- **More credential paths and a scanner-evasion variant**: the Vault CLI token, the Hugging Face
+  CLI token and SSH key paths built from path segments; a decode function looked up through
+  `getattr()`/`__dict__`/`vars()` and executed. Ruleset 62.
+
+### Changed
+- **Strings returned by an MCP tool or prompt function are read as text the model sees**, like
+  its docstring, so a poisoning phrase built at call time is no longer dismissed as a string
+  literal. Ruleset 62.
+
 ## [0.54.0]
 
 ### Fixed

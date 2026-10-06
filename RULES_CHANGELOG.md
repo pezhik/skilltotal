@@ -4,6 +4,57 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 62 (engine 0.55.0)
+
+Threat-research runs of 2026-09-22, 09-25 and 10-02: techniques published in the prior ~45 days,
+each reproduced as an inert sample and missed before its rule was written. Before release every
+rule was run over the 225-component hosted catalog against the ruleset-61 reports; the first cut
+changed the risk level of four well-known projects, all false positives, fixed below.
+
+- **`ST-AGENT-GITCONFIG-EXEC-REMOTE`** (new, malicious indicator): a component's `.git/config`
+  sets `core.fsmonitor` to a command that fetches code and pipes it into a shell, or decodes and
+  runs it. Git runs that command on `git status`/`git diff`, which several AI coding agents run
+  at session startup before any trust prompt (GitSpawn, Manifold Security, 2026). A boolean
+  value (git's built-in daemon) is never flagged; a local hook path (a monorepo's watchman
+  integration) is `needs_review`. The file is exposed to this check alone (`FileIndex.git_config`,
+  never `FileIndex.files`): it belongs to whoever cloned the project, not to what the component
+  ships, and a token in its remote URL was otherwise reported as an embedded secret.
+- **`ST-AGENT-AUTORUN-REMOTE` now also reads a Claude Code plugin's own hook manifest**
+  (`hooks/hooks.json`, `.claude-plugin/plugin.json`). HookPry (arXiv:2609.03884) shows a benign
+  plugin turned malicious by an update that binds commands to lifecycle events. A hook command, or
+  the script it runs from the plugin, that fetches or decodes code and executes it is a malicious
+  indicator. An ordinary hook is a `needs_review` entry listing its commands ("Plugin binds
+  lifecycle hooks") and is not scored: hooks are what a plugin is installed for, and a single
+  snapshot cannot see that an update added one. Scoring them as `ST-AGENT-AUTORUN` raised the
+  risk level of popular plugins for nothing more than a session-start hook.
+- **`ST-SENS-PATH`**: the Vault CLI token (`.vault-token`), the Hugging Face CLI token
+  (`.cache/huggingface/token`), and an SSH key path built from segments
+  (`join(home, ".ssh", "id_ed25519")`; also `id_rsa`, `id_ecdsa`, `id_dsa`). The sckit stealer
+  shipped in compromised MemTensor npm and PyPI packages (September 2026) reads these. A written
+  `.ssh/id_ed25519` was already covered by the `.ssh/` path. The key-type name alone is not
+  matched: applications keep their own signing keys under that name in their own directories
+  (`~/.<app>/id_ed25519`), and matching the bare name turned such a registry client into an
+  exfiltration combination.
+- **`ST-OBF-DYNAMIC-DECODE-EXEC`** (new, malicious indicator): a decode function looked up through
+  `getattr()`, `__dict__` or `vars()` by a literal or concatenated name and executed at once
+  (`exec(getattr(base64, "b64" + "decode")(data))`), which `ST-OBF-DECODE-EXEC` misses because the
+  decode name never follows `exec(`. A dynamic decode whose result is not executed does not match.
+- **`ST-MCP-TOOL-POISONING`**: strings returned by a `@mcp.tool()`/`@server.prompt()` function are
+  agent-facing text, like its docstring, and no longer demoted as string literals. Runtime-gated
+  poisoning (Deadbugz, Pillar Security, August 2026) hands the agent its instructions only after
+  some calls, so install-time review of the static description sees nothing.
+- **Investigated, not shipped: a credential returned by an MCP tool** (cf. CVE-2026-67357, an
+  ArcadeDB MCP settings tool that returned the cluster token). A credential-named key whose value
+  is an environment read cannot be told from a client's own configuration by pattern: both catalog
+  hits were `accessToken: process.env.SERVICE_TOKEN`-style client setup, and the CVE itself
+  is in a Java server the engine does not analyze.
+- **Investigated, not shipped** (09-25 and 10-02 runs): cross-skill collusive composition, which
+  splits an attack across two separately installed skills that a per-component scan never sees
+  together; a pipe-to-shell in a skill's markdown setup steps, left to the script-scoped
+  `ST-SHELL-PIPE-EXEC` because the same line is an ordinary install instruction in a README; an
+  environment-and-system probe posted to a webhook, and an install hook that downloads and spawns
+  a binary, both too close to ordinary telemetry and native builds for a precise rule.
+
 ## ruleset 61 (engine 0.54.0)
 
 From the hosted catalog, 2026-10-05: 10 of its 65 MCP servers produced no `ST-MCP-DETECTED`,

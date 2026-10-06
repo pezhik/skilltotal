@@ -70,6 +70,14 @@ _STRONG_PATHS = alternation(
     r"\.codex/auth\.json",
     r"\.gemini/oauth_creds\.json",
     r"\.config/github-copilot/(?:hosts|apps)\.json",
+    # The sckit stealer (compromised @memtensor npm + PyPI packages, September 2026) targeted
+    # these alongside id_rsa: the other OpenSSH key types, a HashiCorp Vault CLI token, and the
+    # Hugging Face CLI's cached access token. A written `.ssh/id_ed25519` is already a `.ssh/`
+    # path above; the key-type name alone is not a credential (an application can keep its own
+    # signing key at ~/.<app>/id_ed25519), so it counts only joined onto an `.ssh` segment.
+    r"""['"]\.ssh['"]\s*,\s*['"]id_(?:rsa|ecdsa|ed25519|dsa)['"]""",
+    r"\.vault-token\b",
+    r"\.cache/huggingface/token\b",
     flags=re.IGNORECASE,
 )
 

@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.49.0 · ruleset 59 · offline corpus.
+Engine 0.55.0 · ruleset 62 · offline corpus.
 
-- **recall: 100.0%** (45/45 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/28 benign samples wrongly flagged)
+- **recall: 100.0%** (49/49 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/32 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -30,6 +30,7 @@ Engine 0.49.0 · ruleset 59 · offline corpus.
 | mcp-sampling-injection | 100% |
 | mcp-tool-poisoning | 100% |
 | password-archive | 100% |
+| plugin-hook-trojan | 100% |
 | prompt-injection | 100% |
 | pth-persistence | 100% |
 | shell-decode-exec | 100% |
@@ -39,9 +40,9 @@ Engine 0.49.0 · ruleset 59 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 6 | 7 | 7 | 2 |
-| AST02 | 0 | 4 | 2 | 0 |
-| AST04 | 10 | 1 | 4 | 0 |
+| AST01 | 6 | 8 | 8 | 2 |
+| AST02 | 0 | 5 | 2 | 0 |
+| AST04 | 10 | 1 | 5 | 0 |
 | AST05 | 0 | 0 | 2 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.

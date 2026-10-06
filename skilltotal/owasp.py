@@ -55,6 +55,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-OBF-DECODE-EXEC": ("AST01",),
     "ST-OBF-DECODE-EXEC-PY": ("AST01",),
     "ST-OBF-DECODE-EXEC-SH": ("AST01",),
+    "ST-OBF-DYNAMIC-DECODE-EXEC": ("AST01",),
     "ST-PTH-EXEC": ("AST01",),
     "ST-SHELL-EVASION": ("AST01",),
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.
@@ -63,6 +64,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-INSTALL-GYP": ("AST02",),
     "ST-AGENT-AUTORUN": ("AST02",),
     "ST-AGENT-AUTORUN-REMOTE": ("AST02",),
+    "ST-AGENT-GITCONFIG-EXEC-REMOTE": ("AST02",),
     "ST-ARCHIVE-PASSWORD-EXTRACT": ("AST01",),
     "ST-INSTALL-NPM-PREPARE": ("AST02",),
     "ST-INSTALL-PY": ("AST02",),

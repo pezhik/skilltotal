@@ -38,6 +38,29 @@ _DECODE_EXEC = alternation(
     r"eval\s*\(\s*Buffer\.from\s*\([^)]*['\"]base64['\"]",
 )
 
+# A decode-function name resolved dynamically instead of written as a literal attribute access,
+# so the call never shows the ``exec(``/``eval(`` immediately followed by ``b64decode``/``atob``
+# shape _DECODE_EXEC looks for. Reported against Claude Code / OpenAI Codex agent skills in
+# September 2026: commands are "rewritten into forms that mean the same thing to a computer but
+# look harmless to a scanner" (cybersecuritynews.com). Covers both a getattr()/__dict__/vars()
+# lookup and the decode-function name itself split across a string concatenation.
+_DYNAMIC_DECODE_NAME = (
+    r"""['"]b64['"]\s*\+\s*['"]decode['"]"""
+    r"""|['"]b64decode['"]"""
+    r"""|['"]ato['"]\s*\+\s*['"]b['"]"""
+    r"""|['"]atob['"]"""
+    r"""|['"]from['"]\s*\+\s*['"]hex['"]"""
+    r"""|['"]fromhex['"]"""
+)
+_DYNAMIC_DECODE_LOOKUP = (
+    rf"getattr\s*\(\s*[\w.]+\s*,\s*(?:{_DYNAMIC_DECODE_NAME})\s*\)"
+    rf"|(?:\.__dict__|\bvars\([\w.]*\))\s*\[\s*(?:{_DYNAMIC_DECODE_NAME})\s*\]"
+)
+_DYNAMIC_DECODE_EXEC = alternation(
+    rf"exec\s*\(\s*(?:{_DYNAMIC_DECODE_LOOKUP})\s*\(",
+    rf"eval\s*\(\s*(?:{_DYNAMIC_DECODE_LOOKUP})\s*\(",
+)
+
 _BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
 _HEX_ESCAPES = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){10,}")
 _MINIFIED_LINE_CHARS = 2000
@@ -86,6 +109,29 @@ class ObfuscationScanner(Scanner):
             code_context="strings_and_comments_all",
             pattern=_DECODE_EXEC,
         ),
+        RuleSpec(
+            id="ST-OBF-DYNAMIC-DECODE-EXEC",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Dynamically-resolved decode-and-execute (scanner-evasion variant)",
+            description=(
+                "A decode function (b64decode/atob/fromhex) is resolved through getattr(), "
+                "__dict__ or vars() instead of a literal attribute, and the result is "
+                "immediately executed. This evades a plain decode-exec scanner, which looks for "
+                "the function name written right after exec(/eval(."
+            ),
+            recommendation=(
+                "Decode the payload manually and inspect what it does before trusting this "
+                "component. Resolving a decode function dynamically has no honest purpose here; "
+                "it exists to dodge static scanners."
+            ),
+            capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # Same reasoning as ST-OBF-DECODE-EXEC: a match inside a string/comment is a pattern
+            # literal or doc example, never live behavior.
+            code_context="strings_and_comments_all",
+            pattern=_DYNAMIC_DECODE_EXEC,
+        ),
         # The following are listed for `rules list`; they emit needs_review only.
         RuleSpec(
             id="ST-OBF-BASE64-BLOB",
@@ -117,7 +163,8 @@ class ObfuscationScanner(Scanner):
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
-        findings = findings_from_rules(index, [self.rules[0]])
+        scored_ids = {"ST-OBF-DECODE-EXEC", "ST-OBF-DYNAMIC-DECODE-EXEC"}
+        findings = findings_from_rules(index, [r for r in self.rules if r.id in scored_ids])
 
         needs_review: list[NeedsReview] = []
         self._heuristic(index, _BASE64_BLOB, "ST-OBF-BASE64-BLOB",

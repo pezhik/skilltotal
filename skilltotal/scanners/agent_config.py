@@ -1,14 +1,22 @@
 """Agent and IDE configuration that runs commands on its own, and AI CLIs driven with guards off.
 
-Two attack shapes published in 2026 live here.
+Three attack shapes published in 2026 live here.
 
 * **Auto-run configuration shipped with a component.** The Miasma worm (npm, June 2026) wrote
   `.claude/settings.json`, `.gemini/settings.json` and `.vscode/tasks.json` into projects so that
   opening the project in an agent or editor ran the worm again; the TrustFall research showed the
   agentic CLIs execute such project configuration after a single trust prompt, or none in CI.
-  A hook in a repository can be an honest formatter, so the configuration alone is a risky
-  construct. When the command, or the script it runs from the same component, fetches code and
-  pipes it into a shell or decodes and executes it, it is a malicious indicator.
+  HookPry (Sept 2026) showed the same lifecycle-hook binding shipped from a Claude Code plugin's
+  own manifest (`hooks/hooks.json`, or inline in `.claude-plugin/plugin.json`) rather than the
+  well-known `.claude/` paths — a plugin *update* can add the hook without the user ever seeing a
+  new settings file. A hook in a repository can be an honest formatter, so the configuration alone
+  is a risky construct. When the command, or the script it runs from the same component, fetches
+  code and pipes it into a shell or decodes and executes it, it is a malicious indicator.
+* **A `.git/config` that runs a command on every `git status`/`git diff`.** GitSpawn (Manifold
+  Security, Sept 2026) found that several AI coding agents run `git status`/`git diff` at session
+  startup, before any trust prompt, and that `core.fsmonitor` in `.git/config` names a command git
+  itself runs to refresh its index on those calls. A component that ships a rigged `.git/config`
+  therefore gets code execution the moment the agent looks at the project.
 * **An AI coding CLI launched with its permission checks disabled.** The s1ngularity and
   Shai-Hulud npm campaigns drove the victim's own `claude`/`gemini`/`q` CLI with flags such as
   `--dangerously-skip-permissions` and `--yolo` to search the disk for secrets. Honest wrappers
@@ -23,7 +31,7 @@ import json
 import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
-from skilltotal.models import Capability, Evidence, Severity, ThreatClass
+from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
     RuleSpec,
@@ -35,11 +43,27 @@ from skilltotal.scanners.base import (
 R_AUTORUN = "ST-AGENT-AUTORUN"
 R_AUTORUN_REMOTE = "ST-AGENT-AUTORUN-REMOTE"
 R_CLI_BYPASS = "ST-AGENT-CLI-BYPASS"
+R_GITCONFIG_REMOTE = "ST-AGENT-GITCONFIG-EXEC-REMOTE"
 
 # Configuration an agent or editor executes when a project is opened or a session starts.
 _HOOK_CONFIGS = (".claude/settings.json", ".claude/settings.local.json", ".gemini/settings.json",
                  ".cursor/hooks.json", ".qwen/settings.json")
+# A Claude Code plugin's own hook manifest (HookPry, 2026). Hooks are what a plugin declares and
+# is installed for, and what HookPry abuses is an *update* adding one, which a single snapshot
+# cannot see. So only a fetch-or-decode-and-run command here is a finding; an honest hook is
+# listed for review and never scored.
+_PLUGIN_HOOK_CONFIGS = ("hooks/hooks.json", ".claude-plugin/plugin.json")
 _TASKS_CONFIG = ".vscode/tasks.json"
+
+# `.git/config`'s `core.fsmonitor` (GitSpawn, 2026): file_index.py reads this one path despite
+# the general `.git` skip, because its content is itself an auto-exec surface, and hands it only
+# to this check (`index.git_config`, never `index.files`). A boolean value
+# (git's own built-in daemon) is the honest, overwhelmingly common case and is never flagged. A
+# bare local hook path (e.g. a large monorepo's watchman integration) is not a malware verdict on
+# its own -- it is a command git will run automatically, so it is surfaced for review, not
+# flagged. Only a fetch-and-run / decode-and-run value is a malicious indicator.
+_FSMONITOR = re.compile(r"^[ \t]*fsmonitor[ \t]*=[ \t]*(.+?)[ \t]*$", re.MULTILINE | re.IGNORECASE)
+_GIT_BOOL_VALUES = frozenset({"true", "false", "yes", "no", "on", "off", "1", "0"})
 
 # Fetch-and-run or decode-and-run, in a shell command or in the source of a script.
 _REMOTE_EXEC = re.compile(
@@ -122,16 +146,39 @@ class AgentConfigScanner(Scanner):
             threat_class=ThreatClass.RISKY_CONSTRUCT,
             code_context="comments",
         ),
+        RuleSpec(
+            id=R_GITCONFIG_REMOTE,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="A shipped .git/config fetches or decodes code and runs it on git status/diff",
+            description=(
+                "This component's own `.git/config` sets `core.fsmonitor` to a command that "
+                "fetches code and pipes it into a shell, or decodes and runs it. Git runs that "
+                "command on ordinary operations (`git status`, `git diff`) to refresh its index -- "
+                "several AI coding agents run exactly those commands at session startup, before "
+                "any trust prompt (GitSpawn, 2026)."
+            ),
+            recommendation=(
+                "Do not open this project in an agent, editor, or run git commands in it. Remove "
+                "`core.fsmonitor` from .git/config and treat a machine that already opened it as "
+                "exposed."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
         by_path = {f.relpath: f for f in index.files}
         autorun: list[Evidence] = []
         remote: list[Evidence] = []
+        needs_review: list[NeedsReview] = []
         for f in index.files:
             rel = f.relpath.replace("\\", "/")
             lowered = rel.lower()
-            if any(lowered.endswith(c) for c in _HOOK_CONFIGS):
+            plugin = any(lowered.endswith(c) for c in _PLUGIN_HOOK_CONFIGS)
+            honest: list[str] = []
+            if plugin or any(lowered.endswith(c) for c in _HOOK_CONFIGS):
                 commands = self._hook_commands(f)
             elif lowered.endswith(_TASKS_CONFIG):
                 commands = self._folder_open_tasks(f)
@@ -139,15 +186,32 @@ class AgentConfigScanner(Scanner):
                 continue
             for command in commands:
                 ev = self._evidence_for(f, command)
-                autorun.append(ev)
                 if _REMOTE_EXEC.search(command):
+                    autorun.append(ev)
                     remote.append(ev)
                     continue
                 script = self._referenced_script(command, by_path)
-                if script is not None:
-                    m = _REMOTE_EXEC.search(script.text)
-                    if m:
-                        remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
+                m = _REMOTE_EXEC.search(script.text) if script is not None else None
+                if m:
+                    autorun.append(ev)
+                    remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
+                elif plugin:
+                    honest.append(command)
+                else:
+                    autorun.append(ev)
+            if honest:
+                needs_review.append(NeedsReview(
+                    category="agent_config",
+                    title="Plugin binds lifecycle hooks",
+                    reason=(
+                        "This plugin runs these commands on agent lifecycle events: "
+                        + "; ".join(c[:120] for c in honest[:5])
+                        + ". Confirm they do what the plugin says, and re-check after updates: "
+                        "an update can add a hook without the user seeing it (HookPry, 2026)."
+                    ),
+                    file=f.relpath,
+                    line=self._evidence_for(f, honest[0]).line_start,
+                ))
 
         bypass: list[Evidence] = []
         for f in index.select(suffixes=_CODE_SUFFIXES):
@@ -156,6 +220,11 @@ class AgentConfigScanner(Scanner):
                 if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
 
+        gitconfig_remote: list[Evidence] = []
+        gitconfig = index.git_config
+        if gitconfig is not None:
+            self._scan_git_config(gitconfig, gitconfig_remote, needs_review)
+
         findings = []
         if remote:
             findings.append(_finding_from_rule(self._rule(R_AUTORUN_REMOTE), remote))
@@ -163,7 +232,37 @@ class AgentConfigScanner(Scanner):
             findings.append(_finding_from_rule(self._rule(R_AUTORUN), autorun))
         if bypass:
             findings.append(_finding_from_rule(self._rule(R_CLI_BYPASS), bypass))
-        return ScanResult(findings=findings)
+        if gitconfig_remote:
+            findings.append(_finding_from_rule(self._rule(R_GITCONFIG_REMOTE), gitconfig_remote))
+        return ScanResult(findings=findings, needs_review=needs_review)
+
+    @staticmethod
+    def _scan_git_config(
+        f: IndexedFile, remote: list[Evidence], needs_review: list[NeedsReview]
+    ) -> None:
+        m = _FSMONITOR.search(f.text)
+        if m is None:
+            return
+        value = m.group(1).strip().strip("\"'")
+        if not value or value.lower() in _GIT_BOOL_VALUES:
+            return  # unset, or the built-in daemon toggle -- not an external command
+        if _REMOTE_EXEC.search(value):
+            remote.append(f.evidence_for_span(m.start(1), m.end(1)))
+            return
+        needs_review.append(
+            NeedsReview(
+                category="agent_config",
+                title="git config core.fsmonitor names an external command",
+                reason=(
+                    "core.fsmonitor is set to a command rather than a boolean, so git runs it "
+                    "automatically on `status`/`diff`. Large repositories legitimately point this "
+                    "at a local watchman hook script -- confirm this one is trusted before running "
+                    "git commands or opening the project in an agent."
+                ),
+                file=f.relpath,
+                line=f.evidence_for_span(m.start(1), m.end(1)).line_start,
+            )
+        )
 
     def _rule(self, rule_id: str) -> RuleSpec:
         return next(r for r in self.rules if r.id == rule_id)
