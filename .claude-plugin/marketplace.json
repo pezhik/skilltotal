@@ -1,5 +1,6 @@
 {
   "name": "skilltotal",
+  "description": "Checks packages for malicious indicators before the agent installs them.",
   "owner": {
     "name": "SkillTotal",
     "url": "https://www.skilltotal.ai"

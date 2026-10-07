@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.56.0
+      - uses: pezhik/skilltotal@v0.56.1
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail the build on a high/critical finding (or 'none')
@@ -262,7 +262,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.56.0
+    rev: v0.56.1
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -284,6 +284,11 @@ The repository doubles as a plugin marketplace, so inside Claude Code run:
 The plugin calls the CLI, so you also need `pip install skilltotal` (0.56.0 or later). Without
 it the plugin stays silent and blocks nothing.
 
+Install the CLI where Claude Code can find it: `skilltotal --version` should work in the terminal
+you start Claude Code from. To see the hook work without touching a real package, ask the agent to
+run `npm install --registry https://registry.example.invalid left-pad`. Claude Code should stop and
+ask you, with SkillTotal's reason. Nothing is installed unless you approve.
+
 Before each Bash command the agent runs, a hook looks for packages the command would install:
 `npx`, `bunx`, `pnpm dlx`, `npm`/`pnpm`/`yarn`/`bun` add or install, `pip`, `uv`, `uvx`, `pipx`,
 and `claude mcp add … -- <command>`. Other commands pass straight through. If a package has
@@ -291,12 +296,22 @@ malicious indicators, the command is denied and the agent sees why. A high- or c
 package needs your approval. A clean one installs as usual, and the agent gets a one-line note
 with its score.
 
+A package from a custom registry or index (`--registry`, `--index-url`, `--extra-index-url`) or a
+direct archive URL always needs your approval, because SkillTotal can only scan the copy on the
+public registry, and that may not be the one that gets installed. Packages from GitHub
+(`github:owner/repo`, `git+https://github.com/...`) are scanned from the repository.
+
 All checks for one command share a 20-second budget (set `SKILLTOTAL_HOOK_BUDGET` to change
 it). A package that isn't checked in time, or whose check fails, never blocks the install, and
 the agent is told it wasn't checked. Verdicts are reused for 24 hours and redone when the engine
 version changes, so repeated `npx tsc` or `npx prettier` calls don't trigger a rescan. The
 plugin also adds a `/skilltotal:scan <target>` command and registers the MCP server described
 below.
+
+The hook reads a command the way the shell would, through `sudo`, `env`, `bash -c '...'`,
+`cmd /c`, `$(...)` and chains like `cd x && npm i y`. It only sees what the command spells out,
+so a command that builds the package name at run time, or a script the agent downloads and runs,
+gets past it. For code you don't trust, run the agent in a container.
 
 ### Use as an MCP server
 

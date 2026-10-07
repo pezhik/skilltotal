@@ -442,6 +442,7 @@ def hook_response(
     clean: list[str] = []
     failed: list[str] = []
     late: list[str] = []
+    scanned_asks = False
     deadline = time.monotonic() + budget_s
     for item in installs:
         if item.source is None:
@@ -465,9 +466,13 @@ def hook_response(
         summary = (f"{source}: risk {report.get('risk_score', 0)}/100 "
                    f"({report.get('risk_level', 'unknown')})")
         if verdict.get("has_malicious_indicators"):
-            denied.append(f"{summary}. {verdict.get('headline') or 'Malicious indicators'}")
+            headline = verdict.get("headline") or "Malicious indicators"
+            denied.append(_sentence(f"{summary}. {headline}"))
         elif not decision.allow:
-            asked.append(f"{summary}. {'; '.join(decision.reasons)}")
+            # The guard's reasons already name the score; repeating the summary reads as a stutter.
+            asked.append(_sentence(f"{source}: {'; '.join(decision.reasons)}"
+                                   if decision.reasons else summary))
+            scanned_asks = True
         else:
             clean.append(summary)
 
@@ -477,7 +482,8 @@ def hook_response(
         return _answer(permission="deny", reason=f"{reason} {details}")
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
-        return _answer(permission="ask", reason=f"{reason} {details}")
+        # The hint only helps for what the scanner can read; a custom index or archive it can't.
+        return _answer(permission="ask", reason=f"{reason} {details}" if scanned_asks else reason)
     notes = []
     if clean:
         notes.append("SkillTotal checked " + "; ".join(clean) + ", no malicious indicators.")
@@ -489,6 +495,11 @@ def hook_response(
             "it before relying on it."
         )
     return _answer(context=" ".join(notes))
+
+
+def _sentence(text: str) -> str:
+    text = text.strip()
+    return text if text.endswith((".", "!", "?")) else text + "."
 
 
 def _answer(

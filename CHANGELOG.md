@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.56.1]
+
+### Fixed
+- **The plugin's hook passes every Bash command to the CLI.** The wrapper skipped commands that
+  did not contain a package manager's name as typed, so `NPM install x` (which Windows runs) and
+  quote-split names such as `n''px x` reached the shell unchecked. The CLI's parser already
+  handled both and now sees every command.
+- **Hook reasons read as plain sentences.** The risk score appears once, every part ends with a
+  full stop, and a package from a custom index no longer suggests running `skilltotal scan`,
+  which could not see it either.
+- **The plugin manifest carries the engine version**, so an installed plugin updates with each
+  release, in step with the CLI that answers its hook. `claude plugin validate --strict` passes.
+
+### Docs
+- README: how to check that the plugin works, why a custom registry asks for approval, how GitHub
+  sources are scanned, and what the hook does not cover.
+
 ## [0.56.0]
 
 ### Added
