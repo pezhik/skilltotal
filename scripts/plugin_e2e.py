@@ -40,6 +40,7 @@ CASES = {
     ),
     "clean package runs after a real scan": ("npx -y is-number", "ran"),
     "a command that installs nothing runs": ("echo st-e2e-plain", "plain"),
+    "a broken CLI warns and does not block": ("npm install st-e2e-probe-nocli", "warned"),
 }
 
 SEEDED = {
@@ -132,6 +133,10 @@ def main() -> int:
         if validate.returncode != 0:
             print(validate.stdout.decode() + validate.stderr.decode())
             return 1
+        broken = tmp / "broken"  # a CLI that fails to start, like a stale editable install
+        broken.mkdir()
+        (broken / "skilltotal").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
+        (broken / "skilltotal").chmod(0o755)
         for tool in ("npm", "npx", "pip"):
             (shims / tool).write_text(SHIM, encoding="utf-8", newline="\n")
             (shims / tool).chmod(0o755)
@@ -144,7 +149,11 @@ def main() -> int:
         failures = 0
         for name, (command, expect) in CASES.items():
             probe = command.split()[-1]
-            results = _bash_results(_session(claude, plugin, work, env, command), probe)
+            case_env = env
+            if expect == "warned":
+                case_env = {**env, "PATH": os.pathsep.join([str(broken), env["PATH"]])}
+            events = _session(claude, plugin, work, case_env, command)
+            results = _bash_results(events, probe)
             text = "\n".join(results)
             if not results:
                 ok, why = False, "the agent never ran the command"
@@ -153,6 +162,9 @@ def main() -> int:
             elif expect == "ran":
                 scanned = "npm:is-number" in (cache / "hook-cache.json").read_text(encoding="utf-8")
                 ok, why = MARKER in text and scanned, "must run, after a real scan"
+            elif expect == "warned":
+                warned = "did not check this install" in json.dumps(events)
+                ok, why = MARKER in text and warned, "must run, with a warning in the session"
             else:
                 ok, why = "st-e2e-plain" in text, "must run"
             failures += not ok

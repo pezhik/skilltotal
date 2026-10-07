@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.56.2]
+
+### Changed
+- **The plugin warns when it can't check an install.** If the `skilltotal` CLI is not on PATH or
+  fails to run (a stale virtualenv, or an older version without the `hook` command), install
+  commands still run, and Claude Code now shows a warning that names the cause and suggests
+  `pip install -U skilltotal`. Before, the hook stayed silent, which looked the same as a clean
+  check. Other commands get no warning.
+
 ## [0.56.1]
 
 ### Fixed

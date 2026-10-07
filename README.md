@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.56.1
+      - uses: pezhik/skilltotal@v0.56.2
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail the build on a high/critical finding (or 'none')
@@ -262,7 +262,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.56.1
+    rev: v0.56.2
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -281,8 +281,9 @@ The repository doubles as a plugin marketplace, so inside Claude Code run:
 /plugin install skilltotal@skilltotal
 ```
 
-The plugin calls the CLI, so you also need `pip install skilltotal` (0.56.0 or later). Without
-it the plugin stays silent and blocks nothing.
+The plugin calls the CLI, so you also need `pip install skilltotal` (0.56.2 or later). If the CLI
+is missing or fails to start, install commands run unchecked and nothing is blocked. Claude Code
+shows a warning on each one, so you can tell a broken setup from a clean check.
 
 Install the CLI where Claude Code can find it: `skilltotal --version` should work in the terminal
 you start Claude Code from. To see the hook work without touching a real package, ask the agent to

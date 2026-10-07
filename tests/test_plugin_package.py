@@ -99,7 +99,10 @@ exit "${ST_STUB_RC:-0}"
 """
 
 
-def _run_wrapper(tmp_path: Path, command: str, *, with_cli: bool = True, cli_rc: int = 0):
+def _run_wrapper(
+    tmp_path: Path, command: str, *, with_cli: bool = True, cli_rc: int = 0,
+    cli_out: str = '{"answer": "from the cli"}',
+):
     """Run hooks/pretooluse.sh the way Claude Code does, with a stand-in `skilltotal` on PATH."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -115,7 +118,7 @@ def _run_wrapper(tmp_path: Path, command: str, *, with_cli: bool = True, cli_rc:
         "PATH": path,
         "ST_STUB_ARGS": str(tmp_path / "args"),
         "ST_STUB_STDIN": str(tmp_path / "stdin"),
-        "ST_STUB_OUT": '{"answer": "from the cli"}',
+        "ST_STUB_OUT": cli_out,
         "ST_STUB_RC": str(cli_rc),
     }
     if "SYSTEMROOT" in os.environ:  # Windows processes need it to start
@@ -147,17 +150,45 @@ def test_the_wrapper_hands_every_install_to_the_cli_unchanged(tmp_path, command)
     assert done.returncode == 0
     assert (tmp_path / "args").read_text(encoding="utf-8") == "hook claude-code"
     assert (tmp_path / "stdin").read_bytes().decode() == event
-    assert done.stdout.decode() == '{"answer": "from the cli"}'
+    assert done.stdout.decode().strip() == '{"answer": "from the cli"}'
 
 
 @needs_sh
-def test_a_failing_cli_never_fails_the_hook(tmp_path):
-    done, _ = _run_wrapper(tmp_path, "npm install lodash", cli_rc=3)
+def test_a_silent_cli_answer_stays_silent(tmp_path):
+    done, _ = _run_wrapper(tmp_path, "ls -la", cli_out="")
     assert done.returncode == 0
+    assert done.stdout == b""
+
+
+def _warning(done) -> dict:
+    assert done.returncode == 0
+    answer = json.loads(done.stdout.decode())
+    # A warning, never a decision: the install goes ahead as if the plugin were not there.
+    assert "permissionDecision" not in answer["hookSpecificOutput"]
+    assert "did not check this install" in answer["hookSpecificOutput"]["additionalContext"]
+    return answer
 
 
 @needs_sh
-def test_without_the_cli_the_hook_steps_aside(tmp_path):
-    done, _ = _run_wrapper(tmp_path, "npm install lodash", with_cli=False)
+@pytest.mark.parametrize("command", ["npm install lodash", "NPX evil", "p\"i\"p install x"])
+def test_without_the_cli_an_install_warns_the_person_and_proceeds(tmp_path, command):
+    """A missing CLI must not look like protection that found nothing."""
+    answer = _warning(_run_wrapper(tmp_path, command, with_cli=False)[0])
+    assert "not on PATH" in answer["systemMessage"]
+    assert "pip install -U skilltotal" in answer["systemMessage"]
+
+
+@needs_sh
+def test_a_broken_cli_warns_the_person_and_proceeds(tmp_path):
+    """Seen 2026-10-07: a stale editable install whose module was gone; and a CLI older than
+    `hook` exits 2 on the unknown command. Either way nothing was checked."""
+    answer = _warning(_run_wrapper(tmp_path, "npm install lodash", cli_rc=3)[0])
+    assert "failed to run" in answer["systemMessage"]
+
+
+@needs_sh
+def test_without_the_cli_other_commands_stay_quiet(tmp_path):
+    """The warning is for installs; it must not fire on every `ls` the agent runs."""
+    done, _ = _run_wrapper(tmp_path, "ls -la", with_cli=False)
     assert done.returncode == 0
     assert done.stdout == b""
