@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.56.4]
+
+### Changed
+- **The plugin lives in `plugin/`.** The marketplace now serves only the plugin's own files (the
+  manifest, the hook, the `/skilltotal:scan` command and a listing icon) instead of the whole
+  repository. Install commands stay the same. To update an installed copy, run
+  `/plugin marketplace update skilltotal`, then `/reload-plugins`.
+
+### Docs
+- README: the Claude Code plugin has its own section after Install.
+
 ## [0.56.3]
 
 ### Fixed

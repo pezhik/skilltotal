@@ -66,13 +66,17 @@ def _run(argv: list[str], **kw) -> subprocess.CompletedProcess:
 
 
 def _export_plugin(dest: Path) -> None:
-    """Copy the tracked files, as the marketplace would serve them (no local-only files)."""
-    files = _run(["git", "ls-files", "-z"], cwd=ROOT).stdout.decode().split("\0")
+    """Copy the plugin's tracked files, as the marketplace would serve them (no local-only files).
+
+    The plugin is the `plugin/` folder, not the whole repository: the directory validator lints
+    every file in a plugin, and the engine's fixtures and detection signatures read as secrets."""
+    files = _run(["git", "ls-files", "-z", "plugin"], cwd=ROOT).stdout.decode().split("\0")
     for rel in filter(None, files):
         src = ROOT / rel
         if src.is_file():
-            (dest / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dest / rel)
+            out = dest / Path(rel).relative_to("plugin")
+            out.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, out)
 
 
 def _engine_version(skilltotal: str, env: dict) -> str:

@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "skilltotal",
-      "source": "./",
+      "source": "./plugin",
       "description": "Scan packages before the agent installs them."
     }
   ]

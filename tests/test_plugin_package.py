@@ -27,10 +27,11 @@ from tests.test_agent_hook import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+PLUGIN_ROOT = ROOT / "plugin"
+PLUGIN = json.loads((PLUGIN_ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
 MARKETPLACE = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-HOOKS = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
-WRAPPER = ROOT / "hooks" / "pretooluse.sh"
+HOOKS = json.loads((PLUGIN_ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+WRAPPER = PLUGIN_ROOT / "hooks" / "pretooluse.sh"
 
 
 def _bash_hooks() -> list[dict]:
@@ -45,10 +46,28 @@ def _bash_hooks() -> list[dict]:
 # --- Manifests --------------------------------------------------------------------------------
 
 
-def test_the_marketplace_lists_this_repository_as_the_plugin():
+def test_the_marketplace_serves_only_the_plugin_folder():
+    """The directory validator lints every file in the plugin. Serving the whole repository put the
+    engine's test fixtures and detection signatures in front of it, which read as secrets."""
     (entry,) = MARKETPLACE["plugins"]
     assert entry["name"] == PLUGIN["name"] == MARKETPLACE["name"] == "skilltotal"
-    assert entry["source"] == "./"
+    assert entry["source"] == "./plugin"
+    shipped = {p.relative_to(PLUGIN_ROOT).as_posix() for p in PLUGIN_ROOT.rglob("*") if p.is_file()}
+    assert shipped == {
+        ".claude-plugin/plugin.json",
+        ".claude-plugin/icon.png",
+        "hooks/hooks.json",
+        "hooks/pretooluse.sh",
+        "commands/scan.md",
+    }
+
+
+def test_the_plugin_icon_is_a_square_png_the_directory_accepts():
+    data = (PLUGIN_ROOT / ".claude-plugin" / "icon.png").read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+    assert width == height and 512 <= width <= 2048
+    assert len(data) < 2 * 1024 * 1024
 
 
 def test_the_plugin_version_is_the_engine_version():
@@ -90,7 +109,7 @@ def test_every_cli_command_the_plugin_calls_exists():
     server = PLUGIN["mcpServers"]["skilltotal"]
     assert server["command"] == "skilltotal"
     parser.parse_args(server["args"])
-    scan_command = (ROOT / "commands" / "scan.md").read_text(encoding="utf-8")
+    scan_command = (PLUGIN_ROOT / "commands" / "scan.md").read_text(encoding="utf-8")
     assert "skilltotal scan $ARGUMENTS --json" in scan_command
     parser.parse_args(["scan", "x", "--json"])
 
