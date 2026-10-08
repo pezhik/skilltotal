@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.56.2
+      - uses: pezhik/skilltotal@v0.56.3
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail the build on a high/critical finding (or 'none')
@@ -262,7 +262,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.56.2
+    rev: v0.56.3
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -281,7 +281,10 @@ The repository doubles as a plugin marketplace, so inside Claude Code run:
 /plugin install skilltotal@skilltotal
 ```
 
-The plugin calls the CLI, so you also need `pip install skilltotal` (0.56.2 or later). If the CLI
+Then run `/reload-plugins` or restart Claude Code. The hook loads along with the plugins, so
+until you do, it does not check install commands in the session where you ran `/plugin install`.
+
+The plugin calls the CLI, so you also need `pip install skilltotal` (0.56.3 or later). If the CLI
 is missing or fails to start, install commands run unchecked and nothing is blocked. Claude Code
 shows a warning on each one, so you can tell a broken setup from a clean check.
 
@@ -290,7 +293,8 @@ you start Claude Code from. To see the hook work without touching a real package
 run `npm install --registry https://registry.example.invalid left-pad`. Claude Code should stop and
 ask you, with SkillTotal's reason. Nothing is installed unless you approve.
 
-Before each Bash command the agent runs, a hook looks for packages the command would install:
+On Windows, Claude Code runs most commands through its PowerShell tool. Before each command the
+agent runs through the Bash or PowerShell tool, a hook looks for packages the command would install:
 `npx`, `bunx`, `pnpm dlx`, `npm`/`pnpm`/`yarn`/`bun` add or install, `pip`, `uv`, `uvx`, `pipx`,
 and `claude mcp add … -- <command>`. Other commands pass straight through. If a package has
 malicious indicators, the command is denied and the agent sees why. A high- or critical-risk
@@ -310,7 +314,9 @@ plugin also adds a `/skilltotal:scan <target>` command and registers the MCP ser
 below.
 
 The hook reads a command the way the shell would, through `sudo`, `env`, `bash -c '...'`,
-`cmd /c`, `$(...)` and chains like `cd x && npm i y`. It only sees what the command spells out,
+`cmd /c`, `$(...)`, groups like `(npm i y)` and chains like `cd x && npm i y`. For PowerShell it
+also follows `& { ... }`, `iex '...'`, `Start-Process npm -ArgumentList ...` and
+`powershell -EncodedCommand`. It only sees what the command spells out,
 so a command that builds the package name at run time, or a script the agent downloads and runs,
 gets past it. For code you don't trust, run the agent in a container.
 

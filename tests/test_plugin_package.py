@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -36,7 +37,7 @@ def _bash_hooks() -> list[dict]:
     return [
         hook
         for entry in HOOKS["hooks"]["PreToolUse"]
-        if entry["matcher"] == "Bash"
+        if re.fullmatch(entry["matcher"], "Bash")
         for hook in entry["hooks"]
     ]
 
@@ -59,6 +60,14 @@ def test_the_plugin_version_is_the_engine_version():
 def test_the_plugin_carries_what_the_directory_listing_shows():
     for field in ("description", "author", "homepage", "repository", "license"):
         assert PLUGIN[field], field
+
+
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+def test_the_hook_runs_before_every_command_tool(tool):
+    """Claude Code on Windows runs most commands through its PowerShell tool. Seen 2026-10-08: a
+    Bash-only matcher let `npm install --registry <custom> left-pad` through without a word."""
+    (entry,) = [e for e in HOOKS["hooks"]["PreToolUse"] if re.fullmatch(e["matcher"], tool)]
+    assert entry["hooks"] == _bash_hooks()
 
 
 def test_the_bash_hook_runs_the_wrapper_that_ships_in_the_repository():

@@ -368,3 +368,117 @@ def test_installs_the_scanner_cannot_see_ask_the_person(command):
     assert spec["permissionDecision"] == "ask"
     assert "can't check" in spec["permissionDecisionReason"]
     assert calls == []
+
+
+# --- Grouping: the shell runs what sits inside parentheses and braces -------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["(npm install evil)", "{ npm install evil; }", "(cd web && npm install evil)"],
+)
+def test_installs_inside_a_group_are_found(command):
+    assert install_targets(command) == ["npm:evil"]
+
+
+# --- The PowerShell tool ----------------------------------------------------------------------
+# On Windows the agent runs most commands through Claude Code's PowerShell tool, not Bash. Seen
+# 2026-10-08: with a Bash-only hook, `npm install --registry <custom> left-pad` reached npm.
+
+
+def _powershell(command):
+    return {"hook_event_name": "PreToolUse", "tool_name": "PowerShell",
+            "tool_input": {"command": command}}
+
+
+def _ps_targets(command):
+    return install_targets(command, shell="powershell")
+
+
+@pytest.mark.parametrize(("command", "expected"), INSTALL_COMMANDS)
+def test_powershell_finds_the_same_installs(command, expected):
+    if "~" in command or "'fastapi" in command:
+        pytest.skip("POSIX-only spelling")
+    assert _ps_targets(command) == expected
+
+
+POWERSHELL_COMMANDS = [
+    r"C:\nodejs\npm.cmd install evil",
+    r"& 'C:\Program Files\nodejs\npm.cmd' install evil",
+    r'& "C:\Program Files\nodejs\npx.cmd" -y evil',
+    "npm.ps1 install evil",
+    "Set-Location web; npm install evil",
+    "cd web && npm install evil",
+    "npm install evil 2>&1 | Out-Null",
+    "$env:NODE_ENV = 'x'; npm install evil",
+    "iex 'npm install evil'",
+    'Invoke-Expression "npm install evil"',
+    "Invoke-Expression -Command 'pip install evil'",
+    "Start-Process npm -ArgumentList 'install','evil' -Wait",
+    "Start-Process -FilePath npm.cmd -ArgumentList 'install evil' -NoNewWindow -Wait",
+    "saps pip 'install evil'",
+    "& { npm install evil }",
+    "Invoke-Command -ScriptBlock { pip install evil }",
+    "1..2 | ForEach-Object { npm install evil }",
+    "Write-Output $(npm install evil)",
+    "n`px evil",
+    "npm --% install evil",
+    "NPM INSTALL evil",
+    "cmd /c npm install evil",
+    r'cmd /c "C:\nodejs\npm.cmd" install evil',
+    "bash -c 'npm install evil'",
+    "pwsh -NoProfile -Command npm install evil",
+]
+
+
+@pytest.mark.parametrize("command", POWERSHELL_COMMANDS)
+def test_powershell_install_shapes_are_found(command):
+    assert {"npm:evil", "pypi:evil"} & set(_ps_targets(command))
+
+
+@pytest.mark.parametrize("flag", ["-EncodedCommand", "-enc", "-e", "-ec"])
+def test_an_encoded_powershell_command_is_read(flag):
+    """`powershell -EncodedCommand` takes base64 UTF-16LE; it is still a command line."""
+    import base64
+
+    encoded = base64.b64encode("npm install evil".encode("utf-16-le")).decode()
+    command = f"powershell -NoProfile {flag} {encoded}"
+    assert install_targets(command) == ["npm:evil"]
+    assert _ps_targets(command) == ["npm:evil"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "Get-ChildItem node_modules",
+        "npm test",
+        "npm install",
+        "Write-Output 'npm install evil'",
+        "Select-String -Path README.md -Pattern 'pip install'",
+        "Start-Process notepad.exe",
+        "Remove-Item -Recurse -Force dist",
+        "",
+    ],
+)
+def test_powershell_stays_silent_on_commands_that_install_nothing_new(command):
+    assert _ps_targets(command) == []
+
+
+def test_the_powershell_tool_gets_the_same_answers_as_bash():
+    calls = []
+    out = hook_response(
+        _powershell("npx -y evil-mcp"),
+        scan=lambda s, t: calls.append(s) or _report("critical", 100, True, "Malicious"),
+    )
+    assert calls == ["npm:evil-mcp"]
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("command", UNVERIFIABLE_COMMANDS)
+def test_a_powershell_install_the_scanner_cannot_see_asks_the_person(command):
+    calls = []
+    out = hook_response(_powershell(command), scan=lambda s, t: calls.append(s) or _report())
+    spec = out["hookSpecificOutput"]
+    assert spec["permissionDecision"] == "ask"
+    assert "can't check" in spec["permissionDecisionReason"]
+    assert calls == []

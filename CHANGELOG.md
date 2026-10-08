@@ -4,6 +4,21 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.56.3]
+
+### Fixed
+- **The plugin checks commands the agent runs through PowerShell.** On Windows, Claude Code runs
+  most commands through its PowerShell tool, but the hook only listened to the Bash tool, so
+  installs run through PowerShell went unchecked. The hook now covers both tools. The CLI also
+  reads PowerShell quoting (a backtick escapes, a backslash is part of the path), the `&` call
+  operator, script blocks, `iex`/`Invoke-Expression`, `Start-Process` and
+  `powershell -EncodedCommand`. In Bash, it now also finds commands inside parentheses and
+  braces, such as `(npm i x)`.
+
+### Docs
+- README: after installing the plugin, run `/reload-plugins` or restart Claude Code. Until then,
+  the hook does not check commands in the session that installed it.
+
 ## [0.56.2]
 
 ### Changed

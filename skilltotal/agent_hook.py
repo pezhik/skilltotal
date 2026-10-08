@@ -1,6 +1,7 @@
 """Claude Code PreToolUse hook: check a package before the agent installs it.
 
-The SkillTotal plugin runs this before every Bash command the agent wants to execute. It finds the
+The SkillTotal plugin runs this before every Bash or PowerShell command the agent wants to execute
+(Claude Code on Windows runs most commands through its PowerShell tool). It finds the
 packages an install command would bring in (``npx``, ``npm install``, ``pip install``, ``uvx``,
 ``claude mcp add ... -- npx ...``), scans each one, and answers in Claude Code's hook format:
 
@@ -21,6 +22,8 @@ reads stdin and prints the answer.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import shlex
 import time
@@ -45,8 +48,14 @@ class Install:
     unverifiable: str | None = None  # e.g. "pkg from https://registry.example"
 
 
-_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|&\n]")
-_SUBSTITUTION = re.compile(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)")
+# Statement separators, and the brackets of a group, a subshell or a script block: the shell runs
+# what sits inside `(npm i x)`, `{ npm i x; }` and `& { npm i x }` too.
+_SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|&\n(){}]")
+_SUBSTITUTION = {
+    "bash": re.compile(r"\$\(([^()]*)\)|`([^`]*)`|<\(([^()]*)\)"),
+    "powershell": re.compile(r"\$\(([^()]*)\)"),  # a backtick is PowerShell's escape character
+    "cmd": re.compile(r"(?!)"),
+}
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _DRIVE = re.compile(r"^[A-Za-z]:")
 _PY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -70,6 +79,9 @@ _WRAPPERS: dict[str, set[str]] = {
     "timeout": {"-s", "-k", "--signal", "--kill-after"},
 }
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
+# PowerShell: wrappers that take the command line as a string, and the ones that start a program.
+_PS_EVAL = {"iex", "invoke-expression"}
+_PS_START = {"start-process", "saps", "start"}
 
 # npm-family subcommands that install the named packages (npm's own aliases and typo-tolerance).
 _NPM_INSTALL = {"install", "i", "in", "ins", "inst", "insta", "instal", "isnt", "isnta", "isntal",
@@ -95,29 +107,51 @@ _PIP_SOURCE_FLAGS = {"-i", "--index-url", "--extra-index-url", "-f", "--find-lin
                      "--default-index"}
 
 
-def install_targets(command: str) -> list[str]:
+def install_targets(command: str, shell: str = "bash") -> list[str]:
     """Scannable sources (``npm:name``, ``pypi:name``, a GitHub URL) an install would bring in."""
-    return [i.source for i in parse_installs(command) if i.source]
+    return [i.source for i in parse_installs(command, shell) if i.source]
 
 
-def parse_installs(command: str, _depth: int = 0) -> list[Install]:
-    """Everything an install command would bring in, scannable or not (capped at MAX_TARGETS)."""
+def parse_installs(command: str, shell: str = "bash", _depth: int = 0) -> list[Install]:
+    """Everything an install command would bring in, scannable or not (capped at MAX_TARGETS).
+
+    ``shell`` is how the command line is quoted: ``bash`` (POSIX), ``powershell`` or ``cmd``.
+    """
     found: list[Install] = []
     if _depth > _MAX_DEPTH or not command:
         return found
     # A command substitution runs too: `echo $(npm install x)` installs x.
     pieces = [command] + [next(g for g in m.groups() if g is not None)
-                          for m in _SUBSTITUTION.finditer(command)]
+                          for m in _SUBSTITUTION[shell].finditer(command)]
     for piece in pieces:
         for segment in _SEGMENT_SPLIT.split(piece):
             try:
-                tokens = shlex.split(segment, posix=True)
+                tokens = _split(segment, shell)
             except ValueError:
                 continue  # unbalanced quotes: not something we can read reliably
-            for item in _installs_in(_unwrap(tokens), _depth):
+            for item in _installs_in(_unwrap(tokens), shell, _depth):
                 if item not in found:
                     found.append(item)
     return found[:MAX_TARGETS]
+
+
+def _split(segment: str, shell: str) -> list[str]:
+    """Words the way the shell would pass them. Only a POSIX shell escapes with a backslash:
+    PowerShell escapes with a backtick and cmd with a caret, so ``C:\\nodejs\\npm.cmd`` stays
+    a path.
+    """
+    if shell == "bash":
+        return shlex.split(segment, posix=True)
+    lexer = shlex.shlex(segment, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    if shell == "powershell":
+        lexer.escape = "`"
+    else:
+        lexer.escape = "^"
+        lexer.quotes = '"'
+    lexer.escapedquotes = '"'
+    return list(lexer)
 
 
 def _base(token: str) -> str:
@@ -148,16 +182,21 @@ def _unwrap(tokens: list[str]) -> list[str]:
     return tokens
 
 
-def _installs_in(tokens: list[str], depth: int) -> list[Install]:
+def _installs_in(tokens: list[str], shell: str, depth: int) -> list[Install]:
     if not tokens:
         return []
     head, rest = _base(tokens[0]), tokens[1:]
+    if shell == "powershell" and head == "." and rest:  # dot-sourcing runs the command too
+        head, rest = _base(rest[0]), rest[1:]
 
-    inner = _inner_command(head, rest)
+    inner = _inner_command(head, rest, shell)
     if inner is not None:
-        return parse_installs(inner, depth + 1)
+        return parse_installs(inner[0], inner[1], depth + 1)
+    if shell == "powershell" and head in _PS_START:
+        started = _start_process(rest)
+        return _installs_in(_unwrap(started), shell, depth) if started else []
     if head == "claude" and rest[:2] == ["mcp", "add"] and "--" in rest:
-        return _installs_in(_unwrap(rest[rest.index("--") + 1:]), depth)
+        return _installs_in(_unwrap(rest[rest.index("--") + 1:]), shell, depth)
     if head in _NPM_RUNNERS:
         return _npx(rest)
     if head in ("npm", "pnpm", "yarn", "bun"):
@@ -176,24 +215,82 @@ def _installs_in(tokens: list[str], depth: int) -> list[Install]:
     return []
 
 
-def _inner_command(head: str, rest: list[str]) -> str | None:
-    """The command string a shell would run: ``bash -lc '...'``, ``cmd /c ...``, ``pwsh -c ...``."""
+def _inner_command(head: str, rest: list[str], shell: str) -> tuple[str, str] | None:
+    """The command string another shell would run, and how it is quoted: ``bash -lc '...'``,
+    ``cmd /c ...``, ``pwsh -c ...``, ``powershell -EncodedCommand ...``, ``iex '...'``."""
     if head in _SHELLS:
         for i, arg in enumerate(rest):
             if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
-                return rest[i + 1] if i + 1 < len(rest) else None
+                return (rest[i + 1], "bash") if i + 1 < len(rest) else None
         return None
     if head == "cmd":
         for i, arg in enumerate(rest):
             if arg.lower() in ("/c", "/k"):
-                return " ".join(rest[i + 1:])
+                return " ".join(rest[i + 1:]), "cmd"
         return None
     if head in ("powershell", "pwsh"):
         for i, arg in enumerate(rest):
-            if arg.lower() in ("-command", "-c", "/command"):
-                return " ".join(rest[i + 1:])
+            flag = arg.lower().lstrip("-/")
+            if flag in ("command", "c"):
+                return " ".join(rest[i + 1:]), "powershell"
+            if flag in ("encodedcommand", "enc", "ec", "e") and i + 1 < len(rest):
+                decoded = _decode_ps(rest[i + 1])
+                return (decoded, "powershell") if decoded else None
         return None
+    if shell == "powershell" and head in _PS_EVAL:
+        args = [a for a in rest if a.lower() != "-command"]
+        return (" ".join(args), "powershell") if args else None
     return None
+
+
+def _decode_ps(value: str) -> str | None:
+    """``-EncodedCommand`` is base64 of the UTF-16LE command line."""
+    try:
+        return base64.b64decode(value, validate=True).decode("utf-16-le")
+    except (binascii.Error, UnicodeDecodeError, ValueError):
+        return None
+
+
+# Start-Process parameters that take a value (only the program and its arguments matter here).
+_START_PARAMS = {
+    "file": ("filepath", "path", "pspath"),
+    "args": ("argumentlist", "args"),
+    "other": ("workingdirectory", "verb", "windowstyle", "redirectstandardoutput",
+              "redirectstandarderror", "redirectstandardinput", "credential", "environment"),
+}
+
+
+def _start_process(rest: list[str]) -> list[str]:
+    """``Start-Process npm -ArgumentList 'install','x'`` -> ``npm install x``.
+
+    PowerShell accepts any unambiguous prefix of a parameter name, so ``-Arg`` and ``-File`` count.
+    """
+    named: dict[str, str] = {}
+    positional: list[str] = []
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg.startswith("-") and len(arg) > 1:
+            name = arg[1:].lower()
+            key = next((k for k, names in _START_PARAMS.items()
+                        if any(n.startswith(name) for n in names)), None)
+            if key and i + 1 < len(rest):
+                named.setdefault(key, rest[i + 1])
+                i += 2
+            else:
+                i += 1  # a switch such as -Wait or -NoNewWindow
+            continue
+        positional.append(arg)
+        i += 1
+    program = named.get("file") or (positional.pop(0) if positional else None)
+    arguments = named.get("args") or (positional[0] if positional else "")
+    if not program:
+        return []
+    try:
+        words = [w for part in arguments.split(",") for w in _split(part, "powershell")]
+    except ValueError:
+        return []
+    return [program, *words]
 
 
 def _subcommand(args: list[str], value_flags: set[str]) -> tuple[str | None, list[str]]:
@@ -419,6 +516,8 @@ def _pipx(rest: list[str]) -> list[Install]:
 
 
 Scan = Callable[[str, float], dict[str, Any]]
+# Claude Code's command tools, and how each one quotes a command line.
+_TOOL_SHELLS = {"Bash": "bash", "PowerShell": "powershell"}
 
 
 def hook_response(
@@ -430,10 +529,11 @@ def hook_response(
     as ``npm:name``, or raises ``TimeoutError`` when it runs out of time. All the command's checks
     share ``budget_s`` seconds: each gets what is left, and none starts once it is spent.
     """
-    if event.get("tool_name") != "Bash":
+    shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
+    if shell is None:
         return None
     command = str((event.get("tool_input") or {}).get("command", ""))
-    installs = parse_installs(command)
+    installs = parse_installs(command, shell)
     if not installs:
         return None
 
