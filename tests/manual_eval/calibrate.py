@@ -225,8 +225,21 @@ def summarize(results: list[RowResult]) -> dict:
         "finding_mismatches": len(finding_mismatches),
         "combo_on_benign": len(combo_on_benign),
         "avg_needs_review": round(sum(noisy) / len(noisy), 2) if noisy else 0.0,
+        # The mean is pulled by a few large packages (one linter alone moved it by 2.5 before
+        # 0.57.0), so the median and p90 say what a typical report looks like.
+        "median_needs_review": _percentile(noisy, 50),
+        "p90_needs_review": _percentile(noisy, 90),
         "max_needs_review": max(noisy) if noisy else 0,
     }
+
+
+def _percentile(values: list[int], pct: int) -> float:
+    """Nearest-rank percentile; 0.0 for no values."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = max(1, -(-pct * len(ordered) // 100))
+    return float(ordered[rank - 1])
 
 
 def to_markdown(results: list[RowResult], summary: dict) -> str:
