@@ -23,7 +23,13 @@ import re
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
-from skilltotal.scanners.base import MAX_EVIDENCE_SCANNED, RuleSpec, Scanner, ScanResult
+from skilltotal.scanners.base import (
+    MAX_EVIDENCE_SCANNED,
+    RuleSpec,
+    Scanner,
+    ScanResult,
+    aggregated_review,
+)
 
 CATEGORY = "hidden_unicode"
 
@@ -124,6 +130,7 @@ class InvisibleUnicodeScanner(Scanner):
         evidence: list[Evidence] = []
         needs_review: list[NeedsReview] = []
         review_seen: set[str] = set()
+        review_places: list[tuple[str, int | None]] = []
 
         for f in index.files:
             # Every character this scanner hunts (tag chars, bidi controls, zero-width) is
@@ -161,19 +168,18 @@ class InvisibleUnicodeScanner(Scanner):
                         )
                 elif any(_is_review(ord(c)) for c in line) and f.relpath not in review_seen:
                     review_seen.add(f.relpath)
-                    needs_review.append(
-                        NeedsReview(
-                            category=CATEGORY,
-                            title="Bidi / zero-width Unicode",
-                            reason=(
-                                f"Bidi/zero-width character(s) at line {lineno} may be "
-                                "legitimate (locale/RTL/CJK/HTML entities) but can also hide "
-                                "text; review the rendered characters."
-                            ),
-                            file=f.relpath,
-                            line=lineno,
-                        )
-                    )
+                    review_places.append((f.relpath, lineno))
+
+        if review_places:
+            # One note for every file with ambiguous characters, not one per file.
+            needs_review.append(aggregated_review(
+                category=CATEGORY,
+                title="Bidi / zero-width Unicode",
+                places=review_places,
+                what="file(s) with bidi/zero-width characters",
+                advice="They may be legitimate (locale/RTL/CJK/HTML entities) but can also "
+                       "hide text; review the rendered characters.",
+            ))
 
         findings: list[Finding] = []
         if evidence:

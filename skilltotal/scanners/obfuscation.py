@@ -13,10 +13,11 @@ import re
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
-    MAX_EVIDENCE_PER_FINDING,
+    MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
+    aggregated_review,
     alternation,
     findings_from_rules,
 )
@@ -168,33 +169,35 @@ class ObfuscationScanner(Scanner):
 
         needs_review: list[NeedsReview] = []
         self._heuristic(index, _BASE64_BLOB, "ST-OBF-BASE64-BLOB",
-                        "Large base64 blob", "large base64-looking blob", needs_review)
+                        "Large base64 blob", "large base64-looking blob(s)", needs_review)
         self._heuristic(index, _HEX_ESCAPES, "ST-OBF-HEX",
-                        "Excessive hex escaping", "run of hex escape sequences", needs_review)
+                        "Excessive hex escaping", "run(s) of hex escape sequences", needs_review)
         self._minified(index, needs_review)
         return ScanResult(findings=findings, needs_review=needs_review)
 
     def _heuristic(self, index, pattern, _rule_id, title, what, needs_review) -> None:
+        """One aggregated note per heuristic (it used to be one per line, up to 75)."""
+        places: list[tuple[str, int | None]] = []
         seen: set[tuple[str, int]] = set()
+        capped = False
         for _f, _m, ev in index.search(pattern):
             key = (ev.file, ev.line_start)
             if key in seen:
                 continue
+            if len(places) >= MAX_EVIDENCE_SCANNED:
+                capped = True
+                break
             seen.add(key)
-            needs_review.append(
-                NeedsReview(
-                    category=CATEGORY,
-                    title=title,
-                    reason=(
-                        f"A {what} was found at line {ev.line_start}; cannot confirm "
-                        "malicious intent without decoding."
-                    ),
-                    file=ev.file,
-                    line=ev.line_start,
-                )
-            )
-            if len(needs_review) >= 3 * MAX_EVIDENCE_PER_FINDING:
-                return
+            places.append(key)
+        if places:
+            needs_review.append(aggregated_review(
+                category=CATEGORY,
+                title=title,
+                places=places,
+                what=what,
+                advice="Malicious intent cannot be confirmed without decoding them.",
+                capped=capped,
+            ))
 
     def _minified(self, index: FileIndex, needs_review: list[NeedsReview]) -> None:
         """One aggregated note per report (not per file), skipping expected formats.

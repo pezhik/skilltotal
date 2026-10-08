@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from skilltotal.file_index import FileIndex, IndexedFile
+from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.text_normalize import original_span
 
@@ -93,6 +93,41 @@ class RuleSpec:
             "capability": self.capability.value if self.capability else "",
             "threat_class": self.threat_class.value,
         }
+
+# How many places an aggregated needs_review note names before "and N more".
+REVIEW_PLACES_SHOWN = 5
+
+
+def aggregated_review(
+    *,
+    category: str,
+    title: str,
+    places: list[tuple[str, int | None]],
+    what: str,
+    advice: str,
+    capped: bool = False,
+) -> NeedsReview:
+    """One needs_review note for every place a review-only heuristic matched.
+
+    These heuristics used to write one note per file or per line, so a single package could
+    carry hundreds of identical rows (352 "Unparseable Python file" notes for one linter's test
+    fixtures). The note now says how many places matched, names the first few as ``file:line``,
+    says how many are in test code, and points ``file``/``line`` at the first one.
+    """
+    shown = ", ".join(f"{f}:{ln}" if ln else f for f, ln in places[:REVIEW_PLACES_SHOWN])
+    more = len(places) - REVIEW_PLACES_SHOWN
+    if more > 0:
+        shown += f", and {more}{'+' if capped else ''} more"
+    count = f"{len(places)}{'+' if capped else ''}"
+    in_tests = len({f for f, _ in places if is_test_path(f)})
+    tests = f" {in_tests} of the files are test code." if in_tests else ""
+    return NeedsReview(
+        category=category,
+        title=title,
+        reason=f"{count} {what}: {shown}.{tests} {advice}",
+        file=places[0][0],
+        line=places[0][1],
+    )
 
 
 @dataclass

@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.57.0]
+
+### Changed
+- **Review notes are grouped.** Five review-only heuristics used to write one `needs_review`
+  note for every file or line they matched: unparseable Python files, dynamic imports, large
+  base64 blobs, runs of hex escapes, and files with bidi/zero-width characters. One package could
+  carry hundreds of identical notes (352 for one linter's deliberately broken test fixtures).
+  Each heuristic now writes a single note that says how many places matched, names the first
+  five as `file:line`, and says how many of the files are test code. Findings, capabilities and
+  the score are unchanged; the report schema is unchanged.
+
 ## [0.56.4]
 
 ### Changed

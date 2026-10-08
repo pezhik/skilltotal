@@ -20,6 +20,7 @@ from skilltotal.scanners.base import (
     RuleSpec,
     Scanner,
     ScanResult,
+    aggregated_review,
     alternation,
 )
 from skilltotal.scanners.sensitive_paths import (  # reuse the credential-path set
@@ -388,51 +389,46 @@ class PythonAstScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         acc: dict[str, list[Evidence]] = {}
         needs_review: list[NeedsReview] = []
+        unparseable: list[tuple[str, int | None]] = []
+        dynamic_imports: list[tuple[str, int | None]] = []
 
         for f in index.select(suffixes=PY_SUFFIXES):
             try:
                 tree = ast.parse(f.text, filename=f.relpath)
             except SyntaxError as exc:
                 self._regex_fallback(f, acc)
-                needs_review.append(
-                    NeedsReview(
-                        category="python",
-                        title="Unparseable Python file",
-                        reason=(
-                            "File could not be parsed as Python (AST); analyzed with "
-                            "regex fallback, results may be incomplete."
-                        ),
-                        file=f.relpath,
-                        line=exc.lineno,
-                    )
-                )
+                unparseable.append((f.relpath, exc.lineno))
                 continue
             visitor = _CallVisitor(f)
             visitor.visit(tree)
             for rid, evidence in visitor.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
-            for ev in visitor.dynamic_imports:
-                if len(needs_review) >= MAX_EVIDENCE_PER_FINDING:
-                    break
-                needs_review.append(
-                    NeedsReview(
-                        category="dynamic_code_execution",
-                        title="Dynamic module import",
-                        reason=(
-                            f"Dynamic import by name at line {ev.line_start} "
-                            "(__import__ / importlib.import_module); common for optional "
-                            "dependencies or plugins, but verify the module name is not "
-                            "attacker-controlled."
-                        ),
-                        file=ev.file,
-                        line=ev.line_start,
-                    )
-                )
+            dynamic_imports.extend((ev.file, ev.line_start) for ev in visitor.dynamic_imports)
 
             taint = _TaintVisitor(f)
             taint.analyze(tree)
             for rid, evidence in taint.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
+
+        # One note per heuristic, not one per file or call site (see aggregated_review).
+        if unparseable:
+            needs_review.append(aggregated_review(
+                category="python",
+                title="Unparseable Python file",
+                places=unparseable,
+                what="Python file(s) could not be parsed (AST)",
+                advice="They were analyzed with the regex fallback, so results for them may "
+                       "be incomplete.",
+            ))
+        if dynamic_imports:
+            needs_review.append(aggregated_review(
+                category="dynamic_code_execution",
+                title="Dynamic module import",
+                places=dynamic_imports,
+                what="dynamic import(s) by name (__import__ / importlib.import_module)",
+                advice="Common for optional dependencies or plugins, but verify the module "
+                       "names are not attacker-controlled.",
+            ))
 
         _suppress_cmdi_covered_by_taint(acc)
         return ScanResult(findings=self._build_findings(acc), needs_review=needs_review)
