@@ -102,7 +102,7 @@ _CLIENT_CONFIG_PATHS = re.compile(
     r"|\.vscode[/\\]mcp\.json"
     r"|\.continue[/\\]config\.(?:json|yaml|yml)"
     r"|windsurf[/\\]mcp_config\.json"
-    r"|\.codeium[/\\][^\s\"']*mcp[^\s\"']*\.json"
+    r"|\.codeium[/\\][^\s\"']{0,64}mcp[^\s\"']{0,64}\.json"
     r"|(?<![\w.])\.claude\.json)",
     re.IGNORECASE,
 )
@@ -112,7 +112,7 @@ _WRITE_SINK = re.compile(
     r"\b(?:writeFileSync|writeFile|appendFileSync|appendFile|outputFile(?:Sync)?|createWriteStream"
     r"|write_text|write_bytes|Out-File|Set-Content|Add-Content)\b"
     r"|\bjson\.dump\s*\("
-    r"|\bopen\s*\([^)]*,\s*['\"][rbt]*[wa]\+?[rbt]*['\"]",
+    r"|\bopen\s*\([^)]{0,200},\s*['\"][rbt]*[wa]\+?[rbt]*['\"]",
     re.IGNORECASE,
 )
 
@@ -124,8 +124,8 @@ _WRITE_SINK = re.compile(
 # `core.fsmonitor` is handled by the .git/config rule above (git runs it directly).
 _GIT_PERSIST = re.compile(
     r"\bgit\b[^\n]{0,40}?\bconfig\b[^\n]{0,80}?\binit\.templateDir\b"
-    r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]*?\bcore\.hooksPath\b)[^\n]*?--(?:global|system)\b"
-    r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]*?--(?:global|system)\b)[^\n]*?\bcore\.hooksPath\b",
+    r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]{0,200}?\bcore\.hooksPath\b)[^\n]{0,200}?--(?:global|system)\b"
+    r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]{0,200}?--(?:global|system)\b)[^\n]{0,200}?\bcore\.hooksPath\b",
     re.IGNORECASE,
 )
 
@@ -134,11 +134,11 @@ _GIT_PERSIST = re.compile(
 # in backticks). It runs when the skill loads, before the model reads the skill, so `allowed-tools`
 # refusals do not help. A benign skill uses this for `!`git status``; a malicious one hides a
 # credential grab or a fetch-and-run in it. Only the dangerous bodies are flagged.
-_SKILL_DYNAMIC_CMD = re.compile(r"(?m)^[ \t>]*!\s*`?([^`\n]+?)`?\s*$")
+_SKILL_DYNAMIC_CMD = re.compile(r"(?m)^[ \t>]*!\s*(\S[^\n]*)")
 # A credential source piped/joined to a network sink (exfil), or a fetch-and-run. `gh auth token`,
 # an SSH/AWS/keychain read, or a kube/npm credential, reaching curl/wget/nc or an http(s) URL.
 _SKILL_CRED_SOURCE = re.compile(
-    r"\bgh\s+auth\s+(?:token|status\s+[^\n]*--show-token)"
+    r"\bgh\s+auth\s+(?:token|status\s+[^\n]{0,80}--show-token)"
     r"|security\s+find-(?:generic|internet)-password"
     r"|~/\.ssh\b|~/\.aws\b|\.aws/credentials|\bid_rsa\b|\.kube/config|~/\.npmrc|\.git-credentials",
     re.IGNORECASE,
@@ -372,7 +372,7 @@ class AgentConfigScanner(Scanner):
             if not self._is_skill_file(f):
                 continue
             for m in _SKILL_DYNAMIC_CMD.finditer(f.text):
-                body = m.group(1)
+                body = m.group(1).strip().strip("`").strip()
                 dangerous = _REMOTE_EXEC.search(body) or (
                     _SKILL_CRED_SOURCE.search(body) and _SKILL_NET_SINK.search(body)
                 )

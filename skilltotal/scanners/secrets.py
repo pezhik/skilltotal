@@ -72,9 +72,12 @@ _KNOWN: list[tuple[str, re.Pattern[str], int]] = [
 # environment and POSTed in an HTTP header). Scoped to WALLET/SEED/MNEMONIC names so a plain
 # PRIVATE_KEY (JWT signer, SSH deploy key) is not swept in; it feeds the exfil combo
 # (scoring._SENSITIVE_DATA_IDS).
+# The surrounding identifier runs are BOUNDED (not ``[A-Z0-9_]*``): a static scanner must not be
+# made quadratic by a crafted ``process.env.`` followed by a megabyte of ``A``. 40 chars of
+# prefix/suffix covers any real env-var name around the wallet-material word.
 _ENV_KEYMAT_NAME = (
-    r"[A-Z0-9_]*(?:MNEMONIC|SEED_?PHRASE|SECRET_?PHRASE|WALLET_?PRIVATE_?KEY|WALLET_?SECRET|"
-    r"WALLET_?SEED|PRIVATE_?KEY_?MNEMONIC)[A-Z0-9_]*"
+    r"[A-Z0-9_]{0,40}(?:MNEMONIC|SEED_?PHRASE|SECRET_?PHRASE|WALLET_?PRIVATE_?KEY|WALLET_?SECRET|"
+    r"WALLET_?SEED|PRIVATE_?KEY_?MNEMONIC)[A-Z0-9_]{0,40}"
 )
 _ENV_SECRET = re.compile(
     r"process\.env\.(?:" + _ENV_KEYMAT_NAME + r")\b"

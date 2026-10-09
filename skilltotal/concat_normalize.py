@@ -42,10 +42,12 @@ _JS_SUFFIXES = frozenset({".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx"})
 _PY_SUFFIXES = frozenset({".py", ".pyw"})
 _FOLDABLE_SUFFIXES = _JS_SUFFIXES | _PY_SUFFIXES
 
-# A quick pre-check: only files that actually adjoin two string literals can change. Either a
-# quote with only whitespace/`+` before the next quote. Cheap to over-accept; the real work runs
-# only when this matches.
-_HAS_ADJACENCY = re.compile(r"""["'`]\s*\+?\s*["'`]""")
+# A quick pre-check: only files that actually adjoin two string literals can change — a quote with
+# only whitespace / a single `+` before the next quote. Cheap to over-accept; the real work runs
+# only when this matches. Whitespace runs are BOUNDED so a crafted file (a quote followed by a
+# megabyte of spaces) cannot make this gate backtrack — a static scanner must not be DoS-able by
+# the thing it scans. A concat with >80 whitespace chars between operands simply is not folded.
+_HAS_ADJACENCY = re.compile(r"""["'`]\s{0,80}\+?\s{0,80}["'`]""")
 
 
 def _string_tokens(text: str, js: bool) -> list[tuple[int, int, int, int]]:
