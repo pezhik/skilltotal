@@ -19,6 +19,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skilltotal.concat_normalize import fold_string_concats
 from skilltotal.models import Evidence
 from skilltotal.text_normalize import normalize_with_map
 
@@ -916,6 +917,11 @@ class IndexedFile:
     _norm_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed concat-folded view: None until computed; (None,) once computed as identity;
+    # ((folded, idx),) once computed with a real change. Same 1-tuple wrapper as _norm_cache.
+    _fold_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def normalized_or_none(self) -> tuple[str, list[int]] | None:
         """De-obfuscated ``(normalized_text, index_map)``, or None when normalization is the
@@ -929,6 +935,19 @@ class IndexedFile:
             norm, idx = normalize_with_map(self.text)
             self._norm_cache = ((norm, idx),) if norm and norm != self.text else (None,)
         return self._norm_cache[0]
+
+    def concat_folded_or_none(self) -> tuple[str, Sequence[int]] | None:
+        """``(folded_text, index_map)`` with adjacent string-literal concatenations collapsed, or
+        None when folding is the identity (no ``"a" + "b"`` splicing — the common case).
+
+        Cached like ``normalized_or_none``: several scanners look for literals (credential paths,
+        secret-env names, client-config paths) that an attacker splits across concatenated string
+        literals, and each would otherwise re-fold the file.
+        """
+        if self._fold_cache is None:
+            folded, idx = fold_string_concats(self.text, self.suffix)
+            self._fold_cache = ((folded, idx),) if folded != self.text else (None,)
+        return self._fold_cache[0]
 
     @property
     def name(self) -> str:

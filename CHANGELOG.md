@@ -17,6 +17,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
   (`ST-SKILL-DYNAMIC-EXEC`, Clawsights). Each sits beside the honest shape it resembles — a local
   husky `core.hooksPath`, a tool that only reads a client config, a benign `!`git status``
   skill command, a plain `API_KEY` from the environment — which stay clean.
+- **Detection now sees through split and aliased literals.** An attacker can hide a known string
+  from a static matcher by splitting it across concatenated string literals
+  (`process.env["WALLET_" + "PRIVATE_KEY"]`, `open("~/." + "ssh/id_rsa")`) or aliasing the object
+  that holds it. A new deterministic normalizer folds adjacent string-literal concatenations back
+  into one literal (and resolves `process.env` aliasing) before matching, so the credential-path,
+  wallet-env and client-config rules catch these without re-leaking evidence — the string-concat
+  analogue of the homoglyph/zero-width folding already in place. It only joins runs of plain
+  literals, so it adds no false positives. A new per-technique evasion-robustness benchmark guards
+  this going forward.
 
 ## [0.58.0]
 

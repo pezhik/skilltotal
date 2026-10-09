@@ -13,7 +13,13 @@ import re
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Evidence, Finding, NeedsReview, Severity, ThreatClass
-from skilltotal.scanners.base import MAX_EVIDENCE_SCANNED, RuleSpec, Scanner, ScanResult
+from skilltotal.scanners.base import (
+    MAX_EVIDENCE_SCANNED,
+    RuleSpec,
+    Scanner,
+    ScanResult,
+    concat_folded_spans,
+)
 
 CATEGORY = "secret_exposure"
 
@@ -76,6 +82,10 @@ _ENV_SECRET = re.compile(
     r"|os\.environ(?:\.get)?\s*[\[(]\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]"
     r"|os\.getenv\s*\(\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]"
 )
+# Evasion by aliasing the env object: `const e = process.env; ... e.WALLET_PRIVATE_KEY`. Resolve
+# the alias so the key read through it is still seen. JS/TS only (Python reads are AST-folded).
+_ENV_ALIAS = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.env\b")
+_JS_SUFFIXES_SECRET = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 
 # Generic: a secret-named variable assigned a long opaque string.
 _GENERIC = re.compile(
@@ -438,15 +448,35 @@ class SecretsScanner(Scanner):
 
         env_secret_ev: list[Evidence] = []
         env_seen: set[tuple[str, int]] = set()
-        for f in index.files:
-            for _m, ev in f.finditer(_ENV_SECRET):
-                key = (ev.file, ev.line_start)
-                if key in env_seen:
-                    continue
+
+        def _add_env(ev: Evidence) -> None:
+            key = (ev.file, ev.line_start)
+            if key not in env_seen:
                 env_seen.add(key)
                 env_secret_ev.append(ev)
+
+        for f in index.files:
+            for _m, ev in f.finditer(_ENV_SECRET):
+                _add_env(ev)
                 if len(env_secret_ev) >= MAX_EVIDENCE_SCANNED:
                     break
+            # Resolve `const e = process.env; e.WALLET_PRIVATE_KEY` so an aliased read is caught.
+            if f.suffix in _JS_SUFFIXES_SECRET:
+                aliases = {m.group(1) for m in _ENV_ALIAS.finditer(f.text)}
+                for alias in aliases:
+                    alias_pat = re.compile(
+                        r"\b" + re.escape(alias) + r"\.(?:" + _ENV_KEYMAT_NAME + r")\b"
+                        r"|\b" + re.escape(alias) + r"\[\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]"
+                    )
+                    for _m, ev in f.finditer(alias_pat):
+                        _add_env(ev)
+        # Folded view: catch a split env-var name, `process.env['WALLET_' + 'PRIVATE_KEY']`.
+        for f, start, end in concat_folded_spans(
+            index, _ENV_SECRET, suffixes=_JS_SUFFIXES_SECRET
+        ):
+            if len(env_secret_ev) >= MAX_EVIDENCE_SCANNED:
+                break
+            _add_env(f.evidence_for_span(start, end))
 
         findings: list[Finding] = []
         if evidence:

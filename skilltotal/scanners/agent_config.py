@@ -38,7 +38,11 @@ from skilltotal.scanners.base import (
     Scanner,
     ScanResult,
     _finding_from_rule,
+    concat_folded_spans,
 )
+
+# JS/TS (and Python) files where a client-config path may be split across concatenated literals.
+_CONFIG_INJECT_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".pyw")
 
 R_AUTORUN = "ST-AGENT-AUTORUN"
 R_AUTORUN_REMOTE = "ST-AGENT-AUTORUN-REMOTE"
@@ -347,6 +351,21 @@ class AgentConfigScanner(Scanner):
                     config_inject.append(ev)
                     if len(config_inject) >= MAX_EVIDENCE_SCANNED:
                         break
+
+        # Folded view: catch a client-config path split across string literals
+        # (``"~/.cursor/" + "mcp.json"``). Same rule — a write sink must be present in the file.
+        config_inject_lines = {(e.file, e.line_start) for e in config_inject}
+        for f, start, end in concat_folded_spans(
+            index, _CLIENT_CONFIG_PATHS, suffixes=_CONFIG_INJECT_SUFFIXES
+        ):
+            if len(config_inject) >= MAX_EVIDENCE_SCANNED:
+                break
+            if not _WRITE_SINK.search(f.text):
+                continue
+            ev = f.evidence_for_span(start, end)
+            if (ev.file, ev.line_start) not in config_inject_lines:
+                config_inject_lines.add((ev.file, ev.line_start))
+                config_inject.append(ev)
 
         skill_exec: list[Evidence] = []
         for f in index.files:

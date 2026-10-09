@@ -50,6 +50,30 @@ def deobfuscated_spans(
             yield f, start, end
 
 
+def concat_folded_spans(
+    index: FileIndex, pattern: re.Pattern[str], *, suffixes: tuple[str, ...] | None = None
+) -> Iterator[tuple[IndexedFile, int, int]]:
+    """Yield ``(file, start, end)`` for ``pattern`` matches found only after folding away string
+    concatenation (``"a" + "b"`` -> ``"ab"``; see :mod:`skilltotal.concat_normalize`).
+
+    Each match span is mapped back to the ORIGINAL file offsets so evidence stays anchored (the
+    span covers the whole original concatenation, e.g. ``"~/." + "ssh/id_rsa"``). Files where
+    folding is the identity (no concatenated literals — the common case) are skipped, so this is
+    nearly free for normal code and only does work where literals were actually spliced. The
+    caller de-dupes against raw matches and applies its own context/suppression on the original
+    line.
+    """
+    for f in index.select(suffixes=suffixes):
+        folded = f.concat_folded_or_none()
+        if folded is None:
+            continue
+        text, idx = folded
+        for m in pattern.finditer(text):
+            start, end = original_span(idx, m.start(), m.end())
+            if start < end:
+                yield f, start, end
+
+
 @dataclass(frozen=True)
 class RuleSpec:
     """Metadata + (optional) detection pattern for a single rule."""

@@ -28,9 +28,15 @@ from skilltotal.scanners.base import (
     Scanner,
     ScanResult,
     alternation,
+    concat_folded_spans,
 )
 
 CATEGORY = "sensitive_path"
+
+# String concatenation is folded for matching only where C-family string literals stay in scope
+# (ST-SENS-PATH keeps them; see code_context). In Python a credential path is caught by the AST
+# rule and ``"a" "b"`` is folded by the parser, so folding the regex there would only be demoted.
+_JS_FAMILY = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 
 # Strong, path-like credential locations. These are unambiguous enough to flag in any
 # file type, including documentation.
@@ -461,6 +467,26 @@ class SensitivePathScanner(Scanner):
             evidence.append(ev)
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
+
+        # Second pass over the concat-folded view: catch a credential path an attacker split across
+        # string literals (``"~/." + "ssh/id_rsa"``). The span is anchored back to the original
+        # concatenation, so evidence still points at real source. The denylist/guardrail guard is
+        # kept (a security tool may split a path in its own policy data); the other benign-shape
+        # suppressions are for contiguous paths and do not apply to a spliced one.
+        for f, start, end in concat_folded_spans(index, _STRONG_PATHS, suffixes=_JS_FAMILY):
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                break
+            ev = f.evidence_for_span(start, end)
+            key = (ev.file, ev.line_start, ev.line_end)
+            if key in seen_ev:
+                continue
+            seen_ev.add(key)
+            line_text = f.line_text(ev.line_start)
+            if _is_guardlist_context(ev.file, line_text, f.text[start:end]):
+                if ev.file not in guard_files:
+                    guard_files.append(ev.file)
+                continue
+            evidence.append(ev)
 
         if guard_files:
             shown = ", ".join(guard_files[:_SENS_WORD_EXAMPLES])

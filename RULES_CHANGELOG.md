@@ -35,6 +35,20 @@ negative): 53/53 flagged, 0 false positives.
   fetches code and runs it (Datadog's Clawsights note, `gh auth token | curl …`). A benign skill
   that runs `!`git status`` for context is not flagged.
 
+**Evasion hardening (same ruleset).** A regex matches a contiguous literal, so an attacker hides a
+known string by splitting it across concatenated string literals (`process.env["WALLET_" +
+"PRIVATE_KEY"]`, `open("~/." + "ssh/id_rsa")`) or aliasing the object that holds it (`const e =
+process.env; e.WALLET_PRIVATE_KEY`). A new deterministic normalizer (`concat_normalize.py`, the
+string-concatenation analogue of the existing `text_normalize.py` homoglyph/zero-width folding)
+collapses adjacent string-literal concatenations into one literal and anchors the match back to the
+original source, so the credential-path (`ST-SENS-PATH`), wallet-env (`ST-SECRET-ENV`) and
+client-config (`ST-AGENT-CONFIG-INJECT`) rules see through the split; `process.env` aliasing is
+resolved for the wallet-env rule. Folding only joins runs where every operand is a plain literal
+(never across a variable), so it invents nothing that is not already there; a security tool's own
+denylist that splits a path stays `needs_review`, not a finding. `tests/test_evasion_robustness.py`
+measures this per technique (split / aliased / homoglyph / zero-width / array-arg / subshell forms)
+with a benign twin for each, and the detection-efficacy corpus stays 53/53 with 0 false positives.
+
 ## ruleset 62 (engine 0.55.0)
 
 Threat-research runs of 2026-09-22, 09-25 and 10-02: techniques published in the prior ~45 days,
