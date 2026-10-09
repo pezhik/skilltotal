@@ -79,7 +79,7 @@ _ENV_KEYMAT_NAME = (
     r"[A-Z0-9_]{0,40}(?:MNEMONIC|SEED_?PHRASE|SECRET_?PHRASE|WALLET_?PRIVATE_?KEY|WALLET_?SECRET|"
     r"WALLET_?SEED|PRIVATE_?KEY_?MNEMONIC)[A-Z0-9_]{0,40}"
 )
-_ENV_SECRET = re.compile(
+_ENV_KEYMAT_RE = re.compile(
     r"process\.env\.(?:" + _ENV_KEYMAT_NAME + r")\b"
     r"|process\.env\[\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]\s*\]"
     r"|os\.environ(?:\.get)?\s*[\[(]\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]"
@@ -88,7 +88,7 @@ _ENV_SECRET = re.compile(
 # Evasion by aliasing the env object: `const e = process.env; ... e.WALLET_PRIVATE_KEY`. Resolve
 # the alias so the key read through it is still seen. JS/TS only (Python reads are AST-folded).
 _ENV_ALIAS = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.env\b")
-_JS_SUFFIXES_SECRET = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+_ENV_JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 
 # Generic: a secret-named variable assigned a long opaque string.
 _GENERIC = re.compile(
@@ -459,12 +459,12 @@ class SecretsScanner(Scanner):
                 env_secret_ev.append(ev)
 
         for f in index.files:
-            for _m, ev in f.finditer(_ENV_SECRET):
+            for _m, ev in f.finditer(_ENV_KEYMAT_RE):
                 _add_env(ev)
                 if len(env_secret_ev) >= MAX_EVIDENCE_SCANNED:
                     break
             # Resolve `const e = process.env; e.WALLET_PRIVATE_KEY` so an aliased read is caught.
-            if f.suffix in _JS_SUFFIXES_SECRET:
+            if f.suffix in _ENV_JS_SUFFIXES:
                 aliases = {m.group(1) for m in _ENV_ALIAS.finditer(f.text)}
                 for alias in aliases:
                     alias_pat = re.compile(
@@ -475,7 +475,7 @@ class SecretsScanner(Scanner):
                         _add_env(ev)
         # Folded view: catch a split env-var name, `process.env['WALLET_' + 'PRIVATE_KEY']`.
         for f, start, end in concat_folded_spans(
-            index, _ENV_SECRET, suffixes=_JS_SUFFIXES_SECRET
+            index, _ENV_KEYMAT_RE, suffixes=_ENV_JS_SUFFIXES
         ):
             if len(env_secret_ev) >= MAX_EVIDENCE_SCANNED:
                 break

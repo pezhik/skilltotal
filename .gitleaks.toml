@@ -46,3 +46,22 @@ id = "private-key"
     '''skilltotal/scanners/secrets\.py''',
     '''RULES_CHANGELOG\.md''',
   ]
+
+# The secret detector names its own variables after what they detect (``_ENV_KEYMAT_RE``,
+# ``_ENV_JS_SUFFIXES``; a renamed-away ``_JS_SUFFIXES_SECRET`` / ``_ENV_SECRET`` still lives in git
+# history, which gitleaks re-scans). gitleaks' ``generic-api-key`` reads ``…SECRET… = …`` as a key
+# assignment. Scope: the ``generic-api-key`` rule only, on a line that holds one of these detector
+# identifiers, only in secrets.py. A real long-random key on any other line there is still flagged.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "This detector's own variable names (identifiers, not secrets)"
+  condition = "AND"
+  regexTarget = "line"
+  regexes = [
+    '''_ENV_KEYMAT|_ENV_JS_SUFFIXES|_JS_SUFFIXES_SECRET|_ENV_SECRET''',
+  ]
+  paths = [
+    '''skilltotal/scanners/secrets\.py''',
+  ]
