@@ -84,6 +84,13 @@ Or into a virtual environment / as a library:
 pip install skilltotal
 ```
 
+You can also run it with npx. The npm package only starts this engine, so you need uv, pipx, or a
+Python with `skilltotal` installed:
+
+```bash
+npx -y skilltotal scan https://github.com/owner/repo
+```
+
 From source (development):
 
 ```bash
@@ -297,7 +304,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pezhik/skilltotal@v0.57.0
+      - uses: pezhik/skilltotal@v0.58.0
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail the build on a high/critical finding (or 'none')
@@ -321,7 +328,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.57.0
+    rev: v0.58.0
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -339,6 +346,9 @@ Code/Desktop, Cursor, Windsurf, or any MCP client:
 ```json
 { "mcpServers": { "skilltotal": { "command": "skilltotal", "args": ["mcp"] } } }
 ```
+
+If you have not installed it locally, use `"command": "npx", "args": ["-y", "skilltotal", "mcp"]`
+instead. This needs uv, pipx, or Python with `skilltotal`.
 
 Tools exposed: `scan_component` (full report for a path / git URL / `npm:` / `pypi:`
 source), `diff_components` (upgrade review: what changed between two versions), and
@@ -478,6 +488,11 @@ pytest
 
 - Python is analyzed via an **AST** (resolves import aliases, tells `open(p,'w')` from a
   read, ignores API names that only appear in strings/comments). Node.js/config use regex.
+- **Languages:** shell execution, network access, file access and dynamic code are detected in
+  Python and JavaScript/TypeScript. Go, Rust, Java, Ruby and PHP files still get the secret,
+  sensitive-path and hidden-Unicode checks, but their behavior is not analyzed yet. If a component
+  ships code in those languages, the report adds a `needs_review` note, and a low verdict reads
+  "Partially analyzed" instead of "No significant risks found".
 - **Test code** (`__tests__/`, `*.test.*`, `tests/`, `conftest.py`, …) is demoted to
   `needs_review` — it is not executed by consumers, so it does not affect the score.
 - Ambiguous signals (bare `secrets`/`credentials` words, lone base64 blobs, "before

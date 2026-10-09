@@ -56,6 +56,33 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
 
+  # The npm runner (npm/), published with npm Trusted Publishing (OIDC, no stored token) after
+  # PyPI has the same version, because it runs `skilltotal==<version>` from PyPI. Off until the
+  # repository variable NPM_PUBLISH is "true" (set once the package's trusted publisher is
+  # configured on npmjs.com), so a release never fails on a step that cannot work yet.
+  npm-publish:
+    needs: publish
+    if: vars.NPM_PUBLISH == 'true'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write  # OIDC for npm Trusted Publishing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Verify the tag matches the npm package version
+        working-directory: npm
+        run: |
+          PKG=$(node -p "require('./package.json').version")
+          test "$PKG" = "${GITHUB_REF_NAME#v}" || { echo "tag $GITHUB_REF_NAME != npm $PKG"; exit 1; }
+      - name: Publish to npm
+        working-directory: npm
+        run: npm publish --access public
+
   # Create the GitHub Release for this tag so the Releases page never lags PyPI. Notes are the
   # matching CHANGELOG section (so the release page mirrors the changelog).
   github-release:

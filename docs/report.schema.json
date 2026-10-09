@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.6.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.7.json",
   "title": "SkillTotal Report",
   "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.5 (1.4 + traits: a behavioral trait fingerprint with a CSA/MAESTRO/ATLAS crosswalk, descriptive only and never scored). Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
@@ -51,7 +51,12 @@
         "reasons": { "type": "array", "items": { "type": "string" } },
         "malicious_indicators": { "type": "integer", "minimum": 0 },
         "risky_constructs": { "type": "integer", "minimum": 0 },
-        "capabilities": { "type": "integer", "minimum": 0 }
+        "capabilities": { "type": "integer", "minimum": 0 },
+        "unanalyzed_code": {
+          "type": "object",
+          "description": "Shipped source files per language whose behavior (shell, network, file access, dynamic code) is not analyzed yet, e.g. {\"Go\": 12}. Present only when such files exist; a low-level headline then says the analysis was partial (added in 1.7).",
+          "additionalProperties": { "type": "integer", "minimum": 1 }
+        }
       }
     },
     "capabilities": {

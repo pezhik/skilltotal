@@ -112,6 +112,9 @@ def analyze_directory(
                 ),
             )
         )
+    unanalyzed = _unanalyzed_code(index)
+    if unanalyzed:
+        needs_review.append(_unanalyzed_note(unanalyzed))
     for scanner in SCANNERS:
         result = scanner.scan(index)
         findings.extend(result.findings)
@@ -220,7 +223,7 @@ def analyze_directory(
         risk_score=score,
         risk_level=level,
         summary=_summary(level, score, findings, capabilities, needs_review),
-        verdict=_verdict(findings, level),
+        verdict=_verdict(findings, level, unanalyzed),
         capabilities=capabilities,
         traits=traits,
         findings=_sort_findings(findings),
@@ -249,7 +252,48 @@ def _assign_owasp(findings: list[Finding]) -> None:
         f.owasp = owasp_for(f.id)
 
 
-def _verdict(findings: list[Finding], level) -> dict:
+# Source languages whose behavior (shell, network, file access, dynamic code) no scanner reads yet.
+# Secrets, sensitive paths, hidden Unicode and manifest checks still run on these files; the gap is
+# behavior. Without saying so, a Go server that shells out and posts a credential file scored "low"
+# with nothing to tell the reader why.
+_UNANALYZED_LANGUAGES = {
+    ".go": "Go",
+    ".rs": "Rust",
+    ".java": "Java",
+    ".rb": "Ruby",
+    ".php": "PHP",
+}
+
+
+def _unanalyzed_code(index: FileIndex) -> dict[str, int]:
+    """Count shipped (non-test) source files per language whose behavior is not analyzed."""
+    counts: dict[str, int] = {}
+    for f in index.files:
+        lang = _UNANALYZED_LANGUAGES.get(Path(f.relpath).suffix.lower())
+        if lang and not is_test_path(f.relpath):
+            counts[lang] = counts.get(lang, 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _language_list(unanalyzed: dict[str, int]) -> str:
+    names = list(unanalyzed)
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def _unanalyzed_note(unanalyzed: dict[str, int]) -> NeedsReview:
+    files = ", ".join(f"{n} {lang}" for lang, n in unanalyzed.items())
+    return NeedsReview(
+        category="coverage",
+        title="Code in languages not analyzed for behavior",
+        reason=(
+            f"{files} source file(s). Shell execution, network access, file access and dynamic "
+            f"code in {_language_list(unanalyzed)} are not detected yet; checks for secrets, "
+            f"sensitive paths and hidden Unicode did run. A low score does not cover this code."
+        ),
+    )
+
+
+def _verdict(findings: list[Finding], level, unanalyzed: dict[str, int] | None = None) -> dict:
     """Plain-language top-line answer, mapped to the two real user fears:
 
     1. "Is it malicious?" -> ``has_malicious_indicators`` (deliberate deception/stealth
@@ -286,7 +330,15 @@ def _verdict(findings: list[Finding], level) -> dict:
     else:
         vlevel, headline = "low", "No significant risks found"
 
-    return {
+    if unanalyzed and vlevel == "low":
+        # Never a reassuring headline over code nothing read: the level and score stay as they
+        # are (unread code is not evidence of risk), only the wording stops implying "checked".
+        headline = (
+            f"Partially analyzed - {_language_list(unanalyzed)} code not checked "
+            "for shell, network or file access"
+        )
+
+    verdict = {
         "level": vlevel,
         "headline": headline,
         "has_malicious_indicators": has_mal,
@@ -296,6 +348,9 @@ def _verdict(findings: list[Finding], level) -> dict:
         "exposed_secrets": by_class[ThreatClass.EXPOSURE],
         "capabilities": by_class[ThreatClass.CAPABILITY],
     }
+    if unanalyzed:
+        verdict["unanalyzed_code"] = dict(unanalyzed)
+    return verdict
 
 
 def _verdict_reasons(findings: list[Finding], limit: int = 3) -> list[str]:

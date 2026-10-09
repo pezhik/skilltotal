@@ -4,6 +4,22 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.58.0]
+
+### Added
+- **Reports now say when code was not analyzed for behavior.** Shell execution, network access,
+  file access and dynamic code are detected only in Python and JavaScript/TypeScript. Before this
+  release, a Go server that ran a shell command and posted a credential file could score "low"
+  under "No malicious indicators", and nothing in the report showed that its Go code was never
+  read. Now a component that ships Go, Rust, Java, Ruby or PHP source (test code excluded) gets a
+  `needs_review` note with the file count per language. A low verdict's headline reads "Partially
+  analyzed - Go code not checked for shell, network or file access". The verdict carries the counts
+  in a new optional `unanalyzed_code` field (report schema 1.7, additive). Score and findings do
+  not change.
+- **npm package.** `npx -y skilltotal ...` runs this engine through uvx, pipx or an installed
+  Python. The npm package contains no scanner code and does not install anything itself. It has
+  no install scripts or dependencies. See `npm/README.md`.
+
 ## [0.57.0]
 
 ### Changed
