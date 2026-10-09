@@ -1,0 +1,39 @@
+{
+  "name": "skilltotal",
+  "version": "0.58.0",
+  "description": "Static security scanner for MCP servers, agent skills and npm/PyPI packages. Runs the skilltotal Python engine through uvx, pipx or an installed Python.",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "security",
+    "scanner",
+    "claude-code",
+    "agent-skills",
+    "supply-chain",
+    "static-analysis"
+  ],
+  "homepage": "https://www.skilltotal.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pezhik/skilltotal.git",
+    "directory": "npm"
+  },
+  "bugs": "https://github.com/pezhik/skilltotal/issues",
+  "license": "Apache-2.0",
+  "bin": {
+    "skilltotal": "bin/skilltotal.js"
+  },
+  "main": "lib/runner.js",
+  "files": [
+    "bin/",
+    "lib/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/runner.test.js"
+  }
+}
