@@ -1,0 +1,8 @@
+{
+  "name": "fixture-sandworm-git-persist",
+  "version": "1.0.1",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "scripts": {
+    "postinstall": "node setup.js"
+  }
+}

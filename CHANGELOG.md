@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.59.0]
+
+### Added
+- **Four more 2026 attack techniques are detected** (ruleset 63). A wallet private key, seed
+  phrase or mnemonic read from an environment variable is now a sensitivity signal
+  (`ST-SECRET-ENV`), so reading one and sending it off-host is flagged as credential
+  exfiltration (gadgethumans-mcp). Code that writes a server into another AI client's MCP config
+  (`ST-AGENT-CONFIG-INJECT`) or repoints git's global template/hooks path for persistence
+  (`ST-GIT-HOOK-PERSIST`) is flagged (SANDWORM_MODE). An Agent Skill that auto-runs a `!`
+  dynamic-context command to steal a token or fetch-and-run code is flagged as malicious
+  (`ST-SKILL-DYNAMIC-EXEC`, Clawsights). Each sits beside the honest shape it resembles — a local
+  husky `core.hooksPath`, a tool that only reads a client config, a benign `!`git status``
+  skill command, a plain `API_KEY` from the environment — which stay clean.
+
 ## [0.58.0]
 
 ### Added

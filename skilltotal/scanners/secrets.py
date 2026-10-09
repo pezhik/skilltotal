@@ -59,6 +59,24 @@ _KNOWN: list[tuple[str, re.Pattern[str], int]] = [
     ),
 ]
 
+# Reading WALLET key material from the environment. A seed phrase, mnemonic or wallet private
+# key is meant to stay on the host (a wallet signs locally); reading one from an environment
+# variable is a sensitivity signal that, combined with network egress, is the credential-
+# exfiltration shape of the gadgethumans-mcp npm package (a WALLET_PRIVATE_KEY read from the
+# environment and POSTed in an HTTP header). Scoped to WALLET/SEED/MNEMONIC names so a plain
+# PRIVATE_KEY (JWT signer, SSH deploy key) is not swept in; it feeds the exfil combo
+# (scoring._SENSITIVE_DATA_IDS).
+_ENV_KEYMAT_NAME = (
+    r"[A-Z0-9_]*(?:MNEMONIC|SEED_?PHRASE|SECRET_?PHRASE|WALLET_?PRIVATE_?KEY|WALLET_?SECRET|"
+    r"WALLET_?SEED|PRIVATE_?KEY_?MNEMONIC)[A-Z0-9_]*"
+)
+_ENV_SECRET = re.compile(
+    r"process\.env\.(?:" + _ENV_KEYMAT_NAME + r")\b"
+    r"|process\.env\[\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]\s*\]"
+    r"|os\.environ(?:\.get)?\s*[\[(]\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]"
+    r"|os\.getenv\s*\(\s*['\"](?:" + _ENV_KEYMAT_NAME + r")['\"]"
+)
+
 # Generic: a secret-named variable assigned a long opaque string.
 _GENERIC = re.compile(
     r"(?i)(?:api[_-]?key|secret|token|password|passwd|access[_-]?key|auth[_-]?token|"
@@ -326,6 +344,27 @@ class SecretsScanner(Scanner):
             # secrets are in code / value-strings, which are NOT demoted, so recall is preserved.
             code_context="comments",
         ),
+        RuleSpec(
+            id="ST-SECRET-ENV",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Reads wallet key material (private key / seed phrase) from the environment",
+            description=(
+                "The component reads a wallet private key, seed phrase or mnemonic from an "
+                "environment variable. That material is meant to stay on the host (a wallet signs "
+                "locally); reading it is a sensitivity signal, and combined with network egress it "
+                "is a credential-exfiltration path."
+            ),
+            recommendation=(
+                "Verify the key material is used only locally and is never sent off-host. Prefer a "
+                "signer that keeps the key in a wallet or HSM over passing it through an env var."
+            ),
+            capability=None,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            # A mention inside a comment is not a live read; a value-string `"PRIVATE_KEY"` is the
+            # env var NAME being read, which IS the signal, so strings are not demoted.
+            code_context="comments",
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -397,6 +436,18 @@ class SecretsScanner(Scanner):
                     continue
                 self._add(f, m, value, evidence, seen)
 
+        env_secret_ev: list[Evidence] = []
+        env_seen: set[tuple[str, int]] = set()
+        for f in index.files:
+            for _m, ev in f.finditer(_ENV_SECRET):
+                key = (ev.file, ev.line_start)
+                if key in env_seen:
+                    continue
+                env_seen.add(key)
+                env_secret_ev.append(ev)
+                if len(env_secret_ev) >= MAX_EVIDENCE_SCANNED:
+                    break
+
         findings: list[Finding] = []
         if evidence:
             rule = self.rules[0]
@@ -410,6 +461,21 @@ class SecretsScanner(Scanner):
                     evidence=evidence[:MAX_EVIDENCE_SCANNED],
                     recommendation=rule.recommendation,
                     threat_class=rule.threat_class,
+                )
+            )
+
+        if env_secret_ev:
+            env_rule = next(r for r in self.rules if r.id == "ST-SECRET-ENV")
+            findings.append(
+                Finding(
+                    id=env_rule.id,
+                    severity=env_rule.severity,
+                    category=env_rule.category,
+                    title=env_rule.title,
+                    description=env_rule.description,
+                    evidence=env_secret_ev[:MAX_EVIDENCE_SCANNED],
+                    recommendation=env_rule.recommendation,
+                    threat_class=env_rule.threat_class,
                 )
             )
 

@@ -62,7 +62,7 @@ _DROPPER_PAYLOAD_IDS = frozenset(
 # network" tool is not flagged as exfiltration. An embedded secret is not here either: a key the
 # component ships is the author's exposure (ThreatClass.EXPOSURE), and calling it plus any network
 # call a "credential-exfiltration path" described a theft that nothing in the code performs.
-_SENSITIVE_DATA_IDS = frozenset({"ST-SENS-PATH", "ST-SENS-PATH-PY"})
+_SENSITIVE_DATA_IDS = frozenset({"ST-SENS-PATH", "ST-SENS-PATH-PY", "ST-SECRET-ENV"})
 # A confirmed untrusted-instruction surface (the "untrusted content" axis of the trifecta).
 _UNTRUSTED_CONTENT_IDS = frozenset({"ST-PROMPT-INJECTION"})
 

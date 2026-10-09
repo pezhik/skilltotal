@@ -44,6 +44,9 @@ R_AUTORUN = "ST-AGENT-AUTORUN"
 R_AUTORUN_REMOTE = "ST-AGENT-AUTORUN-REMOTE"
 R_CLI_BYPASS = "ST-AGENT-CLI-BYPASS"
 R_GITCONFIG_REMOTE = "ST-AGENT-GITCONFIG-EXEC-REMOTE"
+R_CONFIG_INJECT = "ST-AGENT-CONFIG-INJECT"
+R_GIT_PERSIST = "ST-GIT-HOOK-PERSIST"
+R_SKILL_EXEC = "ST-SKILL-DYNAMIC-EXEC"
 
 # Configuration an agent or editor executes when a project is opened or a session starts.
 _HOOK_CONFIGS = (".claude/settings.json", ".claude/settings.local.json", ".gemini/settings.json",
@@ -83,6 +86,62 @@ _BYPASS_FLAGS = (
 )
 _CLI_BYPASS = re.compile(rf"\b{_AI_CLIS}\b[^\n]{{0,160}}?{_BYPASS_FLAGS}", re.IGNORECASE)
 _CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".zsh", ".ps1")
+
+# --- MCP-client config injection (SANDWORM_MODE "McpInject", 2026) ---------------------------
+# Writing an attacker server into ANOTHER AI client's config loads it on that client's next
+# session, from a package the user installed for something else. These are the config files of the
+# common AI clients; a third-party component has no honest reason to write to them. `.claude/`
+# settings are already covered by the auto-run rule above, so they are left out here.
+_CLIENT_CONFIG_PATHS = re.compile(
+    r"(?:claude_desktop_config\.json"
+    r"|\.cursor[/\\]mcp\.json"
+    r"|\.vscode[/\\]mcp\.json"
+    r"|\.continue[/\\]config\.(?:json|yaml|yml)"
+    r"|windsurf[/\\]mcp_config\.json"
+    r"|\.codeium[/\\][^\s\"']*mcp[^\s\"']*\.json"
+    r"|(?<![\w.])\.claude\.json)",
+    re.IGNORECASE,
+)
+# A file-writing sink, in any of the languages we see. Reading these configs can be benign
+# (a tool that lists your installed servers); writing one is the injection.
+_WRITE_SINK = re.compile(
+    r"\b(?:writeFileSync|writeFile|appendFileSync|appendFile|outputFile(?:Sync)?|createWriteStream"
+    r"|write_text|write_bytes|Out-File|Set-Content|Add-Content)\b"
+    r"|\bjson\.dump\s*\("
+    r"|\bopen\s*\([^)]*,\s*['\"][rbt]*[wa]\+?[rbt]*['\"]",
+    re.IGNORECASE,
+)
+
+# --- git-hook persistence (SANDWORM_MODE / supply-chain worms, 2026) -------------------------
+# Repointing git's GLOBAL template dir makes a hook run for every repository the victim creates
+# or clones. `init.templateDir` is rare and essentially never benign. `core.hooksPath` is NOT a
+# reliable signal on its own: husky/lefthook/pre-commit all set it LOCALLY to a repo directory,
+# so it is flagged only when set `--global`/`--system` (reaching outside the current repo).
+# `core.fsmonitor` is handled by the .git/config rule above (git runs it directly).
+_GIT_PERSIST = re.compile(
+    r"\bgit\b[^\n]{0,40}?\bconfig\b[^\n]{0,80}?\binit\.templateDir\b"
+    r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]*?\bcore\.hooksPath\b)[^\n]*?--(?:global|system)\b"
+    r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]*?--(?:global|system)\b)[^\n]*?\bcore\.hooksPath\b",
+    re.IGNORECASE,
+)
+
+# --- auto-executed command in an Agent Skill (Clawsights dynamic context, Datadog 2026) ------
+# A Claude Code skill may embed a "dynamic context" command with a leading `!` (bare or wrapped
+# in backticks). It runs when the skill loads, before the model reads the skill, so `allowed-tools`
+# refusals do not help. A benign skill uses this for `!`git status``; a malicious one hides a
+# credential grab or a fetch-and-run in it. Only the dangerous bodies are flagged.
+_SKILL_DYNAMIC_CMD = re.compile(r"(?m)^[ \t>]*!\s*`?([^`\n]+?)`?\s*$")
+# A credential source piped/joined to a network sink (exfil), or a fetch-and-run. `gh auth token`,
+# an SSH/AWS/keychain read, or a kube/npm credential, reaching curl/wget/nc or an http(s) URL.
+_SKILL_CRED_SOURCE = re.compile(
+    r"\bgh\s+auth\s+(?:token|status\s+[^\n]*--show-token)"
+    r"|security\s+find-(?:generic|internet)-password"
+    r"|~/\.ssh\b|~/\.aws\b|\.aws/credentials|\bid_rsa\b|\.kube/config|~/\.npmrc|\.git-credentials",
+    re.IGNORECASE,
+)
+_SKILL_NET_SINK = re.compile(
+    r"\b(?:curl|wget|nc|ncat|http|https)\b|https?://", re.IGNORECASE
+)
 
 # A path-looking token in a command that may name a script shipped in the component.
 _PATH_TOKEN = re.compile(r"[\w.${}/\\-]+\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
@@ -166,6 +225,62 @@ class AgentConfigScanner(Scanner):
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
+        RuleSpec(
+            id=R_CONFIG_INJECT,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="Code writes to another AI client's MCP/agent configuration",
+            description=(
+                "The component writes to a config file of a separate AI client (Claude Desktop, "
+                "Cursor, VS Code, Continue, Windsurf). Adding a server there makes that client "
+                "load it on its next session, from a package installed for something else — the "
+                "MCP-config injection the SANDWORM_MODE npm campaign used to register a rogue "
+                "server across clients."
+            ),
+            recommendation=(
+                "Confirm why the component edits another client's configuration. A tool that "
+                "registers itself should ask the user and write only the current client's config."
+            ),
+            capability=Capability.FILESYSTEM_WRITE,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+        ),
+        RuleSpec(
+            id=R_GIT_PERSIST,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="Code installs a global git hook / template for persistence",
+            description=(
+                "The component runs `git config` to point git's global template directory or "
+                "hooks path at its own files, so a hook runs for every repository the user "
+                "creates or clones afterwards. This is the persistence mechanism of the "
+                "SANDWORM_MODE npm campaign."
+            ),
+            recommendation=(
+                "Do not install the component. A package has no legitimate reason to repoint the "
+                "user's global git template or hooks path."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            code_context="comments",
+        ),
+        RuleSpec(
+            id=R_SKILL_EXEC,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="Agent skill auto-runs a command that steals credentials or fetches code",
+            description=(
+                "An Agent Skill embeds a `!` dynamic-context command that runs when the skill "
+                "loads — before the model reads the skill, so its tool restrictions do not apply "
+                "— and that command reads a credential and sends it off-host, or downloads code "
+                "and runs it. This is the malicious-skill pattern Datadog documented (Clawsights)."
+            ),
+            recommendation=(
+                "Do not install the skill. Remove any `!` dynamic-context command that touches "
+                "credentials or the network; it executes without the user's confirmation."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -214,11 +329,38 @@ class AgentConfigScanner(Scanner):
                 ))
 
         bypass: list[Evidence] = []
+        config_inject: list[Evidence] = []
+        git_persist: list[Evidence] = []
         for f in index.select(suffixes=_CODE_SUFFIXES):
             for _m, ev in f.finditer(_CLI_BYPASS):
                 bypass.append(ev)
                 if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
+            for _m, ev in f.finditer(_GIT_PERSIST):
+                git_persist.append(ev)
+                if len(git_persist) >= MAX_EVIDENCE_SCANNED:
+                    break
+            # Writing to another client's config is the injection; reading one can be benign, so
+            # the write sink must be present in the same file as the config path.
+            if _WRITE_SINK.search(f.text):
+                for _m, ev in f.finditer(_CLIENT_CONFIG_PATHS):
+                    config_inject.append(ev)
+                    if len(config_inject) >= MAX_EVIDENCE_SCANNED:
+                        break
+
+        skill_exec: list[Evidence] = []
+        for f in index.files:
+            if not self._is_skill_file(f):
+                continue
+            for m in _SKILL_DYNAMIC_CMD.finditer(f.text):
+                body = m.group(1)
+                dangerous = _REMOTE_EXEC.search(body) or (
+                    _SKILL_CRED_SOURCE.search(body) and _SKILL_NET_SINK.search(body)
+                )
+                if dangerous:
+                    skill_exec.append(f.evidence_for_span(m.start(1), m.end(1)))
+                    if len(skill_exec) >= MAX_EVIDENCE_SCANNED:
+                        break
 
         gitconfig_remote: list[Evidence] = []
         gitconfig = index.git_config
@@ -232,9 +374,27 @@ class AgentConfigScanner(Scanner):
             findings.append(_finding_from_rule(self._rule(R_AUTORUN), autorun))
         if bypass:
             findings.append(_finding_from_rule(self._rule(R_CLI_BYPASS), bypass))
+        if config_inject:
+            findings.append(_finding_from_rule(self._rule(R_CONFIG_INJECT), config_inject))
+        if git_persist:
+            findings.append(_finding_from_rule(self._rule(R_GIT_PERSIST), git_persist))
+        if skill_exec:
+            findings.append(_finding_from_rule(self._rule(R_SKILL_EXEC), skill_exec))
         if gitconfig_remote:
             findings.append(_finding_from_rule(self._rule(R_GITCONFIG_REMOTE), gitconfig_remote))
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    # A Claude Code / agent skill file: the well-known name, or a markdown file whose YAML
+    # frontmatter declares `allowed-tools` (the skill marker) or a skill `name:` + `description:`.
+    @staticmethod
+    def _is_skill_file(f: IndexedFile) -> bool:
+        name = f.relpath.replace("\\", "/").rsplit("/", 1)[-1].lower()
+        if name in ("skill.md", "agents.md"):
+            return True
+        if not name.endswith((".md", ".mdx")):
+            return False
+        head = f.text[:600]
+        return bool(re.search(r"(?mi)^\s*allowed-tools\s*:", head))
 
     @staticmethod
     def _scan_git_config(

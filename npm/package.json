@@ -1,6 +1,6 @@
 {
   "name": "skilltotal",
-  "version": "0.58.0",
+  "version": "0.59.0",
   "description": "Static security scanner for MCP servers, agent skills and npm/PyPI packages. Runs the skilltotal Python engine through uvx, pipx or an installed Python.",
   "keywords": [
     "mcp",

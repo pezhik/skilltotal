@@ -4,6 +4,37 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 63 (engine 0.59.0)
+
+Threat-research run of 2026-10-10: the most recent publicly documented malicious AI components
+(npm/PyPI/MCP-registry/skills, June–October 2026). Each technique was reproduced as an inert,
+sanitized sample, confirmed missed by ruleset 62, given a rule, and paired with a benign
+look-alike that must stay clean. Measured on the detection-efficacy corpus (now 53 positive / 36
+negative): 53/53 flagged, 0 false positives.
+
+- **`ST-SECRET-ENV`** (new, risky construct): a wallet private key, seed phrase or mnemonic read
+  from an environment variable (`process.env.WALLET_PRIVATE_KEY`, `os.getenv("MNEMONIC")`, …).
+  This key material is meant to stay on the host (a wallet signs locally), so reading it is a
+  sensitivity signal. It feeds the credential-exfiltration combo (`ST-COMBO-EXFIL`), so reading it
+  and reaching the network is critical — the gadgethumans-mcp npm package put a `WALLET_PRIVATE_KEY`
+  in an HTTP header. Scoped to wallet/seed/mnemonic names so a plain `API_KEY` or a JWT/SSH
+  `PRIVATE_KEY` from the environment is not swept in.
+- **`ST-AGENT-CONFIG-INJECT`** (new, risky construct): a component writes to another AI client's
+  MCP/agent config (`claude_desktop_config.json`, `.cursor/mcp.json`, `.vscode/mcp.json`,
+  Continue, Windsurf). Registering a server there makes that client load it next session, from a
+  package installed for something else — the SANDWORM_MODE "McpInject" technique. Reading such a
+  config (a doctor/status tool listing installed servers) is not flagged; the write sink must be
+  present.
+- **`ST-GIT-HOOK-PERSIST`** (new, risky construct): a component runs `git config` to repoint git's
+  global template directory (`init.templateDir`) or `--global`/`--system` hooks path, so a hook
+  runs for every repository the user creates or clones. husky/lefthook/pre-commit set
+  `core.hooksPath` LOCALLY to a repo directory and stay clean.
+- **`ST-SKILL-DYNAMIC-EXEC`** (new, malicious indicator): an Agent Skill embeds a `!`
+  dynamic-context command that runs when the skill loads — before the model reads it, so
+  `allowed-tools` does not help — and that command reads a credential and sends it off-host, or
+  fetches code and runs it (Datadog's Clawsights note, `gh auth token | curl …`). A benign skill
+  that runs `!`git status`` for context is not flagged.
+
 ## ruleset 62 (engine 0.55.0)
 
 Threat-research runs of 2026-09-22, 09-25 and 10-02: techniques published in the prior ~45 days,
