@@ -122,6 +122,39 @@ def test_a_malicious_package_is_denied_with_the_reason_for_the_agent():
     assert "Malicious indicators" in spec["permissionDecisionReason"]
 
 
+def _finding(rule_id, title, threat_class, file, line):
+    return {"id": rule_id, "title": title, "threat_class": threat_class,
+            "evidence": [{"file": file, "line_start": line}]}
+
+
+def test_the_deny_reason_names_what_was_found_and_where():
+    # The agent repeats the reason to the person, so it carries the evidence, not only a verdict.
+    report = _report("medium", 25, True, "Malicious indicators found")
+    report["findings"] = [
+        _finding("ST-INSTALL-NPM", "npm install-time lifecycle hook", "risky_construct",
+                 "package.json", 6),
+        _finding("ST-OBF-DECODE-EXEC", "Decode-and-execute (obfuscated execution)",
+                 "malicious_indicator", "scripts/setup.js", 4),
+    ]
+    out = hook_response(_bash("npm install evil-pkg"), scan=lambda s, t: report)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    found = "npm:evil-pkg: Decode-and-execute (obfuscated execution) at scripts/setup.js:4."
+    assert found in reason
+    assert "lifecycle hook" not in reason  # a risky construct is not why it was denied
+    assert "(and" not in reason
+
+
+def test_the_deny_reason_counts_further_malicious_findings():
+    report = _report("critical", 90, True, "Malicious indicators found")
+    report["findings"] = [
+        _finding("ST-OBF-DECODE-EXEC", "Decode-and-execute (obfuscated execution)",
+                 "malicious_indicator", "a.js", 1),
+        _finding("ST-INSTALL-DROPPER", "Install-time dropper", "malicious_indicator", "b.js", 2),
+    ]
+    out = hook_response(_bash("npm install evil-pkg"), scan=lambda s, t: report)
+    assert "at a.js:1 (and 1 more)." in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
 def test_a_high_risk_package_asks_the_person():
     out = hook_response(_bash("pip install risky"), scan=lambda s, t: _report("high", 60))
     spec = out["hookSpecificOutput"]

@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.61.1]
+
+### Changed
+- **The Claude Code plugin says what it found when it blocks an install.** The deny reason now
+  names the first malicious-indicator finding and where it is (`Decode-and-execute (obfuscated
+  execution) at scripts/setup.js:4`, plus how many more there are) instead of only the verdict, so
+  the agent can tell the person exactly why the package was stopped. `skilltotal scan` still lists
+  every finding. Detection is unchanged (ruleset 65).
+
 ## [0.61.0]
 
 ### Fixed

@@ -566,8 +566,7 @@ def hook_response(
         summary = (f"{source}: risk {report.get('risk_score', 0)}/100 "
                    f"({report.get('risk_level', 'unknown')})")
         if verdict.get("has_malicious_indicators"):
-            headline = verdict.get("headline") or "Malicious indicators"
-            denied.append(_sentence(f"{summary}. {headline}"))
+            denied.append(_sentence(f"{source}: {_malicious_detail(report)}"))
         elif not decision.allow:
             # The guard's reasons already name the score; repeating the summary reads as a stutter.
             asked.append(_sentence(f"{source}: {'; '.join(decision.reasons)}"
@@ -576,7 +575,7 @@ def hook_response(
         else:
             clean.append(summary)
 
-    details = "Run `skilltotal scan <package>` for the file:line evidence."
+    details = "Run `skilltotal scan <package>` for every finding with its file:line evidence."
     if denied:
         reason = "SkillTotal found malicious indicators before install. " + " ".join(denied)
         return _answer(permission="deny", reason=f"{reason} {details}")
@@ -595,6 +594,28 @@ def hook_response(
             "it before relying on it."
         )
     return _answer(context=" ".join(notes))
+
+
+def _malicious_detail(report: dict[str, Any]) -> str:
+    """What was found and where: the first malicious-indicator finding and its file:line.
+
+    The reason is what the agent repeats to the person, so it carries the evidence itself
+    ("Decode-and-execute (obfuscated execution) at scripts/setup.js:4") rather than only a verdict.
+    """
+    hits = [
+        f for f in report.get("findings") or []
+        if f.get("threat_class") == "malicious_indicator"
+    ]
+    if not hits:
+        return (report.get("verdict") or {}).get("headline") or "Malicious indicators"
+    first = hits[0]
+    detail = str(first.get("title") or first.get("id") or "Malicious indicator")
+    evidence = (first.get("evidence") or [{}])[0]
+    if evidence.get("file") and evidence.get("line_start"):
+        detail += f" at {evidence['file']}:{evidence['line_start']}"
+    if len(hits) > 1:
+        detail += f" (and {len(hits) - 1} more)"
+    return detail
 
 
 def _sentence(text: str) -> str:
