@@ -37,8 +37,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
+import warnings
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TextIO
 
 from skilltotal import engine
 from skilltotal.agent_skill import SKILL_MISMATCH_FINDING_ID
@@ -302,8 +305,14 @@ def load_rows(path: Path) -> list[tuple[str, str, str, str, list[str], list[str]
     return rows
 
 
-def calibrate(dataset: Path) -> tuple[list[RowResult], dict]:
-    results = [run_row(c, s, v, exp, ef, ff) for c, s, v, exp, ef, ff in load_rows(dataset)]
+def calibrate(dataset: Path, progress: TextIO | None = None) -> tuple[list[RowResult], dict]:
+    """Run every row. With ``progress``, write ``[i/N] <source>`` there as each row starts."""
+    rows = load_rows(dataset)
+    results = []
+    for i, (c, s, v, exp, ef, ff) in enumerate(rows, 1):
+        if progress is not None:
+            print(f"[{i}/{len(rows)}] {s}", file=progress, flush=True)
+        results.append(run_row(c, s, v, exp, ef, ff))
     return results, summarize(results)
 
 
@@ -313,7 +322,13 @@ def main() -> None:
     ap.add_argument("--out", type=Path, help="output prefix; writes <prefix>.json and .md")
     args = ap.parse_args()
 
-    results, summary = calibrate(args.dataset)
+    # Compiling the scanned third-party Python emits SyntaxWarnings (invalid escapes in a
+    # linter's test files, ...). They say nothing about the calibration and filled the progress
+    # file deploy.ps1 tails: 118 lines in the first half hour of the 0.62.0 run.
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
+    # Progress goes to stderr, flushed per row: stdout carries the markdown report, and a piped
+    # stdout is block-buffered, so progress printed there would arrive in chunks.
+    results, summary = calibrate(args.dataset, progress=sys.stderr)
     payload = {"summary": summary, "results": [asdict(r) for r in results]}
 
     if args.out:

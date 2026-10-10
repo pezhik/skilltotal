@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import sys
 from pathlib import Path
 
@@ -228,3 +229,40 @@ def test_markdown_renders(tmp_path):
     md = calibrate.to_markdown(results, summary)
     assert "# SkillTotal calibration report" in md
     assert "benign false positives" in md
+
+
+def _two_row_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
+    a, b = tmp_path / "a", tmp_path / "b"
+    _write(a, "ok.py", "x = 1\n")
+    _write(b, "ok.py", "y = 2\n")
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,ecosystem,source,version,notes\n"
+        f"benign-baseline,local,{a},,one\n"
+        f"benign-baseline,local,{b},,two\n",
+        encoding="utf-8",
+    )
+    return csv_path, a, b
+
+
+def test_calibrate_reports_each_row_as_it_starts(tmp_path, capsys):
+    # deploy.ps1 tails these lines to show how far the ~85-minute release calibration has got.
+    csv_path, a, b = _two_row_dataset(tmp_path)
+    progress = io.StringIO()
+    calibrate.calibrate(csv_path, progress=progress)
+    assert progress.getvalue().splitlines() == [f"[1/2] {a}", f"[2/2] {b}"]
+    # Called as a library, without a stream, it stays quiet.
+    calibrate.calibrate(csv_path)
+    captured = capsys.readouterr()
+    assert captured.out == "" and captured.err == ""
+
+
+def test_the_cli_streams_progress_to_stderr_and_the_report_to_stdout(tmp_path, monkeypatch, capsys):
+    csv_path, a, b = _two_row_dataset(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["calibrate.py", "--dataset", str(csv_path)])
+    calibrate.main()
+    captured = capsys.readouterr()
+    assert f"[1/2] {a}" in captured.err.splitlines()
+    assert f"[2/2] {b}" in captured.err.splitlines()
+    assert "[1/2]" not in captured.out
+    assert "# SkillTotal calibration report" in captured.out
