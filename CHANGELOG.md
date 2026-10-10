@@ -10,8 +10,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - **The Claude Code plugin says what it found when it blocks an install.** The deny reason now
   names the first malicious-indicator finding and where it is (`Decode-and-execute (obfuscated
   execution) at scripts/setup.js:4`, plus how many more there are) instead of only the verdict, so
-  the agent can tell the person exactly why the package was stopped. `skilltotal scan` still lists
-  every finding. Detection is unchanged (ruleset 65).
+  the agent can tell the person exactly why the package was stopped. The path comes from the
+  scanned package, so it is quoted as data and shown only when it is a plain path: a file name
+  written as an instruction to the agent is left out. `skilltotal scan` still lists every finding.
+  Detection is unchanged (ruleset 65).
+
+### Fixed
+- **CI tests the npm runner against the engine in the same commit.** The runner prefers
+  `uvx`/`pipx`, which fetch the matching release from PyPI, so the end-to-end tests ran the last
+  release on ordinary commits and failed on every release commit, whose version is published only
+  after its tag. The test step now keeps only Python and Node on `PATH`.
 
 ## [0.61.0]
 

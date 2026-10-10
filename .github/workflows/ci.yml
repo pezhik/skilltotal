@@ -48,7 +48,13 @@ jobs:
           node-version: "22"
       - name: Test the npm runner
         working-directory: npm
-        run: npm test
+        # The runner prefers uvx/pipx, which fetch the PyPI release matching package.json: on a
+        # release commit that version is not published yet (its tag publishes it), and on any other
+        # commit they would test the last release, not this checkout. With only Python and Node on
+        # PATH, the end-to-end tests run the engine installed from this checkout above.
+        run: |
+          export PATH="$(dirname "$(command -v python)"):$(dirname "$(command -v node)"):/usr/bin:/bin"
+          npm test
       - name: Check the packed file list
         working-directory: npm
         run: |
