@@ -180,17 +180,17 @@ def render_markdown(s: dict, meta: dict) -> str:
     # the SAME 17,535 entries is what makes two reports comparable, so say both dates when they
     # differ rather than let a reader reconcile the count against today's registry.
     snapshot = meta.get("population_snapshot") or meta["generated"]
-    when = (
-        f"scanned on {meta['generated']} against the registry as of {snapshot}"
-        if snapshot != meta["generated"]
-        else f"run on {meta['generated']}"
-    )
+    rerun = snapshot != meta["generated"]
     add("# The MCP registry, measured")
     add("")
+    # How many were scanned leads, not "every component": an eighth of the population could not
+    # be scanned, and the coverage table below says why.
+    as_of = f" as of {snapshot}" if rerun else ""
     add(
-        f"A deterministic static scan of every distinct component in the public MCP registry — "
-        f"{s['population']:,} of them — {when} with SkillTotal "
-        f"{meta['engine']} (ruleset {meta['ruleset']})."
+        f"A deterministic static scan of the public MCP registry{as_of}: "
+        f"{s['scanned']:,} of its {s['population']:,} distinct components "
+        f"({pct(s['scanned'], s['population'])}), {'scanned' if rerun else 'run'} on "
+        f"{meta['generated']} with SkillTotal {meta['engine']} (ruleset {meta['ruleset']})."
     )
     add("")
     add("## How to read this")

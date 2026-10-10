@@ -109,11 +109,20 @@ def test_report_states_the_population_snapshot_when_it_differs_from_the_scan_dat
     against the live registry a reader checks today."""
     meta = {**_META, "generated": "2026-09-13", "population_snapshot": "2026-08-16"}
     text = sr.render_markdown(sr.summarize(_rows()), meta)
-    assert "scanned on 2026-09-13 against the registry as of 2026-08-16" in text
+    lead = text.splitlines()[2]
+    assert "the public MCP registry as of 2026-08-16:" in lead
+    assert "scanned on 2026-09-13" in lead
     assert "as of 2026-08-16, deduplicated by source" in text
     # Same-day runs keep the plain wording.
-    same = sr.render_markdown(sr.summarize(_rows()), _META)
-    assert "run on 2026-08-19" in same and "against the registry as of" not in same
+    same = sr.render_markdown(sr.summarize(_rows()), _META).splitlines()[2]
+    assert "run on 2026-08-19" in same and "as of" not in same
+
+
+def test_report_leads_with_how_many_were_scanned_not_every_component():
+    """The lead once said "every distinct component" while an eighth was never scanned."""
+    lead = sr.render_markdown(sr.summarize(_rows()), _META).splitlines()[2]
+    assert "3 of its 5 distinct components (60.0%)" in lead
+    assert "every distinct component" not in lead
 
 
 def test_report_states_coverage_and_versions():

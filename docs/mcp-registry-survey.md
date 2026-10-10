@@ -1,6 +1,6 @@
 # The MCP registry, measured
 
-A deterministic static scan of every distinct component in the public MCP registry — 17,535 of them — scanned on 2026-09-19 against the registry as of 2026-08-16 with SkillTotal 0.49.0 (ruleset 59).
+A deterministic static scan of the public MCP registry as of 2026-08-16: 15,341 of its 17,535 distinct components (87.5%), scanned on 2026-09-19 with SkillTotal 0.49.0 (ruleset 59).
 
 ## How to read this
 
