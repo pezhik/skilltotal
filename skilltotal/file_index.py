@@ -415,8 +415,11 @@ def is_doc_path(relpath: str, skills: frozenset[str] = frozenset()) -> bool:
         name = name[: name.rindex(".")]
     if name in _INSTRUCTION_NAMES or name.endswith(_INSTRUCTION_SUFFIXES):
         return False
-    if name in _DOC_EXACT_NAMES or name in _FEED_NAMES or name.endswith(_FEED_SUFFIXES):
+    if name in _DOC_EXACT_NAMES:
         return True
+    # A feed inside a skill is something the skill may tell the agent to read, like its markdown.
+    if name in _FEED_NAMES or name.endswith(_FEED_SUFFIXES):
+        return not _under_skill(relpath.lower(), skills)
     # Named for an attack -> documentation about it, whatever else the name says. Checked before
     # the instruction keywords below and covers `.txt` corpora such as `advanced_attacks.txt`.
     if any(kw in name for kw in _SECURITY_DOC_KEYWORDS) and (

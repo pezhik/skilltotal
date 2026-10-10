@@ -134,6 +134,8 @@ def test_a_theft_directive_still_fires(tmp_path: Path, text: str):
 def test_a_release_feed_is_documentation():
     assert is_doc_path("feed.xml") and is_doc_path("site/atom.xml") and is_doc_path("news.rss")
     assert not is_doc_path("config.xml") and not is_doc_path("src/feed.ts")
+    # Inside a skill, a feed is something the skill can tell the agent to read.
+    assert not is_doc_path("skills/news/feed.xml", frozenset({"skills/news"}))
 
 
 def test_a_credential_path_in_release_notes_is_not_scored(tmp_path: Path):
