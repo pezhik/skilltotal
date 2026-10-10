@@ -65,6 +65,9 @@ _BIND_BEFORE = re.compile(
 # ('::', PORT). Port 0 asks for "any port": a client's source address, not a service.
 _TUPLE_BEFORE = re.compile(r"(?<![\w$.])\(\s*$")
 _TUPLE_AFTER = re.compile(r"\s*,\s*(?:[1-9]\d{0,4}|[A-Za-z_][\w.]*)\s*\)")
+# The address followed by a literal port number in the same argument list is a socket address in
+# any call: web.TCPSite(runner, "0.0.0.0", 8080).
+_PORT_AFTER = re.compile(r"\s*,\s*[1-9]\d{0,4}\b(?!\.)")
 # CLI launchers: --host 0.0.0.0, --bind=0.0.0.0:8000, -b 0.0.0.0 (flask run -h, gunicorn -b).
 _FLAG_BEFORE = re.compile(
     r"(?:--(?:host|hostname|bind|listen|ip|addr|address)|(?<![\w-])-[hHb])(?:=|\s+)$"
@@ -80,8 +83,10 @@ def _bind_evidence(index: FileIndex) -> list[Evidence]:
             line_start = text.rfind("\n", 0, m.start()) + 1
             before = text[max(line_start, m.start() - _CONTEXT_CHARS) : m.start()]
             if m.group(0)[0] in "'\"":
-                bound = _BIND_BEFORE.search(before) or (
-                    _TUPLE_BEFORE.search(before) and _TUPLE_AFTER.match(text, m.end())
+                bound = (
+                    _BIND_BEFORE.search(before)
+                    or _PORT_AFTER.match(text, m.end())
+                    or (_TUPLE_BEFORE.search(before) and _TUPLE_AFTER.match(text, m.end()))
                 )
             else:
                 bound = _FLAG_BEFORE.search(before)

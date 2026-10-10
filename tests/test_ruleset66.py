@@ -283,6 +283,7 @@ def test_an_all_interfaces_literal_outside_a_bind_is_not_a_bind(
         ("srv.py", "from wsgiref.simple_server import make_server\n"
                    "make_server('0.0.0.0', 8000, app)\n"),
         ("srv.py", "websockets.serve(handler, '0.0.0.0', 8765)\n"),
+        ("srv.py", "site = web.TCPSite(runner, '0.0.0.0', 8080)\n"),
         ("gunicorn.conf.py", 'bind = "0.0.0.0:8000"\n'),
         ("srv.py", "sock.bind(('::', 8080))\n"),
         ("server.ts", "app.listen(port, '0.0.0.0', () => console.log('up'));\n"),
@@ -379,7 +380,9 @@ def test_a_typosquat_sdist_without_pyproject_is_anchored_on_pkg_info(tmp_path: P
 _ACL_CHECK = (
     "const { spawnSync } = require('child_process');\n"
     "function buildAclScript(paths) {\n"
-    "  return `$p = '${paths.join(\"','\")}'; Get-Acl $p | ConvertTo-Json`;\n}\n"
+    "  return `$paths = @('${paths.join(\"','\")}');\n"
+    "  foreach ($p in $paths) { Get-Acl -LiteralPath $p | Select-Object Owner | ConvertTo-Json }`;"
+    "\n}\n"
     "function check(paths) {\n"
     "  const script = buildAclScript(paths);\n"
     "  const encodedScript = Buffer.from(script, 'utf16le').toString('base64');\n"
@@ -413,6 +416,20 @@ def test_encoding_a_script_from_the_same_file_is_not_evasion(tmp_path: Path, sou
         "spawn('powershell.exe', ['-EncodedCommand', enc]);\n",
         # The exemption covers -EncodedCommand only: a policy bypass still counts.
         _INLINE_SCRIPT + "exec('powershell -ExecutionPolicy Bypass -File stage.ps1');\n",
+        # A name first bound to a harmless script and then to a download is not a local script.
+        "let s = `Get-Date | Out-String`;\n"
+        "async function run(u) {\n  s = await (await fetch(u)).text();\n"
+        "  const enc = Buffer.from(s, 'utf16le').toString('base64');\n"
+        "  spawn('powershell.exe', ['-EncodedCommand', enc]);\n}\n",
+        # A "builder" that only wraps what it is given carries no script of its own.
+        "function wrap(x) { return `${x}`; }\n"
+        "const payload = globalThis.__payload;\n"
+        "spawn('powershell.exe', ['-EncodedCommand',\n"
+        "  Buffer.from(wrap(payload), 'utf16le').toString('base64')]);\n",
+        # Nor does one that downloads it.
+        "async function build(u) { const r = await fetch(u); return `${await r.text()} # x`; }\n"
+        "const enc = Buffer.from(build(u), 'utf16le').toString('base64');\n"
+        "spawn('powershell.exe', ['-EncodedCommand', enc]);\n",
     ],
 )
 def test_hidden_or_remote_encoded_commands_still_fire(tmp_path: Path, source: str):

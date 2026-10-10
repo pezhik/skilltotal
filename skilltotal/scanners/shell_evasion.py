@@ -50,28 +50,68 @@ _UTF16_BASE64_TAIL = re.compile(
 )
 _IDENT = re.compile(r"[A-Za-z_$][\w$]*")
 _LOOKAHEAD_CHARS = 200
+_BUILDER_BODY_CHARS = 6000
+# A script builder that reaches outside the file (network, files, environment, input) is not a
+# script the file spells out, whatever it returns.
+_BUILDER_IO = re.compile(
+    r"\b(?:fetch|axios|request|got|https?|net|readFile\w*|createReadStream|require|import|"
+    r"XMLHttpRequest|WebSocket|stdin|argv|env|await)\b"
+)
+# The builder must carry the script itself, not only wrap its arguments (`` `${x}` ``).
+_INTERPOLATION = re.compile(r"\$\{[^}]*\}")
+_MIN_BUILDER_SCRIPT = 40
 
 
-def _binding(f: IndexedFile, name: str) -> re.Match[str] | None:
-    """`const|let|var <name> = <value>` (with an optional type annotation) in this file."""
-    return re.search(
-        rf"\b(?:const|let|var)\s+{re.escape(name)}\s*(?::[^=\n]{{0,60}})?=\s*", f.text
-    )
-
-
-def _defines_function(f: IndexedFile, name: str) -> bool:
-    n = re.escape(name)
-    return bool(re.search(
-        rf"\bfunction\s+{n}\s*\(|\b(?:const|let|var)\s+{n}\s*=\s*(?:async\s+)?(?:function\b|\()",
+def _bindings(f: IndexedFile, name: str) -> list[re.Match[str]]:
+    """Every assignment of ``name`` in the file: `const|let|var <name> =` and `<name> =`."""
+    return list(re.finditer(
+        rf"(?<![\w$.])(?:(?:const|let|var)\s+)?{re.escape(name)}\s*(?::[^=\n]{{0,60}})?"
+        rf"=(?![=>])\s*",
         f.text,
     ))
+
+
+def _builder_code(f: IndexedFile, name: str) -> tuple[str, int] | None:
+    """The code of a function named ``name`` defined in this file, string literals left out, and
+    how much literal script text its strings hold (``${…}`` excluded); None if there is no such
+    function."""
+    n = re.escape(name)
+    m = re.search(
+        rf"\bfunction\s+{n}\s*\([^)]{{0,200}}\)[^{{]{{0,80}}\{{"
+        rf"|\b(?:const|let|var)\s+{n}\s*=\s*(?:async\s+)?(?:function\b[^{{]{{0,200}}|"
+        rf"\([^)]{{0,200}}\)[^{{]{{0,80}}=>\s*)\{{",
+        f.text,
+    )
+    if m is None:
+        return None
+    code: list[str] = []
+    literal = 0
+    depth, i, stop = 0, m.end() - 1, min(len(f.text), m.end() + _BUILDER_BODY_CHARS)
+    while i < stop:
+        span = f.string_span_at(i)
+        if span is not None and span[0] == i:
+            literal += len(_INTERPOLATION.sub("", f.text[span[0] + 1 : span[1] - 1]).strip())
+            code.append(" ")
+            i = span[1]
+            continue
+        ch = f.text[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return "".join(code), literal
+        code.append(ch)
+        i += 1
+    return None
 
 
 def _is_local_script(f: IndexedFile, at: int, depth: int = 0) -> int | None:
     """End offset of a script expression at ``at`` that this file spells out, or None.
 
-    A string/template literal; a name bound to one; or a call to a function defined in the file
-    (a script builder such as ``buildWindowsAclScript(paths)``), alone or through a name.
+    A string/template literal; a name every assignment of which is one; or a call to a function
+    defined in the file whose body builds the text without any input (a script builder such as
+    ``buildWindowsAclScript(paths)``), alone or through a name.
     """
     if depth > 2:
         return None
@@ -87,9 +127,16 @@ def _is_local_script(f: IndexedFile, at: int, depth: int = 0) -> int | None:
     end = ident.end()
     call = re.match(r"\s*\([^()]{0,200}\)", text[end : end + 210])
     if call is not None:
-        return end + call.end() if _defines_function(f, ident.group(0)) else None
-    bound = _binding(f, ident.group(0))
-    if bound is None or _is_local_script(f, bound.end(), depth + 1) is None:
+        builder = _builder_code(f, ident.group(0))
+        if (
+            builder is None
+            or builder[1] < _MIN_BUILDER_SCRIPT
+            or _BUILDER_IO.search(builder[0])
+        ):
+            return None
+        return end + call.end()
+    bound = _bindings(f, ident.group(0))
+    if not bound or any(_is_local_script(f, b.end(), depth + 1) is None for b in bound):
         return None
     return end
 
@@ -109,11 +156,14 @@ def _encodes_visible_script(f: IndexedFile, flag_end: int) -> bool:
         return False
     if nxt.group(1):
         return _encodes_local_script(f, nxt.end(1))
-    bound = _binding(f, nxt.group(2))
-    if bound is None:
+    bound = _bindings(f, nxt.group(2))
+    if not bound:
         return False
-    encoder = re.match(r"Buffer\.from\s*\(", f.text[bound.end() : bound.end() + 20])
-    return encoder is not None and _encodes_local_script(f, bound.end() + encoder.end())
+    for b in bound:
+        encoder = re.match(r"Buffer\.from\s*\(", f.text[b.end() : b.end() + 20])
+        if encoder is None or not _encodes_local_script(f, b.end() + encoder.end()):
+            return False
+    return True
 
 
 _RULE = RuleSpec(
