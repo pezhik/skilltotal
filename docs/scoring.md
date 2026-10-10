@@ -115,8 +115,8 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … (`is_data_corpus_path`). A
   prompt-injection string in an eval dataset is a detector test vector, not behavior. Restricted to
   non-code suffixes, so a real payload shipped as code in such a directory is still scanned/scored.
-- **Python string literals / comments, shell `#` comments, and C-family `//` `/* */` comments**
-  (`.ts`/`.js`/`.go`/`.rs`/…) — a behavior/text detector matching
+- **Python string literals / comments, shell `#` and PowerShell `<# … #>` comments, and C-family
+  `//` `/* */` comments** (`.ts`/`.js`/`.go`/`.rs`/…) — a behavior/text detector matching
   its own regex literal or a docstring example is not behavior; a `# Usage: curl … | bash` line is a
   doc comment, not a runnable pipe-to-shell. Governed per-rule by `code_context`
   (`strings_and_comments` for decode-exec / tool-poisoning / prompt-injection / sensitive-path;
@@ -127,8 +127,13 @@ so the engine does not flag descriptions of attacks or its own detection pattern
 - **Denylist / guardrail credential paths and public DocSearch keys** — demoted at the scanner level
   (`sensitive_paths.py`, `secrets.py`): a policy that *protects* `~/.ssh`/`id_rsa` is not access to
   it — including a macOS sandbox profile's `(deny file-read* …)` rule that keeps an agent CLI's
-  tools away from its own login file — and an Algolia DocSearch search key sitting next to an app
-  id / index name is public/read-only.
+  tools away from its own login file — a key or kubeconfig handed to its own client (`ssh -i`,
+  `--kubeconfig`) is read locally to authenticate, and an Algolia DocSearch search key sitting next
+  to an app id / index name is public/read-only.
+- **PowerShell `-EncodedCommand` of the file's own script** — a JS/TS file that base64-encodes a
+  script it spells out (`Buffer.from(SCRIPT, "utf16le").toString("base64")`) to pass it to
+  PowerShell hides nothing from a reader; `ST-SHELL-EVASION` sets it aside for review. A literal
+  blob, or a value encoded from a download, a file read or a parameter, still scores.
 - **Cited or described attacks** — a prompt-injection phrase wrapped in quotes (also when elided:
   `'Ignore previous instructions...'`), framed by a defensive line, or a data-theft phrase whose
   subject is a third-party attacker with a modal verb ("attackers may steal credentials", a threat
