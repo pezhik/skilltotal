@@ -267,7 +267,7 @@ _ABILITY = re.compile(
     r"(?i)\b(?:can|could|may|might|would|will|(?:is|are)\s+able\s+to|"
     r"(?:try|tries|trying|attempts?|attempting|seeks?)\s+to)\b"
 )
-_SECOND_PERSON = re.compile(r"(?i)\byou(?:r)?\b")
+_SECOND_PERSON = re.compile(r"(?i)\byou(?:rs?|rself|rselves)?\b")
 _CLAUSE_BREAKS = ".;:!?<>\n"
 _CLAUSE_WINDOW = 300
 
