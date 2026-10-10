@@ -195,8 +195,9 @@ _WEAK = alternation(
 
 # Quote characters that wrap a *cited* phrase (straight, smart, guillemets, backtick).
 _QUOTES = "\"'`“”‘’«»"
-# An ellipsis that elides the rest of a quoted phrase: `...` (two to four dots) or `…`.
-_ELISION = re.compile(r" ?(?:\.{2,4}|…)")
+# What may sit between a cited phrase and its closing quote: an ellipsis that elides the rest of it
+# (`...`, `…`) or the cited sentence's own punctuation (`"Ignore all previous instructions."`).
+_ELISION = re.compile(r" ?(?:\.{2,4}|…)|[.!?,;:]")
 # Quote pairs for the ENCLOSING-quote citation form (opening -> closing). Deliberately excludes
 # single/typographic-apostrophe quotes: apostrophes in prose ("don't", "user's") would make
 # unquoted lines look quoted and wrongly demote live directives.
@@ -334,9 +335,9 @@ def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False)
     Two forms (the use–mention distinction: quoted text is mentioned, not asserted):
     1. The span is immediately wrapped in quotes on BOTH sides — a security doc listing
        ``"ignore all previous instructions"``, or an elided ``'Ignore previous instructions...'``
-       (only an ellipsis may separate the phrase from its closing quote). Requiring both immediate
-       boundaries keeps recall: an injection that continues past the phrase has no closing quote
-       right after the match.
+       (only an ellipsis or one punctuation mark may separate the phrase from its closing quote).
+       Requiring both immediate boundaries keeps recall: an injection that continues past the
+       phrase has no closing quote right after the match.
     2. (``prose`` files only) the span STARTS inside an open quoted region on its line AND the
        line carries a defensive-citation cue (``untrusted``, ``e.g.``, ``etc.``, ``such as`` …)
        — e.g. ``treat snippets as untrusted, never authoritative ("Ignore prior instructions,
@@ -352,8 +353,9 @@ def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False)
     before = text[start - 1] if start > 0 else ""
     # An elided quotation is still a quotation: `'Ignore previous instructions...'` cuts the cited
     # phrase off with an ellipsis and then closes the quote (gemini-cli's issue-triage skill lists
-    # exactly that as an example of SPAM to classify). Only an ellipsis may sit between the phrase
-    # and the closing quote, so an injection that continues past the phrase is not covered.
+    # exactly that as an example of SPAM to classify). Only an ellipsis or one punctuation mark may
+    # sit between the phrase and the closing quote, so an injection that continues past the phrase
+    # is not covered.
     elision = _ELISION.match(text, end)
     close_at = elision.end() if elision else end
     after = text[close_at] if close_at < len(text) else ""
