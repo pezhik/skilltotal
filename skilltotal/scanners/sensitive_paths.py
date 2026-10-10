@@ -185,9 +185,12 @@ def _guard_segment(relpath: str) -> bool:
 # (string-append (param "HOME_DIR") "/.gemini/oauth_creds.json")))`. Agent CLIs ship such profiles
 # to keep the tools they run away from the CLI's own login; the path names what is protected, so it
 # is the opposite of a read. Only deny rules for file operations count; an `(allow ...)` is not a
-# guard. The rule may span many lines, so the enclosing form is found by its parentheses.
-_SBPL_DENY_FILE = re.compile(r"\(\s*deny\s+file[\w*-]*")
+# guard. The rule may span many lines, so the enclosing form is found by its parentheses; it must
+# open a line and contain only SBPL (forms, symbols, strings) up to the path, so a `// (deny file*`
+# comment cannot stand in front of a real read in JavaScript.
+_SBPL_DENY_FILE = re.compile(r"(?m)^[ \t]*\(\s*deny\s+file[\w*-]*")
 _SBPL_LOOKBACK = 4000
+_NOT_SBPL = frozenset(";{}=")
 
 
 def _in_sandbox_deny_rule(text: str, offset: int) -> bool:
@@ -206,6 +209,8 @@ def _in_sandbox_deny_rule(text: str, offset: int) -> bool:
                 break
             i = close + 1
             continue
+        if ch in _NOT_SBPL:
+            return False  # code, not a sandbox profile
         if ch == "(":
             depth += 1
         elif ch == ")":

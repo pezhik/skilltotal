@@ -218,6 +218,11 @@ def test_a_sandbox_deny_rule_is_not_credential_access(tmp_path: Path):
         # An ALLOW rule grants access; it is not a guard.
         "export const P = `(allow file-read*\n"
         '  (literal (string-append (param "HOME_DIR") "/.gemini/oauth_creds.json")))`;\n',
+        # A deny form written in front of real code is not a profile: comments cannot launder it.
+        "// (deny file-read*\n"
+        "const k = require('fs').readFileSync(home + '/.gemini/oauth_creds.json');\n",
+        "/*\n(deny file-read*\n*/\n"
+        "const k = require('fs').readFileSync(home + '/.gemini/oauth_creds.json');\n",
     ],
 )
 def test_credential_paths_outside_a_deny_rule_still_fire(tmp_path: Path, source: str):
