@@ -127,18 +127,32 @@ _WRITE_CALL_OPEN = (
 _WRITE_BEFORE = re.compile(_WRITE_CALL_OPEN + r"[^;\n]{0,200}$", re.IGNORECASE)
 # Python `Path(...).write_text(...)` / `.write_bytes(...)`: the path precedes the write method.
 _WRITE_METHOD_AFTER = re.compile(r"^[^;\n]{0,120}?\.write_(?:text|bytes)\s*\(", re.IGNORECASE)
+# The variable a statement assigns the config path to, so a one-hop write through it is caught
+# (`const target = home + '/.cursor/mcp.json'; writeFileSync(target, data)`). A health check that
+# returns the paths in a list (`return [path.join(cwd, '.claude.json'), …]`) has no such
+# assignment head, so it is not matched — closing the injection bypass without re-flagging reads.
+_ASSIGN_HEAD = re.compile(r"^(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=(?!=)")
 
 
 def _is_write_target(text: str, start: int, end: int) -> bool:
-    """True if the config-path span [start,end) sits inside a write sink's argument list."""
+    """True if the config-path span [start,end) is (or flows one hop to) a write sink's target."""
     line_start = text.rfind("\n", 0, start) + 1
-    semi = text.rfind(";", line_start, start)
-    stmt_start = max(line_start, semi + 1)
+    stmt_start = max(line_start, text.rfind(";", line_start, start) + 1)
     before = text[max(stmt_start, start - 200):start]
     if _WRITE_BEFORE.search(before):
         return True
-    after = text[end:end + 120]
-    return bool(_WRITE_METHOD_AFTER.match(after))
+    if _WRITE_METHOD_AFTER.match(text[end:end + 120]):
+        return True
+    # One-hop: the path is assigned to a variable that is then written.
+    m = _ASSIGN_HEAD.match(before)
+    if m:
+        var = re.escape(m.group(1))
+        if re.search(_WRITE_CALL_OPEN + r"[^;\n]{0,200}\b" + var + r"\b", text, re.IGNORECASE):
+            return True
+        method = r"\b" + var + r"\b[^;\n]{0,80}\.write_(?:text|bytes)\s*\("
+        if re.search(method, text, re.IGNORECASE):
+            return True
+    return False
 
 # --- git-hook persistence (SANDWORM_MODE / supply-chain worms, 2026) -------------------------
 # Repointing git's GLOBAL template dir makes a hook run for every repository the victim creates
@@ -158,6 +172,14 @@ _GIT_PERSIST = re.compile(
 _GIT_CONFIG_READ = re.compile(r"--(?:get|get-all|get-regexp|list|unset|unset-all|null)\b", re.I)
 # core.hooksPath followed by an actual value (a SET), vs. nothing / a shell terminator (a READ).
 _HOOKSPATH_SET = re.compile(r"core\.hooksPath\b[ \t]+[\"']?[^\s|&;)>\"']", re.I)
+# A line whose command only PRINTS the git config command (restore-instruction help text), rather
+# than running it. Narrow to print builtins so a line that EXECUTES a quoted command (`eval "…"`,
+# `bash -c "…"`) is still detected — skipping all quoted strings would be an evasion hole.
+_PRINT_LINE = re.compile(
+    r"^\s*(?:echo|printf|print|println|log|logger|warn|info|debug|say|puts|"
+    r"Write-Host|Write-Output|console\.\w+)\b",
+    re.IGNORECASE,
+)
 
 # --- auto-executed command in an Agent Skill (Clawsights dynamic context, Datadog 2026) ------
 # A Claude Code skill may embed a "dynamic context" command with a leading `!` (bare or wrapped
@@ -370,13 +392,14 @@ class AgentConfigScanner(Scanner):
                 bypass.append(ev)
                 if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
-            for m, ev in f.finditer(_GIT_PERSIST):
+            for _m, ev in f.finditer(_GIT_PERSIST):
                 line = f.line_text(ev.line_start)
                 # A read (`--get`/`--list`/`--unset`, or value-less `core.hooksPath`) is not
-                # persistence; a command quoted inside a shell string is printed help, not run.
+                # persistence; a line that only PRINTS the command (echo/log restore-help) is not
+                # running it. `eval`/`bash -c` of a quoted command are NOT skipped.
                 if _GIT_CONFIG_READ.search(line):
                     continue
-                if f.in_shell_quoted(m.start()):
+                if _PRINT_LINE.match(line):
                     continue
                 lower = line.lower()
                 reads_hookspath = (

