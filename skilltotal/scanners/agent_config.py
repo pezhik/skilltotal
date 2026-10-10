@@ -172,14 +172,27 @@ _GIT_PERSIST = re.compile(
 _GIT_CONFIG_READ = re.compile(r"--(?:get|get-all|get-regexp|list|unset|unset-all|null)\b", re.I)
 # core.hooksPath followed by an actual value (a SET), vs. nothing / a shell terminator (a READ).
 _HOOKSPATH_SET = re.compile(r"core\.hooksPath\b[ \t]+[\"']?[^\s|&;)>\"']", re.I)
-# A line whose command only PRINTS the git config command (restore-instruction help text), rather
-# than running it. Narrow to print builtins so a line that EXECUTES a quoted command (`eval "…"`,
-# `bash -c "…"`) is still detected — skipping all quoted strings would be an evasion hole.
+# A line that only PRINTS the git command as restore-instruction help text, rather than running it.
+# Suppressing it safely needs ALL of: a REAL print builtin at the start (not a word like `log`,
+# which a script can define as a function that runs its argument); the git command sitting INSIDE
+# a quoted string; and nothing outside the quotes that could execute it (`;`, `&&`, `||`, `|`,
+# `$(`, backticks). Anything else -- `eval "git config …"`, `echo $(git config …)`,
+# `echo x; git config …` -- stays detected.
 _PRINT_LINE = re.compile(
-    r"^\s*(?:echo|printf|print|println|log|logger|warn|info|debug|say|puts|"
-    r"Write-Host|Write-Output|console\.\w+)\b",
+    r"^\s*(?:echo|printf|Write-Host|Write-Output|console\.(?:log|info|warn|error))\b",
     re.IGNORECASE,
 )
+_EXEC_OUTSIDE_QUOTES = re.compile(r"[;&|`]|\$\(")
+_QUOTED_RUN = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"")
+
+
+def _is_printed_help(line: str, quoted_at_offset: bool) -> bool:
+    """True if ``line`` only prints the git command (so it is not executed). Bypass-safe: requires
+    a print builtin, the match inside a quote, and no executable syntax outside the quotes."""
+    if not _PRINT_LINE.match(line) or not quoted_at_offset:
+        return False
+    outside = _QUOTED_RUN.sub("", line)  # blank the quoted segments; inspect what remains
+    return not _EXEC_OUTSIDE_QUOTES.search(outside)
 
 # --- auto-executed command in an Agent Skill (Clawsights dynamic context, Datadog 2026) ------
 # A Claude Code skill may embed a "dynamic context" command with a leading `!` (bare or wrapped
@@ -392,14 +405,14 @@ class AgentConfigScanner(Scanner):
                 bypass.append(ev)
                 if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
-            for _m, ev in f.finditer(_GIT_PERSIST):
+            for m, ev in f.finditer(_GIT_PERSIST):
                 line = f.line_text(ev.line_start)
                 # A read (`--get`/`--list`/`--unset`, or value-less `core.hooksPath`) is not
-                # persistence; a line that only PRINTS the command (echo/log restore-help) is not
-                # running it. `eval`/`bash -c` of a quoted command are NOT skipped.
+                # persistence; a line that only PRINTS the command is not running it (see
+                # _is_printed_help -- bypass-safe). `eval`/`bash -c`/`echo $(…)` stay detected.
                 if _GIT_CONFIG_READ.search(line):
                     continue
-                if _PRINT_LINE.match(line):
+                if _is_printed_help(line, f.in_shell_quoted(m.start())):
                     continue
                 lower = line.lower()
                 reads_hookspath = (

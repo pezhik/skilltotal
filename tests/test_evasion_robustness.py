@@ -222,3 +222,22 @@ def test_git_persist_printed_restore_help_stays_clean(tmp_path: Path):
     # is not installing persistence.
     sh = '#!/bin/bash\necho "restore with: git config --global core.hooksPath $prev"\n'
     assert "ST-GIT-HOOK-PERSIST" not in _ids(_mk(tmp_path, "help.sh", sh))
+
+
+def test_git_persist_echo_with_command_separator_is_caught(tmp_path: Path):
+    # `echo hi ; git config …` — the line starts with echo but a `;` runs the real command.
+    sh = "#!/bin/bash\necho hi ; git config --global init.templateDir /evil\n"
+    assert "ST-GIT-HOOK-PERSIST" in _ids(_mk(tmp_path, "s.sh", sh))
+
+
+def test_git_persist_command_substitution_is_caught(tmp_path: Path):
+    # `echo $(git config …)` — the substitution executes the git command.
+    sh = "#!/bin/bash\necho $(git config --global core.hooksPath /evil)\n"
+    assert "ST-GIT-HOOK-PERSIST" in _ids(_mk(tmp_path, "c.sh", sh))
+
+
+def test_git_persist_user_defined_log_function_is_caught(tmp_path: Path):
+    # A script can define `log` as a function that runs its argument, so a `log`-prefixed line is
+    # not proof the command is only printed.
+    sh = '#!/bin/bash\nlog(){ eval "$@"; }\nlog "git config --global init.templateDir /evil"\n'
+    assert "ST-GIT-HOOK-PERSIST" in _ids(_mk(tmp_path, "u.sh", sh))
