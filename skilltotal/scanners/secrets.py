@@ -89,6 +89,10 @@ _ENV_KEYMAT_RE = re.compile(
 # the alias so the key read through it is still seen. JS/TS only (Python reads are AST-folded).
 _ENV_ALIAS = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*process\.env\b")
 _ENV_JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+# Reading a key from the environment is a CODE behaviour; the same text in a markdown code block is
+# a documentation example. Scope the env-secret scan to code files so a SKILL.md / README example
+# is never counted as a real read.
+_ENV_CODE_SUFFIXES = _ENV_JS_SUFFIXES + (".py", ".pyw")
 
 # Generic: a secret-named variable assigned a long opaque string.
 _GENERIC = re.compile(
@@ -458,7 +462,12 @@ class SecretsScanner(Scanner):
                 env_seen.add(key)
                 env_secret_ev.append(ev)
 
-        for f in index.files:
+        # Only real code reads a key from the environment. The same `process.env.WALLET_PRIVATE_KEY`
+        # in a SKILL.md / README code block is a documentation EXAMPLE, not a read — and SKILL.md is
+        # deliberately kept in scope as an instruction surface, so it is not demoted as a doc. A
+        # crypto-agent project (e.g. affaan-m/ECC) ships such examples in its skill docs, and
+        # counting them as a secret read turned ordinary network use into a false exfil verdict.
+        for f in index.select(suffixes=_ENV_CODE_SUFFIXES):
             for _m, ev in f.finditer(_ENV_KEYMAT_RE):
                 _add_env(ev)
                 if len(env_secret_ev) >= MAX_EVIDENCE_SCANNED:

@@ -107,7 +107,7 @@ _CLIENT_CONFIG_PATHS = re.compile(
     re.IGNORECASE,
 )
 # A file-writing sink, in any of the languages we see. Reading these configs can be benign
-# (a tool that lists your installed servers); writing one is the injection.
+# (a tool that lists / health-checks your installed servers); only WRITING one is the injection.
 _WRITE_SINK = re.compile(
     r"\b(?:writeFileSync|writeFile|appendFileSync|appendFile|outputFile(?:Sync)?|createWriteStream"
     r"|write_text|write_bytes|Out-File|Set-Content|Add-Content)\b"
@@ -115,6 +115,30 @@ _WRITE_SINK = re.compile(
     r"|\bopen\s*\([^)]{0,200},\s*['\"][rbt]*[wa]\+?[rbt]*['\"]",
     re.IGNORECASE,
 )
+# The config path must be the TARGET of a write, not merely mentioned in the same file. A health
+# check that reads ~/.claude.json and writes its OWN state file elsewhere (e.g. ECC's
+# mcp-health-check.js) is not injection. This matches when a write sink opens its argument list and
+# the config path appears inside it, on the same statement (bounded so a crafted line cannot
+# backtrack). The config path (built from the shared alternation) is appended by the scanner.
+_WRITE_CALL_OPEN = (
+    r"(?:writeFileSync|writeFile|appendFileSync|appendFile|outputFile(?:Sync)?|createWriteStream"
+    r"|Out-File|Set-Content|Add-Content|json\.dump|open)\s*\("
+)
+_WRITE_BEFORE = re.compile(_WRITE_CALL_OPEN + r"[^;\n]{0,200}$", re.IGNORECASE)
+# Python `Path(...).write_text(...)` / `.write_bytes(...)`: the path precedes the write method.
+_WRITE_METHOD_AFTER = re.compile(r"^[^;\n]{0,120}?\.write_(?:text|bytes)\s*\(", re.IGNORECASE)
+
+
+def _is_write_target(text: str, start: int, end: int) -> bool:
+    """True if the config-path span [start,end) sits inside a write sink's argument list."""
+    line_start = text.rfind("\n", 0, start) + 1
+    semi = text.rfind(";", line_start, start)
+    stmt_start = max(line_start, semi + 1)
+    before = text[max(stmt_start, start - 200):start]
+    if _WRITE_BEFORE.search(before):
+        return True
+    after = text[end:end + 120]
+    return bool(_WRITE_METHOD_AFTER.match(after))
 
 # --- git-hook persistence (SANDWORM_MODE / supply-chain worms, 2026) -------------------------
 # Repointing git's GLOBAL template dir makes a hook run for every repository the victim creates
@@ -128,6 +152,12 @@ _GIT_PERSIST = re.compile(
     r"|\bgit\b[^\n]{0,40}?\bconfig\b(?=[^\n]{0,200}?--(?:global|system)\b)[^\n]{0,200}?\bcore\.hooksPath\b",
     re.IGNORECASE,
 )
+# Reading or clearing the config is not installing persistence: `git config --global --get
+# core.hooksPath`, or the value-less `git config --global core.hooksPath` (then `|| true` / end of
+# command), just reads the current value — ECC's codex tooling does this to save/restore it.
+_GIT_CONFIG_READ = re.compile(r"--(?:get|get-all|get-regexp|list|unset|unset-all|null)\b", re.I)
+# core.hooksPath followed by an actual value (a SET), vs. nothing / a shell terminator (a READ).
+_HOOKSPATH_SET = re.compile(r"core\.hooksPath\b[ \t]+[\"']?[^\s|&;)>\"']", re.I)
 
 # --- auto-executed command in an Agent Skill (Clawsights dynamic context, Datadog 2026) ------
 # A Claude Code skill may embed a "dynamic context" command with a leading `!` (bare or wrapped
@@ -340,27 +370,43 @@ class AgentConfigScanner(Scanner):
                 bypass.append(ev)
                 if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
-            for _m, ev in f.finditer(_GIT_PERSIST):
+            for m, ev in f.finditer(_GIT_PERSIST):
+                line = f.line_text(ev.line_start)
+                # A read (`--get`/`--list`/`--unset`, or value-less `core.hooksPath`) is not
+                # persistence; a command quoted inside a shell string is printed help, not run.
+                if _GIT_CONFIG_READ.search(line):
+                    continue
+                if f.in_shell_quoted(m.start()):
+                    continue
+                lower = line.lower()
+                reads_hookspath = (
+                    "core.hookspath" in lower
+                    and "templatedir" not in lower
+                    and not _HOOKSPATH_SET.search(line)
+                )
+                if reads_hookspath:
+                    continue
                 git_persist.append(ev)
                 if len(git_persist) >= MAX_EVIDENCE_SCANNED:
                     break
-            # Writing to another client's config is the injection; reading one can be benign, so
-            # the write sink must be present in the same file as the config path.
+            # Writing to another client's config is the injection; reading or health-checking one
+            # is benign, so the config path must be the TARGET of a write sink, not just present.
             if _WRITE_SINK.search(f.text):
-                for _m, ev in f.finditer(_CLIENT_CONFIG_PATHS):
-                    config_inject.append(ev)
-                    if len(config_inject) >= MAX_EVIDENCE_SCANNED:
-                        break
+                for m, ev in f.finditer(_CLIENT_CONFIG_PATHS):
+                    if _is_write_target(f.text, m.start(), m.end()):
+                        config_inject.append(ev)
+                        if len(config_inject) >= MAX_EVIDENCE_SCANNED:
+                            break
 
         # Folded view: catch a client-config path split across string literals
-        # (``"~/.cursor/" + "mcp.json"``). Same rule — a write sink must be present in the file.
+        # (``"~/.cursor/" + "mcp.json"``). Same rule — it must be a write target.
         config_inject_lines = {(e.file, e.line_start) for e in config_inject}
         for f, start, end in concat_folded_spans(
             index, _CLIENT_CONFIG_PATHS, suffixes=_CONFIG_INJECT_SUFFIXES
         ):
             if len(config_inject) >= MAX_EVIDENCE_SCANNED:
                 break
-            if not _WRITE_SINK.search(f.text):
+            if not _WRITE_SINK.search(f.text) or not _is_write_target(f.text, start, end):
                 continue
             ev = f.evidence_for_span(start, end)
             if (ev.file, ev.line_start) not in config_inject_lines:
