@@ -4,6 +4,87 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 66 (engine 0.62.0)
+
+Pre-launch reviews of engine 0.61.1 (2026-10-10): false positives on widely used projects, and
+scan scope that let a payload sit where nothing read it. Each false-positive fix is
+pinned by a sanitized repro and by a test that the attack it resembles still fires
+(`tests/test_ruleset66.py`). Detection-efficacy corpus, now 64 positive / 46 negative:
+64/64 flagged, 0 false positives.
+
+- **Install scripts are always read** (scan scope): the files `package.json` runs at install
+  (`preinstall` / `install` / `postinstall`), found the way Node finds them (`node .` runs `main`,
+  `node install` runs `install.js`), and the package's own modules they load with a literal
+  relative `require` / `import`, transitively, are indexed even when minified or filed under a
+  skipped folder (`vendor/`, a bundled `node_modules/`). A minified one-line dropper run by
+  `postinstall` was set aside as a bundle and scanned clean. One that cannot be read (larger than
+  2 MiB, binary) gets the needs_review note "Install script not analyzed", which `guard` and the
+  Claude Code hook treat as not checked.
+- **PyPI packages are read as pip installs them** (scan scope): the pure-Python wheel when it is
+  the release's only wheel, else the sdist, else any wheel. A release with only a pure wheel and
+  an sdist used to be read from the sdist, whose tests, docs, benchmarks and build tooling pip
+  never installs. A wheel's `*.dist-info/` is packaging metadata (its `METADATA` repeats the
+  README), like an sdist's `PKG-INFO` and `*.egg-info/`. The component takes the registry's name.
+- **Source maps with no code in them are not read**: a `.map` with only the format's own keys, no
+  `sourcesContent`, paths in `sources`, identifiers in `names` and a VLQ `mappings` string (what
+  TypeScript writes) holds positions and names alone. Any other `.map` is read like any file.
+- **Record files are documentation whatever else their name says** (`file_index.is_doc_path`): a
+  markdown file whose name ends in a record word (changelog, changes, history, license, notice,
+  authors, maintainers) is that record. `RULES_CHANGELOG.md` quotes the attacks its rules detect,
+  and the word "rules" made it read as an instruction file, so the scanner rated its own
+  repository as malicious.
+- **Trait crosswalk**: MITRE ATLAS tactics are the official ones. An untrusted-instruction surface
+  maps to Execution (LLM Prompt Injection, AML.T0051) and Persistence (AML.T0070, AML.T0099), the
+  instruction-driven exfiltration flow to Execution and Exfiltration, and supply-chain provenance
+  to Initial Access (AML.T0010). No score or finding changes.
+- **`ST-PROMPT-INJECTION`** (changed): a quoted phrase stays a citation when only an ellipsis or
+  one punctuation mark separates it from the closing quote (`'Ignore previous instructions...'`
+  quoted by an issue-triage skill). A data-theft or instruction-planting phrase whose clause has a
+  third-party attacker as subject with a modal or ability verb ("Attackers may steal credentials",
+  in a threat model) is a threat description. Both go to needs_review. The clause stops at a
+  sentence break and at "you" / "yourself", so "As an attacker, you can now steal …" and a
+  directive after the description still score; override and jailbreak phrases are never exempted
+  this way.
+- **Documentation** (demotion): RSS/Atom release feeds (`feed.xml`, `atom.xml`, `rss.xml`,
+  `*.rss`, `*.atom`) are documentation, like `CHANGELOG.md` (a release note that mentions
+  `id_rsa`). A feed inside a skill directory stays in scope.
+- **`ST-SENS-PATH`** (changed): a path inside a macOS Seatbelt `(deny file-…)` rule is a guard, not
+  access (an agent CLI's sandbox profile that denies its tools the CLI's own login file). The form
+  must open a line and contain only profile syntax up to the path; an `(allow …)` rule still
+  counts. A kubeconfig handed to a Kubernetes client (`--kubeconfig`, `KUBECONFIG=`) is not a
+  read, like `ssh -i`, unless the line pipes, redirects or substitutes it.
+- **`ST-AGENT-CLI-BYPASS`** (changed): a bypass flag written as inline code in Python text (an LLM
+  review prompt) or in a Python docstring is documentation. A launch (argv list, command string,
+  JS template) still fires.
+- **`ST-EXPOSE-BIND`** (changed): a quoted `0.0.0.0` / `::` counts only in a bind context: a
+  host / hostname / bind / listen name (`host=`, `HOST =`, `host: str =`, `"host":`, env default,
+  `||` / `??` / `or` fallback), a server call (`listen`, `bind`, `serve`, `run`, `*server(`), a
+  `(host, port)` tuple or an address followed by a literal port, or a `--host` / `--bind` option
+  (argv, argparse / click default). Set members, comparisons, `url.replace(…)`, version strings, a
+  client's source address and Python docstrings no longer count. New: `bind = "0.0.0.0:8000"`,
+  `web.TCPSite(r, "0.0.0.0", 8080)`. `ST-EXPOSE-DEBUG` also ignores docstrings.
+- **`ST-SHELL-EVASION`** (changed): `-EncodedCommand` whose value is a script the same JS/TS file
+  spells out and encodes in place (`Buffer.from(SCRIPT, "utf16le").toString("base64")`, every
+  assignment resolved; a builder function must carry the script and reach no input) goes to
+  needs_review. A literal blob, or a value encoded from a download, a file read, a parameter or a
+  rebound name, still fires, as does every other idiom. PowerShell `<# … #>` block comments are
+  comments (a setup script's usage line); an opener inside a string or a here-string is not.
+- **`ST-TYPOSQUAT`** (changed): popular packages that resemble a protected name are exempt: every
+  name among the 10,000 most-downloaded npm and PyPI packages that the heuristic flagged (40 npm,
+  104 PyPI). They are not added as targets. Evidence anchors to `PKG-INFO` or
+  `*.dist-info/METADATA` (`Name:`) when a distribution has no `pyproject.toml` / `setup.py`, so a
+  wheel is checked.
+- **Node.js rules** (changed): `ST-FS-NODE-READ` / `-WRITE`, `ST-NET-NODE`, `ST-SHELL-NODE`,
+  `ST-CMDI-NODE`, `ST-AUTH-DELEGATED` and `ST-AUTH-SCOPED` ignore comment-only matches (JSDoc
+  examples in `.d.ts` files and bundles).
+- **Engine**: new `code_context` policy `comments_and_docstrings` (comments plus Python docstrings;
+  other string literals stay in scope). `scoring._package_base_name` keeps an npm scope (it
+  returned `''` for every scoped package, so a scoped provider SDK could never be allowlisted).
+- Not changed (real constructs): `ST-CMDI-*` on commands built from configuration (an editor from
+  `$EDITOR`, a tool path from a config object), `ST-DESERIALIZE-PY` on a library's public
+  `pickle.load` APIs, `ST-AGENT-CONFIG-INJECT` on a command that installs a server into the Claude
+  Desktop config.
+
 ## ruleset 65 (engine 0.61.0)
 
 Security review of ruleset 64 (2026-10-10): each new rule could be sidestepped by writing the same

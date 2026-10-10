@@ -7,6 +7,24 @@ Please report security issues privately via GitHub Security Advisories
 **contact@skilltotal.ai** — not in public issues. We aim to acknowledge within a few
 business days.
 
+### What to report privately, and what in public
+
+- **Privately:** anything that lets a component make SkillTotal itself misbehave. For example,
+  code from a scanned package, repository or archive that runs on the user's machine; an install
+  command the Claude Code plugin should have read but missed, or an install it let through against
+  its own verdict; a path escape during extraction; or a way to tamper with a report or a cached
+  verdict.
+- **In a public issue, or a pull request with a sanitized fixture:** a package that was scanned
+  but that no rule flagged (a detection gap), or a false positive. Detection gaps are expected in
+  a static scanner. They are fixed in the open, and the sample is added to the test corpus.
+
+## Supported versions
+
+Only the latest release receives fixes. The engine, the CLI, the Claude Code plugin, the GitHub
+Action and the npm runner are released together under one version number. Upgrade the CLI with
+`pipx upgrade skilltotal`; the plugin updates through its marketplace, and the GitHub Action and
+the pre-commit hook move when you change the tag they are pinned to.
+
 ## Preventing secret/key leakage (defense in depth)
 
 SkillTotal is a security product; its own repo must not leak secrets. Four independent layers
@@ -22,9 +40,11 @@ guard against committing secrets or keys — no single layer is relied on alone:
    protection blocks a `git push` containing a recognized **partner** secret format (an AWS
    `AKIA…`, a Hugging Face `hf_…`, a GitHub `ghp_…` token, …) — a stop even if layers 1–2 are
    bypassed. This layer is **not disable-able by repo config** for partner patterns.
-4. **No long-lived tokens** (OIDC): PyPI publishing uses **Trusted Publishing** (OpenID
-   Connect) from GitHub Actions, so there are no PyPI API tokens stored in the repo, in CI
-   secrets, or on any developer machine. There is no static publishing key to leak.
+4. **No long-lived tokens** (OIDC): PyPI and npm publishing use **Trusted Publishing** (OpenID
+   Connect) from GitHub Actions. No PyPI or npm API token is stored in the repo or in CI secrets,
+   so there is no static publishing key to leak. What the release workflow publishes carries a
+   PEP 740 attestation (PyPI) or npm provenance that points back to the workflow run that built
+   it.
 
 Supporting measures: `.gitignore` excludes common secret files (`.env`, `*.pem`, `*.key`,
 `id_rsa`, `.pypirc`, `.npmrc`, …); a `detect-secrets` baseline (`.secrets.baseline`) tracks
@@ -53,6 +73,7 @@ not weakened:
 
 ## If a secret is ever exposed
 
-Treat it as compromised: rotate/revoke it immediately at the provider, then purge it from
-history (e.g. `git filter-repo`) and force-push. Because publishing uses OIDC, a leaked repo
-contains no usable publishing credential.
+Treat it as compromised and rotate or revoke it at the provider immediately. Rotation is the fix.
+A secret that reached a public repository has already been copied, and rewriting history does not
+take it back (the default branch is protected against force-pushes). Because publishing uses OIDC,
+the repository holds no publishing credential that could leak.

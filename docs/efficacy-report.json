@@ -1,8 +1,8 @@
 {
-  "engine_version": "0.56.0",
-  "ruleset_version": 62,
-  "positives": 49,
-  "negatives": 32,
+  "engine_version": "0.62.0",
+  "ruleset_version": 66,
+  "positives": 64,
+  "negatives": 46,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -15,42 +15,50 @@
     "AST05": 1.0
   },
   "recall_by_technique": {
+    "action-run-exec": 1.0,
     "agent-config-autorun": 1.0,
     "credential-exfil": 1.0,
     "decode-exec": 1.0,
     "deserialize-exec": 1.0,
+    "dns-exfil": 1.0,
     "email-exfil": 1.0,
+    "git-hook-persistence": 1.0,
     "gyp-command-substitution": 1.0,
     "hidden-unicode": 1.0,
     "install-dropper": 1.0,
     "lethal-trifecta": 1.0,
+    "mcp-config-inject": 1.0,
     "mcp-sampling-injection": 1.0,
     "mcp-tool-poisoning": 1.0,
     "password-archive": 1.0,
+    "pickle-reduce-gadget": 1.0,
     "plugin-hook-trojan": 1.0,
     "prompt-injection": 1.0,
     "pth-persistence": 1.0,
     "shell-decode-exec": 1.0,
-    "typosquat-dropper": 1.0
+    "skill-dynamic-exec": 1.0,
+    "typosquat-dropper": 1.0,
+    "wallet-key-exfil": 1.0
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 8,
+      "node": 12,
       "python": 8,
-      "manifest/text": 6,
+      "manifest/text": 7,
       "shell": 2
     },
     "AST02": {
-      "node": 5,
+      "manifest/text": 5,
+      "node": 6,
       "python": 2
     },
     "AST04": {
+      "node": 2,
       "python": 5,
-      "manifest/text": 10,
-      "node": 1
+      "manifest/text": 11
     },
     "AST05": {
-      "python": 2
+      "python": 4
     }
   }
 }

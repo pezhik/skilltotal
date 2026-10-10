@@ -4,6 +4,87 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.62.0]
+
+Found by pre-launch security reviews of 0.61.1. Ruleset 66.
+
+### Security
+- **The Claude Code hook no longer runs code from the project the agent works in.** It started its
+  scan with `python -m skilltotal` from the agent's working directory, and `python -m` puts that
+  directory first on `sys.path`: a `json.py` planted in an opened repository ran inside the
+  scanner before anyone approved anything, and the project's `.skilltotal.toml` tuned the scan of
+  someone else's package. The scan now starts in an empty directory of its own, with `-P` on Python
+  3.11+. The npm runner's Python fallback passes `-P` too, so it now needs Python 3.11+.
+- **A package can no longer silence its own findings.** A `skilltotal:ignore` comment suppressed a
+  finding in any scanned component, so one line next to a dropper made it scan clean. Inline
+  markers now count only for `skilltotal scan` of a local directory (your own code, as in CI).
+  `analyze` and `analyze_directory` take `inline_ignores`, off by default, and an honored marker is
+  counted in `metadata.suppressed_count`.
+- **The hook asks about every package it did not check.** A scan that failed or ran out of time,
+  the sixth and later packages of one command, and an install script that could not be read used
+  to let the install through with a note, which made the guard easy to step around: pad a package
+  until its scan times out, or name it sixth. They now need the person's approval. The hook still
+  never denies an install because of its own failure.
+- **The hook checks what will actually be installed.** The version a command names (`npx x@0.1.2`,
+  `pip install x==1.0`) instead of the latest release; the git ref (`github:o/r#v1`,
+  `git+https://github.com/o/r.git@main`) instead of the default branch; the real package behind an
+  npm alias (`x@npm:real`); and `pip install -e git+...`. Other git hosts (`gitlab:`,
+  `bitbucket:`, `gist:`) and refs the scan cannot reproduce exactly are asked about.
+- **The hook's verdict cache is keyed by the artifact.** An unpinned `npm:x` is first resolved to
+  the release the registry serves (`npm:x@1.2.3`), and a PyPI package to the file pip would
+  install, because a published PyPI version can gain files. A clean verdict from the morning no
+  longer vouches for a release published in the afternoon. An exact release is reused for a week,
+  a git repository or an unresolved name for an hour.
+- **The GitHub Action** passes its inputs to the shell only through `env` (a `source` copied from
+  a pull request comment could run commands in the runner), keeps the checked-out repository off
+  `sys.path`, fails on an unknown `fail-on` value instead of silently disabling the gate, and runs
+  the engine that ships with the pinned tag unless `version:` is set.
+- **Text reports escape control characters**, so a path or snippet from a scanned package cannot
+  move the terminal cursor, rewrite earlier lines or set the clipboard.
+
+### Changed
+- **The scripts npm runs at install are always analyzed**, whatever their shape. A minified
+  one-line `setup.js` run by `postinstall` was set aside as a bundle, so a dropper in it scanned
+  clean. An install script that cannot be read at all (larger than 2 MiB, binary) is reported,
+  makes `guard` block and makes the hook ask.
+- **PyPI packages are scanned as pip installs them**: the pure-Python wheel when it is the
+  release's only wheel, else the sdist, else any wheel, named by the registry. The sdist carried tests, docs and build
+  tooling that pip never installs, which slowed the hook (fastapi: 1,215 files, now 65) and
+  produced findings in code no user runs. A wheel's `*.dist-info/` is packaging metadata, like an
+  sdist's `PKG-INFO`.
+- **Source maps that carry no code are skipped.** A `.map` holding only positions and names, as
+  TypeScript writes it, cannot run and has nothing to analyze. A map with `sourcesContent`, or
+  anything else in it, is read like any file.
+- **npm dist-tags resolve.** `npm:x@latest` and `npm:x@next`, the usual way MCP servers are
+  started, scan the tagged version instead of failing.
+- **The text report** leads with the verdict, labels a capability finding as not scored
+  (`[HIGH - capability, not scored]`), shows a one-line location as `file:12`, and lists three
+  locations per finding (`--json` keeps all of them). Verdict reasons list malicious indicators
+  first, then scored risks, then capabilities.
+- **The hook's messages** name the release that was checked, the top finding of a high-risk
+  package and the command to inspect it (`skilltotal scan npm:x` instead of `<package>`).
+- **MITRE ATLAS tactics in the trait crosswalk are real ATLAS tactics.** "Adversarial Perception
+  Attacks" and "Model Poisoning" were labels from the CSA paper. An untrusted-instruction surface
+  now maps to Execution and Persistence (AML.T0051, AML.T0070, AML.T0099), supply-chain provenance
+  to Initial Access (AML.T0010).
+- A usage error (an unknown flag value) exits 1, as documented; 2 means a gate tripped. `guard`
+  names the malicious finding and its location instead of repeating the headline, and
+  `skilltotal scan lodash` suggests `npm:lodash` or `pypi:lodash`.
+
+### Fixed
+- **A redirected report no longer crashes on Windows.** Output goes out as UTF-8 and `--output`
+  is written before anything is printed, so `scan --json > r.json` on a legacy code page neither
+  fails on a snippet nor leaves the file empty.
+- **SkillTotal no longer rates its own repository as malicious.** `RULES_CHANGELOG.md` quotes the
+  attacks its rules detect, and the word "rules" made it read as an instruction file; a file whose
+  name ends in a record word (changelog, history, license) is documentation.
+- **False positives on widely used projects** (ruleset 66): an injection phrase quoted by an
+  issue-triage skill, a threat model's account of what attackers may do, a CLI's sandbox profile
+  that denies its tools the CLI's own login file, a `0.0.0.0` that is not a bind address, JSDoc
+  examples, and popular packages whose names sit a letter away from another popular name no longer
+  score. Each fix is pinned beside a test that the attack it resembles still fires. See
+  `RULES_CHANGELOG.md`.
+
 ## [0.61.1]
 
 ### Changed

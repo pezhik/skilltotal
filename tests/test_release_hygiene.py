@@ -6,6 +6,7 @@ so forgetting them blocks the tag instead of shipping a stale PyPI page.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -53,6 +54,27 @@ def test_documented_action_pins_match_the_current_version():
     assert not stale, (
         f"action pins must be v{skilltotal.__version__}, found stale: {', '.join(stale)}"
     )
+
+
+def test_efficacy_report_is_regenerated_for_this_release():
+    """README says the detection-efficacy report is regenerated every release; hold it to that.
+
+    The published report sat at engine 0.56.0 through five releases while README quoted it, so
+    the report must name the version and ruleset being released, and README must quote its counts.
+    """
+    report = json.loads((ROOT / "docs" / "efficacy-report.json").read_text(encoding="utf-8"))
+    regenerate = "regenerate: python tests/manual_eval/efficacy.py --out docs/efficacy-report"
+    assert report["engine_version"] == skilltotal.__version__, (
+        f"docs/efficacy-report.json is for engine {report['engine_version']}, "
+        f"not {skilltotal.__version__}; {regenerate}"
+    )
+    assert report["ruleset_version"] == skilltotal.RULESET_VERSION, (
+        f"docs/efficacy-report.json is for ruleset {report['ruleset_version']}, "
+        f"not {skilltotal.RULESET_VERSION}; {regenerate}"
+    )
+    readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
+    counts = f"{report['positives']} malicious and {report['negatives']} benign samples"
+    assert counts in readme, f"README must quote the efficacy report's sample counts: {counts!r}"
 
 
 def test_schema_id_matches_report_schema_version():
