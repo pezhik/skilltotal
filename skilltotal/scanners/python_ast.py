@@ -76,6 +76,17 @@ UNSAFE_DESERIALIZE_CALLS = frozenset(
     }
 )
 
+# What a pickle __reduce__/__reduce_ex__ may hand back as the callable to run on load. Pickle
+# calls whatever comes first in the returned tuple, so a shell or code-execution function there
+# runs the moment the object is unpickled (the classic gadget in poisoned ML model files).
+REDUCE_GADGET_CALLS = (
+    SHELL_CALLS
+    | DYNAMIC_CALLS
+    | frozenset(
+        {"__import__", "builtins.eval", "builtins.exec", "builtins.__import__", "pty.spawn"}
+    )
+)
+
 # Rule ids
 R_SHELL = "ST-SHELL-PY"
 R_CMDI = "ST-CMDI-PY"
@@ -88,6 +99,7 @@ R_DYN = "ST-DYN-PY"
 # serializer variant of ST-OBF-DECODE-EXEC; Python-specific because it needs alias resolution.
 R_DECODE_EXEC_PY = "ST-OBF-DECODE-EXEC-PY"
 R_SENS_PY = "ST-SENS-PATH-PY"
+R_PICKLE_REDUCE = "ST-PICKLE-REDUCE"
 
 # Calls that *use* a path/command/URL — a sensitive path passed here is a real read/exec/send,
 # not a mere mention. Excludes regex builders / metadata constructors, so a detector matching its
@@ -192,6 +204,28 @@ class PythonAstScanner(Scanner):
                 r"\b(?:c?[Pp]ickle|_pickle|dill|marshal)\.loads?\s*\(",
                 r"\bjsonpickle\.(?:decode|loads)\s*\(",
             ),
+        ),
+        RuleSpec(
+            id=R_PICKLE_REDUCE,
+            category="unsafe_deserialization",
+            severity=Severity.HIGH,
+            title="Pickle __reduce__ returns a code-execution callable",
+            description=(
+                "A class defines __reduce__/__reduce_ex__ that returns a shell or "
+                "code-execution function (os.system, subprocess, eval, exec, ...) as the callable "
+                "pickle invokes on load, so unpickling the object runs it. This is the construct "
+                "pickle code-execution gadgets are built from."
+            ),
+            recommendation=(
+                "A __reduce__ normally returns the class (or a factory) and its constructor "
+                "arguments, not a shell or exec function. Do not unpickle data this component "
+                "produces unless that behavior is intended and understood."
+            ),
+            capability=None,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            suffixes=PY_SUFFIXES,
+            # No regex fallback: a real gadget is valid Python and always parses, and a regex
+            # cannot see which callable the tuple returns -- it would only add false positives.
         ),
         RuleSpec(
             id=R_FS_READ,
@@ -568,6 +602,34 @@ class _CallVisitor(ast.NodeVisitor):
                     self._add(R_SENS_PY, node)
                     break
         self.generic_visit(node)
+
+    # -- pickle gadgets ----------------------------------------------------
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._check_reduce_gadget(node)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._check_reduce_gadget(node)
+        self.generic_visit(node)
+
+    def _check_reduce_gadget(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        """Flag a __reduce__/__reduce_ex__ that returns (<shell/exec callable>, args).
+
+        Pickle calls the first element of the returned tuple when the object is loaded, so
+        ``return (os.system, ("...",))`` runs a command on unpickling. A normal __reduce__ returns
+        the class or a factory (``(self.__class__, (...))``), which resolves to no dangerous name.
+        """
+        if node.name not in ("__reduce__", "__reduce_ex__"):
+            return
+        for sub in ast.walk(node):
+            if not (isinstance(sub, ast.Return) and isinstance(sub.value, ast.Tuple)):
+                continue
+            if not sub.value.elts:
+                continue
+            callee = _resolve_dotted(sub.value.elts[0], self.aliases, self.from_imports)
+            if callee in REDUCE_GADGET_CALLS:
+                self._add(R_PICKLE_REDUCE, sub)
+                return
 
     def _decode_exec_inner_call(self, node: ast.Call) -> ast.Call | None:
         """If ``node`` is exec/eval/compile(<deserialize>(<non-literal>)), return the inner

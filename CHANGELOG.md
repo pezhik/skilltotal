@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.60.0]
+
+### Added
+- **Four gaps found by a blind red-team are closed** (ruleset 64). Ten malicious AI components
+  were built without reference to the rules and then scanned; these four went unseen or
+  under-read. A composite GitHub Action's `run:` steps are now scanned as shell: they run on the
+  runner of whoever uses the action, yet were never read, so `curl … | bash` or `… base64 -d |
+  bash` in an `action.yml` produced no finding (the project's own `.github/` CI stays out of
+  scope). DNS lookups (`dns.resolve4`, `dns.lookup`) now count as network egress, so reading a
+  credential and tunnelling it out over DNS is flagged as exfiltration. A pickle `__reduce__` that
+  returns a shell or code-execution callable is flagged as a code-execution gadget
+  (`ST-PICKLE-REDUCE`). A Solana CLI keypair read through `os.homedir()` instead of `~` is now
+  recognized as a credential path. Each sits beside the honest shape it resembles, which stays
+  clean: a DNS health check, custom pickling that returns the class, a security tool that lists
+  wallet paths to protect. An ordinary setup action that installs a CLI with its vendor's script
+  is reported as a risky construct but not escalated to malicious or high risk.
+
 ## [0.59.0]
 
 ### Added

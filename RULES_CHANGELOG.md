@@ -4,6 +4,35 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 64 (engine 0.60.0)
+
+Blind red-team of 2026-10-10: ten malicious AI components (skill, agent, MCP servers, npm, PyPI,
+Claude plugin, model file, GitHub Action, clipper) built without reference to the rules, then
+scanned. Four techniques went unseen or under-read by ruleset 63; each was reproduced as an inert
+sample, fixed, and paired with a benign look-alike that must stay clean. Measured on the
+detection-efficacy corpus (now 58 positive / 40 negative): 58/58 flagged, 0 false positives.
+
+- **Composite GitHub Action `run:` steps** (scan scope, existing rules): the shell rules
+  (`ST-SHELL-PIPE-EXEC`, `ST-OBF-DECODE-EXEC-SH`, `ST-ARCHIVE-PASSWORD-EXTRACT`) now read the
+  `run:` steps of an `action.yml`/`action.yaml`, inline or as a `run: |` block. These steps
+  execute on the consumer's runner, like an install-time hook. Comment lines, trailing comments
+  and `description:` prose are not read as commands, and an `action.yml` under `.github/` (the
+  project's own CI, e.g. `./.github/actions/x`) is out of scope for the same reason CI
+  configuration is demoted. No YAML library is used; the engine stays stdlib-only.
+- **`ST-NET-NODE`** (changed): DNS lookups (`dns.resolve*`, `dns.lookup`, `dns.promises.*`,
+  `node:dns` imports) count as network egress. A crafted hostname leaks data to an attacker's
+  zone (DNS tunnelling), so a credential read plus a DNS lookup now forms `ST-COMBO-EXFIL`. Only
+  `dns.`-anchored calls match, so `path.resolve` and `Promise.resolve` do not.
+- **`ST-PICKLE-REDUCE`** (new, malicious indicator): a `__reduce__`/`__reduce_ex__` returns a
+  shell or code-execution callable (`os.system`, `subprocess.*`, `eval`, `exec`, …) as the
+  function pickle calls on load, so unpickling the object runs it. Import aliases are resolved
+  (`from os import system`, `import subprocess as sp`). A `__reduce__` that returns the class or
+  a factory with its constructor arguments stays clean.
+- **`ST-SENS-PATH`** (changed): the Solana CLI keypair path is matched home-relative
+  (`.config/solana`), like the other home-directory credential paths, so a path built as
+  `os.homedir() + "/.config/solana/id.json"` is recognized. A denylist that names the path in
+  order to protect it is still routed to review.
+
 ## ruleset 63 (engine 0.59.0)
 
 Threat-research run of 2026-10-10: the most recent publicly documented malicious AI components

@@ -54,6 +54,9 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-FLOW-TRIFECTA": ("AST01",),
     "ST-OBF-DECODE-EXEC": ("AST01",),
     "ST-OBF-DECODE-EXEC-PY": ("AST01",),
+    # A __reduce__ returning os.system/eval runs code the moment the object is unpickled: a
+    # deliberate deserialize-and-execute gadget (AST01) built on unsafe deserialization (AST05).
+    "ST-PICKLE-REDUCE": ("AST01", "AST05"),
     "ST-OBF-DECODE-EXEC-SH": ("AST01",),
     "ST-OBF-DYNAMIC-DECODE-EXEC": ("AST01",),
     "ST-PTH-EXEC": ("AST01",),

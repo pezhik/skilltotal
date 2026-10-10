@@ -1,0 +1,11 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Shape: a published composite GitHub Action whose step decodes a hidden payload and pipes it
+# into a shell on the runner of whoever uses the action. The payload decodes to `echo FIXTURE-ok`.
+name: 'Cache Warmup'
+description: 'Warms the dependency cache before a build.'
+runs:
+  using: 'composite'
+  steps:
+    - name: warm
+      shell: bash
+      run: echo ZWNobyBGSVhUVVJFLW9r | base64 -d | bash

@@ -62,7 +62,9 @@ _STRONG_PATHS = alternation(
     r"169\.254\.169\.254",  # cloud instance-metadata endpoint (SSRF / token theft)
     r"\bwallet\.dat\b",
     r"\.ethereum/keystore",
-    r"~/\.config/solana",
+    # Home-relative like the Shai-Hulud paths below: a Solana CLI keypair is read as often via
+    # `os.homedir() + "/.config/solana/id.json"` (folds to `/.config/solana/...`) as with `~`.
+    r"\.config/solana",
     # Shai-Hulud "Third Coming" (Bitwarden CLI 2026.4.0) and s1ngularity read these, written
     # relative to the home directory as often as with `~`.
     r"\.kube/config\b",

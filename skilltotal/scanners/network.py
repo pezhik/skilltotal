@@ -26,7 +26,8 @@ class NetworkScanner(PatternScanner):
             title="Node.js network egress",
             description=(
                 "Node.js HTTP/network/email client usage was detected "
-                "(fetch / axios / http.request / https.request / nodemailer / SendGrid / SES)."
+                "(fetch / axios / http.request / https.request / nodemailer / SendGrid / SES / "
+                "DNS lookups)."
             ),
             recommendation=(
                 "Confirm the destination hosts are expected and that no sensitive data "
@@ -47,6 +48,14 @@ class NetworkScanner(PatternScanner):
                 r"@sendgrid/mail",
                 r"\bSendEmailCommand\b",
                 r"\bmailgun\b",
+                # DNS lookups are an egress channel: a crafted hostname leaks data to an
+                # attacker-controlled zone (DNS tunnelling), dodging HTTP-based detection.
+                # Quantifiers are bounded (no nested repetition) so the pattern is ReDoS-safe.
+                r"\bdns\.(?:resolve\w*|lookup)\s*\(",
+                r"\bdns\.promises\.(?:resolve\w*|lookup)\s*\(",
+                r"\bdnsPromises\.(?:resolve\w*|lookup)\s*\(",
+                r"require\(\s*['\"]node:dns['\"]\s*\)",
+                r"from\s+['\"]node:dns['\"]",
                 flags=re.MULTILINE,
             ),
         ),

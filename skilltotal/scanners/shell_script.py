@@ -1,9 +1,10 @@
-"""Shell-script detection (.sh / .bash / .zsh and shebang scripts).
+"""Shell-script detection (.sh / .bash / .zsh and shebang scripts, composite-action steps).
 
 Shell install/bootstrap scripts are a common dropper surface that the language scanners
 (Python AST, Node regex) miss: a decode-and-execute idiom (``… base64 -d | bash``) or a
 remote pipe-to-shell (``curl … | sh``). Detection is regex over shell files, selected by
-suffix or by a shell shebang on the first line.
+suffix or by a shell shebang on the first line, and over the ``run:`` steps of a composite
+GitHub Action (``action.yml``), which execute on the runner of whoever uses the action.
 """
 
 from __future__ import annotations
@@ -44,6 +45,81 @@ _FENCE_INFO = re.compile(r" {0,3}(?:`{3,}|~{3,})\s*([\w+-]*)")
 # and extracting a downloaded archive with a password have no honest documentation reading.
 _MARKDOWN_RULES = frozenset({R_DECODE_EXEC_SH, R_PASSWORD_ARCHIVE})
 _DOWNLOAD = re.compile(r"\b(?:curl|wget|Invoke-WebRequest|iwr)\b", re.IGNORECASE)
+
+# Composite GitHub Actions. The `run:` steps of an `action.yml` execute on the runner of whoever
+# `uses:` the action -- the consumer, like an install-time hook -- so the shell rules apply to them
+# (a composite action piping `curl` into `bash` used to produce no finding at all). A file under
+# `.github/` is the project's own CI (a local `./.github/actions/x` action), never consumer-facing,
+# and is left out for the same reason file_index.is_ci_path demotes CI configuration.
+_ACTION_NAMES = frozenset({"action.yml", "action.yaml"})
+# `run:` as a mapping key, optionally the first key of a list item (`- run:`). `runs:` is not it.
+_RUN_KEY = re.compile(r"^([ \t]*)(?:-[ \t]+)?run:(.*)$")
+# A block-scalar header (`|`, `|-`, `>+`, `|2`, ...): the command is on the following lines.
+_BLOCK_HEADER = re.compile(r"^[|>][0-9+-]*[ \t]*(?:#.*)?$")
+_TRAILING_COMMENT = re.compile(r"[ \t]#")
+
+
+def _code_part(line: str) -> str:
+    """``line`` without a trailing ``  # comment``; empty for a whole-line comment.
+
+    A ``#`` counts only after whitespace, so a URL fragment (``…/a#b``) is not cut.
+    """
+    if line.lstrip().startswith("#"):
+        return ""
+    cut = _TRAILING_COMMENT.search(line)
+    return (line[: cut.start()] if cut else line).rstrip()
+
+
+def _action_run_regions(text: str) -> list[tuple[int, int]]:
+    """Character spans of the shell commands in a composite action's ``run:`` steps.
+
+    No YAML library (the engine is stdlib-only). A ``run:`` key is found line by line; its command
+    is the rest of that line, or -- after a block header -- the following lines indented at least
+    as far as the first of them (so a sibling ``shell: bash`` after ``- run: |`` ends the block).
+    Comment lines and trailing comments are left out, so a ``# curl … | bash`` note is not read as
+    a command.
+    """
+    lines = text.splitlines(keepends=True)
+    offsets: list[int] = []
+    pos = 0
+    for line in lines:
+        offsets.append(pos)
+        pos += len(line)
+    spans: list[tuple[int, int]] = []
+
+    def add(i: int, col: int = 0) -> None:
+        code = _code_part(lines[i].rstrip("\r\n")[col:])
+        if code.strip():
+            spans.append((offsets[i] + col, offsets[i] + col + len(code)))
+
+    i = 0
+    while i < len(lines):
+        m = _RUN_KEY.match(lines[i].rstrip("\r\n"))
+        if m is None:
+            i += 1
+            continue
+        if not _BLOCK_HEADER.match(m.group(2).strip()):
+            add(i, m.start(2))  # inline: `run: curl … | bash`
+            i += 1
+            continue
+        key_indent = len(m.group(1))
+        content_indent: int | None = None
+        i += 1
+        while i < len(lines):
+            raw = lines[i].rstrip("\r\n")
+            if not raw.strip():
+                i += 1
+                continue
+            indent = len(raw) - len(raw.lstrip(" \t"))
+            if content_indent is None:
+                if indent <= key_indent:
+                    break  # an empty block: the next key is not the command
+                content_indent = indent
+            elif indent < content_indent:
+                break
+            add(i)
+            i += 1
+    return spans
 
 
 class ShellScriptScanner(Scanner):
@@ -124,7 +200,11 @@ class ShellScriptScanner(Scanner):
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
-        files = [f for f in index.files if self._is_shell(f) or f.suffix in _MARKDOWN]
+        files = [
+            f
+            for f in index.files
+            if self._is_shell(f) or f.suffix in _MARKDOWN or self._is_action(f)
+        ]
         findings = []
         for rule in self.rules:
             if rule.pattern is None:
@@ -156,7 +236,10 @@ class ShellScriptScanner(Scanner):
 
     @staticmethod
     def _regions(f) -> list[tuple[int, int]]:
-        """Where shell commands live: the whole script, or each fenced block of a markdown file."""
+        """Where shell commands live: the whole script, each fenced block of a markdown file, or
+        each ``run:`` step of a composite action."""
+        if ShellScriptScanner._is_action(f):
+            return _action_run_regions(f.text)
         if f.suffix in _MARKDOWN:
             spans = []
             for start, end in f.markdown_code_spans():
@@ -165,6 +248,12 @@ class ShellScriptScanner(Scanner):
                     spans.append((start, end))
             return spans
         return [(0, len(f.text))]
+
+    @staticmethod
+    def _is_action(f) -> bool:
+        """A composite GitHub Action's metadata, outside the project's own `.github/` CI."""
+        parts = f.relpath.lower().split("/")
+        return parts[-1] in _ACTION_NAMES and ".github" not in parts[:-1]
 
     @staticmethod
     def _is_shell(f) -> bool:

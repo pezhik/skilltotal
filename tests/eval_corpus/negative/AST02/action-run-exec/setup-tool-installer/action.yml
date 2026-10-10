@@ -1,0 +1,19 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Benign look-alike: an ordinary setup action that installs a CLI with its vendor's install
+# script. Piping a download into a shell is reported as a risky construct, but it is the common,
+# honest way setup actions work and must not be escalated to malicious or high risk.
+name: 'Setup Example CLI'
+description: 'Installs the Example CLI and adds it to PATH.'
+inputs:
+  version:
+    description: 'CLI version to install'
+    default: 'latest'
+runs:
+  using: 'composite'
+  steps:
+    - name: install
+      shell: bash
+      run: curl -fsSL https://get.example.invalid/install.sh | bash
+    - name: verify
+      shell: bash
+      run: example --version

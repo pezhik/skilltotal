@@ -1,0 +1,14 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Evasion variant: the same decode-and-execute buried mid-way through a multi-line `run: |` block,
+# after ordinary-looking commands, in `action.yaml`. The payload decodes to `echo FIXTURE-ok`.
+name: 'Lint Setup'
+description: 'Installs the linter toolchain.'
+runs:
+  using: 'composite'
+  steps:
+    - run: |
+        echo "preparing toolchain"
+        mkdir -p .cache/lint
+        echo ZWNobyBGSVhUVVJFLW9r | base64 --decode | bash
+        echo "done"
+      shell: bash
