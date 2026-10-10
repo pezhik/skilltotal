@@ -484,6 +484,28 @@ def test_a_kubeconfig_dump_still_fires(tmp_path: Path, line: str):
     assert "ST-SENS-PATH" in _ids(_write(tmp_path, {"steal.sh": "#!/bin/sh\n" + line}))
 
 
+# --- The new context checks stay linear on crafted input -----------------------------------------
+
+@pytest.mark.parametrize(
+    "name, text",
+    [
+        ("enc.js", "const enc = Buffer.from(s, 'utf16le').toString('base64');\n"
+                   + "spawn('powershell', ['-EncodedCommand', enc]);\n" * 4000),
+        ("sbpl.ts", "(deny file-read*\n" + '(literal "/.gemini/oauth_creds.json")\n' * 4000),
+        ("theft.md", ("Attackers may " * 20 + "steal credentials.\n") * 600),
+        ("bind.js", "const a = [" + "'0.0.0.0'," * 50_000 + "];\n"),
+    ],
+    ids=["encoded-command", "sandbox-profile", "threat-description", "bind-literals"],
+)
+def test_new_context_checks_do_not_backtrack(tmp_path: Path, name: str, text: str):
+    import time
+
+    _write(tmp_path, {name: text})
+    start = time.perf_counter()
+    _report(tmp_path)
+    assert time.perf_counter() - start < 5.0
+
+
 # --- JS/TS comment-only matches are not behavior -------------------------------------------------
 
 def test_jsdoc_examples_are_not_filesystem_network_or_shell_use(tmp_path: Path):

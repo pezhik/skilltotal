@@ -18,9 +18,10 @@ credential file in an ``.md`` are still caught.
 
 from __future__ import annotations
 
+import bisect
 import re
 
-from skilltotal.file_index import FileIndex
+from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -189,36 +190,53 @@ def _guard_segment(relpath: str) -> bool:
 # open a line and contain only SBPL (forms, symbols, strings) up to the path, so a `// (deny file*`
 # comment cannot stand in front of a real read in JavaScript.
 _SBPL_DENY_FILE = re.compile(r"(?m)^[ \t]*\(\s*deny\s+file[\w*-]*")
-_SBPL_LOOKBACK = 4000
+_SBPL_MAX_FORM = 8000
 _NOT_SBPL = frozenset(";{}=")
 
 
-def _in_sandbox_deny_rule(text: str, offset: int) -> bool:
-    """True if ``offset`` lies inside a Seatbelt ``(deny file-…)`` form that is still open."""
-    rules = list(_SBPL_DENY_FILE.finditer(text, max(0, offset - _SBPL_LOOKBACK), offset))
-    if not rules:
-        return False
-    depth, i = 0, rules[-1].start()
-    while i < offset:
-        ch = text[i]
-        if ch == '"':  # an SBPL string: its parentheses (a regex such as "($|x)") do not count
-            close = text.find('"', i + 1)
-            while close != -1 and text[close - 1] == "\\":
-                close = text.find('"', close + 1)
-            if close == -1 or close >= offset:
-                break
-            i = close + 1
+def _sandbox_deny_spans(text: str) -> list[tuple[int, int]]:
+    """Char-spans of Seatbelt ``(deny file-…)`` forms, in order and not overlapping.
+
+    Each span runs from the form's ``(`` to its closing ``)``, and stops early at the first
+    character that cannot be profile syntax (``;``, ``{``, ``}``, ``=``: code, not a profile). One
+    linear pass: a form that starts inside one already walked is skipped.
+    """
+    spans: list[tuple[int, int]] = []
+    walked_to = 0
+    for rule in _SBPL_DENY_FILE.finditer(text):
+        start = rule.start() + rule.group(0).index("(")
+        if start < walked_to:
             continue
-        if ch in _NOT_SBPL:
-            return False  # code, not a sandbox profile
-        if ch == "(":
-            depth += 1
-        elif ch == ")":
-            depth -= 1
-            if depth == 0:
-                return False  # the deny form closed before the match
-        i += 1
-    return depth > 0
+        depth, i, stop = 0, start, min(len(text), start + _SBPL_MAX_FORM)
+        while i < stop:
+            ch = text[i]
+            if ch == '"':  # an SBPL string: its parentheses (a regex such as "($|x)") do not count
+                close = text.find('"', i + 1, stop)
+                while close != -1 and text[close - 1] == "\\":
+                    close = text.find('"', close + 1, stop)
+                if close == -1:
+                    break
+                i = close + 1
+                continue
+            if ch in _NOT_SBPL:
+                break
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    i += 1
+                    break
+            i += 1
+        spans.append((start, i))
+        walked_to = i
+    return spans
+
+
+def _in_spans(spans: list[tuple[int, int]], offset: int) -> bool:
+    """True if ``offset`` falls in one of the sorted, non-overlapping ``spans``."""
+    k = bisect.bisect_right(spans, (offset, float("inf"))) - 1
+    return k >= 0 and spans[k][0] <= offset < spans[k][1]
 
 
 def _is_guardlist_context(relpath: str, line_text: str, matched: str = "") -> bool:
@@ -499,14 +517,23 @@ class SensitivePathScanner(Scanner):
         guard_files: list[str] = []
         cited_files: list[str] = []
         unread_files: list[str] = []
+        deny_spans: dict[str, list[tuple[int, int]]] = {}
+
+        def in_deny_rule(f: IndexedFile, offset: int) -> bool:
+            spans = deny_spans.get(f.relpath)
+            if spans is None:
+                spans = _sandbox_deny_spans(f.text) if "deny" in f.text else []
+                deny_spans[f.relpath] = spans
+            return _in_spans(spans, offset)
+
         for f, _m, ev in index.search(_STRONG_PATHS):
             key = (ev.file, ev.line_start, ev.line_end)
             if key in seen_ev:
                 continue
             seen_ev.add(key)
             line_text = f.line_text(ev.line_start)
-            if _is_guardlist_context(ev.file, line_text, _m.group(0)) or _in_sandbox_deny_rule(
-                f.text, _m.start()
+            if _is_guardlist_context(ev.file, line_text, _m.group(0)) or in_deny_rule(
+                f, _m.start()
             ):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
@@ -537,8 +564,8 @@ class SensitivePathScanner(Scanner):
                 continue
             seen_ev.add(key)
             line_text = f.line_text(ev.line_start)
-            if _is_guardlist_context(ev.file, line_text, f.text[start:end]) or (
-                _in_sandbox_deny_rule(f.text, start)
+            if _is_guardlist_context(ev.file, line_text, f.text[start:end]) or in_deny_rule(
+                f, start
             ):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)

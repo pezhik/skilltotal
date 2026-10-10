@@ -60,6 +60,8 @@ _BUILDER_IO = re.compile(
 # The builder must carry the script itself, not only wrap its arguments (`` `${x}` ``).
 _INTERPOLATION = re.compile(r"\$\{[^}]*\}")
 _MIN_BUILDER_SCRIPT = 40
+# Encoded-command exemption checks per file (each one may re-read the file).
+_MAX_CHECKS = 8
 
 
 def _bindings(f: IndexedFile, name: str) -> list[re.Match[str]]:
@@ -209,15 +211,20 @@ class ShellEvasionScanner(Scanner):
         evidence: list[Evidence] = []
         seen: set[tuple[str, int, int]] = set()
         encoded_scripts: list[str] = []
+        checks: dict[str, int] = {}
         for f, m, ev in index.search(_RULE.pattern, suffixes=_RULE.suffixes):  # type: ignore[arg-type]
             key = (ev.file, ev.line_start, ev.line_end)
             if key in seen:
                 continue
             seen.add(key)
-            if _ENCODED_FLAG.fullmatch(m.group(0)) and _encodes_visible_script(f, m.end()):
-                if f.relpath not in encoded_scripts:
-                    encoded_scripts.append(f.relpath)
-                continue
+            # Each check reads the file again, so a file gets a few of them (an honest one has a
+            # handful of encoded calls); past that every match is simply a finding.
+            if _ENCODED_FLAG.fullmatch(m.group(0)) and checks.get(f.relpath, 0) < _MAX_CHECKS:
+                checks[f.relpath] = checks.get(f.relpath, 0) + 1
+                if _encodes_visible_script(f, m.end()):
+                    if f.relpath not in encoded_scripts:
+                        encoded_scripts.append(f.relpath)
+                    continue
             evidence.append(ev)
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
