@@ -4,6 +4,24 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.61.0]
+
+### Fixed
+- **The ruleset 64 rules can no longer be sidestepped by rewriting the same code** (ruleset 65).
+  A security review of 0.60.0 found ways around each new rule that change nothing about what
+  runs. A composite action's `run:` command is now read as the runner's shell receives it, so a
+  command written as a quoted or escaped YAML string (`|` for `|`), continued on the next
+  line, placed in a flow mapping (`{ run: … }`), behind an alias or under a quoted key is read
+  like any other, and a `#` inside shell quotes no longer hides the rest of the line. An action
+  under `.github/` is now read too and shown for review instead of being left out. A function
+  looked up by name (`getattr(os, "sys" + "tem")`, `__import__("os").system`) resolves to the
+  function itself, which also closes a known gap in Python shell detection; `os.exec*`,
+  `os.spawn*` and `subprocess.getoutput` now count as process execution. A pickle gadget is
+  caught when the callable is aliased first, set with a lambda, or registered with
+  `copyreg.pickle`. A `dns` or `https` module bound under any name counts as network egress.
+  Each case has an honest look-alike that stays clean: a commented-out command, custom pickling
+  that returns the class, an e-mail validator that looks up MX records.
+
 ## [0.60.0]
 
 ### Added

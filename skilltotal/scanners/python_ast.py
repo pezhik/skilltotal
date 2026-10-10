@@ -31,19 +31,35 @@ from skilltotal.scanners.sensitive_paths import (  # reuse the credential-path s
 PY_SUFFIXES = (".py", ".pyw")
 
 # --- call-target classification ------------------------------------------------------
-SHELL_CALLS = frozenset(
+# Process creation without subprocess: the exec*/spawn* families replace or fork the interpreter
+# with another program, and getoutput()/getstatusoutput() run a command through the shell.
+_PROCESS_CALLS = frozenset(
     {
-        "subprocess.run",
-        "subprocess.call",
-        "subprocess.check_call",
-        "subprocess.check_output",
-        "subprocess.Popen",
-        "os.system",
-        "os.popen",
-        # asyncio process creation is shell execution too.
-        "asyncio.create_subprocess_shell",
-        "asyncio.create_subprocess_exec",
+        f"os.{fn}"
+        for fn in (
+            "execl", "execle", "execlp", "execlpe", "execv", "execve", "execvp", "execvpe",
+            "spawnl", "spawnle", "spawnlp", "spawnlpe", "spawnv", "spawnve", "spawnvp",
+            "spawnvpe", "posix_spawn", "posix_spawnp", "startfile",
+        )
     }
+    | {"subprocess.getoutput", "subprocess.getstatusoutput", "pty.spawn"}
+)
+SHELL_CALLS = (
+    frozenset(
+        {
+            "subprocess.run",
+            "subprocess.call",
+            "subprocess.check_call",
+            "subprocess.check_output",
+            "subprocess.Popen",
+            "os.system",
+            "os.popen",
+            # asyncio process creation is shell execution too.
+            "asyncio.create_subprocess_shell",
+            "asyncio.create_subprocess_exec",
+        }
+    )
+    | _PROCESS_CALLS
 )
 # Third-party libraries whose whole purpose is running OS processes; importing one is a
 # shell-execution signal even without a direct subprocess call. `git` is GitPython: every
@@ -64,7 +80,12 @@ NETWORK_HEADS = frozenset({"requests", "aiohttp", "httpx", "smtplib"})
 WRITE_MODE_CHARS = frozenset("wax+")
 
 # Calls that always run through a shell (so a dynamic command is injectable).
-ALWAYS_SHELL_CALLS = frozenset({"os.system", "os.popen", "asyncio.create_subprocess_shell"})
+ALWAYS_SHELL_CALLS = frozenset(
+    {
+        "os.system", "os.popen", "asyncio.create_subprocess_shell",
+        "subprocess.getoutput", "subprocess.getstatusoutput",
+    }
+)
 
 # Deserializers that execute / instantiate arbitrary objects from their input.
 UNSAFE_DESERIALIZE_CALLS = frozenset(
@@ -78,14 +99,29 @@ UNSAFE_DESERIALIZE_CALLS = frozenset(
 
 # What a pickle __reduce__/__reduce_ex__ may hand back as the callable to run on load. Pickle
 # calls whatever comes first in the returned tuple, so a shell or code-execution function there
-# runs the moment the object is unpickled (the classic gadget in poisoned ML model files).
+# runs the moment the object is unpickled (the classic gadget in poisoned ML model files): process
+# creation, eval/exec, the runners that execute a path or a statement string, and a second
+# unpickle (a nested payload).
 REDUCE_GADGET_CALLS = (
     SHELL_CALLS
     | DYNAMIC_CALLS
     | frozenset(
-        {"__import__", "builtins.eval", "builtins.exec", "builtins.__import__", "pty.spawn"}
+        {
+            "__import__", "builtins.eval", "builtins.exec", "builtins.compile",
+            "builtins.__import__", "runpy.run_path", "runpy.run_module", "timeit.timeit",
+            "timeit.repeat", "pdb.run", "profile.run", "cProfile.run", "pickle.loads",
+            "_pickle.loads", "cPickle.loads", "dill.loads",
+        }
     )
 )
+_REDUCE_METHODS = frozenset({"__reduce__", "__reduce_ex__"})
+# copyreg.pickle(cls, reducer) registers a reducer function: the same gadget, defined elsewhere.
+_COPYREG_PICKLE = frozenset({"copyreg.pickle", "copy_reg.pickle"})
+# Looking a module function up by name hides it from a name match: `getattr(os, "system")`,
+# `__import__("os").system`, `getattr(__import__("os"), "sys" + "tem")`. These resolve when the
+# module and the name are constants (so `getattr(self, name)` stays unresolved).
+_IMPORT_BY_NAME = frozenset({"__import__", "builtins.__import__", "importlib.import_module"})
+_GETATTR = frozenset({"getattr", "builtins.getattr"})
 
 # Rule ids
 R_SHELL = "ST-SHELL-PY"
@@ -515,6 +551,8 @@ class _CallVisitor(ast.NodeVisitor):
         # ids of deserialize calls nested directly inside an exec/eval/compile (decode-and-execute),
         # so the weaker ST-DESERIALIZE-PY is not also raised on the same node (scored once).
         self._decode_exec_inner: set[int] = set()
+        # Functions seen so far by name, for copyreg.pickle(cls, reducer_function).
+        self._functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import) -> None:
@@ -577,6 +615,8 @@ class _CallVisitor(ast.NodeVisitor):
             self._add(R_FS_WRITE, node)
         elif _is_network_call(name):
             self._add(R_NET, node)
+        elif name in _COPYREG_PICKLE and len(node.args) >= 2:
+            self._check_copyreg_reducer(node, node.args[1])
 
         # Independent of the classification above: a credential path passed to a path/IO/process/
         # network call is a real sensitive-data access (e.g. open("~/.aws/credentials"),
@@ -605,11 +645,23 @@ class _CallVisitor(ast.NodeVisitor):
 
     # -- pickle gadgets ----------------------------------------------------
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._functions[node.name] = node
         self._check_reduce_gadget(node)
         self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._functions[node.name] = node
         self._check_reduce_gadget(node)
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        # `__reduce__ = lambda self: (os.system, (...,))` in a class body: the same gadget.
+        if (
+            any(isinstance(t, ast.Name) and t.id in _REDUCE_METHODS for t in node.targets)
+            and isinstance(node.value, ast.Lambda)
+            and self._is_gadget(node.value.body)
+        ):
+            self._add(R_PICKLE_REDUCE, node)
         self.generic_visit(node)
 
     def _check_reduce_gadget(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
@@ -619,17 +671,39 @@ class _CallVisitor(ast.NodeVisitor):
         ``return (os.system, ("...",))`` runs a command on unpickling. A normal __reduce__ returns
         the class or a factory (``(self.__class__, (...))``), which resolves to no dangerous name.
         """
-        if node.name not in ("__reduce__", "__reduce_ex__"):
-            return
-        for sub in ast.walk(node):
-            if not (isinstance(sub, ast.Return) and isinstance(sub.value, ast.Tuple)):
-                continue
-            if not sub.value.elts:
-                continue
-            callee = _resolve_dotted(sub.value.elts[0], self.aliases, self.from_imports)
-            if callee in REDUCE_GADGET_CALLS:
-                self._add(R_PICKLE_REDUCE, sub)
-                return
+        if node.name in _REDUCE_METHODS:
+            self._flag_gadget_return(node)
+
+    def _check_copyreg_reducer(self, call: ast.Call, reducer: ast.expr) -> None:
+        """``copyreg.pickle(cls, reducer)``: the reducer runs on pickling and its returned tuple is
+        what the loader calls, exactly like a __reduce__ method."""
+        if isinstance(reducer, ast.Lambda):
+            if self._is_gadget(reducer.body):
+                self._add(R_PICKLE_REDUCE, call)
+        elif isinstance(reducer, ast.Name) and reducer.id in self._functions:
+            self._flag_gadget_return(self._functions[reducer.id])
+
+    def _flag_gadget_return(self, func: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        local = _local_assignments(func)
+        for sub in ast.walk(func):
+            if isinstance(sub, ast.Return) and sub.value is not None:
+                if self._is_gadget(sub.value, local):
+                    self._add(R_PICKLE_REDUCE, sub)
+                    return
+
+    def _is_gadget(self, value: ast.expr, local: dict[str, ast.expr] | None = None) -> bool:
+        """``(callable, args)`` whose callable resolves to a REDUCE_GADGET_CALLS name. A name
+        assigned in the same function (``f = os.system`` / ``t = (os.system, …)``) is followed
+        one step, since aliasing the callable first changes nothing for pickle."""
+        local = local or {}
+        if isinstance(value, ast.Name) and value.id in local:
+            value = local[value.id]
+        if not (isinstance(value, ast.Tuple) and value.elts):
+            return False
+        target = value.elts[0]
+        if isinstance(target, ast.Name) and target.id in local:
+            target = local[target.id]
+        return _resolve_dotted(target, self.aliases, self.from_imports) in REDUCE_GADGET_CALLS
 
     def _decode_exec_inner_call(self, node: ast.Call) -> ast.Call | None:
         """If ``node`` is exec/eval/compile(<deserialize>(<non-literal>)), return the inner
@@ -681,7 +755,76 @@ def _resolve_dotted(
             parts[0] = aliases[parts[0]]
             base = ".".join(parts)
         return f"{base}.{func.attr}"
+    if isinstance(func, ast.Call):
+        return _resolve_lookup_call(func, aliases, from_imports)
     return None
+
+
+def _resolve_lookup_call(
+    call: ast.Call, aliases: dict[str, str], from_imports: dict[str, str]
+) -> str | None:
+    """``__import__("os")`` -> ``os``; ``getattr(os, "sys" + "tem")`` -> ``os.system``.
+
+    Only for a constant name looked up on a module (imported, or imported right there by name), so
+    ``getattr(self, name)`` and ``getattr(obj, "x")`` stay unresolved.
+    """
+    name = _resolve_dotted(call.func, aliases, from_imports)
+    if name in _IMPORT_BY_NAME and call.args:
+        return _const_str(call.args[0])
+    if name not in _GETATTR or len(call.args) < 2:
+        return None
+    attr = _const_str(call.args[1])
+    owner = call.args[0]
+    if attr is None:
+        return None
+    is_module = isinstance(owner, ast.Call) or (
+        isinstance(owner, (ast.Name, ast.Attribute))
+        and _root_name(owner) in aliases.keys() | from_imports.keys()
+    )
+    base = _resolve_dotted(owner, aliases, from_imports) if is_module else None
+    if not base:
+        return None
+    parts = base.split(".")
+    if parts[0] in aliases:
+        parts[0] = aliases[parts[0]]
+    return ".".join([*parts, attr])
+
+
+def _root_name(node: ast.expr) -> str | None:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _const_str(node: ast.expr) -> str | None:
+    """A string spelled out in constants: ``"system"``, ``"sys" + "tem"``, ``f"sys{'tem'}"``."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left, right = _const_str(node.left), _const_str(node.right)
+        return left + right if left is not None and right is not None else None
+    if isinstance(node, ast.JoinedStr):
+        parts = []
+        for value in node.values:
+            if isinstance(value, ast.FormattedValue):
+                value = value.value
+            part = _const_str(value)
+            if part is None:
+                return None
+            parts.append(part)
+        return "".join(parts)
+    return None
+
+
+def _local_assignments(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.expr]:
+    """``name = value`` assignments in a function body (the last one wins)."""
+    local: dict[str, ast.expr] = {}
+    for sub in ast.walk(func):
+        if isinstance(sub, ast.Assign) and len(sub.targets) == 1:
+            target = sub.targets[0]
+            if isinstance(target, ast.Name):
+                local[target.id] = sub.value
+    return local
 
 
 def _first_arg(node: ast.Call) -> ast.expr | None:

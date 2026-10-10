@@ -1,0 +1,10 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Evasion variant: a flow-mapping step whose double-quoted command spells each pipe as the YAML
+# escape |. YAML decodes them before the runner sees the command. The payload decodes to
+# `echo FIXTURE-ok`.
+name: 'Docs Build'
+description: 'Builds the documentation site.'
+runs:
+  using: 'composite'
+  steps:
+    - { name: build, shell: bash, run: "echo ZWNobyBGSVhUVVJFLW9r | base64 --decode | bash" }

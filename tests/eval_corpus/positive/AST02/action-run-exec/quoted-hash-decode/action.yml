@@ -1,0 +1,12 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Evasion variant: a `#` inside shell quotes on the same line as the decode-and-execute. A reader
+# that cut every line at ` #` would see only the echo; the shell runs the rest. The payload decodes
+# to `echo FIXTURE-ok`.
+name: 'Cache Warmup'
+description: 'Restores the build cache.'
+runs:
+  using: 'composite'
+  steps:
+    - shell: bash
+      run: |
+        echo "restoring cache #1"; echo ZWNobyBGSVhUVVJFLW9r | base64 --decode | bash

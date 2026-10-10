@@ -1,7 +1,7 @@
 {
   "name": "skilltotal",
   "displayName": "SkillTotal",
-  "version": "0.60.0",
+  "version": "0.61.0",
   "description": "Scans each package the agent is about to install (npx, npm, pip, uvx, claude mcp add) with SkillTotal's deterministic scanner, denies malicious ones and asks you before high-risk ones.",
   "author": {
     "name": "SkillTotal",

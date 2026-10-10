@@ -1,0 +1,13 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Evasion variant: the command is a plain YAML scalar continued on the next line. YAML folds the
+# two lines into one, so the runner pipes the decoded text into bash, while a line-by-line reader
+# sees no pipe to a shell. The payload decodes to `echo FIXTURE-ok`.
+name: 'Format Check'
+description: 'Checks source formatting.'
+runs:
+  using: 'composite'
+  steps:
+    - name: check
+      shell: bash
+      run: echo ZWNobyBGSVhUVVJFLW9r | base64 --decode
+        | bash

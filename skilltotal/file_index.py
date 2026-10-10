@@ -271,6 +271,10 @@ def is_ci_path(relpath: str) -> bool:
     for i in range(len(parts) - 2):
         if parts[i] == ".github" and parts[i + 1] == "workflows":
             return True
+    # An action's metadata under .github/ (`./.github/actions/x/action.yml`) is the project's own
+    # CI helper as a rule; its run: steps are still read, and shown as needs_review.
+    if parts[-1] in ("action.yml", "action.yaml") and ".github" in parts[:-1]:
+        return True
     return parts[-1] in _CI_EXACT_NAMES
 
 

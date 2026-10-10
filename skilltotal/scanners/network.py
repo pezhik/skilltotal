@@ -40,8 +40,9 @@ class NetworkScanner(PatternScanner):
                 r"\baxios\b",
                 r"\bhttps?\.request\s*\(",
                 r"\bhttps?\.get\s*\(",
-                r"require\(\s*['\"]node:?https?['\"]\s*\)",
-                r"from\s+['\"]node:?https?['\"]",
+                # The module itself, so `const h = require("https"); h.request(…)` counts too.
+                r"require\(\s*['\"](?:node:)?https?['\"]\s*\)",
+                r"from\s+['\"](?:node:)?https?['\"]",
                 # E-mail is an egress channel too (e.g. the Postmark MCP BCC-exfil backdoor).
                 r"\bnodemailer\b",
                 r"\.sendMail\s*\(",
@@ -54,8 +55,11 @@ class NetworkScanner(PatternScanner):
                 r"\bdns\.(?:resolve\w*|lookup)\s*\(",
                 r"\bdns\.promises\.(?:resolve\w*|lookup)\s*\(",
                 r"\bdnsPromises\.(?:resolve\w*|lookup)\s*\(",
-                r"require\(\s*['\"]node:dns['\"]\s*\)",
-                r"from\s+['\"]node:dns['\"]",
+                # The dns module however it is bound (`const d = require("dns")`, a destructured or
+                # dynamic import, dns/promises), not only a variable named `dns`.
+                r"require\(\s*['\"](?:node:)?dns(?:/promises)?['\"]\s*\)",
+                r"from\s+['\"](?:node:)?dns(?:/promises)?['\"]",
+                r"\bimport\(\s*['\"](?:node:)?dns(?:/promises)?['\"]\s*\)",
                 flags=re.MULTILINE,
             ),
         ),

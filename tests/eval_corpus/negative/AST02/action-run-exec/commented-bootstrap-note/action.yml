@@ -1,0 +1,18 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Benign look-alike: an action whose run block keeps the old bootstrap line commented out, plus a
+# trailing YAML comment and a `#` inside a quoted string. None of it is executed, so none of it may
+# read as a decode-and-execute.
+name: 'Setup Toolchain'
+description: 'Installs the pinned toolchain.'
+runs:
+  using: 'composite'
+  steps:
+    - name: install
+      shell: bash
+      run: |
+        # old bootstrap, removed: echo ZWNobyBGSVhUVVJFLW9r | base64 --decode | bash
+        echo "toolchain #pinned"
+        ./scripts/install-toolchain.sh
+    - name: verify
+      shell: bash
+      run: toolchain --version  # echo ZWNobyBGSVhUVVJFLW9r | base64 --decode | bash

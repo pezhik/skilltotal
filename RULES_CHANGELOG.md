@@ -4,6 +4,45 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 65 (engine 0.61.0)
+
+Security review of ruleset 64 (2026-10-10): each new rule could be sidestepped by writing the same
+behavior in another form. Every bypass was reproduced as an inert probe, closed, and covered by a
+test beside a benign look-alike. Measured on the detection-efficacy corpus (now 63 positive /
+43 negative): 63/63 flagged, 0 false positives.
+
+- **Composite GitHub Action `run:` steps** (scan scope): the command is decoded the way YAML
+  delivers it to the runner's shell: plain scalars folded across lines (a ` #` ends them, as in
+  YAML), double-quoted escapes decoded (`|` is a `|`), single-quoted, block `|` and folded
+  `>` scalars, an alias to an anchored value, a value that starts on the next line, flow
+  mappings, quoted keys and JSON-style actions. Shell comments are removed with quotes tracked
+  across lines, so `echo "a #b"; curl … | bash` in a block is read whole while a commented-out
+  line is still ignored. Matches map back to the exact `action.yml` line. A `run` key that holds a
+  mapping (an input named `run`) is not a command. An `action.yml` under `.github/` is now read
+  and demoted to needs_review as CI configuration (`file_index.is_ci_path`), instead of being
+  skipped, because such an action can still be used remotely.
+- **`ST-SHELL-PY`** (changed): a module function looked up by a constant name resolves to that
+  function: `getattr(os, "system")`, `getattr(__import__("os"), "sys" + "tem")`,
+  `__import__("os").system`, `importlib.import_module("subprocess").run`. Only a module and a
+  constant name resolve, so `getattr(self, name)` and `getattr(obj, "x")` stay unresolved.
+  `os.exec*`, `os.spawn*`, `os.posix_spawn*`, `os.startfile`, `pty.spawn`,
+  `subprocess.getoutput` and `subprocess.getstatusoutput` count as process execution; the last
+  two always use a shell, so a dynamic command there is `ST-CMDI-PY`.
+- **`ST-PICKLE-REDUCE`** (changed): the gadget is also caught when the callable is assigned to a
+  local name first (`f = os.system; return (f, …)`), when the tuple itself is, when
+  `__reduce__` is a class-level lambda, and when a reducer is registered with `copyreg.pickle`
+  (lambda or function). The callable list adds process creation (above), `runpy.run_path` /
+  `run_module`, the statement runners (`timeit`, `pdb.run`, `profile.run`, `cProfile.run`) and a
+  nested `pickle.loads`.
+- **`ST-NET-NODE`** (changed): the `dns` module required or imported under any name, with or
+  without the `node:` prefix, including `dns/promises` and a dynamic `import()`. The `http`/`https`
+  require/import pattern now also matches the module without the `node:` prefix (it required the
+  prefix by mistake), so `const h = require("https"); h.request(…)` counts as egress.
+- Known gap, not closed here: a credential path built from separate segments
+  (`path.join(os.homedir(), ".aws", "credentials")`) is not recognized. Joining segments naively
+  would also flag the cloud SDKs that build the same path to load their own credentials, so it
+  needs a false-positive study first.
+
 ## ruleset 64 (engine 0.60.0)
 
 Blind red-team of 2026-10-10: ten malicious AI components (skill, agent, MCP servers, npm, PyPI,
