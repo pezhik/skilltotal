@@ -255,9 +255,15 @@ def _mcp_add_installs(args: list[str], shell: str, depth: int) -> list[Install]:
     """
     found: list[Install] = []
     for i in range(len(args)):
-        if not _could_launch(args[i]):
+        if _could_launch(args[i]):
+            items = _installs_in(_unwrap(args[i:]), shell, depth)
+        elif any(c.isspace() for c in args[i]):
+            # One quoted word holding a whole command line (`"npx evil"`): a server started
+            # through a shell runs it as such, so it is read as one.
+            items = parse_installs(args[i], shell, depth + 1)
+        else:
             continue
-        for item in _installs_in(_unwrap(args[i:]), shell, depth):
+        for item in items:
             if item not in found:
                 found.append(item)
     return found
@@ -316,7 +322,7 @@ def _add_json_installs(piece: str, shell: str, depth: int) -> list[Install]:
                 continue  # a remote server: nothing is installed
             words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
                 isinstance(extra, list)) else [command]
-            for item in _installs_in(_unwrap(words), shell, depth):
+            for item in _mcp_add_installs(["<name>", *words], shell, depth):
                 if item not in found:
                     found.append(item)
     return found if configs else unreadable

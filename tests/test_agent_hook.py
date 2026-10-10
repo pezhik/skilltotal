@@ -597,6 +597,9 @@ def test_installs_from_github_are_scanned_from_the_repository(command, expected)
         # not guessed at, every launcher in the line is read.
         ("claude mcp add -e A=1 B=2 -- srv npx -y evil-mcp", ["npm:evil-mcp"]),
         ("claude mcp add -H 'X: 1' srv -- uvx evil-mcp", ["pypi:evil-mcp"]),
+        # A whole command line in one quoted word runs as such when the server starts in a shell.
+        ("""claude mcp add srv "npx -y evil-mcp" """, ["npm:evil-mcp"]),
+        ("""claude mcp add-json srv '{"command": "npx -y evil-mcp"}'""", ["npm:evil-mcp"]),
         ("""claude mcp add-json fs '{"command": "npx", "args": ["-y", "some-mcp"]}'""",
          ["npm:some-mcp"]),
         # Read as the shell delivers it: the quotes splice "n", "p", "x" back into npx.
