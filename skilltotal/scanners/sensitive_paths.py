@@ -181,6 +181,41 @@ def _guard_segment(relpath: str) -> bool:
     return False
 
 
+# A macOS sandbox (Seatbelt / SBPL) rule that DENIES access: `(deny file-read* (literal
+# (string-append (param "HOME_DIR") "/.gemini/oauth_creds.json")))`. Agent CLIs ship such profiles
+# to keep the tools they run away from the CLI's own login; the path names what is protected, so it
+# is the opposite of a read. Only deny rules for file operations count; an `(allow ...)` is not a
+# guard. The rule may span many lines, so the enclosing form is found by its parentheses.
+_SBPL_DENY_FILE = re.compile(r"\(\s*deny\s+file[\w*-]*")
+_SBPL_LOOKBACK = 4000
+
+
+def _in_sandbox_deny_rule(text: str, offset: int) -> bool:
+    """True if ``offset`` lies inside a Seatbelt ``(deny file-…)`` form that is still open."""
+    rules = list(_SBPL_DENY_FILE.finditer(text, max(0, offset - _SBPL_LOOKBACK), offset))
+    if not rules:
+        return False
+    depth, i = 0, rules[-1].start()
+    while i < offset:
+        ch = text[i]
+        if ch == '"':  # an SBPL string: its parentheses (a regex such as "($|x)") do not count
+            close = text.find('"', i + 1)
+            while close != -1 and text[close - 1] == "\\":
+                close = text.find('"', close + 1)
+            if close == -1 or close >= offset:
+                break
+            i = close + 1
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return False  # the deny form closed before the match
+        i += 1
+    return depth > 0
+
+
 def _is_guardlist_context(relpath: str, line_text: str, matched: str = "") -> bool:
     """True if a sensitive-path match is a defensive denylist/guardrail mention, not access."""
     bare = _TRAILING_COMMENT.sub("", line_text)
@@ -213,6 +248,13 @@ _SSH_KEY_VARIABLE_BEFORE = re.compile(
     r"(?:[:=]|\?\?|\|\||:-)"
     r"[^|;&\n]*$"
 )
+# A kubeconfig handed to a Kubernetes client as its configuration (`kc-agent --kubeconfig
+# ~/.kube/config`, `KUBECONFIG=~/.kube/config kubectl …`): like `ssh -i`, the client reads it
+# locally to authenticate. Only when nothing on the rest of the line pipes, redirects or substitutes
+# it: `kubectl --kubeconfig ~/.kube/config config view --raw | curl …` dumps the file and stays
+# flagged.
+_KUBECONFIG_FLAG_BEFORE = re.compile(r"(?:--kubeconfig[=\s]+|\bKUBECONFIG=)[\"']?$")
+_SHELL_PLUMBING = re.compile(r"[|>`]|\$\(|<\(")
 # `match = "**/.ssh/*"` in a policy template is a pattern for paths, not a path.
 _POLICY_GLOB_BEFORE = re.compile(r"\*\*/$")
 # The cloud instance-metadata service answers two very different questions. Asking it for the
@@ -281,6 +323,10 @@ def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
     if _BARE_DIR_MATCH.match(match.group(0)) and _DIR_SETUP_BEFORE.search(before):
         return True
     if _SSH_IDENTITY_BEFORE.search(before) or _SSH_KEY_VARIABLE_BEFORE.search(before):
+        return True
+    if _KUBECONFIG_FLAG_BEFORE.search(before) and not _SHELL_PLUMBING.search(
+        line_text[col + len(match.group(0)):]
+    ):
         return True
     if _POLICY_GLOB_BEFORE.search(before) or _EXISTS_TEST_BEFORE.search(before):
         return True
@@ -454,7 +500,9 @@ class SensitivePathScanner(Scanner):
                 continue
             seen_ev.add(key)
             line_text = f.line_text(ev.line_start)
-            if _is_guardlist_context(ev.file, line_text, _m.group(0)):
+            if _is_guardlist_context(ev.file, line_text, _m.group(0)) or _in_sandbox_deny_rule(
+                f.text, _m.start()
+            ):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
                 continue
@@ -484,7 +532,9 @@ class SensitivePathScanner(Scanner):
                 continue
             seen_ev.add(key)
             line_text = f.line_text(ev.line_start)
-            if _is_guardlist_context(ev.file, line_text, f.text[start:end]):
+            if _is_guardlist_context(ev.file, line_text, f.text[start:end]) or (
+                _in_sandbox_deny_rule(f.text, start)
+            ):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
                 continue
@@ -519,8 +569,8 @@ class SensitivePathScanner(Scanner):
                     title=f"Credential path named but not read ({len(unread_files)})",
                     reason=(
                         f"A credential location appears in {len(unread_files)} file(s) as a "
-                        f"directory being created, a key passed to the SSH "
-                        f"client as its identity, or words in a sentence; flagged for review, not "
+                        f"directory being created, a key or kubeconfig handed to its own client "
+                        f"(ssh -i, --kubeconfig), or words in a sentence; flagged for review, not "
                         f"scored: {shown}."
                     ),
                     file=unread_files[0],

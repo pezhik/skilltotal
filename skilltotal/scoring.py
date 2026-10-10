@@ -162,11 +162,16 @@ def _credential_domain(snippet: str) -> str | None:
 def _package_base_name(component: Component) -> str:
     """The base package name, without a version suffix. A PyPI sdist's ``Component.name`` is the
     ``package-version`` dir (``botocore-1.43.42``), so match on the clean source spec
-    (``pypi:botocore``) when present, else strip a trailing ``-<version>`` from the name."""
+    (``pypi:botocore``) when present, else strip a trailing ``-<version>`` from the name.
+
+    A scoped npm name keeps its scope: ``npm:@google/gemini-cli@0.63.0`` -> ``@google/gemini-cli``
+    (splitting on the first ``@`` returned the empty string for every scoped package)."""
     src = (component.source or "").strip().lower()
     for prefix in ("pypi:", "npm:"):
         if src.startswith(prefix):
-            return re.split(r"[@=]", src[len(prefix):], maxsplit=1)[0].strip()
+            spec = src[len(prefix):]
+            scope = "@" if spec.startswith("@") else ""
+            return scope + re.split(r"[@=<>!~ ]", spec[len(scope):], maxsplit=1)[0].strip()
     name = (component.name or "").strip().lower()
     return re.sub(r"-\d+(?:\.\d+)*.*$", "", name)
 

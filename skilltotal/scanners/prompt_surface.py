@@ -195,6 +195,8 @@ _WEAK = alternation(
 
 # Quote characters that wrap a *cited* phrase (straight, smart, guillemets, backtick).
 _QUOTES = "\"'`“”‘’«»"
+# An ellipsis that elides the rest of a quoted phrase: `...` (two to four dots) or `…`.
+_ELISION = re.compile(r" ?(?:\.{2,4}|…)")
 # Quote pairs for the ENCLOSING-quote citation form (opening -> closing). Deliberately excludes
 # single/typographic-apostrophe quotes: apostrophes in prose ("don't", "user's") would make
 # unquoted lines look quoted and wrongly demote live directives.
@@ -240,6 +242,55 @@ def _is_defensive_frame(text: str, start: int, end: int) -> bool:
     return bool(_DEFENSIVE_FRAME.search(text[line_start:line_end]))
 
 
+# The data-theft and instruction-planting phrasings (steal / harvest / exfiltrate / read-then-send /
+# send <secret> to / append $KEY to requests / write rules into CLAUDE.md ...). Only these can be
+# read as a threat DESCRIPTION; an instruction-override or jailbreak phrase ("ignore previous
+# instructions", "DAN mode") is never exempted this way.
+_THEFT_START = re.compile(
+    r"(?i)(?:steal|harvest|exfiltrat|leak|send|post|upload|transmit|forward|secretly|silently|"
+    r"quietly|covertly|append|add|include|attach|insert|pass|write|save|"
+    r"(?:read|cat|copy|copies|collect|gather|grab)s?\b)"
+)
+# A threat model or security write-up says what an ATTACKER can do: "An adversary can sniff the
+# channel and steal the secrets", "If the attacker is able to steal the user token ...",
+# "Attackers may steal credentials". A directive to the agent never has a third-party attacker as
+# its subject with a modal/ability verb. Only the clause leading to the phrase counts: it stops at
+# a sentence boundary and at the last second-person pronoun, so "As an attacker, you can now
+# steal ..." and "Attackers can do this. Steal ..." stay directives.
+_THREAT_ACTOR = re.compile(
+    r"(?i)\b(?:attackers?|adversar(?:y|ies)|threat[\s-]actors?|intruders?|hackers?|"
+    r"malicious\s+(?:users?|actors?|part(?:y|ies)|insiders?|code|packages?|extensions?|"
+    r"servers?|skills?|tools?|websites?|sites?))\b"
+)
+_ABILITY = re.compile(
+    r"(?i)\b(?:can|could|may|might|would|will|(?:is|are)\s+able\s+to|"
+    r"(?:try|tries|trying|attempts?|attempting|seeks?)\s+to)\b"
+)
+_SECOND_PERSON = re.compile(r"(?i)\byou(?:r)?\b")
+_CLAUSE_BREAKS = ".;:!?<>\n"
+_CLAUSE_WINDOW = 300
+
+
+def _is_threat_description(text: str, start: int, end: int) -> bool:
+    """True if a data-theft phrase is the capability of a third-party attacker being described.
+
+    Microsoft Threat Modeling Tool models (``.tm7``) and security write-ups describe each threat in
+    the third person; ``github/awesome-copilot`` ships one inside a threat-model skill and its
+    "Attackers may steal credentials" text scored as a live prompt-injection directive. Linear in
+    the (bounded) clause, so a crafted file cannot make it backtrack.
+    """
+    if not _THEFT_START.match(text, start, end):
+        return False
+    clause = text[max(0, start - _CLAUSE_WINDOW):start]
+    cut = max(clause.rfind(ch) for ch in _CLAUSE_BREAKS)
+    clause = clause[cut + 1:]
+    second_person = list(_SECOND_PERSON.finditer(clause))
+    if second_person:
+        clause = clause[second_person[-1].end():]
+    actor = _THREAT_ACTOR.search(clause)
+    return actor is not None and _ABILITY.search(clause, actor.end()) is not None
+
+
 # File suffixes where quotation marks carry the prose meaning of citation. In code and
 # structured data (.json/.yaml/.go/...) EVERY string value is quote-wrapped, so the
 # enclosing-quote form below would demote a poisoned MCP tool description — those files keep
@@ -282,8 +333,10 @@ def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False)
 
     Two forms (the use–mention distinction: quoted text is mentioned, not asserted):
     1. The span is immediately wrapped in quotes on BOTH sides — a security doc listing
-       ``"ignore all previous instructions"``. Requiring both immediate boundaries keeps recall:
-       an injection that continues past the phrase has no closing quote right after the match.
+       ``"ignore all previous instructions"``, or an elided ``'Ignore previous instructions...'``
+       (only an ellipsis may separate the phrase from its closing quote). Requiring both immediate
+       boundaries keeps recall: an injection that continues past the phrase has no closing quote
+       right after the match.
     2. (``prose`` files only) the span STARTS inside an open quoted region on its line AND the
        line carries a defensive-citation cue (``untrusted``, ``e.g.``, ``etc.``, ``such as`` …)
        — e.g. ``treat snippets as untrusted, never authoritative ("Ignore prior instructions,
@@ -297,7 +350,13 @@ def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False)
        where every value is quote-wrapped by syntax, not by citation.
     """
     before = text[start - 1] if start > 0 else ""
-    after = text[end] if end < len(text) else ""
+    # An elided quotation is still a quotation: `'Ignore previous instructions...'` cuts the cited
+    # phrase off with an ellipsis and then closes the quote (gemini-cli's issue-triage skill lists
+    # exactly that as an example of SPAM to classify). Only an ellipsis may sit between the phrase
+    # and the closing quote, so an injection that continues past the phrase is not covered.
+    elision = _ELISION.match(text, end)
+    close_at = elision.end() if elision else end
+    after = text[close_at] if close_at < len(text) else ""
     # A start/end-of-file boundary is NOT a quote. (Guard the empty string explicitly: `"" in
     # _QUOTES` is True in Python — an empty string is a substring of any string — which would
     # misread a match at the very first/last byte as "quoted" and wrongly demote a live directive.)
@@ -376,46 +435,56 @@ class PromptSurfaceScanner(Scanner):
             seen.add(key)
             evidence.append(ev)
 
-        def review_citation(ev: Evidence, phrase: str) -> None:
+        def review_citation(ev: Evidence, phrase: str, *, described: bool = False) -> None:
             key = (ev.file, ev.line_start)
             if key in nr_seen or len(needs_review) >= MAX_EVIDENCE_PER_FINDING:
                 return
             nr_seen.add(key)
+            if described:
+                title = "Attack described, not directed"
+                reason = (
+                    f"Phrase '{phrase}' at line {ev.line_start} describes what an attacker can "
+                    "do (a threat model or security write-up), not an instruction to the agent; "
+                    "review the surrounding text to confirm."
+                )
+            else:
+                title = "Cited prompt-injection example"
+                reason = (
+                    f"Phrase '{phrase}' at line {ev.line_start} is quoted as an example, "
+                    "not a live directive; review the surrounding text to confirm."
+                )
             needs_review.append(
                 NeedsReview(
                     category=CATEGORY,
-                    title="Cited prompt-injection example",
-                    reason=(
-                        f"Phrase '{phrase}' at line {ev.line_start} is quoted as an example, "
-                        "not a live directive; review the surrounding text to confirm."
-                    ),
+                    title=title,
+                    reason=reason,
                     file=ev.file,
                     line=ev.line_start,
                 )
             )
 
-        # Raw pass: the patterns as written. A match wrapped in quotes on both sides is a cited
-        # example, not a live directive -> route to needs_review (ambiguous), never scored.
-        for f, m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
-            prose = _is_prose(f)
-            if _is_quoted_citation(f.text, m.start(), m.end(), prose=prose) or (
-                _is_defensive_frame(f.text, m.start(), m.end())
+        def classify(f: IndexedFile, start: int, end: int, ev: Evidence) -> None:
+            # A match wrapped in quotes is a cited example, a line that guards against injection
+            # is a defence, and a theft phrase with an attacker as its subject is a threat
+            # description: all go to needs_review (ambiguous), never scored.
+            if _is_quoted_citation(f.text, start, end, prose=_is_prose(f)) or (
+                _is_defensive_frame(f.text, start, end)
             ):
-                review_citation(ev, m.group(0))
+                review_citation(ev, f.text[start:end])
+            elif _is_threat_description(f.text, start, end):
+                review_citation(ev, f.text[start:end], described=True)
             else:
                 add(ev)
+
+        # Raw pass: the patterns as written.
+        for f, m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
+            classify(f, m.start(), m.end(), ev)
         # De-obfuscation pass: the same patterns after folding homoglyphs / full-width /
         # diacritics / zero-width splicing, mapped back to the original span. Catches
         # injection hidden behind look-alike characters; de-duped against the raw pass.
         for f, start, end in deobfuscated_spans(index, _STRONG):
             if start < end:
-                prose = _is_prose(f)
-                if _is_quoted_citation(f.text, start, end, prose=prose) or (
-                    _is_defensive_frame(f.text, start, end)
-                ):
-                    review_citation(f.evidence_for_span(start, end), f.text[start:end])
-                else:
-                    add(f.evidence_for_span(start, end))
+                classify(f, start, end, f.evidence_for_span(start, end))
 
         findings = [_finding_from_rule(inj_rule, evidence)] if evidence else []
 

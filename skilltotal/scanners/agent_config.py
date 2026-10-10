@@ -88,8 +88,23 @@ _BYPASS_FLAGS = (
     r"(?:--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--yolo\b|"
     r"--trust-all-tools|--allow-all-tools|--approval-mode[= ]yolo)"
 )
-_CLI_BYPASS = re.compile(rf"\b{_AI_CLIS}\b[^\n]{{0,160}}?{_BYPASS_FLAGS}", re.IGNORECASE)
+_CLI_BYPASS = re.compile(rf"\b{_AI_CLIS}\b[^\n]{{0,160}}?({_BYPASS_FLAGS})", re.IGNORECASE)
 _CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".zsh", ".ps1")
+
+
+def _flag_in_inline_code(f: IndexedFile, m: re.Match[str]) -> bool:
+    """True if the matched bypass flag is a markdown inline-code span inside Python text.
+
+    Python has no backtick syntax, so `` `--dangerously-skip-permissions` `` in a .py file is
+    formatting in text written for a reader -- the prompt of a security-review hook describing the
+    flag as a vulnerability (anthropics/claude-code), or help text -- not an argument handed to a
+    process. A real launch passes the flag as its own string or inside a command string.
+    """
+    if f.suffix not in (".py", ".pyw"):
+        return False
+    start, end = m.start(1), m.end(1)
+    return start > 0 and f.text[start - 1] == "`" and end < len(f.text) and f.text[end] == "`"
+
 
 # --- MCP-client config injection (SANDWORM_MODE "McpInject", 2026) ---------------------------
 # Writing an attacker server into ANOTHER AI client's config loads it on that client's next
@@ -256,7 +271,9 @@ class AgentConfigScanner(Scanner):
             ),
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
-            code_context="comments",
+            # A launch passes the flag as a value-string; a comment or a docstring that names it
+            # documents the flag. (Inline-code mentions in Python text are set aside in scan().)
+            code_context="comments_and_docstrings",
         ),
         RuleSpec(
             id=R_GITCONFIG_REMOTE,
@@ -382,10 +399,15 @@ class AgentConfigScanner(Scanner):
                 ))
 
         bypass: list[Evidence] = []
+        bypass_described: list[str] = []
         config_inject: list[Evidence] = []
         git_persist: list[Evidence] = []
         for f in index.select(suffixes=_CODE_SUFFIXES):
             for _m, ev in f.finditer(_CLI_BYPASS):
+                if _flag_in_inline_code(f, _m):
+                    if f.relpath not in bypass_described:
+                        bypass_described.append(f.relpath)
+                    continue
                 bypass.append(ev)
                 if len(bypass) >= MAX_EVIDENCE_SCANNED:
                     break
@@ -448,6 +470,19 @@ class AgentConfigScanner(Scanner):
         gitconfig = index.git_config
         if gitconfig is not None:
             self._scan_git_config(gitconfig, gitconfig_remote, needs_review)
+
+        if bypass_described:
+            needs_review.append(NeedsReview(
+                category="agent_config",
+                title="AI CLI permission-bypass flag named in text",
+                reason=(
+                    "A flag that turns off an AI coding CLI's approval prompts appears as inline "
+                    "code in text (a prompt, help or documentation string), not as an argument "
+                    f"to a process: {', '.join(bypass_described[:5])}. Confirm nothing launches "
+                    "the CLI with it."
+                ),
+                file=bypass_described[0],
+            ))
 
         findings = []
         if remote:

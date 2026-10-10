@@ -99,6 +99,8 @@ SHELL_RULE = RuleSpec(
         "derived from untrusted input; prefer execFile with an argument array."
     ),
     capability=Capability.SHELL_EXECUTION,
+    # `// const { exec } = require('child_process')` in a comment or JSDoc example runs nothing.
+    code_context="comments",
     suffixes=NODE_SUFFIXES,
     # The file-independent part; call sites are resolved per file in ShellExecScanner.scan.
     pattern=_ANYWHERE,
@@ -120,6 +122,7 @@ CMDI_RULE = RuleSpec(
     ),
     capability=None,  # shell capability already covered by ST-SHELL-NODE
     threat_class=ThreatClass.RISKY_CONSTRUCT,
+    code_context="comments",
     suffixes=NODE_SUFFIXES,
     # Metadata only (rules list / docs): the effective pattern is built per file.
     pattern=alternation(

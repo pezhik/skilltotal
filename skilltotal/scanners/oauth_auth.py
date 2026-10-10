@@ -47,6 +47,8 @@ class OAuthAuthScanner(PatternScanner):
                 "logged or forwarded off-host."
             ),
             capability=Capability.DELEGATED_AUTHENTICATION,
+            # A comment that mentions an OIDC flow does not use one.
+            code_context="comments",
             suffixes=CODE_SUFFIXES,
             pattern=alternation(
                 # User-delegation grant flows (client_credentials is excluded on purpose — that is

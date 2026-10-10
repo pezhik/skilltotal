@@ -34,6 +34,9 @@ class FilesystemScanner(PatternScanner):
             description="Node.js filesystem read APIs were detected (fs.readFile).",
             recommendation=_READ_RECO,
             capability=Capability.FILESYSTEM_READ,
+            # A JSDoc example (`* fs.createReadStream('speech.mp3')`) describes a call; it makes
+            # none. Comment matches are demoted; code, strings included, stays in scope.
+            code_context="comments",
             suffixes=NODE_SUFFIXES,
             pattern=alternation(
                 r"\bfs\.readFile(?:Sync)?\s*\(",
@@ -51,6 +54,7 @@ class FilesystemScanner(PatternScanner):
             ),
             recommendation=_WRITE_RECO,
             capability=Capability.FILESYSTEM_WRITE,
+            code_context="comments",
             suffixes=NODE_SUFFIXES,
             pattern=alternation(
                 r"\bfs\.writeFile(?:Sync)?\s*\(",

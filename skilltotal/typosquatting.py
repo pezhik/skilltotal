@@ -5,11 +5,14 @@ the classic supply-chain attack where a malicious package impersonates a trusted
 (``lodash`` -> ``loddash``, ``requests`` -> ``requets``). Like ``ST-SKILL-CAP-MISMATCH`` this is a
 synthesized finding (see :mod:`skilltotal.engine`) keyed off the component *identity*, not file
 content: deterministic, stdlib-only, no LLM, no execution. Evidence is anchored to the ``name``
-declaration in the package manifest so the "no finding without evidence" invariant holds.
+declaration in the package manifest (``package.json``; ``pyproject.toml`` / ``setup.py``, else the
+core metadata of an sdist's ``PKG-INFO`` or a wheel's ``*.dist-info/METADATA``) so the "no finding
+without evidence" invariant holds.
 
-Conservative on purpose (to keep false positives at zero on benign corpora): exact matches and
-scoped npm names are never flagged, short names are skipped, and the edit-distance threshold is
-tight. The finding interprets the resemblance only — it never asserts the package *is* malicious.
+Conservative on purpose (to keep false positives at zero on benign corpora): exact matches, popular
+look-alikes (``_KNOWN_LEGIT_*``) and scoped npm names are never flagged, short names are skipped,
+and the edit-distance threshold is tight. The finding interprets the resemblance only — it never
+asserts the package *is* malicious.
 """
 
 from __future__ import annotations
@@ -56,6 +59,37 @@ _PYPI_RAW = (
 )
 
 
+# Well-known packages that sit within the edit threshold of a name above but are popular projects in
+# their own right: `vitest` is not a misspelt `vite`, `scapy` is not a misspelt `scipy`. They are
+# exempt (never flagged), and are not themselves targets. Derived, not hand-picked: every name in
+# the 10,000 most-downloaded packages of each registry (npm: npm-high-impact `topDownload`; PyPI:
+# hugovk/top-pypi-packages; 2026-10 snapshots) that the heuristic would otherwise flag. A real
+# typosquat cannot take one of these names: they are registered to the projects listed here.
+# Refresh alongside the popular lists.
+_KNOWN_LEGIT_NPM_RAW = (
+    "color", "color2k", "colord", "commondir", "corser", "crypt", "crypto", "cypress", "dargs",
+    "dashify", "enquirer", "esquery", "for-in", "format", "gaxios", "getenv", "global", "globby",
+    "jshint", "keypress", "minimisted", "mquery", "mssql", "node-watch", "opener", "otplib",
+    "oxlint", "preact", "prismjs", "radash", "rcedit", "react-dnd", "recast", "rehackt",
+    "scrypt-js", "shimmer", "tslint", "uuidv7", "vitefu", "vitest",
+)
+_KNOWN_LEGIT_PYPI_RAW = (
+    "aerich", "aioftp", "astrapy", "beaker", "beautifulsoup", "blake3", "bleach", "botorch",
+    "cattrs", "certipy", "coredis", "cpplint", "crick", "darker", "djangoql", "djlint", "dydantic",
+    "enrich", "fasta2a", "fastai", "fastar", "gradio", "grequests", "grpclib", "hiredis",
+    "httpie", "httpr", "httpx2", "hyper", "itypes", "jaxlib", "manygo", "markdown2", "markitdown",
+    "moocore", "moyopy", "nbsphinx", "niquests", "numpyro", "open3d", "opencc", "opendal",
+    "openlit", "openmim", "openmm", "p-tqdm", "panda3d", "pandasql", "pandoc", "pathlib",
+    "pottery", "psycopg", "psycopg-binary", "psycopg-c", "pyaml", "pygame", "pyjsparser",
+    "pylama", "pynini", "pynvml", "pyperf", "pyqwest", "pyrect", "pysaml2", "pyshacl", "pytoml",
+    "pytorch", "redfish", "redisvl", "rtoml", "ruyaml", "scanpy", "scapy", "scramp", "scrypt",
+    "segments", "shyaml", "simpy", "sodapy", "spaces", "splink", "stqdm", "stumpy", "syrupy",
+    "tablib", "tclint", "tcmlib", "tensorflowjs", "tombi", "tomli-w", "tomlkit", "tomlrt",
+    "torchao", "torchax", "torchx", "typepy", "unicon", "unicorn", "usort", "vastai", "vyper",
+    "willow", "x-transformers", "xoto3",
+)
+
+
 def _canon_pypi(s: str) -> str:
     """PEP 503-style canonical name: lowercase with runs of ``-_.`` collapsed to a single ``-``."""
     return re.sub(r"[-_.]+", "-", s.strip().lower())
@@ -67,6 +101,8 @@ def _canon_npm(s: str) -> str:
 
 _POPULAR_NPM = frozenset(_canon_npm(x) for x in _NPM_RAW)
 _POPULAR_PYPI = frozenset(_canon_pypi(x) for x in _PYPI_RAW)
+_KNOWN_LEGIT_NPM = frozenset(_canon_npm(x) for x in _KNOWN_LEGIT_NPM_RAW)
+_KNOWN_LEGIT_PYPI = frozenset(_canon_pypi(x) for x in _KNOWN_LEGIT_PYPI_RAW)
 
 
 def _levenshtein(a: str, b: str, max_d: int) -> int | None:
@@ -93,9 +129,9 @@ def _levenshtein(a: str, b: str, max_d: int) -> int | None:
 def package_name_typosquatting(component: Component, index: FileIndex) -> Finding | None:
     """Synthesize ST-TYPOSQUAT when an npm/PyPI package name closely resembles a popular package."""
     if component.type == "npm_package":
-        popular, canon, eco = _POPULAR_NPM, _canon_npm, "npm"
+        popular, legit, canon, eco = _POPULAR_NPM, _KNOWN_LEGIT_NPM, _canon_npm, "npm"
     elif component.type == "python_package":
-        popular, canon, eco = _POPULAR_PYPI, _canon_pypi, "PyPI"
+        popular, legit, canon, eco = _POPULAR_PYPI, _KNOWN_LEGIT_PYPI, _canon_pypi, "PyPI"
     else:
         return None
 
@@ -103,8 +139,8 @@ def package_name_typosquatting(component: Component, index: FileIndex) -> Findin
     if not raw or raw.startswith("@"):
         return None  # scoped npm names are namespace-protected — not a typosquat surface
     norm = canon(raw)
-    if len(norm) < 5 or norm in popular:
-        return None  # too short to disambiguate, or it IS the known package
+    if len(norm) < 5 or norm in popular or norm in legit:
+        return None  # too short to disambiguate, or it IS a known package (target or look-alike)
 
     best: str | None = None
     best_d = 99
@@ -151,17 +187,39 @@ def _root_file(index: FileIndex, names: tuple[str, ...]) -> IndexedFile | None:
     return None
 
 
+def _wheel_metadata(index: FileIndex) -> IndexedFile | None:
+    """A wheel's ``<name>-<version>.dist-info/METADATA``; a wheel has no pyproject.toml/setup.py."""
+    for f in index.files:
+        parts = f.relpath.split("/")
+        if len(parts) == 2 and parts[0].lower().endswith(".dist-info") and parts[1] == "METADATA":
+            return f
+    return None
+
+
+_NPM_NAME = re.compile(r'"name"\s*:\s*"([^"]*)"')
+_PY_MANIFEST_NAME = re.compile(r'(?im)^\s*name\s*[=:]\s*["\']([^"\']*)["\']')
+# Core metadata (an sdist's PKG-INFO, a wheel's METADATA): an RFC 822 `Name:` header.
+_CORE_METADATA_NAME = re.compile(r"(?m)^Name:[ \t]*(\S+)[ \t]*\r?$")
+
+
 def _name_evidence(index: FileIndex, ctype: str, raw: str) -> Evidence | None:
-    """Anchor evidence to the ``name`` declaration in the package manifest."""
+    """Anchor evidence to the ``name`` declaration in the package manifest.
+
+    PyPI: ``pyproject.toml`` / ``setup.py`` when they declare it, else the core metadata every
+    distribution carries (an sdist's root ``PKG-INFO``, a wheel's ``*.dist-info/METADATA``).
+    """
     if ctype == "npm_package":
-        manifest = _root_file(index, ("package.json",))
-        pat = r'"name"\s*:\s*"([^"]*)"'
+        candidates = [(_root_file(index, ("package.json",)), _NPM_NAME)]
     else:
-        manifest = _root_file(index, ("pyproject.toml", "setup.py"))
-        pat = r'(?im)^\s*name\s*[=:]\s*["\']([^"\']*)["\']'
-    if manifest is None:
-        return None
-    m = re.search(pat, manifest.text)
-    if m:
-        return manifest.evidence_for_span(m.start(1), m.end(1))
-    return manifest.evidence_for_lines(1, 1)
+        candidates = [
+            (_root_file(index, ("pyproject.toml",)), _PY_MANIFEST_NAME),
+            (_root_file(index, ("setup.py",)), _PY_MANIFEST_NAME),
+            (_root_file(index, ("PKG-INFO",)), _CORE_METADATA_NAME),
+            (_wheel_metadata(index), _CORE_METADATA_NAME),
+        ]
+    present = [(f, pat) for f, pat in candidates if f is not None]
+    for manifest, pat in present:
+        m = pat.search(manifest.text)
+        if m:
+            return manifest.evidence_for_span(m.start(1), m.end(1))
+    return present[0][0].evidence_for_lines(1, 1) if present else None

@@ -95,6 +95,9 @@ class RuleSpec:
     #   "any"                  - count every match (default; e.g. AST/JSON-anchored rules).
     #   "comments"             - demote matches inside Python comments only (real positives are
     #                            value-strings, e.g. ST-EXPOSE-* `host="0.0.0.0"`).
+    #   "comments_and_docstrings" - as "comments", plus Python docstrings (a string literal that
+    #                            stands alone as a statement documents the code; its examples do
+    #                            not run). Other string literals stay in scope.
     #   "strings_and_comments" - demote matches inside Python string literals OR comments (real
     #                            positives are never a plain .py value-string). C-family string
     #                            literals are NOT demoted (a credential path in a JS string is

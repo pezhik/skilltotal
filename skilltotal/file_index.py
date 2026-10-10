@@ -372,6 +372,11 @@ _DOC_EXACT_NAMES: frozenset[str] = frozenset(
     {"pkg-info", "code_of_conduct.md", ".gitignore", ".dockerignore", ".npmignore",
      ".gcloudignore"}
 )
+# A syndication feed (RSS / Atom) publishes the project's release notes or posts for feed readers:
+# the same prose as a CHANGELOG, wrapped in XML. anthropics/claude-code ships its changelog as
+# `feed.xml`, and a release note naming `id_rsa` scored as credential access.
+_FEED_NAMES: frozenset[str] = frozenset({"feed.xml", "atom.xml", "rss.xml"})
+_FEED_SUFFIXES: tuple[str, ...] = (".rss", ".atom")
 # AI-instruction surfaces that ARE an attack target even though they are markdown/text: a
 # real injection lives here, so these are explicitly NOT treated as documentation.
 _INSTRUCTION_NAMES: frozenset[str] = frozenset(
@@ -410,7 +415,7 @@ def is_doc_path(relpath: str, skills: frozenset[str] = frozenset()) -> bool:
         name = name[: name.rindex(".")]
     if name in _INSTRUCTION_NAMES or name.endswith(_INSTRUCTION_SUFFIXES):
         return False
-    if name in _DOC_EXACT_NAMES:
+    if name in _DOC_EXACT_NAMES or name in _FEED_NAMES or name.endswith(_FEED_SUFFIXES):
         return True
     # Named for an attack -> documentation about it, whatever else the name says. Checked before
     # the instruction keywords below and covers `.txt` corpora such as `advanced_attacks.txt`.
@@ -722,6 +727,37 @@ def _python_agent_facing_spans(
     return spans, regions
 
 
+def _python_docstring_spans(text: str, line_starts: list[int]) -> list[tuple[int, int]]:
+    """Char-spans of Python docstrings: string literals that stand alone as a statement.
+
+    A module, class or function docstring (and an attribute docstring under an assignment) is
+    an expression statement that evaluates a string and discards it -- documentation with the
+    syntax of a string. See ``IndexedFile.in_python_docstring``.
+    """
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return []
+    lines = text.splitlines(keepends=True)
+
+    def offset(lineno: int, col_bytes: int) -> int:
+        # ast columns count UTF-8 bytes; the index counts characters.
+        if not 0 < lineno <= min(len(lines), len(line_starts)):
+            return len(text)
+        col = len(lines[lineno - 1].encode("utf-8")[:col_bytes].decode("utf-8", errors="ignore"))
+        return line_starts[lineno - 1] + col
+
+    return [
+        (offset(node.lineno, node.col_offset), offset(node.end_lineno, node.end_col_offset))
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        and node.end_lineno is not None
+        and node.end_col_offset is not None
+    ]
+
+
 # Rust unit tests live INLINE in the same .rs file as production code (gated by `#[cfg(test)]`
 # on a module or `#[test]` on a function), unlike the separate test directories is_test_path
 # recognizes. That gated code is compiled only for `cargo test` and never shipped to consumers,
@@ -879,6 +915,40 @@ def _rust_test_spans(text: str) -> list[tuple[int, int]]:
     return spans
 
 
+# A PowerShell here-string (`@"` … `"@` / `@'` … `'@`): its lines are a string's content, which a
+# script may later run (`Invoke-Expression $s`), so a `<#` inside one opens no comment.
+_PS_HERE_STRING = re.compile(r"@([\"'])[ \t]*\r?\n.*?\r?\n\1@", re.DOTALL)
+
+
+def _ps_block_comment_spans(text: str) -> list[tuple[int, int]]:
+    """Char-spans of PowerShell ``<# … #>`` block comments.
+
+    An opener inside a quoted string on its line or inside a here-string is text, not a comment
+    (``$s = "<#"`` must not turn the rest of a script into a comment), and an unclosed block
+    counts for nothing.
+    """
+    here_strings = [m.span() for m in _PS_HERE_STRING.finditer(text)] if "@" in text else []
+    spans: list[tuple[int, int]] = []
+    pos = 0
+    while True:
+        start = text.find("<#", pos)
+        if start < 0:
+            return spans
+        line_head = text[text.rfind("\n", 0, start) + 1 : start]
+        if (
+            line_head.count('"') % 2
+            or line_head.count("'") % 2
+            or _offset_in_spans(here_strings, start)
+        ):
+            pos = start + 2
+            continue
+        end = text.find("#>", start + 2)
+        if end < 0:
+            return spans
+        spans.append((start, end + 2))
+        pos = end + 2
+
+
 def _unquoted_hash_index(line: str) -> int | None:
     """Index of the first shell comment ``#`` in ``line``, or None.
 
@@ -969,6 +1039,10 @@ class IndexedFile:
         default=None, repr=False, compare=False
     )
     _sampling_cache: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
+    # Lazily-computed char-spans of Python docstrings; see ``in_python_docstring``.
+    _docstring_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
     # Lazily-computed char-spans of markdown fenced code blocks.
     _md_code_spans_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -1066,7 +1140,11 @@ class IndexedFile:
         return _offset_in_spans(self._comment_spans, offset)
 
     def _ensure_sh_comment_spans(self) -> None:
-        """Record shell (#) comment char-spans once, for ``.sh``/``.bash``/``.zsh`` files."""
+        """Record shell (#) comment char-spans once, for ``.sh``/``.bash``/``.zsh`` files.
+
+        PowerShell also has ``<# … #>`` block comments, where a script documents its own usage
+        (``powershell -ExecutionPolicy Bypass -File setup.ps1`` in codex's setup script).
+        """
         if self._sh_comment_spans is not None:
             return
         spans: list[tuple[int, int]] = []
@@ -1077,6 +1155,8 @@ class IndexedFile:
                 if hash_idx is not None:
                     spans.append((offset + hash_idx, offset + len(line)))
                 offset += len(line)
+            if self.suffix in (".ps1", ".psm1"):
+                spans.extend(_ps_block_comment_spans(self.text))
         self._sh_comment_spans = spans
 
     def in_shell_comment(self, offset: int) -> bool:
@@ -1180,6 +1260,19 @@ class IndexedFile:
             return False
         self._ensure_agent_facing()
         return _offset_in_spans(self._agent_facing_cache, offset)
+
+    def in_python_docstring(self, offset: int) -> bool:
+        """True if ``offset`` is inside a Python docstring (a string literal used as a statement).
+
+        A docstring documents the code beside it, like a comment; ``app.run(host="0.0.0.0")``
+        written in one is an example, not a bind. Returns False for non-Python files and for
+        source that does not parse.
+        """
+        if self.suffix not in (".py", ".pyw"):
+            return False
+        if self._docstring_cache is None:
+            self._docstring_cache = _python_docstring_spans(self.text, self._line_starts)
+        return _offset_in_spans(self._docstring_cache, offset)
 
     def _ensure_agent_facing(self) -> None:
         if self._agent_facing_cache is None:

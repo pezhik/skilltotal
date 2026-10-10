@@ -34,6 +34,8 @@ class NetworkScanner(PatternScanner):
                 "is sent off-host."
             ),
             capability=Capability.NETWORK_EGRESS,
+            # A JSDoc example or a `// … axios …` note describes a request; it sends none.
+            code_context="comments",
             suffixes=NODE_SUFFIXES,
             pattern=alternation(
                 r"\bfetch\s*\(",

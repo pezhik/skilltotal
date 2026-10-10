@@ -908,6 +908,9 @@ def _split_code_context_evidence(
 _AGENT_TEXT_RULES = frozenset(
     {"ST-PROMPT-INJECTION", "ST-MCP-TOOL-POISONING", "ST-MCP-SAMPLING-INJECTION"}
 )
+# Policies under which only comments (and, for the second, Python docstrings) are non-code: the
+# rule's real positives are value-strings, so string literals are never demoted for it.
+_COMMENT_ONLY_POLICIES = frozenset({"comments", "comments_and_docstrings"})
 
 
 def _is_noncode_context(
@@ -915,8 +918,8 @@ def _is_noncode_context(
 ) -> bool:
     """True if evidence ``e`` is a non-executable string/comment match that ``policy`` demotes.
 
-    Python: a match inside a comment (any policy) or a string literal
-    (``strings_and_comments``/``strings_and_comments_all``).
+    Python: a match inside a comment (any policy), a docstring (``comments_and_docstrings``) or a
+    string literal (``strings_and_comments``/``strings_and_comments_all``).
     Shell: a match inside a ``#`` comment — so a ``# Usage: curl … | bash`` example line is a
     doc comment, not a runnable remote pipe-to-shell.
     C-family (.ts/.js/.go/.rs/…): a match inside a ``//`` or ``/* */`` comment — so a JSDoc line
@@ -942,6 +945,10 @@ def _is_noncode_context(
     if f.suffix in (".py", ".pyw"):
         if f.in_comment(e.match_offset):
             return True
+        # A docstring is a comment with the syntax of a string: `host="0.0.0.0"` in one is an
+        # example. Opt-in, because for other rules a value-string in .py is the real signal.
+        if policy == "comments_and_docstrings" and f.in_python_docstring(e.match_offset):
+            return True
         return policy in ("strings_and_comments", "strings_and_comments_all") and f.in_string(
             e.match_offset
         )
@@ -955,7 +962,7 @@ def _is_noncode_context(
     # For every rule that already treats string literals as non-code: a phrase inside a JS regex
     # literal is a pattern the code matches, and rendered HTML/JSX page text or a UI text attribute
     # (`placeholder="Paste ~/.codex/auth.json here"`) is prose for the person using the page.
-    if policy != "comments" and (
+    if policy not in _COMMENT_ONLY_POLICIES and (
         f.in_js_regex(e.match_offset)
         or f.in_rendered_markup_text(e.match_offset)
         or f.in_jsx_ui_attribute(e.match_offset)

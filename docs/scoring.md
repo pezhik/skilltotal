@@ -108,8 +108,9 @@ so the engine does not flag descriptions of attacks or its own detection pattern
 - **Test code** — `tests/`, `*.test.*`, `conftest.py`, compound test trees (`cli-e2e-tests/`,
   `integration-tests/`), … (not run by consumers).
 - **Documentation / prose** — `README`, `CHANGELOG`, `LICENSE`, `docs/`, `*.egg-info/PKG-INFO`,
-  ignore-files. AI-instruction surfaces (`SKILL.md`, `AGENTS.md`, MCP manifests, `.cursorrules`)
-  are **kept in scope** — a real injection lives there.
+  RSS/Atom release feeds (`feed.xml`, `*.rss`, `*.atom`), ignore-files. AI-instruction surfaces
+  (`SKILL.md`, `AGENTS.md`, MCP manifests, `.cursorrules`) are **kept in scope** — a real injection
+  lives there.
 - **Data / eval / benchmark corpora** — inert reference *data* files under `eval_datasets/`,
   `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … (`is_data_corpus_path`). A
   prompt-injection string in an eval dataset is a detector test vector, not behavior. Restricted to
@@ -119,11 +120,20 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   its own regex literal or a docstring example is not behavior; a `# Usage: curl … | bash` line is a
   doc comment, not a runnable pipe-to-shell. Governed per-rule by `code_context`
   (`strings_and_comments` for decode-exec / tool-poisoning / prompt-injection / sensitive-path;
-  `comments` for the network-exposure rules and shell pipe-to-shell, whose real positives are
-  value-strings / real commands).
+  `comments` for shell pipe-to-shell and the Node.js filesystem / network / shell rules, whose real
+  positives are code and value-strings, so a JSDoc `* fs.writeFileSync(...)` example is not a write;
+  `comments_and_docstrings` for the network-exposure rules and the AI-CLI permission-bypass rule,
+  where a Python docstring that shows `host="0.0.0.0"` is an example, not a bind).
 - **Denylist / guardrail credential paths and public DocSearch keys** — demoted at the scanner level
   (`sensitive_paths.py`, `secrets.py`): a policy that *protects* `~/.ssh`/`id_rsa` is not access to
-  it, and an Algolia DocSearch search key sitting next to an app id / index name is public/read-only.
+  it — including a macOS sandbox profile's `(deny file-read* …)` rule that keeps an agent CLI's
+  tools away from its own login file — and an Algolia DocSearch search key sitting next to an app
+  id / index name is public/read-only.
+- **Cited or described attacks** — a prompt-injection phrase wrapped in quotes (also when elided:
+  `'Ignore previous instructions...'`), framed by a defensive line, or a data-theft phrase whose
+  subject is a third-party attacker with a modal verb ("attackers may steal credentials", a threat
+  model) is demoted to `needs_review` by the prompt-surface scanner; the same words addressed to the
+  agent still score.
 
 ## `needs_review` and the score
 

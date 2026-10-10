@@ -47,6 +47,8 @@ class ScopedIdentityScanner(PatternScanner):
                 "needs, and that the token lifetime is minimal."
             ),
             capability=Capability.SCOPED_IDENTITY,
+            # A JSDoc line naming the projected token path describes it; code reads it.
+            code_context="comments",
             suffixes=CODE_SUFFIXES,
             pattern=alternation(
                 # AWS STS assumed / temporary credentials.
