@@ -223,9 +223,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int) -> list[Install]:
     if shell == "powershell" and head in _PS_START:
         started = _start_process(rest)
         return _installs_in(_unwrap(started), shell, depth) if started else []
-    if head == "claude" and rest[:1] == ["mcp"]:
-        command = _mcp_server_command(rest[1:])
-        return _installs_in(_unwrap(command), shell, depth) if command else []
+    if head == "claude" and rest[:2] == ["mcp", "add"]:
+        return _mcp_add_installs(rest[2:], shell, depth)
     if head in _NPM_RUNNERS:
         return _npx(rest)
     if head in ("npm", "pnpm", "yarn", "bun"):
@@ -244,30 +243,36 @@ def _installs_in(tokens: list[str], shell: str, depth: int) -> list[Install]:
     return []
 
 
-# `claude mcp add` / `add-json` options that take a value.
-_CLAUDE_MCP_VALUE_FLAGS = {"-s", "--scope", "-t", "--transport", "-e", "--env", "-H", "--header",
-                           "--client-id", "--client-secret", "--callback-port"}
+def _mcp_add_installs(args: list[str], shell: str, depth: int) -> list[Install]:
+    """What ``claude mcp add [options] <name> [--] <command> [args...]`` installs.
 
-
-def _mcp_server_command(args: list[str]) -> list[str]:
-    """The command ``claude mcp add [options] <name> [--] <command> [args...]`` registers a server
-    with, as words (the ``--`` is only needed when the command has options of its own). A remote
-    server (a URL) installs nothing and yields nothing; ``add-json`` is read by
-    ``_add_json_installs``, before the command line is split at braces.
+    Where the server's command starts depends on options the hook would have to parse exactly as
+    the tool does (``-e``/``-H`` take several values; the name may come after ``--``), and a word
+    misread there is a package never checked. So every place a launcher could start (``npx``,
+    ``uvx``, ``npm``, ``pip``, a shell or a wrapper) is read as a command, and everything any of
+    them would install is checked. A remote server (a URL) installs nothing.
+    ``add-json`` is read by ``_add_json_installs``, before the line is split at braces.
     """
-    if not args or args[0] != "add":
-        return []
-    rest = args[1:]
-    if "--" in rest:
-        return rest[rest.index("--") + 1:]
-    i = 0
-    while i < len(rest):
-        arg = rest[i]
-        if arg.startswith("-"):
-            i += 2 if (arg in _CLAUDE_MCP_VALUE_FLAGS and "=" not in arg) else 1
+    found: list[Install] = []
+    for i in range(len(args)):
+        if not _could_launch(args[i]):
             continue
-        return rest[i + 1:]  # rest[i] is the server's name
-    return []
+        for item in _installs_in(_unwrap(args[i:]), shell, depth):
+            if item not in found:
+                found.append(item)
+    return found
+
+
+def _could_launch(word: str) -> bool:
+    """True for a word that can start a command the hook reads (a package runner or manager, a
+    Python, a shell or a wrapper)."""
+    head = _base(word)
+    return (
+        head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx", "cmd",
+                                         "powershell", "pwsh")
+        or head in _SHELLS or head in _WRAPPERS
+        or bool(re.fullmatch(r"pip\d*(?:\.\d+)?|(?:python|py)\d*(?:\.\d+)?", head))
+    )
 
 
 _ADD_JSON = re.compile(r"\bclaude(?:\.exe|\.cmd)?\s+mcp\s+add-json\b", re.IGNORECASE)
@@ -275,28 +280,46 @@ _ADD_JSON = re.compile(r"\bclaude(?:\.exe|\.cmd)?\s+mcp\s+add-json\b", re.IGNORE
 
 def _add_json_installs(piece: str, shell: str, depth: int) -> list[Install]:
     """``claude mcp add-json <name> '{"command": "npx", "args": ["-y", "pkg"]}'`` starts the server
-    with that command. The JSON is read from the raw command line: splitting at ``{`` and ``}``
-    (a shell group) would cut it apart. A config that cannot be read is asked about."""
+    with that command.
+
+    The config is read from the argument as the shell passes it, tokenizing the whole piece:
+    splitting at ``{`` and ``}`` first (a shell group) would cut the JSON apart, and the raw text
+    is not what the shell delivers (``'{"command":"n'p'x"}'`` reaches the tool as ``npx``). A
+    config that cannot be read is asked about.
+    """
     if not _ADD_JSON.search(piece):
         return []
-    start, end = piece.find("{"), piece.rfind("}")
-    if start < 0 or end < start:
-        return []
-    raw = piece[start:end + 1]
-    for text in (raw, raw.replace('\\"', '"'), raw.replace('`"', '"')):
-        try:
-            config = json.loads(text)
-        except ValueError:
+    unreadable = [Install(None, "a `claude mcp add-json` server config SkillTotal could not read")]
+    try:
+        tokens = _split(piece, shell)
+    except ValueError:
+        return unreadable
+    found: list[Install] = []
+    configs = 0
+    for i in range(len(tokens) - 2):
+        if not (_base(tokens[i]) == "claude" and tokens[i + 1:i + 3] == ["mcp", "add-json"]):
             continue
-        if not isinstance(config, dict):
-            break
-        command, extra = config.get("command"), config.get("args")
-        if not isinstance(command, str):
-            return []  # a remote server: nothing is installed
-        words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
-            isinstance(extra, list)) else [command]
-        return _installs_in(_unwrap(words), shell, depth)
-    return [Install(None, "a `claude mcp add-json` server config SkillTotal could not read")]
+        # Every argument that reads as a JSON object is taken as a config, rather than trusting a
+        # reading of the options in front of it.
+        for word in tokens[i + 3:]:
+            if not word.lstrip().startswith("{"):
+                continue
+            try:
+                config = json.loads(word)
+            except ValueError:
+                continue
+            if not isinstance(config, dict):
+                continue
+            configs += 1
+            command, extra = config.get("command"), config.get("args")
+            if not isinstance(command, str):
+                continue  # a remote server: nothing is installed
+            words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
+                isinstance(extra, list)) else [command]
+            for item in _installs_in(_unwrap(words), shell, depth):
+                if item not in found:
+                    found.append(item)
+    return found if configs else unreadable
 
 
 def _inner_command(head: str, rest: list[str], shell: str) -> tuple[str, str] | None:
@@ -479,7 +502,7 @@ def _github(spec: str, *, pip: bool = False) -> Install | None:
             # pip never takes a ref from the fragment: it installs the default branch. Anything
             # there but its own metadata keys is something the scan cannot account for.
             if tail and not _PIP_FRAGMENT.fullmatch(tail[1:]):
-                return Install(None, f"{spec} (a URL fragment SkillTotal cannot interpret)")
+                return Install(None, f"{spec} (a URL fragment the scan cannot interpret)")
             ref = ""
         else:
             ref = tail[1:]
@@ -495,7 +518,7 @@ def _github(spec: str, *, pip: bool = False) -> Install | None:
         return Install(url)
     if _PLAIN_REF.fullmatch(ref):
         return Install(f"{url}/tree/{ref}")
-    return Install(None, f"{spec} (a git ref SkillTotal cannot check out exactly)")
+    return Install(None, f"{spec} (a git ref the scan cannot reproduce exactly)")
 
 
 def _flag_value(args: list[str], flags: set[str]) -> str | None:
@@ -722,12 +745,13 @@ def hook_response(
         decision = evaluate(report)
         verdict = report.get("verdict") or {}
         label = _checked_label(source, report)
+        # The hint names the release that was checked, so `skilltotal scan` reads the same one.
         if verdict.get("has_malicious_indicators"):
             denied.append(_sentence(f"{label}: {_malicious_detail(report)}"))
-            scanned.append(source)
+            scanned.append(label)
         elif not decision.allow or _looks_typosquatted(report):
             asked.append(_sentence(f"{label}: {_ask_detail(report)}"))
-            scanned.append(source)
+            scanned.append(label)
         else:
             clean.append(f"{label}: risk {report.get('risk_score', 0)}/100 "
                          f"({report.get('risk_level', 'unknown')})")
@@ -735,16 +759,17 @@ def hook_response(
     # What was not checked is the person's call, never a silent pass: otherwise a package padded
     # until its scan times out, or named sixth, would walk past the guard.
     if late:
-        asked.append(f"{_names(late)}: not checked within the {budget_s:g} s SkillTotal waits "
-                     f"before an install.")
+        asked.append(f"{_names(late)}: not checked within SkillTotal's {budget_s:g}-second "
+                     f"time limit.")
     if failed:
-        asked.append(f"{_names(failed)}: SkillTotal could not check this package.")
+        asked.append(f"{_names(failed)}: not checked because the scan failed.")
     if skipped:
-        asked.append(f"{_names(skipped)}: not checked; SkillTotal checks the first "
-                     f"{MAX_TARGETS} packages of a command.")
+        asked.append(f"{_names(skipped)}: not checked; SkillTotal checks only the first "
+                     f"{MAX_TARGETS} packages in a command.")
 
     if denied:
-        reason = "SkillTotal found malicious indicators before install. " + " ".join(denied)
+        reason = "SkillTotal blocked this install: it found malicious indicators. " + " ".join(
+            denied)
         return _answer(permission="deny", reason=f"{reason} {_details(scanned)}")
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
@@ -762,7 +787,7 @@ def _names(sources: list[str], shown: int = 3) -> str:
 
 def _details(scanned: list[str]) -> str:
     target = scanned[0] if len(scanned) == 1 else "<package>"
-    return f"Run `skilltotal scan {target}` for every finding with its file:line evidence."
+    return f"Run `skilltotal scan {target}` to see every finding with its file:line evidence."
 
 
 def _checked_label(source: str, report: dict[str, Any]) -> str:
@@ -836,7 +861,8 @@ def _ask_detail(report: dict[str, Any]) -> str:
 
 def _risk_detail(report: dict[str, Any]) -> str:
     """Why a package needs approval: its score and the finding that weighs most in it."""
-    summary = f"risk {report.get('risk_score', 0)}/100 ({report.get('risk_level', 'unknown')})"
+    summary = (f"risk {report.get('risk_score', 0)}/100 ({report.get('risk_level', 'unknown')}), "
+               f"no malicious indicators")
     scored = [
         f for f in report.get("findings") or []
         if f.get("threat_class") == "risky_construct"

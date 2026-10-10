@@ -209,7 +209,7 @@ def test_a_high_risk_package_asks_the_person():
 def test_the_reason_reads_as_sentences_the_agent_can_act_on():
     """Seen in a real session: 'Seeded verdict Run `skilltotal scan`' and the score said twice."""
     deny = hook_response(_bash("npx bad"), scan=lambda s, t: _report("critical", 100, True, "Odd"))
-    assert "Odd. Run `skilltotal scan npm:bad` for every finding" in (
+    assert "Odd. Run `skilltotal scan npm:bad` to see every finding" in (
         deny["hookSpecificOutput"]["permissionDecisionReason"])
     ask = hook_response(_bash("pip install risky"), scan=lambda s, t: _report("high", 60))
     reason = ask["hookSpecificOutput"]["permissionDecisionReason"]
@@ -245,7 +245,7 @@ def test_a_scan_that_fails_asks_the_person_and_never_denies():
     spec = out["hookSpecificOutput"]
     assert spec["permissionDecision"] == "ask"
     reason = spec["permissionDecisionReason"]
-    assert "npm:lodash: SkillTotal could not check this package." in reason
+    assert "npm:lodash: not checked because the scan failed." in reason
     assert "skilltotal scan" not in reason
 
 
@@ -265,7 +265,8 @@ def test_a_scan_over_the_time_budget_asks_the_person():
     assert 0 < given[0] <= 12.0
     spec = out["hookSpecificOutput"]
     assert spec["permissionDecision"] == "ask"
-    assert "npm:huge: not checked within the 12 s" in spec["permissionDecisionReason"]
+    assert ("npm:huge: not checked within SkillTotal's 12-second time limit."
+            in spec["permissionDecisionReason"])
 
 
 def test_no_scan_starts_once_the_budget_is_spent():
@@ -449,9 +450,9 @@ def test_a_cached_ask_still_names_the_top_finding(tmp_path, monkeypatch):
     for _ in range(2):
         out = hook_response(_bash("pip install risky"), scan=cli._hook_scan_cached)
         reason = out["hookSpecificOutput"]["permissionDecisionReason"]
-        assert ("pypi:risky==2.0.0: risk 60/100 (high); top finding: Shell command built from "
-                "input at `x.py:12`.") in reason
-        assert "Run `skilltotal scan pypi:risky`" in reason
+        assert ("pypi:risky==2.0.0: risk 60/100 (high), no malicious indicators; top finding: "
+                "Shell command built from input at `x.py:12`.") in reason
+        assert "Run `skilltotal scan pypi:risky==2.0.0`" in reason
     assert scans == ["pypi:risky"]
 
 
@@ -592,8 +593,15 @@ def test_installs_from_github_are_scanned_from_the_repository(command, expected)
         ("claude mcp add fs npx @modelcontextprotocol/server-filesystem ~",
          ["npm:@modelcontextprotocol/server-filesystem"]),
         ("claude mcp add -s user fetch uvx mcp-server-fetch", ["pypi:mcp-server-fetch"]),
+        # `-e` takes several values and the name may follow `--`: where the command starts is
+        # not guessed at, every launcher in the line is read.
+        ("claude mcp add -e A=1 B=2 -- srv npx -y evil-mcp", ["npm:evil-mcp"]),
+        ("claude mcp add -H 'X: 1' srv -- uvx evil-mcp", ["pypi:evil-mcp"]),
         ("""claude mcp add-json fs '{"command": "npx", "args": ["-y", "some-mcp"]}'""",
          ["npm:some-mcp"]),
+        # Read as the shell delivers it: the quotes splice "n", "p", "x" back into npx.
+        ("""claude mcp add-json -s user fs '{"command":"n'p'x","args":["-y","evil"]}'""",
+         ["npm:evil"]),
         ("claude mcp add --transport http notion https://mcp.notion.example/mcp", []),
     ],
 )

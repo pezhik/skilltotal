@@ -97,10 +97,29 @@ def test_the_bash_hook_runs_the_wrapper_that_ships_in_the_repository():
 
 
 def test_the_hook_timeout_outlasts_the_cli_budget():
-    """Claude Code kills a hook at its timeout. The CLI must answer first, inside its own budget,
-    or a slow scan ends as a killed hook instead of the 'not checked in time' note."""
+    """Claude Code kills a hook at its timeout and then lets the command through. The CLI must
+    answer first, inside its own budget, or a slow scan ends as a silent pass instead of a
+    question to the person. That holds for the longest budget SKILLTOTAL_HOOK_BUDGET may set."""
+    from skilltotal.cli import HOOK_MAX_BUDGET_S
+
     (hook,) = _bash_hooks()
     assert hook["timeout"] >= HOOK_BUDGET_S + 30
+    assert hook["timeout"] >= HOOK_MAX_BUDGET_S + 15
+
+
+def test_a_budget_past_the_hook_timeout_is_capped(monkeypatch):
+    import io
+    import sys
+
+    import skilltotal.cli as cli
+
+    seen = []
+    monkeypatch.setattr("skilltotal.agent_hook.hook_response",
+                        lambda event, scan, budget_s: seen.append(budget_s))
+    monkeypatch.setenv("SKILLTOTAL_HOOK_BUDGET", "300")
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    assert seen == [cli.HOOK_MAX_BUDGET_S]
 
 
 def test_every_cli_command_the_plugin_calls_exists():

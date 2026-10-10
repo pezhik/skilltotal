@@ -1,6 +1,6 @@
 name: "SkillTotal AI Component Security Scan"
 # GitHub Marketplace requires description <= 125 chars; the full pitch lives in the README.
-description: "Static security scan for AI components (MCP, agent skills, npm/PyPI, repos) - SARIF, deterministic, offline."
+description: "Static security scan for AI components (MCP, agent skills, npm/PyPI, repos) - SARIF, deterministic, no LLM."
 author: "SkillTotal"
 branding:
   icon: "shield"

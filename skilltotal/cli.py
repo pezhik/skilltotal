@@ -575,6 +575,9 @@ def _cmd_hook() -> int:
         budget = float(os.environ.get("SKILLTOTAL_HOOK_BUDGET", HOOK_BUDGET_S))
     except ValueError:
         budget = HOOK_BUDGET_S
+    # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
+    # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
+    budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
     answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget)
     if answer is not None:
         print(json.dumps(answer))
@@ -585,6 +588,7 @@ def _cmd_hook() -> int:
 # a week for an exact npm/PyPI release (its files never change), an hour for anything that can
 # change under the same name (a git repository, or a package whose release could not be resolved).
 HOOK_BUDGET_S = 20.0
+HOOK_MAX_BUDGET_S = 100.0
 HOOK_RELEASE_TTL_S = 7 * 24 * 3600
 HOOK_MOVING_TTL_S = 3600
 HOOK_CACHE_MAX_ENTRIES = 500
