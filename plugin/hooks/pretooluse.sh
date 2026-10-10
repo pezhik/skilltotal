@@ -16,7 +16,7 @@ warn() {
     *npm*|*npx*|*pnpm*|*yarn*|*bun*|*pip*|*uv*|*python*|*"py "*|*mcp*) ;;
     *) return ;;
   esac
-  printf '%s\n' "{\"systemMessage\": \"SkillTotal did not check this install: $1. Fix: pip install -U skilltotal\", \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"additionalContext\": \"SkillTotal did not check this install: $1.\"}}"
+  printf '%s\n' "{\"systemMessage\": \"SkillTotal did not check this install: $1. Fix: pipx install skilltotal (or pipx upgrade skilltotal)\", \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"additionalContext\": \"SkillTotal did not check this install: $1.\"}}"
 }
 
 input=$(cat)

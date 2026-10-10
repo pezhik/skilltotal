@@ -176,3 +176,43 @@ def test_config_ignore_rule(tmp_path: Path, capsys):
 def test_no_command_errors():
     with pytest.raises(SystemExit):
         main([])
+
+
+def test_a_usage_error_exits_1_not_the_gate_code(capsys):
+    # Exit code 2 means a gate tripped; a mistyped level must not look like a failed component.
+    with pytest.raises(SystemExit) as exc:
+        main(["scan", str(FIXTURES / "clean_pkg"), "--fail-on", "hihg"])
+    capsys.readouterr()
+    assert exc.value.code == EXIT_ERROR
+
+
+def test_a_bare_package_name_gets_a_hint(capsys):
+    code = main(["scan", "some-package-that-is-not-a-folder"])
+    err = capsys.readouterr().err
+    assert code == EXIT_ERROR
+    assert "npm:some-package-that-is-not-a-folder or pypi:some-package-that-is-not-a-folder" in err
+
+
+def test_the_output_file_is_written_even_if_the_console_cannot_print(tmp_path, monkeypatch):
+    # Seen on Windows: `scan --output r.json` left no file when printing a snippet to a legacy
+    # code-page console failed first.
+    import io
+    import sys
+
+    class Legacy(io.TextIOWrapper):
+        pass
+
+    target = tmp_path / "r.json"
+    legacy = Legacy(io.BytesIO(), encoding="cp1252")
+    monkeypatch.setattr(sys, "stdout", legacy)
+    code = main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--json", "--output", str(target)])
+    assert code == EXIT_OK
+    assert json.loads(target.read_text(encoding="utf-8"))["findings"]
+    legacy.flush()
+    assert legacy.encoding.lower().replace("-", "") == "utf8"  # reconfigured for redirection
+
+
+def test_text_reports_never_carry_terminal_escapes():
+    from skilltotal.report import _terminal_safe
+
+    assert _terminal_safe("ok\x1b[2J\r\x07\tx\n") == "ok\\x1b[2J\\x0d\\x07\tx\n"

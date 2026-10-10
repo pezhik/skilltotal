@@ -20,12 +20,13 @@ test("an installed Python is the fallback, and only one that already has the eng
   const linux = candidates("1.0.0", "linux").slice(2);
   assert.deepEqual(linux.map((c) => c.cmd), ["python3", "python"]);
   for (const c of linux) {
-    assert.deepEqual(c.args, ["-m", "skilltotal"]);
-    assert.deepEqual(c.probe, ["-c", "import skilltotal"]);
+    // -P keeps the current directory (often the repository being scanned) off sys.path.
+    assert.deepEqual(c.args, ["-P", "-m", "skilltotal"]);
+    assert.deepEqual(c.probe, ["-P", "-c", "import skilltotal"]);
   }
   const win = candidates("1.0.0", "win32").slice(2);
   assert.deepEqual(win.map((c) => c.cmd), ["py", "python", "python3"]);
-  assert.deepEqual(win[0].args, ["-3", "-m", "skilltotal"]);
+  assert.deepEqual(win[0].args, ["-3", "-P", "-m", "skilltotal"]);
 });
 
 test("nothing in the plan installs anything", () => {
@@ -68,6 +69,27 @@ test("the bin runs the engine and passes the exit code through", { skip: !runner
   assert.match(ok.stdout, /^skilltotal \d+\.\d+\.\d+/);
   const bad = spawnSync(process.execPath, [bin, "no-such-command"], { encoding: "utf8" });
   assert.notEqual(bad.status, 0);
+});
+
+test("a skilltotal/ or json.py planted in the current directory is never what runs", {
+  skip: !runner || !runner.args.includes("-P"),
+}, () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "planted-"));
+  const marker = path.join(dir, "ran.txt");
+  const plant = `open(${JSON.stringify(marker)}, "w").write("ran")\n`;
+  fs.mkdirSync(path.join(dir, "skilltotal"));
+  fs.writeFileSync(path.join(dir, "skilltotal", "__init__.py"), plant);
+  fs.writeFileSync(path.join(dir, "json.py"), plant);
+  try {
+    const r = spawnSync(process.execPath, [bin, "--version"], { encoding: "utf8", cwd: dir });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^skilltotal \d+\.\d+\.\d+/);
+    assert.equal(fs.existsSync(marker), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("with nothing to run the engine, it exits 127 and says how to install one", () => {

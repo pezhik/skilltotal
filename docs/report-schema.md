@@ -110,7 +110,7 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `files_skipped_large` | integer | Files over the size cap skipped |
 | `scanners_run` | array | Scanner names that ran |
 | `findings_by_severity` | object | Counts per severity |
-| `suppressed_count` | integer | Evidence occurrences removed via `--baseline` |
+| `suppressed_count` | integer | Evidence occurrences removed via `--baseline` or an inline `skilltotal:ignore` marker (honored only for `scan` of a local directory) |
 
 ## Alternative format: SARIF
 

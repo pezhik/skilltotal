@@ -34,7 +34,11 @@ the language auditors and compliance stakeholders already use.
 
 `emergent = yes` marks a combination trait (backed by a synthesized risky-construct finding);
 all others are single-behavior traits. MAESTRO layers reference the CSA MAESTRO framework; ATLAS
-tactics reference MITRE ATLAS.
+tactics are the official MITRE ATLAS tactics, reached through the technique that fits the trait:
+LLM Prompt Injection (AML.T0051) is Execution, poisoning an agent's context or tool data
+(AML.T0070, AML.T0099) is Persistence, AI Supply Chain Compromise (AML.T0010) is Initial Access,
+and the exfiltration combinations are Exfiltration (AML.TA0010). A trait with no honest fit
+carries none.
 
 The three CSA **Tool Execution Context** traits form a blast-radius spectrum — how a component
 authenticates its tool calls, from largest to smallest blast radius: `embedded_credential` (Agent
@@ -52,13 +56,13 @@ short-lived, assumed, narrowly-scoped credential).
 | `embedded_credential` | no | Tool Execution Context / Agent Service Identity | Insufficient permission granularity; credential rotation complexity | L4 Deployment & Infrastructure, L6 Security & Compliance | - |
 | `delegated_authentication` | no | Tool Execution Context / User Delegated Credentials | Access-control boundary confusion (agent-level vs user-level operations) | L4 Deployment & Infrastructure, L6 Security & Compliance | - |
 | `scoped_identity` | no | Tool Execution Context / Least-Privilege Service Identity | Agent proliferation / permission sprawl if scopes are not curated | L4 Deployment & Infrastructure, L6 Security & Compliance | - |
-| `untrusted_perception` | no | Perception & Context / Contextual Perception | Context manipulation and poisoning | L2 Data Operations, L5 Evaluation & Observability | Adversarial Perception Attacks, Model Poisoning |
+| `untrusted_perception` | no | Perception & Context / Contextual Perception | Context manipulation and poisoning | L2 Data Operations, L5 Evaluation & Observability | Execution, Persistence |
 | `metadata_integrity` | no | Trust / Tool Poisoning | Trust inheritance through data | L6 Security & Compliance, L7 Agent Ecosystem | - |
-| `supply_chain_provenance` | no | General Protections / Supply Chain | Supply-chain compromise via install-time execution or name confusion | L4 Deployment & Infrastructure | - |
+| `supply_chain_provenance` | no | General Protections / Supply Chain | Supply-chain compromise via install-time execution or name confusion | L4 Deployment & Infrastructure | Initial Access |
 | `unsafe_deserialization` | no | General Protections / Input Validation | Untrusted input driving code execution on deserialization | L2 Data Operations | - |
 | `code_obfuscation` | no | General Protections / Explainability | Opaque payloads defeating review and detection | L5 Evaluation & Observability | - |
 | `exfil_correlation` | yes | Tool Access Control / Broker-Mediated Access | Cross-request correlation blindness (read sensitive data then external comms) | L5 Evaluation & Observability | Exfiltration |
-| `instruction_exfil_flow` | yes | Perception & Context + Tool Access Control | Context manipulation escalated through tool egress | L2 Data Operations, L5 Evaluation & Observability | Adversarial Perception Attacks, Exfiltration |
+| `instruction_exfil_flow` | yes | Perception & Context + Tool Access Control | Context manipulation escalated through tool egress | L2 Data Operations, L5 Evaluation & Observability | Execution, Exfiltration |
 | `malware_convergence` | yes | General Protections / Anomaly Detection | Convergent malicious behavior across independent indicators | L5 Evaluation & Observability | - |
 
 ## Adding or changing a trait

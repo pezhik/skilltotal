@@ -7,6 +7,7 @@ itself — never from the user's environment.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -232,6 +233,13 @@ def _is_archive_name(name: str) -> bool:
 def _collect_local(source: str) -> SourceContext:
     root = Path(source).expanduser().resolve()
     if not root.exists():
+        name = source.strip()
+        if _NPM_NAME_RE.match(name) or _PYPI_NAME_RE.match(name):
+            # `skilltotal scan lodash` most often means the package, not a folder named lodash.
+            raise CollectionError(
+                f"Path does not exist: {source}. To scan a package, name its registry: "
+                f"npm:{name} or pypi:{name}"
+            )
         raise CollectionError(f"Path does not exist: {source}")
     if root.is_dir():
         component = detect_component(root, source=str(root))
@@ -725,8 +733,12 @@ def _safe_extract_zip(data: bytes, dest: Path) -> None:
 
 
 def _collect_archive(
-    source: str, ctype: str, version: str, archive_url: str, filename: str
+    source: str, ctype: str, version: str, archive_url: str, filename: str,
+    *, name: str | None = None,
 ) -> SourceContext:
+    """Download and extract a registry artifact. ``name`` is the registry's own name for the
+    project, when the artifact may not carry a manifest that says it (a wheel has none at its
+    root, and an sdist folder is named ``project-1.2.3``)."""
     data = _http_get(archive_url)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
@@ -740,6 +752,7 @@ def _collect_archive(
         component = detect_component(root, source=source)
         component = replace(
             component,
+            name=neutralize_hidden(name) if name else component.name,
             type=ctype,
             version=component.version or version,
             download_url=archive_url,
@@ -755,15 +768,34 @@ _EXACT_NPM_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 _EXACT_PYPI_VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z.+!-]*$")
 
 
-def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> str | None:
-    """The exact release a registry source names right now, as a pinned source.
+class Release(NamedTuple):
+    """One exact registry artifact. ``source`` scans it (``npm:x@1.2.3`` / ``pypi:x==1.2.3``).
 
-    ``npm:x`` / ``npm:x@latest`` -> ``npm:x@1.2.3``; ``pypi:x`` -> ``pypi:x==1.2.3``. A source that
-    already pins an exact version comes back as is, without a request. Anything that is not an
-    npm or PyPI package (a git URL, a local path) returns None, as does a registry that does not
-    answer: the caller then knows only the name, not which release it would get.
+    A PyPI release can gain files after it is published (a wheel added to a version first shipped
+    as an sdist), so its version alone does not say what gets installed: ``artifact`` is the file
+    the scan reads and ``files`` a digest of every file in the release, so a verdict stays tied to
+    the set pip could choose from. An npm version is one immutable tarball: neither is needed.
+    """
 
-    One small request (npm's per-tag manifest, PyPI's project JSON), so a caller that keeps a
+    source: str
+    artifact: str = ""
+    files: str = ""
+
+    @property
+    def key(self) -> str:
+        """What a verdict about this release may be remembered under."""
+        return " ".join(part for part in (self.source, self.artifact, self.files) if part)
+
+
+def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release | None:
+    """The exact artifact a registry source names right now.
+
+    ``npm:x`` / ``npm:x@latest`` -> ``npm:x@1.2.3``; ``pypi:x`` -> ``pypi:x==1.2.3`` plus the file
+    pip would install. An exact npm pin comes back without a request. Anything that is not an npm
+    or PyPI package (a git URL, a local path) returns None, as does a registry that does not
+    answer: the caller then knows only the name, not what it would get.
+
+    One small request (npm's per-tag manifest, PyPI's release JSON), so a caller that keeps a
     verdict per package can tell a new release from the one it checked.
     """
     kind = classify_source(source)
@@ -773,23 +805,30 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> str | Non
             if not name:
                 return None
             if pin and _EXACT_NPM_VERSION_RE.match(pin):
-                return f"npm:{name}@{pin}"
+                return Release(f"npm:{name}@{pin}")
             url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest')}"
             with _open(url, timeout=timeout) as resp:
                 version = str(json.loads(resp.read(8 * 1024 * 1024)).get("version") or "")
-            return f"npm:{name}@{version}" if _EXACT_NPM_VERSION_RE.match(version) else None
+            if not _EXACT_NPM_VERSION_RE.match(version):
+                return None
+            return Release(f"npm:{name}@{version}")
         if kind == "pypi":
             name, pin = pypi_package_spec(source)
-            if not name:
+            if not name or (pin and not _EXACT_PYPI_VERSION_RE.match(pin)):
                 return None
-            if pin and _EXACT_PYPI_VERSION_RE.match(pin):
-                return f"pypi:{name}=={pin}"
-            if pin:
+            url = f"https://pypi.org/pypi/{name}/{quote(pin)}/json" if pin else (
+                f"https://pypi.org/pypi/{name}/json")
+            with _open(url, timeout=timeout) as resp:
+                meta = json.loads(resp.read(_MAX_ARCHIVE_BYTES))
+            version = str((meta.get("info") or {}).get("version") or "")
+            urls = meta.get("urls") or []
+            chosen = _pick_distribution(urls)
+            artifact = str((chosen or {}).get("filename") or "")
+            if not (_EXACT_PYPI_VERSION_RE.match(version) and artifact):
                 return None
-            with _open(f"https://pypi.org/pypi/{name}/json", timeout=timeout) as resp:
-                info = json.loads(resp.read(_MAX_ARCHIVE_BYTES)).get("info") or {}
-            version = str(info.get("version") or "")
-            return f"pypi:{name}=={version}" if _EXACT_PYPI_VERSION_RE.match(version) else None
+            names = sorted(str(u.get("filename") or "") for u in urls)
+            files = hashlib.sha256("\n".join(names).encode("utf-8")).hexdigest()[:16]
+            return Release(f"pypi:{name}=={version}", artifact, files)
     except (OSError, ValueError, CollectionError):
         return None
     return None
@@ -818,24 +857,43 @@ def _collect_npm(source: str) -> SourceContext:
     return _collect_archive(source, "npm_package", str(chosen), tarball, tarball)
 
 
+def _pick_distribution(urls: list[dict]) -> dict | None:
+    """The file to scan for a PyPI release: the one pip installs whenever that is one file.
+
+    A pure-Python wheel (``*-none-any.whl``) that is the release's only wheel is what pip installs
+    on every platform: nothing in it runs at install time, and its code is exactly what gets
+    imported, without the tests, docs and build tooling an sdist carries. Next to platform wheels
+    it is not: pip prefers a platform wheel where one matches, so a clean pure wheel could stand
+    in for a different one. Then the sdist is scanned, the source every build starts from, whose
+    build script runs wherever pip has to build it. A release with neither gets its first wheel.
+    """
+    wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
+    sdist = next((u for u in urls if u.get("packagetype") == "sdist"), None)
+    if len(wheels) == 1 and str(wheels[0].get("filename") or "").lower().endswith("-none-any.whl"):
+        return wheels[0]
+    return sdist or (wheels[0] if wheels else None)
+
+
 def _collect_pypi(source: str) -> SourceContext:
     name, pin = pypi_package_spec(source)
     if not name:
         raise CollectionError(f"invalid PyPI package name in: {source}")
     if pin:
+        if not _EXACT_PYPI_VERSION_RE.match(pin):
+            raise CollectionError(f"invalid PyPI version in: {source}")
         # Per-version metadata endpoint lists that release's distributions directly.
-        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/{pin}/json"))
+        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/{quote(pin)}/json"))
         version = str((meta.get("info") or {}).get("version") or pin)
     else:
         meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/json"))
         version = str((meta.get("info") or {}).get("version") or "")
-    urls = meta.get("urls") or []
-    chosen = next((u for u in urls if u.get("packagetype") == "sdist"), None)
-    chosen = chosen or next((u for u in urls if u.get("packagetype") == "bdist_wheel"), None)
+    chosen = _pick_distribution(meta.get("urls") or [])
     if not (version and chosen and chosen.get("url")):
         raise CollectionError(f"PyPI project '{name}' has no downloadable distribution")
+    project = str((meta.get("info") or {}).get("name") or name)
     return _collect_archive(
-        source, "python_package", version, chosen["url"], chosen.get("filename", "")
+        source, "python_package", version, chosen["url"], chosen.get("filename", ""),
+        name=project,
     )
 
 

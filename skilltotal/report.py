@@ -7,6 +7,7 @@ can feed a CLI, a web response, or a SaaS API without change.
 from __future__ import annotations
 
 import json
+import re
 
 from skilltotal.diff import DiffReport
 from skilltotal.guard import GuardDecision
@@ -14,6 +15,22 @@ from skilltotal.models import Report
 from skilltotal.scanners.base import RuleSpec
 
 _INDENT = "  "
+# Control characters other than tab and newline. Paths and snippets come from the scanned
+# package, so a text report printed to a terminal must not carry escape sequences that move the
+# cursor, rewrite earlier lines (a BLOCK turned into an ALLOW) or set the clipboard.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# The text report shows a few locations per finding; --json carries every one.
+_TEXT_EVIDENCE_SHOWN = 3
+_CLASS_ORDER = {"malicious_indicator": 0, "risky_construct": 1, "exposure": 2, "capability": 3}
+_CLASS_LABEL = {
+    "malicious_indicator": " - malicious indicator",
+    "capability": " - capability, not scored",
+}
+
+
+def _terminal_safe(text: str) -> str:
+    """Show control characters as ``\\x1b`` instead of sending them to the terminal."""
+    return _CONTROL_CHARS.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
 
 
 def render_json(report: Report) -> str:
@@ -50,20 +67,26 @@ def render_text(report: Report) -> str:
             lines.append(f"{_INDENT}- {cap.value} ({len(evs)} evidence)")
         lines.append("")
 
-    # Findings
+    # Findings: what drives the verdict first. A capability is what the code can do, and it is
+    # labeled as such, so "[HIGH]" next to a 0/100 score does not read as a contradiction.
     lines.append(f"Findings ({len(report.findings)}):")
     if not report.findings:
         lines.append(f"{_INDENT}(none)")
-    for f in report.findings:
-        lines.append(f"{_INDENT}[{f.severity.value.upper()}] {f.id}  {f.title}")
+    for f in sorted(report.findings, key=lambda f: _CLASS_ORDER.get(f.threat_class.value, 4)):
+        label = _CLASS_LABEL.get(f.threat_class.value, "")
+        lines.append(f"{_INDENT}[{f.severity.value.upper()}{label}] {f.id}  {f.title}")
         lines.append(f"{_INDENT*2}{f.description}")
         lines.append(f"{_INDENT*2}Recommendation: {f.recommendation}")
         lines.append(f"{_INDENT*2}Evidence:")
-        for e in f.evidence:
-            loc = f"{e.file}:{e.line_start}-{e.line_end}"
-            lines.append(f"{_INDENT*3}- {loc}")
+        for e in f.evidence[:_TEXT_EVIDENCE_SHOWN]:
+            lines_span = (f"{e.line_start}" if e.line_end == e.line_start
+                          else f"{e.line_start}-{e.line_end}")
+            lines.append(f"{_INDENT*3}- {e.file}:{lines_span}")
             for snippet_line in e.snippet.splitlines() or [e.snippet]:
                 lines.append(f"{_INDENT*4}{snippet_line}")
+        hidden = len(f.evidence) - _TEXT_EVIDENCE_SHOWN
+        if hidden > 0:
+            lines.append(f"{_INDENT*3}... and {hidden} more (all of them in --json)")
         lines.append("")
 
     # Needs review
@@ -75,7 +98,7 @@ def render_text(report: Report) -> str:
             lines.append(f"{_INDENT*2}{n.reason}")
         lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n"
+    return _terminal_safe("\n".join(lines).rstrip() + "\n")
 
 
 def render_diff_json(diff: DiffReport) -> str:
@@ -138,7 +161,7 @@ def render_diff_text(diff: DiffReport) -> str:
             lines.append(f"{_INDENT}- {cap}")
         lines.append("")
 
-    return "\n".join(lines).rstrip() + "\n"
+    return _terminal_safe("\n".join(lines).rstrip() + "\n")
 
 
 def _diff_side(side: dict) -> str:
@@ -189,7 +212,7 @@ def render_guard_text(source: str, report: dict, decision: GuardDecision) -> str
     if not decision.allow:
         lines.append("")
         lines.append(f"Inspect the full report: skilltotal scan {source}")
-    return "\n".join(lines) + "\n"
+    return _terminal_safe("\n".join(lines) + "\n")
 
 
 def render_inventory_json(items: list[dict]) -> str:
@@ -217,7 +240,7 @@ def render_inventory_text(items: list[dict]) -> str:
     if flagged:
         lines.append("")
         lines.append(f"{len(flagged)} component(s) need attention (high risk or malicious).")
-    return "\n".join(lines) + "\n"
+    return _terminal_safe("\n".join(lines) + "\n")
 
 
 def render_rules_json(rules: list[RuleSpec]) -> str:

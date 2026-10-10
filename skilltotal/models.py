@@ -172,6 +172,12 @@ class Finding:
         }
 
 
+# The needs_review title for a script the package runs at install time that could not be read
+# (too large, binary, missing). The install guard keys on it: an install it cannot see is not
+# called clean.
+UNANALYZED_INSTALL_SCRIPT = "Install script not analyzed"
+
+
 @dataclass
 class NeedsReview:
     """A low-confidence or un-evidenced signal that must NOT affect the score.

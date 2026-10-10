@@ -60,8 +60,17 @@ EXIT_ERROR = 1
 EXIT_FAIL_ON_HIGH = 2
 
 
+class _Parser(argparse.ArgumentParser):
+    """argparse, except that a usage error exits 1 rather than 2: exit code 2 means a gate tripped,
+    and a CI job must be able to tell a mistyped flag from a component that failed its check."""
+
+    def error(self, message: str):  # type: ignore[override]
+        self.print_usage(sys.stderr)
+        self.exit(EXIT_ERROR, f"{self.prog}: error: {message}\n")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="skilltotal",
         description="AI Component Security Platform — static analysis of AI components.",
     )
@@ -260,6 +269,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Redirected output on Windows is written in the legacy code page, which cannot encode much of
+    # what a scanned package may contain: a `✓` in one snippet crashed `scan --json > r.json` and
+    # left the file empty. Reports go out as UTF-8 and never fail on their own content.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):  # absent on injected test streams
+            if stream.isatty():
+                stream.reconfigure(errors="replace")
+            else:
+                stream.reconfigure(encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -348,14 +366,15 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     else:
         structured = render_json(report)
 
+    # The file first: whatever happens to the console, the report the caller asked for exists.
+    if args.output:
+        Path(args.output).write_text(structured, encoding="utf-8")
+        print(f"Report written to {args.output}", file=sys.stderr)
+
     if args.sarif or args.json:
         print(structured)
     else:
         print(render_text(report))
-
-    if args.output:
-        Path(args.output).write_text(structured, encoding="utf-8")
-        print(f"Report written to {args.output}", file=sys.stderr)
 
     level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
     score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
@@ -385,14 +404,14 @@ def _cmd_diff(args: argparse.Namespace) -> int:
 
     diff = diff_reports(old_report, new_report)
 
+    if args.output:
+        Path(args.output).write_text(render_diff_json(diff), encoding="utf-8")
+        print(f"Diff report written to {args.output}", file=sys.stderr)
+
     if args.json:
         print(render_diff_json(diff))
     else:
         print(render_diff_text(diff))
-
-    if args.output:
-        Path(args.output).write_text(render_diff_json(diff), encoding="utf-8")
-        print(f"Diff report written to {args.output}", file=sys.stderr)
 
     if args.fail_on_new:
         worst = max_new_severity(diff)
@@ -582,16 +601,18 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     """``_hook_scan``, reusing a verdict. Agents run the same ``npx tsc`` again and again, and each
     must not cost a scan.
 
-    A verdict belongs to one release. ``npm:x`` is first resolved to the release the registry
-    serves now (``npm:x@1.2.3``) and that is what is scanned and remembered, so a clean verdict
-    from this morning never vouches for a release published this afternoon. A new engine version
-    rescans everything.
+    A verdict belongs to one artifact. ``npm:x`` is first resolved to the release the registry
+    serves now (``npm:x@1.2.3``; on PyPI, also the file pip would install) and that is what is
+    scanned and remembered, so a clean verdict from this morning never vouches for a release, or a
+    file, published this afternoon. A new engine version rescans everything.
     """
     from skilltotal.collector import resolve_release
+    from skilltotal.models import UNANALYZED_INSTALL_SCRIPT
 
     started = time.monotonic()
     release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
-    key = release or source
+    key = release.key if release else source
+    target = release.source if release else source
     ttl = HOOK_RELEASE_TTL_S if release else HOOK_MOVING_TTL_S
     path = _hook_cache_path()
     try:
@@ -606,7 +627,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
             and now - _number(hit.get("at")) < _number(hit.get("ttl", ttl))):
         return hit["report"]
     # Raises on failure/timeout: nothing is cached then.
-    report = _hook_scan(key, timeout - (time.monotonic() - started))
+    report = _hook_scan(target, timeout - (time.monotonic() - started))
     verdict = report.get("verdict") or {}
     entry = {
         "engine": __version__,
@@ -636,8 +657,19 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
                 for f in report.get("findings") or []
                 if f.get("threat_class") in ("malicious_indicator", "risky_construct")
             ],
+            # An install script the scan could not read decides the answer as much as a finding.
+            "needs_review": [
+                {"category": n.get("category"), "title": n.get("title"), "file": n.get("file")}
+                for n in report.get("needs_review") or []
+                if n.get("title") == UNANALYZED_INSTALL_SCRIPT
+            ],
         },
     }
+    scanned = str((report.get("component") or {}).get("download_url") or "").rsplit("/", 1)[-1]
+    if release and release.artifact and scanned != release.artifact:
+        # A file was added to the release between the lookup and the scan: the verdict is good
+        # for what was scanned, but it is not the artifact the key names, so it is not kept.
+        return entry["report"]
     # Keep the file small: drop what has expired, then the oldest past the cap.
     live = {
         k: v for k, v in cache.items()

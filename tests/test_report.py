@@ -76,3 +76,43 @@ def test_text_report_leads_with_the_verdict(tmp_path, malicious_npm, clean_repor
     assert "Verdict   : HIGH - High-risk capabilities" in render_text(malicious_npm)
     clean = render_text(clean_report)
     assert "Verdict   : LOW - " in clean and "MALICIOUS" not in clean
+
+
+def test_text_report_labels_capabilities_and_keeps_evidence_short(tmp_path):
+    # Seen in a pre-launch audit: "Risk: LOW (score 0/100)" above "[HIGH] ST-...", and up to 25
+    # locations per capability. A capability is labeled as not scored; --json keeps every location.
+    import re
+
+    (tmp_path / "index.js").write_text(
+        "const cp = require('child_process');\n"
+        + "".join(f"cp.execSync('ls {i}');\n" for i in range(6)),
+        encoding="utf-8",
+    )
+    report = analyze_directory(tmp_path, Component(name="d", type="directory", source="d"))
+    text = render_text(report)
+    shell = next(f for f in report.findings if f.id == "ST-SHELL-NODE")
+    assert shell.threat_class.value == "capability"
+    assert "- capability, not scored] ST-SHELL-NODE" in text
+    assert re.search(r"- index\.js:\d+\n", text)  # one line reads as one line, not "2-2"
+    assert f"... and {len(shell.evidence) - 3} more (all of them in --json)" in text
+
+
+def test_verdict_reasons_lead_with_what_is_scored(tmp_path):
+    # A dropper's reasons once listed two capabilities and dropped the install-time dropper.
+    (tmp_path / "package.json").write_text(
+        '{"name": "d", "version": "1.0.0", "scripts": {"postinstall": "node setup.js"}}',
+        encoding="utf-8",
+    )
+    (tmp_path / "setup.js").write_text(
+        "const fs = require('fs'); const https = require('https');\n"
+        "fs.readFileSync(require('os').homedir() + '/.npmrc');\n"
+        'eval(Buffer.from("Y29uc29sZS5sb2coMSk=", "base64").toString());\n',
+        encoding="utf-8",
+    )
+    report = analyze_directory(tmp_path, Component(name="d", type="directory", source="d"))
+    by_title = {f.title: f.threat_class.value for f in report.findings}
+    reasons = report.verdict["reasons"]
+    order = {"malicious_indicator": 0, "risky_construct": 1, "exposure": 2, "capability": 3}
+    ranks = [order[by_title[r]] for r in reasons]
+    assert ranks == sorted(ranks)
+    assert by_title[reasons[0]] == "malicious_indicator"

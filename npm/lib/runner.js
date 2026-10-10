@@ -24,9 +24,13 @@ function candidates(version, platform = process.platform) {
     ...pythons.map(([cmd, pre]) => ({
       name: cmd,
       cmd,
-      args: [...pre, "-m", PACKAGE],
+      // -P (Python 3.11+): `python -m` would otherwise import from the current directory first,
+      // so a `skilltotal/` or `json.py` in the repository being scanned would run in place of
+      // the engine.
+      args: [...pre, "-P", "-m", PACKAGE],
       // Only a Python that already has the engine counts: never pip-install on the user's behalf.
-      probe: [...pre, "-c", `import ${PACKAGE}`],
+      // The probe keeps the directory off sys.path too; a Python without -P (3.10) is passed over.
+      probe: [...pre, "-P", "-c", `import ${PACKAGE}`],
     })),
   ];
 }
@@ -55,7 +59,7 @@ function helpText(version) {
     "The scanner is a Python package (Python 3.10+). Install one of these, then run the same command again:",
     "  uv    https://docs.astral.sh/uv/   (recommended: npx skilltotal then runs it in isolation)",
     "  pipx  https://pipx.pypa.io",
-    `  pip   python -m pip install skilltotal==${version}`,
+    `  pip   python -m pip install skilltotal==${version}   (Python 3.11+)`,
     "",
   ].join("\n");
 }

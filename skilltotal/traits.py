@@ -98,11 +98,23 @@ class TraitCrosswalk:
     emergent: bool = False
 
 
+# The 16 tactics of MITRE ATLAS (atlas.mitre.org, mitre-atlas/atlas-data ATLAS.yaml). A trait's
+# `atlas_tactics` may only name these: the CSA paper's own labels ("Adversarial Perception
+# Attacks", "Model Poisoning") are not ATLAS tactics and were shown as if they were.
+ATLAS_TACTICS: frozenset[str] = frozenset({
+    "Reconnaissance", "Resource Development", "Initial Access", "AI Model Access", "Execution",
+    "Persistence", "Privilege Escalation", "Defense Evasion", "Credential Access", "Discovery",
+    "Lateral Movement", "Collection", "AI Attack Staging", "Command and Control", "Exfiltration",
+    "Impact",
+})
+
 # Trait -> its crosswalk. The MAESTRO layers for the CSA trait categories are taken from the
 # paper's mapping table (section 3.6.1); Tool-Usage-derived traits are mapped to L3/L4 as a
 # documented SkillTotal extension (the CSA table covered 6 of 7 categories, omitting Tool
-# Usage). ATLAS tactics are populated only from the paper's explicit examples plus the direct
-# Exfiltration tactic for the exfil combo; other traits honestly carry none.
+# Usage). ATLAS tactics are reached through the ATLAS technique that fits the trait: LLM Prompt
+# Injection (AML.T0051) is Execution; poisoning an agent's context or tool data (AML.T0070,
+# AML.T0099) is Persistence; AI Supply Chain Compromise (AML.T0010) is Initial Access; the exfil
+# combinations are Exfiltration (AML.TA0010). Traits with no honest fit carry none.
 TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
     ComponentTrait.TOOL_SURFACE: TraitCrosswalk(
         title="Tool surface",
@@ -184,7 +196,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         csa_trait="Perception & Context / Contextual Perception",
         csa_risk="Context manipulation and poisoning",
         maestro_layers=("L2", "L5"),
-        atlas_tactics=("Adversarial Perception Attacks", "Model Poisoning"),
+        atlas_tactics=("Execution", "Persistence"),
     ),
     ComponentTrait.METADATA_INTEGRITY: TraitCrosswalk(
         title="Metadata integrity risk",
@@ -206,7 +218,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         csa_trait="General Protections / Supply Chain",
         csa_risk="Supply-chain compromise via install-time execution or name confusion",
         maestro_layers=("L4",),
-        atlas_tactics=(),
+        atlas_tactics=("Initial Access",),
     ),
     ComponentTrait.UNSAFE_DESERIALIZATION: TraitCrosswalk(
         title="Unsafe deserialization",
@@ -245,7 +257,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         csa_trait="Perception & Context + Tool Access Control",
         csa_risk="Context manipulation escalated through tool egress",
         maestro_layers=("L2", "L5"),
-        atlas_tactics=("Adversarial Perception Attacks", "Exfiltration"),
+        atlas_tactics=("Execution", "Exfiltration"),
         emergent=True,
     ),
     ComponentTrait.MALWARE_CONVERGENCE: TraitCrosswalk(

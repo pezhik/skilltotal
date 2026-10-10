@@ -117,23 +117,36 @@ class _Resp(io.BytesIO):
 
 def test_resolve_release_pins_what_the_registry_serves_now(monkeypatch):
     urls = []
+    pypi = {"info": {"version": "2.32.3"},
+            "urls": [_dist("sdist", "requests-2.32.3.tar.gz"),
+                     _dist("bdist_wheel", "requests-2.32.3-py3-none-any.whl")]}
 
     def fake_open(url, *, timeout):
         urls.append(url)
         if url.startswith("https://registry.npmjs.org/"):
             return _Resp(json.dumps({"version": "5.1.0"}).encode())
-        return _Resp(json.dumps({"info": {"version": "2.32.3"}}).encode())
+        return _Resp(json.dumps(pypi).encode())
 
     monkeypatch.setattr(collector, "_open", fake_open)
-    assert collector.resolve_release("npm:express") == "npm:express@5.1.0"
+    assert collector.resolve_release("npm:express") == collector.Release("npm:express@5.1.0")
     assert urls[-1] == "https://registry.npmjs.org/express/latest"
-    assert collector.resolve_release("npm:@scope/pkg@next") == "npm:@scope/pkg@5.1.0"
+    release = collector.resolve_release("npm:@scope/pkg@next")
+    assert release.source == "npm:@scope/pkg@5.1.0" and release.key == release.source
     assert urls[-1] == "https://registry.npmjs.org/@scope%2Fpkg/next"
-    assert collector.resolve_release("pypi:requests") == "pypi:requests==2.32.3"
-    # An exact pin needs no request; a git URL or a local path names no registry release.
+    # PyPI: the version AND the file pip would install, since files can be added to a release.
+    release = collector.resolve_release("pypi:requests")
+    assert release.source == "pypi:requests==2.32.3"
+    assert release.artifact == "requests-2.32.3-py3-none-any.whl"
+    assert release.key.startswith("pypi:requests==2.32.3 requests-2.32.3-py3-none-any.whl ")
+    # The whole file set is in the key: a file added to the release changes it.
+    pypi["urls"].append(_dist("bdist_wheel", "requests-2.32.3-cp312-cp312-win_amd64.whl"))
+    assert collector.resolve_release("pypi:requests").key != release.key
+    assert urls[-1] == "https://pypi.org/pypi/requests/json"
+    collector.resolve_release("pypi:requests==2.32.3")
+    assert urls[-1] == "https://pypi.org/pypi/requests/2.32.3/json"
+    # An exact npm pin needs no request; a git URL or a local path names no registry release.
     asked = len(urls)
-    assert collector.resolve_release("npm:x@1.2.3") == "npm:x@1.2.3"
-    assert collector.resolve_release("pypi:x==1.0") == "pypi:x==1.0"
+    assert collector.resolve_release("npm:x@1.2.3") == collector.Release("npm:x@1.2.3")
     assert collector.resolve_release("https://github.com/o/r") is None
     assert collector.resolve_release("./local/dir") is None
     assert len(urls) == asked
@@ -145,10 +158,15 @@ def test_resolve_release_is_none_when_the_registry_cannot_say(monkeypatch):
 
     monkeypatch.setattr(collector, "_open", offline)
     assert collector.resolve_release("npm:express") is None
+    assert collector.resolve_release("pypi:requests") is None
     # A version that is not a plain version is not a key anyone should trust.
     monkeypatch.setattr(collector, "_open",
                         lambda url, *, timeout: _Resp(b'{"version": "1.0.0 and more"}'))
     assert collector.resolve_release("npm:express") is None
+    # A release with no file to install has nothing to remember a verdict for.
+    monkeypatch.setattr(collector, "_open",
+                        lambda url, *, timeout: _Resp(b'{"info": {"version": "1.0"}, "urls": []}'))
+    assert collector.resolve_release("pypi:x") is None
 
 
 def test_collect_npm_unknown_version_errors(monkeypatch):
@@ -263,6 +281,79 @@ def test_collect_pypi_prefers_sdist_and_extracts(monkeypatch):
         # the analyzed distribution URL is surfaced for source deep-linking (schema 1.2)
         assert ctx.component.download_url == "https://files.pythonhosted.org/x-2.0.0.tar.gz"
         assert ctx.component.to_dict()["download_url"] == ctx.component.download_url
+
+
+def _dist(kind, filename):
+    return {"packagetype": kind, "filename": filename,
+            "url": f"https://files.pythonhosted.org/packages/aa/{filename}"}
+
+
+@pytest.mark.parametrize(
+    ("files", "expected"),
+    [
+        # pip installs the pure wheel on every platform; nothing in it runs at install time.
+        ([_dist("sdist", "x-1.0.tar.gz"), _dist("bdist_wheel", "x-1.0-py3-none-any.whl")],
+         "x-1.0-py3-none-any.whl"),
+        # Only platform wheels: some machines build from the sdist and run its build script.
+        ([_dist("bdist_wheel", "x-1.0-cp312-cp312-manylinux_2_17_x86_64.whl"),
+          _dist("sdist", "x-1.0.tar.gz")], "x-1.0.tar.gz"),
+        ([_dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl")],
+         "x-1.0-cp312-cp312-win_amd64.whl"),
+        # A pure wheel beside platform wheels is not what pip installs where a platform wheel
+        # matches, so a clean one must not stand in for the release: the sdist is read instead.
+        ([_dist("bdist_wheel", "x-1.0-py3-none-any.whl"),
+          _dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl"),
+          _dist("sdist", "x-1.0.tar.gz")], "x-1.0.tar.gz"),
+        ([], None),
+    ],
+)
+def test_pypi_scans_the_file_pip_installs(files, expected):
+    chosen = collector._pick_distribution(files)
+    assert (chosen or {}).get("filename") == expected
+
+
+def test_collect_pypi_wheel_is_named_by_the_registry(monkeypatch):
+    # A wheel has no manifest at its root, and an sdist folder is `x-1.0`: the registry's project
+    # name is the one the typosquatting check and the report header must see.
+    meta = json.dumps(
+        {
+            "info": {"name": "Some-Pkg", "version": "1.0"},
+            "urls": [_dist("sdist", "some_pkg-1.0.tar.gz"),
+                     _dist("bdist_wheel", "some_pkg-1.0-py3-none-any.whl")],
+        }
+    ).encode()
+    wheel = _zip({"some_pkg/__init__.py": "x = 1\n",
+                  "some_pkg-1.0.dist-info/METADATA": "Name: Some-Pkg\nVersion: 1.0\n"})
+    seen = []
+
+    def fake_get(url):
+        seen.append(url)
+        return wheel if url.endswith(".whl") else meta
+
+    monkeypatch.setattr(collector, "_http_get", fake_get)
+    with collector.collect("pypi:some-pkg") as ctx:
+        assert ctx.component.name == "Some-Pkg"
+        assert ctx.component.version == "1.0"
+        assert ctx.component.type == "python_package"
+        assert (ctx.root / "some_pkg" / "__init__.py").exists()
+    assert seen[-1].endswith("some_pkg-1.0-py3-none-any.whl")
+
+
+def test_wheel_metadata_is_packaging_metadata_like_pkg_info():
+    # A wheel's METADATA repeats the README as its long description, exactly like an sdist's
+    # PKG-INFO: an example attack quoted in a README must not score from either.
+    from skilltotal.file_index import is_doc_path
+
+    assert is_doc_path("some_pkg-1.0.dist-info/METADATA")
+    assert is_doc_path("PKG-INFO")
+    assert not is_doc_path("some_pkg/__init__.py")
+
+
+def test_collect_pypi_rejects_a_version_that_is_not_one(monkeypatch):
+    monkeypatch.setattr(collector, "_http_get", lambda url: pytest.fail(f"fetched {url}"))
+    with pytest.raises(CollectionError):
+        with collector.collect("pypi:x==../../simple"):
+            pass
 
 
 def test_git_clone_timeout_becomes_collection_error(monkeypatch, tmp_path):

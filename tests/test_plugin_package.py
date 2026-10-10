@@ -203,7 +203,7 @@ def test_without_the_cli_an_install_warns_the_person_and_proceeds(tmp_path, comm
     """A missing CLI must not look like protection that found nothing."""
     answer = _warning(_run_wrapper(tmp_path, command, with_cli=False)[0])
     assert "not on PATH" in answer["systemMessage"]
-    assert "pip install -U skilltotal" in answer["systemMessage"]
+    assert "pipx install skilltotal" in answer["systemMessage"]
 
 
 @needs_sh

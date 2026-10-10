@@ -243,7 +243,7 @@ def test_python_stdio_server_counts_only_with_a_server_import(tmp_path):
 
 
 def test_mcp_patterns_stay_linear():
-    """Every MCP surface pattern on adversarial input of each shape it could backtrack over.
+    r"""Every MCP surface pattern on adversarial input of each shape it could backtrack over.
 
     `\s*\)?\s*` in the tool-name pattern was quadratic: "Tool" + 20k spaces took 2.3 s, and a
     file can be 2 MiB. Doubling the input must not much more than double the time.

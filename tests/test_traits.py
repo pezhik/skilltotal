@@ -74,9 +74,20 @@ def test_exfil_correlation_carries_cross_request_correlation_crosswalk():
     assert "Exfiltration" in meta.atlas_tactics
 
 
-def test_untrusted_perception_maps_to_atlas_perception_tactics():
+def test_untrusted_perception_maps_to_the_atlas_tactic_of_prompt_injection():
+    # LLM Prompt Injection (AML.T0051) sits under the Execution tactic in ATLAS.
     meta = TRAIT_CROSSWALK[ComponentTrait.UNTRUSTED_PERCEPTION]
-    assert "Adversarial Perception Attacks" in meta.atlas_tactics
+    assert "Execution" in meta.atlas_tactics
+
+
+def test_every_atlas_label_is_a_real_atlas_tactic():
+    # "Adversarial Perception Attacks" and "Model Poisoning" were shown as ATLAS tactics; they are
+    # labels from the CSA paper, and ATLAS has no such tactics.
+    from skilltotal.traits import ATLAS_TACTICS
+
+    assert len(ATLAS_TACTICS) == 16
+    for trait, meta in TRAIT_CROSSWALK.items():
+        assert set(meta.atlas_tactics) <= ATLAS_TACTICS, trait
 
 
 def test_engine_projects_traits_onto_report():

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import re
 import shlex
 import time
@@ -34,7 +35,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from skilltotal.guard import evaluate
+from skilltotal.guard import PLAIN_PATH, evaluate, unanalyzed_install_scripts
 
 # How many packages one command gets checked; the person is asked about the rest.
 MAX_TARGETS = 5
@@ -61,8 +62,8 @@ _SUBSTITUTION = {
     "cmd": re.compile(r"(?!)"),
 }
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-# A file path the deny reason may quote: no whitespace or punctuation a sentence needs.
-_PLAIN_PATH = re.compile(r"[A-Za-z0-9._/@+-]{1,120}")
+# A file path a reason may quote: no whitespace or punctuation a sentence needs (see guard).
+_PLAIN_PATH = PLAIN_PATH
 # A version the reason may quote; it comes from the scanned manifest, so it is held to the same.
 _PLAIN_VERSION = re.compile(r"[0-9][0-9A-Za-z.+-]{0,40}")
 _DRIVE = re.compile(r"^[A-Za-z]:")
@@ -72,9 +73,21 @@ _PY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 _NPM_EXACT = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?|[A-Za-z][\w.-]*")
 _PY_EXACT = re.compile(r"\s*==\s*([0-9][0-9A-Za-z.+!-]*)\s*$")
 _NPM_NAME = re.compile(r"^(?:@[a-z0-9][\w.-]*/)?[a-z0-9][\w.-]*$", re.IGNORECASE)
-_GH_SHORTHAND = re.compile(r"^(?:github:)?([A-Za-z0-9][\w.-]*)/([A-Za-z0-9][\w.-]*?)(?:#.*)?$")
+# `alias@npm:real@1.2.3` installs `real` under the name `alias`.
+_NPM_ALIAS = re.compile(r"^(?:@[^/@\s]+/)?[^@\s]+@npm:(\S+)$")
+# npm's shorthands for repositories on other git hosts, which the hook does not fetch.
+_NPM_OTHER_HOSTS = ("gist:", "bitbucket:", "gitlab:")
+_GH_SHORTHAND = re.compile(
+    r"^(?:github:)?([A-Za-z0-9][\w.-]*)/([A-Za-z0-9][\w.-]*?)(?P<tail>#.*)?$")
 _GH_URL = re.compile(r"^(?:git\+)?(?:https?|ssh|git)://(?:[^@/]+@)?github\.com[/:]"
-                     r"([\w.-]+)/([\w.-]+?)(?:\.git)?(?:[@#].*)?/?$")
+                     r"([\w.-]+)/([\w.-]+?)(?:\.git)?(?P<tail>[@#].*?)?/?$")
+# A branch, tag or commit the scan can check out exactly as the installer will.
+_PLAIN_REF = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+# A URL fragment that is pip metadata (`#egg=name&subdirectory=pkg`), not a git ref.
+_PIP_FRAGMENT = re.compile(
+    r"(?:egg|subdirectory|sha1|sha224|sha256|sha384|sha512|md5)=[^&#]*"
+    r"(?:&(?:egg|subdirectory|sha1|sha224|sha256|sha384|sha512|md5)=[^&#]*)*"
+)
 
 # Wrappers that run the rest of the line as a command, with the flags of theirs that take a value.
 _WRAPPERS: dict[str, set[str]] = {
@@ -136,6 +149,9 @@ def parse_installs(command: str, shell: str = "bash", _depth: int = 0) -> list[I
     pieces = [command] + [next(g for g in m.groups() if g is not None)
                           for m in _SUBSTITUTION[shell].finditer(command)]
     for piece in pieces:
+        for item in _add_json_installs(piece, shell, _depth):
+            if item not in found:
+                found.append(item)
         for segment in _SEGMENT_SPLIT.split(piece):
             try:
                 tokens = _split(segment, shell)
@@ -207,8 +223,9 @@ def _installs_in(tokens: list[str], shell: str, depth: int) -> list[Install]:
     if shell == "powershell" and head in _PS_START:
         started = _start_process(rest)
         return _installs_in(_unwrap(started), shell, depth) if started else []
-    if head == "claude" and rest[:2] == ["mcp", "add"] and "--" in rest:
-        return _installs_in(_unwrap(rest[rest.index("--") + 1:]), shell, depth)
+    if head == "claude" and rest[:1] == ["mcp"]:
+        command = _mcp_server_command(rest[1:])
+        return _installs_in(_unwrap(command), shell, depth) if command else []
     if head in _NPM_RUNNERS:
         return _npx(rest)
     if head in ("npm", "pnpm", "yarn", "bun"):
@@ -225,6 +242,61 @@ def _installs_in(tokens: list[str], shell: str, depth: int) -> list[Install]:
     if head == "pipx":
         return _pipx(rest)
     return []
+
+
+# `claude mcp add` / `add-json` options that take a value.
+_CLAUDE_MCP_VALUE_FLAGS = {"-s", "--scope", "-t", "--transport", "-e", "--env", "-H", "--header",
+                           "--client-id", "--client-secret", "--callback-port"}
+
+
+def _mcp_server_command(args: list[str]) -> list[str]:
+    """The command ``claude mcp add [options] <name> [--] <command> [args...]`` registers a server
+    with, as words (the ``--`` is only needed when the command has options of its own). A remote
+    server (a URL) installs nothing and yields nothing; ``add-json`` is read by
+    ``_add_json_installs``, before the command line is split at braces.
+    """
+    if not args or args[0] != "add":
+        return []
+    rest = args[1:]
+    if "--" in rest:
+        return rest[rest.index("--") + 1:]
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg.startswith("-"):
+            i += 2 if (arg in _CLAUDE_MCP_VALUE_FLAGS and "=" not in arg) else 1
+            continue
+        return rest[i + 1:]  # rest[i] is the server's name
+    return []
+
+
+_ADD_JSON = re.compile(r"\bclaude(?:\.exe|\.cmd)?\s+mcp\s+add-json\b", re.IGNORECASE)
+
+
+def _add_json_installs(piece: str, shell: str, depth: int) -> list[Install]:
+    """``claude mcp add-json <name> '{"command": "npx", "args": ["-y", "pkg"]}'`` starts the server
+    with that command. The JSON is read from the raw command line: splitting at ``{`` and ``}``
+    (a shell group) would cut it apart. A config that cannot be read is asked about."""
+    if not _ADD_JSON.search(piece):
+        return []
+    start, end = piece.find("{"), piece.rfind("}")
+    if start < 0 or end < start:
+        return []
+    raw = piece[start:end + 1]
+    for text in (raw, raw.replace('\\"', '"'), raw.replace('`"', '"')):
+        try:
+            config = json.loads(text)
+        except ValueError:
+            continue
+        if not isinstance(config, dict):
+            break
+        command, extra = config.get("command"), config.get("args")
+        if not isinstance(command, str):
+            return []  # a remote server: nothing is installed
+        words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
+            isinstance(extra, list)) else [command]
+        return _installs_in(_unwrap(words), shell, depth)
+    return [Install(None, "a `claude mcp add-json` server config SkillTotal could not read")]
 
 
 def _inner_command(head: str, rest: list[str], shell: str) -> tuple[str, str] | None:
@@ -329,13 +401,13 @@ def _node_manager(head: str, rest: list[str]) -> list[Install]:
     if head == "yarn" and sub != "add":
         return []  # `yarn install` installs the lockfile only
     if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
-        return _npm_packages(args, _flag_value(rest, _NPM_SOURCE_FLAGS))
+        return _npm_packages(args, _custom_source(rest, _NPM_SOURCE_FLAGS))
     return []
 
 
 def _npx(args: list[str]) -> list[Install]:
     """``npx [-y] [-p pkg] pkg args``: the explicit ``-p`` package, else the first positional."""
-    registry = _flag_value(args, _NPM_SOURCE_FLAGS)
+    registry = _custom_source(args, _NPM_SOURCE_FLAGS)
     i = 0
     while i < len(args):
         arg = args[i]
@@ -369,10 +441,13 @@ def _npm_spec(spec: str, registry: str | None) -> list[Install]:
     """A registry name, a GitHub source, an unscannable remote, or a local path (ignored)."""
     if spec.startswith((".", "/", "~", "file:", "link:", "workspace:")) or _DRIVE.match(spec):
         return []  # the person's own code on disk
+    alias = _NPM_ALIAS.match(spec)
+    if alias:
+        spec = alias.group(1)  # what npm fetches; the alias is only the folder it lands in
     gh = _github(spec)
     if gh:
-        return [Install(gh)]
-    if "://" in spec or spec.startswith(("git+", "git:")):
+        return [gh]
+    if "://" in spec or spec.startswith(("git+", "git:", *_NPM_OTHER_HOSTS)):
         return [Install(None, f"{spec} (a remote archive or repository)")]
     versioned = spec.count("@") > (1 if spec.startswith("@") else 0)
     name, version = spec.rsplit("@", 1) if versioned else (spec, "")
@@ -385,17 +460,42 @@ def _npm_spec(spec: str, registry: str | None) -> list[Install]:
     return [Install(f"npm:{name}@{version}" if _NPM_EXACT.fullmatch(version) else f"npm:{name}")]
 
 
-def _github(spec: str) -> str | None:
-    """``github:o/r``, ``o/r``, ``git+https://github.com/o/r.git@main`` -> the repository URL."""
+def _github(spec: str, *, pip: bool = False) -> Install | None:
+    """``github:o/r#v1``, ``o/r``, ``git+https://github.com/o/r.git@main`` -> the repository at
+    the ref the installer checks out, or None when the spec is not a GitHub source.
+
+    The ref decides what gets installed, so dropping it would scan the default branch while the
+    installer fetched a branch the author kept for the purpose. The two installers spell it
+    differently: pip takes ``@ref`` and keeps ``#egg=...&subdirectory=...`` for metadata, npm takes
+    everything after ``#`` as the ref. A ref the scan cannot reproduce exactly (a branch with a
+    slash, an npm ``#semver:`` range) is not guessed at: the person is asked.
+    """
     m = _GH_URL.match(spec)
     if m:
-        return f"https://github.com/{m.group(1)}/{m.group(2)}"
-    if spec.startswith(("@", "git+", "git:")) or "://" in spec:
+        tail = m.group("tail") or ""
+        if tail.startswith("@"):  # `@ref`, then (pip) an optional `#egg=...` fragment
+            ref = tail[1:].split("#", 1)[0] if pip else tail[1:]
+        elif pip:
+            # pip never takes a ref from the fragment: it installs the default branch. Anything
+            # there but its own metadata keys is something the scan cannot account for.
+            if tail and not _PIP_FRAGMENT.fullmatch(tail[1:]):
+                return Install(None, f"{spec} (a URL fragment SkillTotal cannot interpret)")
+            ref = ""
+        else:
+            ref = tail[1:]
+    elif spec.startswith(("@", "git+", "git:")) or "://" in spec:
         return None  # a scoped npm name, or a non-GitHub remote
-    m = _GH_SHORTHAND.match(spec)
-    if m:
-        return f"https://github.com/{m.group(1)}/{m.group(2)}"
-    return None
+    else:
+        m = _GH_SHORTHAND.match(spec)
+        if not m:
+            return None
+        ref = (m.group("tail") or "")[1:]
+    url = f"https://github.com/{m.group(1)}/{m.group(2)}"
+    if not ref:
+        return Install(url)
+    if _PLAIN_REF.fullmatch(ref):
+        return Install(f"{url}/tree/{ref}")
+    return Install(None, f"{spec} (a git ref SkillTotal cannot check out exactly)")
 
 
 def _flag_value(args: list[str], flags: set[str]) -> str | None:
@@ -408,13 +508,48 @@ def _flag_value(args: list[str], flags: set[str]) -> str | None:
     return None
 
 
+# The public registries the scan itself reads, named explicitly (`-i https://pypi.org/simple`).
+_PUBLIC_SOURCES = frozenset({
+    "https://registry.npmjs.org", "https://registry.yarnpkg.com",
+    "https://pypi.org/simple", "https://pypi.python.org/simple",
+})
+
+
+def _custom_source(args: list[str], flags: set[str]) -> str | None:
+    """The first package source a command names other than the public registry, or None.
+
+    Every source flag counts: `-i https://pypi.org/simple --extra-index-url https://x` installs
+    from both, and the extra index can serve the higher version.
+    """
+    for i, arg in enumerate(args):
+        key, _, value = arg.partition("=")
+        if arg in flags and i + 1 < len(args):
+            value = args[i + 1]
+        elif not (value and key in flags):
+            continue
+        if value.rstrip("/").lower() not in _PUBLIC_SOURCES:
+            return value
+    return None
+
+
 def _pip_install(args: list[str]) -> list[Install]:
-    index = _flag_value(args, _PIP_SOURCE_FLAGS)
+    index = _custom_source(args, _PIP_SOURCE_FLAGS)
     out: list[Install] = []
     skip = False
-    for arg in args:
+    for i, arg in enumerate(args):
         if skip:
             skip = False
+            continue
+        # `-e .` is the person's own checkout, but `-e git+https://...` fetches a repository.
+        editable = None
+        if arg in ("-e", "--editable"):
+            editable, skip = (args[i + 1] if i + 1 < len(args) else ""), True
+        elif arg.startswith("--editable="):
+            editable = arg.split("=", 1)[1]
+        elif arg.startswith("-e") and not arg.startswith("--"):
+            editable = arg[2:]
+        if editable is not None:
+            out.extend(_py_spec(editable, index))
             continue
         if arg.startswith("-"):
             skip = (arg in _PIP_VALUE_FLAGS or arg in _UV_VALUE_FLAGS) and "=" not in arg
@@ -427,9 +562,9 @@ def _py_spec(spec: str, index: str | None) -> list[Install]:
     """``fastapi[standard]>=0.110`` -> pypi:fastapi; a GitHub VCS spec is scanned from GitHub."""
     if not spec or spec.startswith((".", "/", "~")) or _DRIVE.match(spec):
         return []
-    gh = _github(spec) if ("://" in spec or spec.startswith("git+")) else None
+    gh = _github(spec, pip=True) if ("://" in spec or spec.startswith("git+")) else None
     if gh:
-        return [Install(gh)]
+        return [gh]
     if "://" in spec or spec.startswith("git+"):
         return [Install(None, f"{spec} (a remote archive or repository)")]
     if spec.endswith((".whl", ".tar.gz", ".zip")) or "/" in spec or "\\" in spec:
@@ -490,12 +625,12 @@ def _uvx(args: list[str]) -> list[Install]:
     found = _with_values(args)
     source = _flag_value(args, {"--from"})
     if source:
-        return _py_spec(source, _flag_value(args, _PIP_SOURCE_FLAGS)) + found
+        return _py_spec(source, _custom_source(args, _PIP_SOURCE_FLAGS)) + found
     return _first_py(args) + found
 
 
 def _with_values(args: list[str]) -> list[Install]:
-    index = _flag_value(args, _PIP_SOURCE_FLAGS)
+    index = _custom_source(args, _PIP_SOURCE_FLAGS)
     out: list[Install] = []
     for i, arg in enumerate(args):
         value = None
@@ -510,7 +645,7 @@ def _with_values(args: list[str]) -> list[Install]:
 
 def _first_py(args: list[str]) -> list[Install]:
     """The first positional (the tool or package), skipping flags and their values."""
-    index = _flag_value(args, _PIP_SOURCE_FLAGS)
+    index = _custom_source(args, _PIP_SOURCE_FLAGS)
     i = 0
     while i < len(args):
         arg = args[i]
@@ -527,7 +662,7 @@ def _pipx(rest: list[str]) -> list[Install]:
         return _first_py(args)
     if sub == "inject":
         positional = [a for a in args if not a.startswith("-")]
-        index = _flag_value(args, _PIP_SOURCE_FLAGS)
+        index = _custom_source(args, _PIP_SOURCE_FLAGS)
         return [x for spec in positional[1:] for x in _py_spec(spec, index)]
     return []
 
@@ -590,8 +725,8 @@ def hook_response(
         if verdict.get("has_malicious_indicators"):
             denied.append(_sentence(f"{label}: {_malicious_detail(report)}"))
             scanned.append(source)
-        elif not decision.allow:
-            asked.append(_sentence(f"{label}: {_risk_detail(report)}"))
+        elif not decision.allow or _looks_typosquatted(report):
+            asked.append(_sentence(f"{label}: {_ask_detail(report)}"))
             scanned.append(source)
         else:
             clean.append(f"{label}: risk {report.get('risk_score', 0)}/100 "
@@ -677,6 +812,26 @@ def _malicious_detail(report: dict[str, Any]) -> str:
     if len(hits) > 1:
         detail += f" (and {len(hits) - 1} more)"
     return detail
+
+
+def _looks_typosquatted(report: dict[str, Any]) -> bool:
+    """A name a letter or two from a popular package: one mistyped `npm install expresss` is how
+    an agent gets the impostor, and only the person can say which name was meant."""
+    return any(f.get("id") == "ST-TYPOSQUAT" for f in report.get("findings") or [])
+
+
+def _ask_detail(report: dict[str, Any]) -> str:
+    """Why a scanned package needs approval: a script npm runs at install that the scan could not
+    read (nothing in it was checked), a name that resembles a popular package, else its risk."""
+    unread = unanalyzed_install_scripts(report)
+    if unread:
+        shown = next((p for p in unread if _PLAIN_PATH.fullmatch(p)), None)
+        script = f"the install script `{shown}`" if shown else "a script it runs at install time"
+        return f"{script} could not be analyzed, so nothing in it was checked"
+    if _looks_typosquatted(report):
+        return ("its name is a letter or two away from a popular package (possible "
+                "typosquatting), so check the name before installing")
+    return _risk_detail(report)
 
 
 def _risk_detail(report: dict[str, Any]) -> str:

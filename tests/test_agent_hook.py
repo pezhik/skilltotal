@@ -334,7 +334,8 @@ def test_a_checked_release_is_not_scanned_again(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
     release = ["npm:tsc@5.0.0"]
-    monkeypatch.setattr(collector, "resolve_release", lambda source, timeout=0: release[0])
+    monkeypatch.setattr(collector, "resolve_release",
+                        lambda source, timeout=0: collector.Release(release[0]))
     calls = []
 
     def fake(source, timeout):
@@ -376,6 +377,57 @@ def test_a_source_whose_release_is_unknown_is_reused_for_an_hour(tmp_path, monke
     assert len(calls) == 1
     clock[0] += 31 * 60
     cli._hook_scan_cached("https://github.com/o/r", 20)
+    assert len(calls) == 2
+
+
+def test_a_pypi_verdict_belongs_to_the_file_that_was_scanned(tmp_path, monkeypatch):
+    # A PyPI release can gain files after it is published: a version first shipped as a clean
+    # sdist can get a wheel later, which pip then prefers. The version alone is not the key.
+    import skilltotal.cli as cli
+    from skilltotal import collector
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    artifact = ["x-1.0.tar.gz"]
+    monkeypatch.setattr(collector, "resolve_release",
+                        lambda source, timeout=0: collector.Release("pypi:x==1.0", artifact[0]))
+    calls = []
+
+    def fake(source, timeout):
+        calls.append(source)
+        report = _report()
+        report["component"] = {"download_url": f"https://files.pythonhosted.org/p/{artifact[0]}"}
+        return report
+
+    monkeypatch.setattr(cli, "_hook_scan", fake)
+    cli._hook_scan_cached("pypi:x", 20)
+    cli._hook_scan_cached("pypi:x", 20)
+    assert calls == ["pypi:x==1.0"]
+
+    artifact[0] = "x-1.0-py3-none-any.whl"  # added to the same version
+    cli._hook_scan_cached("pypi:x", 20)
+    assert calls == ["pypi:x==1.0", "pypi:x==1.0"]
+
+
+def test_a_verdict_for_another_file_than_the_key_is_not_kept(tmp_path, monkeypatch):
+    # The file was added between the lookup and the scan: what was scanned is not what the key
+    # names, so the next call scans again rather than trusting a mislabeled verdict.
+    import skilltotal.cli as cli
+    from skilltotal import collector
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(collector, "resolve_release",
+                        lambda source, timeout=0: collector.Release("pypi:x==1.0", "x-1.0.tar.gz"))
+    calls = []
+
+    def fake(source, timeout):
+        calls.append(source)
+        report = _report()
+        report["component"] = {"download_url": "https://files.pythonhosted.org/p/x-1.0-py3-none-any.whl"}
+        return report
+
+    monkeypatch.setattr(cli, "_hook_scan", fake)
+    cli._hook_scan_cached("pypi:x", 20)
+    cli._hook_scan_cached("pypi:x", 20)
     assert len(calls) == 2
 
 
@@ -509,14 +561,93 @@ GITHUB_COMMANDS = [
     ("npm install github:someone/tool", ["https://github.com/someone/tool"]),
     ("npm install someone/tool", ["https://github.com/someone/tool"]),
     ("npm install git+https://github.com/someone/tool.git", ["https://github.com/someone/tool"]),
-    ("pip install git+https://github.com/someone/tool.git@main", ["https://github.com/someone/tool"]),
     ("npx github:someone/tool", ["https://github.com/someone/tool"]),
+    # The ref is what gets installed: scanning the default branch instead would let a clean
+    # main vouch for a branch kept for the purpose.
+    ("pip install git+https://github.com/someone/tool.git@main",
+     ["https://github.com/someone/tool/tree/main"]),
+    ("npm install github:someone/tool#v1.2.0", ["https://github.com/someone/tool/tree/v1.2.0"]),
+    ("npm install someone/tool#0123abcd", ["https://github.com/someone/tool/tree/0123abcd"]),
+    ("pip install 'git+https://github.com/someone/tool.git#egg=tool'",
+     ["https://github.com/someone/tool"]),
+    ("pip install -e git+https://github.com/someone/tool.git@v2#egg=tool",
+     ["https://github.com/someone/tool/tree/v2"]),
+    ("uv pip install --editable=git+https://github.com/someone/tool.git",
+     ["https://github.com/someone/tool"]),
 ]
 
 
 @pytest.mark.parametrize(("command", "expected"), GITHUB_COMMANDS)
 def test_installs_from_github_are_scanned_from_the_repository(command, expected):
     assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # The public registry named explicitly is still the public registry.
+        ("npm i --registry https://registry.npmjs.org/ left-pad", ["npm:left-pad"]),
+        ("pip install -i https://pypi.org/simple requests", ["pypi:requests"]),
+        # `claude mcp add` needs `--` only when the command has options of its own.
+        ("claude mcp add fs npx @modelcontextprotocol/server-filesystem ~",
+         ["npm:@modelcontextprotocol/server-filesystem"]),
+        ("claude mcp add -s user fetch uvx mcp-server-fetch", ["pypi:mcp-server-fetch"]),
+        ("""claude mcp add-json fs '{"command": "npx", "args": ["-y", "some-mcp"]}'""",
+         ["npm:some-mcp"]),
+        ("claude mcp add --transport http notion https://mcp.notion.example/mcp", []),
+    ],
+)
+def test_more_install_shapes_are_read_the_way_the_tool_runs_them(command, expected):
+    assert install_targets(command) == expected
+
+
+def test_a_name_that_resembles_a_popular_package_asks_the_person():
+    # `npm install expresss` scored low, so the agent installed the impostor with a note.
+    report = _report("low", 20)
+    report["findings"] = [{**_finding("ST-TYPOSQUAT", "Package name closely resembles a popular "
+                                      "package (possible typosquatting)", "risky_construct",
+                                      "package.json", 2), "severity": "high"}]
+    out = hook_response(_bash("npm install expresss"), scan=lambda s, t: report)
+    spec = out["hookSpecificOutput"]
+    assert spec["permissionDecision"] == "ask"
+    assert "possible typosquatting" in spec["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # `alias@npm:real` installs `real`; the alias is only the folder name.
+        ("npm install lodash@npm:evil-pkg", ["npm:evil-pkg"]),
+        ("npm i x@npm:@scope/real@1.2.3", ["npm:@scope/real@1.2.3"]),
+    ],
+)
+def test_an_npm_alias_is_checked_as_the_package_it_installs(command, expected):
+    assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm install someone/tool#feature/x",
+        "npm install github:someone/tool#semver:^1.0.0",
+        "npm install gitlab:someone/tool",
+        "npm install bitbucket:someone/tool",
+        "pip install -e git+https://gitlab.example/x/y.git#egg=y",
+        # npm reads everything after `#` as the ref, even what looks like pip metadata.
+        "npm install git+https://github.com/someone/tool.git#egg=x",
+        # pip never takes a ref from the fragment; one that is not its metadata is not guessed at.
+        "pip install git+https://github.com/someone/tool.git#clean-branch",
+        # Every source flag counts: the extra index can serve the higher version.
+        "pip install -i https://pypi.org/simple --extra-index-url https://pypi.evil.example/s x",
+        # A server config the hook cannot read is not a pass.
+        "claude mcp add-json fs '{not json}'",
+    ],
+)
+def test_a_source_the_scan_cannot_reproduce_asks_the_person(command):
+    calls = []
+    out = hook_response(_bash(command), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == []
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
 UNVERIFIABLE_COMMANDS = [

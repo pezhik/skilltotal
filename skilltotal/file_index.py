@@ -13,6 +13,7 @@ import ast
 import bisect
 import fnmatch
 import io
+import json
 import re
 import tokenize
 from collections.abc import Iterable, Iterator, Sequence
@@ -102,6 +103,52 @@ def _is_minified(filename: str, text: str) -> bool:
     if len(text) < _MINIFIED_MIN_BYTES:
         return False
     return len(text) / max(1, text.count("\n") + 1) > _MINIFIED_AVG_LINE
+
+
+_IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]{0,200}")
+_MAP_PATH = re.compile(r"[A-Za-z0-9._/@+:~-]{0,300}")
+_VLQ = re.compile(r"[A-Za-z0-9+/,;=]*")
+# The keys of the source map format (version 3, plus the ignore-list and debug-id extensions).
+_SOURCE_MAP_KEYS = frozenset({
+    "version", "file", "sourceRoot", "sources", "names", "mappings", "sourcesContent",
+    "ignoreList", "x_google_ignoreList", "debugId", "debug_id",
+})
+
+
+def _is_codeless_source_map(filename: str, text: str) -> bool:
+    """True for a JavaScript source map that carries no code: nothing in it to analyze.
+
+    A source map cannot run (as JavaScript it is a syntax error, and only a debugger reads it).
+    One with only the format's own keys, no ``sourcesContent``, paths in ``sources``, identifiers
+    in ``names`` and a VLQ ``mappings`` string holds positions and names alone (TypeScript writes
+    them so), and a TypeScript SDK ships one per module: skipping them saves a quarter of such a
+    scan. Anything else in a ``.map`` is read like any file: source text, an extra key or an odd
+    string can hold code the package loads itself, and for a minified bundle the map is the
+    readable copy.
+    """
+    if not filename.lower().endswith(".map"):
+        return False
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return False
+    if not (isinstance(data, dict) and set(data) <= _SOURCE_MAP_KEYS):
+        return False
+    if any(data.get("sourcesContent") or []):
+        return False
+    sources, names = data.get("sources"), data.get("names") or []
+    paths = [*(sources if isinstance(sources, list) else [None]),
+             data.get("file") or "", data.get("sourceRoot") or ""]
+    ignored = [*(data.get("ignoreList") or []), *(data.get("x_google_ignoreList") or [])]
+    debug_id = str(data.get("debugId") or data.get("debug_id") or "")
+    return (
+        isinstance(data.get("mappings"), str) and bool(_VLQ.fullmatch(data["mappings"]))
+        and all(isinstance(p, str) and _MAP_PATH.fullmatch(p) for p in paths)
+        and isinstance(names, list)
+        and all(isinstance(n, str) and _IDENTIFIER.fullmatch(n) for n in names)
+        and all(isinstance(i, int) for i in ignored)
+        and bool(re.fullmatch(r"[0-9A-Fa-f-]{0,64}", debug_id))
+    )
 
 
 def is_build_output_path(relpath: str) -> bool:
@@ -371,7 +418,10 @@ def is_doc_path(relpath: str, skills: frozenset[str] = frozenset()) -> bool:
         name.endswith(tuple(_PROSE_SUFFIXES - {""}))
     ):
         return True
-    if any(part in _DOC_DIR_SEGMENTS or part.endswith(".egg-info") for part in parts[:-1]):
+    # Packaging metadata: an sdist's `*.egg-info/` and a wheel's `*.dist-info/` (whose METADATA
+    # repeats the README as the long description, like an sdist's PKG-INFO).
+    if any(part in _DOC_DIR_SEGMENTS or part.endswith((".egg-info", ".dist-info"))
+           for part in parts[:-1]):
         return True
     suffix = name[name.rindex("."):] if "." in name[1:] else ""
     if suffix not in _PROSE_SUFFIXES:
@@ -1417,7 +1467,14 @@ class FileIndex:
         *,
         exclude: Iterable[str] | None = None,
         skip_build_output: bool = True,
+        always_index: Iterable[str] = (),
     ) -> FileIndex:
+        """Walk ``root`` once and load its text files.
+
+        ``always_index`` names files (relative POSIX paths) indexed even when minified: the
+        scripts a package runs at install time are the attack surface itself, whatever their
+        shape, so they are never set aside as a bundle.
+        """
         root = Path(root).resolve()
         files: list[IndexedFile] = []
         minified: list[str] = []
@@ -1427,9 +1484,11 @@ class FileIndex:
             "skipped_binary": 0,
             "skipped_large": 0,
             "skipped_minified": 0,
+            "skipped_source_map": 0,
             "total_seen": 0,
         }
         excludes = tuple(exclude or ())
+        always = frozenset(always_index)
 
         for path in cls._walk(root, excludes, skip_build_output=skip_build_output):
             stats["total_seen"] += 1
@@ -1462,18 +1521,41 @@ class FileIndex:
                     _line_starts=cls._compute_line_starts(text),
                 )
                 continue
-            if _is_minified(path.name, text):
+            relpath = path.relative_to(root).as_posix()
+            if _is_minified(path.name, text) and relpath not in always:
                 stats["skipped_minified"] += 1
-                minified.append(path.relative_to(root).as_posix())
+                minified.append(relpath)
+                continue
+            if _is_codeless_source_map(path.name, text):
+                stats["skipped_source_map"] += 1
                 continue
             files.append(
                 IndexedFile(
                     path=path,
-                    relpath=path.relative_to(root).as_posix(),
+                    relpath=relpath,
                     text=text,
                     _line_starts=cls._compute_line_starts(text),
                 )
             )
+            stats["indexed"] += 1
+
+        # A file npm runs at install is read even inside a folder the walk sets aside (`vendor/`, a
+        # bundled `node_modules/`): it runs on every install, whatever it is filed under.
+        for relpath in sorted(always - {f.relpath for f in files}):
+            if excludes and _matches_any(relpath, excludes):
+                continue
+            path = root / relpath
+            try:
+                if not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
+                    continue
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:
+                continue
+            text = raw.decode("utf-8", errors="replace").removeprefix("﻿")
+            files.append(IndexedFile(path=path, relpath=relpath, text=text,
+                                     _line_starts=cls._compute_line_starts(text)))
             stats["indexed"] += 1
 
         files.sort(key=lambda f: f.relpath)

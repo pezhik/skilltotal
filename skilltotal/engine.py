@@ -8,6 +8,7 @@ expected to import :func:`analyze_directory` (pure, no process I/O) directly; th
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable
 from dataclasses import replace
@@ -21,6 +22,7 @@ from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import collect
 from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
+    MAX_FILE_BYTES,
     FileIndex,
     IndexedFile,
     is_build_output_path,
@@ -32,6 +34,7 @@ from skilltotal.file_index import (
     skill_dirs,
 )
 from skilltotal.models import (
+    UNANALYZED_INSTALL_SCRIPT,
     Component,
     Evidence,
     Finding,
@@ -101,10 +104,18 @@ def analyze_directory(
     # A published package artifact ships its build output and NOT its sources, so dist/ and build/
     # must be scanned there; in a repository they duplicate source that is checked in beside them.
     published = component.type in _PUBLISHED_PACKAGE_TYPES
-    index = FileIndex.build(Path(root), exclude=exclude, skip_build_output=not published)
+    # What npm runs on install is read whatever its shape, minified or not: it is the attack.
+    install_scripts = _install_script_files(Path(root))
+    index = FileIndex.build(
+        Path(root), exclude=exclude, skip_build_output=not published, always_index=install_scripts
+    )
 
     findings: list[Finding] = []
     needs_review: list[NeedsReview] = []
+    indexed = {f.relpath for f in index.files}
+    for relpath, script in install_scripts.items():
+        if relpath not in indexed:
+            needs_review.append(_unanalyzed_install_script(Path(root), relpath, script))
     if index.minified:
         shown = ", ".join(index.minified[:5])
         more = f" (+{len(index.minified) - 5} more)" if len(index.minified) > 5 else ""
@@ -274,6 +285,122 @@ _UNANALYZED_LANGUAGES = {
 }
 
 
+# npm runs these on every install of the package, before anyone looks at it.
+_NPM_INSTALL_SCRIPTS = ("preinstall", "install", "postinstall")
+
+
+def _install_script_files(root: Path) -> dict[str, str]:
+    """Files ``package.json`` runs at install time, as ``{relpath: script name}``.
+
+    Any word of a ``preinstall`` / ``install`` / ``postinstall`` command that names a file inside
+    the component is that file (``node setup.js``, ``sh ./scripts/x.sh``, ``./bin/fetch``), found
+    the way Node finds it (``node .`` runs the package's ``main``, ``node install`` runs
+    ``install.js``). So are the package's own modules those files load with a literal relative
+    ``require``/``import``, transitively: a two-line ``postinstall`` that requires a minified
+    ``lib/x.min.js`` runs that bundle too. Parsing only: nothing is run.
+    """
+    try:
+        data = json.loads((root / "package.json").read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return {}
+    scripts = data.get("scripts") if isinstance(data, dict) else None
+    if not isinstance(scripts, dict):
+        return {}
+    base = root.resolve()
+    queue: list[tuple[Path, str]] = []
+    for script in _NPM_INSTALL_SCRIPTS:
+        command = scripts.get(script)
+        if not isinstance(command, str):
+            continue
+        for word in re.split(r"[\s;&|<>()]+", command):
+            word = word.strip("\"'`")
+            if word and not word.startswith("-"):
+                target = _module_file(base, base, word)
+                if target is not None:
+                    queue.append((target, script))
+    found: dict[str, str] = {}
+    while queue and len(found) < _MAX_INSTALL_FILES:
+        target, script = queue.pop(0)
+        relpath = target.relative_to(base).as_posix()
+        if relpath in found:
+            continue
+        found[relpath] = script
+        if target.suffix.lower() not in _LOADING_SUFFIXES:
+            continue
+        try:
+            if target.stat().st_size > MAX_FILE_BYTES:
+                continue  # unread; reported as not analyzed
+            text = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in _RELATIVE_MODULE.finditer(text):
+            loaded = _module_file(base, target.parent, match.group(2))
+            if loaded is not None:
+                queue.append((loaded, script))
+    return found
+
+
+# A relative module a script loads with a literal specifier: require('./x'), import('./x'),
+# `import x from './x'`, `export * from './x'`. Bare names are dependencies, not the package's code.
+_RELATIVE_MODULE = re.compile(
+    r"""(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)(["'])(\.{1,2}(?:/[^"'\n]{0,200})?)\1"""
+)
+_LOADING_SUFFIXES = frozenset({".js", ".cjs", ".mjs", ""})
+_MODULE_SUFFIXES = (".js", ".cjs", ".mjs", ".json")
+# An install-time dropper is a handful of files; this only bounds a pathological require graph.
+_MAX_INSTALL_FILES = 200
+
+
+def _module_file(base: Path, start: Path, spec: str) -> Path | None:
+    """The file ``spec`` names from ``start``, looked up as Node does (the path itself, then with
+    ``.js``/``.cjs``/``.mjs``/``.json``, then a folder's ``package.json`` main or ``index``), and
+    only when it lies inside the component ``base``."""
+    try:
+        path = (start / spec).resolve()
+    except (OSError, ValueError):
+        return None
+    candidates = [path, *(path.with_name(path.name + s) for s in _MODULE_SUFFIXES)]
+    if path.is_dir():
+        try:
+            main = json.loads((path / "package.json").read_text(encoding="utf-8")).get("main")
+        except (OSError, ValueError, AttributeError):
+            main = None
+        if isinstance(main, str) and main:
+            entry = path / main
+            candidates += [entry, *(entry.with_name(entry.name + s) for s in _MODULE_SUFFIXES)]
+            candidates += [entry / f"index{s}" for s in _MODULE_SUFFIXES]
+        candidates += [path / f"index{s}" for s in _MODULE_SUFFIXES]
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+            resolved.relative_to(base)
+        except (OSError, ValueError):
+            continue  # outside the component, or not a path at all
+        if resolved.is_file():
+            return resolved
+    return None
+
+
+def _unanalyzed_install_script(root: Path, relpath: str, script: str) -> NeedsReview:
+    try:
+        too_large = (root / relpath).stat().st_size > MAX_FILE_BYTES
+    except OSError:
+        too_large = False
+    why = (
+        f"it is larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB" if too_large
+        else "it is not text the scanner reads, or it was excluded from the scan"
+    )
+    return NeedsReview(
+        category="coverage",
+        title=UNANALYZED_INSTALL_SCRIPT,
+        reason=(
+            f"package.json runs {relpath} at install time ({script}), and it was not analyzed: "
+            f"{why}. Nothing in it was checked, so read it before installing."
+        ),
+        file=relpath,
+    )
+
+
 def _unanalyzed_code(index: FileIndex) -> dict[str, int]:
     """Count shipped (non-test) source files per language whose behavior is not analyzed."""
     counts: dict[str, int] = {}
@@ -362,11 +489,21 @@ def _verdict(findings: list[Finding], level, unanalyzed: dict[str, int] | None =
     return verdict
 
 
+# Which findings explain a verdict first: what makes it malicious, then what is scored, then the
+# rest. A capability is never the reason ahead of a risky construct, whatever its severity.
+_REASON_ORDER = {
+    ThreatClass.MALICIOUS_INDICATOR: 0,
+    ThreatClass.RISKY_CONSTRUCT: 1,
+    ThreatClass.EXPOSURE: 2,
+    ThreatClass.CAPABILITY: 3,
+}
+
+
 def _verdict_reasons(findings: list[Finding], limit: int = 3) -> list[str]:
-    """Top distinct finding titles (malicious first, then by severity) as plain reasons."""
+    """Top distinct finding titles (by threat class, then by severity) as plain reasons."""
     ordered = sorted(
         findings,
-        key=lambda f: (f.threat_class is not ThreatClass.MALICIOUS_INDICATOR, -f.severity.rank),
+        key=lambda f: (_REASON_ORDER.get(f.threat_class, 4), -f.severity.rank),
     )
     reasons: list[str] = []
     for f in ordered:
