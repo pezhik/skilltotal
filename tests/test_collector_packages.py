@@ -81,6 +81,76 @@ def test_collect_npm_pinned_version(monkeypatch):
         assert ctx.component.version == "1.2.3"  # pinned, not latest 2.0.0
 
 
+@pytest.mark.parametrize(("tag", "expected"), [("latest", "2.0.0"), ("next", "3.0.0-rc.1")])
+def test_collect_npm_resolves_a_dist_tag(monkeypatch, tag, expected):
+    # `npx -y @playwright/mcp@latest` is how MCP servers are usually installed: the tag names the
+    # version npm would fetch, it is not a missing version.
+    registry = json.dumps(
+        {
+            "dist-tags": {"latest": "2.0.0", "next": "3.0.0-rc.1"},
+            "versions": {
+                v: {"dist": {"tarball": f"https://registry.npmjs.org/x/-/x-{v}.tgz"}}
+                for v in ("1.2.3", "2.0.0", "3.0.0-rc.1")
+            },
+        }
+    ).encode()
+
+    def fake_get(url):
+        if url.endswith(".tgz"):
+            version = url.rsplit("x-", 1)[1][: -len(".tgz")]
+            return _tgz({"package/package.json": json.dumps({"name": "x", "version": version})
+                         .encode()})
+        return registry
+
+    monkeypatch.setattr(collector, "_http_get", fake_get)
+    with collector.collect(f"npm:x@{tag}") as ctx:
+        assert ctx.component.version == expected
+
+
+class _Resp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_resolve_release_pins_what_the_registry_serves_now(monkeypatch):
+    urls = []
+
+    def fake_open(url, *, timeout):
+        urls.append(url)
+        if url.startswith("https://registry.npmjs.org/"):
+            return _Resp(json.dumps({"version": "5.1.0"}).encode())
+        return _Resp(json.dumps({"info": {"version": "2.32.3"}}).encode())
+
+    monkeypatch.setattr(collector, "_open", fake_open)
+    assert collector.resolve_release("npm:express") == "npm:express@5.1.0"
+    assert urls[-1] == "https://registry.npmjs.org/express/latest"
+    assert collector.resolve_release("npm:@scope/pkg@next") == "npm:@scope/pkg@5.1.0"
+    assert urls[-1] == "https://registry.npmjs.org/@scope%2Fpkg/next"
+    assert collector.resolve_release("pypi:requests") == "pypi:requests==2.32.3"
+    # An exact pin needs no request; a git URL or a local path names no registry release.
+    asked = len(urls)
+    assert collector.resolve_release("npm:x@1.2.3") == "npm:x@1.2.3"
+    assert collector.resolve_release("pypi:x==1.0") == "pypi:x==1.0"
+    assert collector.resolve_release("https://github.com/o/r") is None
+    assert collector.resolve_release("./local/dir") is None
+    assert len(urls) == asked
+
+
+def test_resolve_release_is_none_when_the_registry_cannot_say(monkeypatch):
+    def offline(url, *, timeout):
+        raise OSError("offline")
+
+    monkeypatch.setattr(collector, "_open", offline)
+    assert collector.resolve_release("npm:express") is None
+    # A version that is not a plain version is not a key anyone should trust.
+    monkeypatch.setattr(collector, "_open",
+                        lambda url, *, timeout: _Resp(b'{"version": "1.0.0 and more"}'))
+    assert collector.resolve_release("npm:express") is None
+
+
 def test_collect_npm_unknown_version_errors(monkeypatch):
     registry = json.dumps(
         {"dist-tags": {"latest": "2.0.0"},

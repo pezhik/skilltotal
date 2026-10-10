@@ -145,6 +145,37 @@ jobs:
             || { echo "::error::fail-on changed the reported risk; it must only change the exit"; exit 1; }
           case "$LEVEL" in low|'') echo "::error::expected a risky verdict, got '$LEVEL'"; exit 1 ;; esac
 
+      - name: An unknown fail-on level fails instead of switching the gate off
+        id: badlevel
+        continue-on-error: true
+        uses: ./
+        with:
+          source: tests/fixtures/malicious_npm_pkg
+          fail-on: hihg
+          upload-sarif: false
+          sarif-file: badlevel.sarif
+
+      - name: Assert the typo failed the job
+        run: |
+          [ '${{ steps.badlevel.outcome }}' = "failure" ] \
+            || { echo "::error::a misspelled fail-on level let the job pass"; exit 1; }
+
+      - name: Source text is passed as data, never run as shell
+        # A workflow may hand the action untrusted text (an issue title, a branch name). It reaches
+        # the shell only through env, so `$(…)` in it is a path that does not exist, not a command.
+        id: inject
+        continue-on-error: true
+        uses: ./
+        with:
+          source: "nothing-here-$(touch injected.txt)"
+          fail-on: none
+          upload-sarif: false
+          sarif-file: inject.sarif
+
+      - name: Assert nothing was executed
+        run: |
+          [ ! -e injected.txt ] || { echo "::error::the source input was executed as shell"; exit 1; }
+
   secrets:
     runs-on: ubuntu-latest
     steps:

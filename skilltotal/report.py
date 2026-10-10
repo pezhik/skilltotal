@@ -28,6 +28,16 @@ def render_text(report: Report) -> str:
     version = f" {c.version}" if c.version else ""
     lines.append(f"Component : {c.name}{version} ({c.type})")
     lines.append(f"Source    : {c.source}")
+    # The verdict is the top-line answer and comes first: a malicious indicator is reported here,
+    # not by the score, so a dropper whose score reads "medium" must not look medium.
+    verdict = report.verdict or {}
+    if verdict.get("headline"):
+        reasons = verdict.get("reasons") or []
+        lines.append(
+            f"Verdict   : {str(verdict.get('level', '')).upper()} - {verdict['headline']}"
+            + (f" ({'; '.join(reasons)})" if verdict.get("has_malicious_indicators") and reasons
+               else "")
+        )
     lines.append(f"Risk      : {report.risk_level.value.upper()}  (score {report.risk_score}/100)")
     lines.append("")
     lines.append(report.summary)

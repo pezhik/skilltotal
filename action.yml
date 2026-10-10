@@ -12,11 +12,11 @@ inputs:
     required: false
     default: "."
   version:
-    description: "Pin the skilltotal PyPI version to install. Empty installs the latest release."
+    description: "Install this skilltotal version from PyPI. Empty runs the engine that ships with this action's ref (no download)."
     required: false
     default: ""
   fail-on:
-    description: "Fail the job when a finding is this severity or higher: 'high' or 'none'."
+    description: "Fail the job when the risk is this level or higher: 'low', 'medium', 'high', 'critical' or 'none'."
     required: false
     default: "high"
   upload-sarif:
@@ -55,43 +55,69 @@ runs:
       with:
         python-version: "3.12"
 
+    # Inputs reach the shell only through env, never as `${{ }}` inside `run:`: a workflow that
+    # passes untrusted text (an issue title, a PR branch name) as `source` must not be able to
+    # inject shell into the consumer's runner.
     - name: Install SkillTotal
+      if: ${{ inputs.version != '' }}
       shell: bash
-      run: |
-        if [ -n "${{ inputs.version }}" ]; then
-          python -m pip install --upgrade "skilltotal==${{ inputs.version }}"
-        else
-          python -m pip install --upgrade skilltotal
-        fi
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: python -P -m pip install --upgrade "skilltotal==$INPUT_VERSION"
 
     - name: Scan
       id: scan
       shell: bash
+      env:
+        INPUT_SOURCE: ${{ inputs.source }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
       run: |
         set -o pipefail
+        # With no version pinned, run the engine that ships with this action's ref: it has no
+        # runtime dependencies, so a tag or SHA pin of the action pins the scanner code too,
+        # and nothing is downloaded from PyPI. `-P` keeps the working directory -- the repository
+        # being scanned, possibly an untrusted PR -- off sys.path, so a `skilltotal/` or `json.py`
+        # planted there cannot stand in for the scanner or the stdlib.
+        if [ -n "$INPUT_VERSION" ]; then
+          ST=(skilltotal)
+        else
+          ST=(env PYTHONPATH="$GITHUB_ACTION_PATH" python -P -m skilltotal)
+        fi
         BASE=()
-        if [ -n "${{ inputs.baseline }}" ]; then BASE+=(--baseline "${{ inputs.baseline }}"); fi
+        if [ -n "$INPUT_BASELINE" ]; then BASE+=(--baseline "$INPUT_BASELINE"); fi
+
+        # An unknown level must fail loudly, never silently switch the gate off.
+        GATE=()
+        case "$(printf '%s' "$INPUT_FAIL_ON" | tr '[:upper:]' '[:lower:]')" in
+          none) ;;
+          low|medium|high|critical) GATE+=(--fail-on "$(printf '%s' "$INPUT_FAIL_ON" | tr '[:upper:]' '[:lower:]')") ;;
+          *) echo "::error::fail-on must be low, medium, high, critical or none (got '$INPUT_FAIL_ON')"
+             echo "gate-exit=1" >> "$GITHUB_OUTPUT"
+             exit 0 ;;
+        esac
 
         # SARIF report for Code Scanning (not gated, so the upload always has a file).
-        skilltotal scan "${{ inputs.source }}" --sarif --output "${{ inputs.sarif-file }}" "${BASE[@]}" || true
+        "${ST[@]}" scan "$INPUT_SOURCE" --sarif --output "$INPUT_SARIF_FILE" "${BASE[@]}" || true
 
         # JSON run drives the outputs AND the gate. --output is written before the gate exits,
         # so the JSON file exists even when the gate trips. Capture the exit code, don't abort here.
-        GATE=()
-        if [ "${{ inputs.fail-on }}" = "high" ]; then GATE+=(--fail-on-high); fi
         # `|| GATE_EXIT=$?` is load-bearing. GitHub runs `shell: bash` as `bash -eo pipefail`, so a
         # bare failing command aborts the step immediately: the assignment below never ran and the
         # outputs were left empty exactly when a finding had been found. `||` suppresses `-e`.
         GATE_EXIT=0
-        skilltotal scan "${{ inputs.source }}" --json --output skilltotal.json "${BASE[@]}" "${GATE[@]}" \
+        "${ST[@]}" scan "$INPUT_SOURCE" --json --output skilltotal.json "${BASE[@]}" "${GATE[@]}" \
           || GATE_EXIT=$?
 
-        # Parse risk via stdlib in one process (never pipe python -> python on any host).
-        SCORE=$(python -c "import json;print(json.load(open('skilltotal.json')).get('risk_score',''))" 2>/dev/null || echo "")
-        LEVEL=$(python -c "import json;print(json.load(open('skilltotal.json')).get('risk_level',''))" 2>/dev/null || echo "")
+        # Parse risk via stdlib in one process (never pipe python -> python on any host); `-I` so a
+        # `json.py` in the scanned repository is not imported in place of the stdlib.
+        SCORE=$(python -I -c "import json;print(json.load(open('skilltotal.json')).get('risk_score',''))" 2>/dev/null || echo "")
+        LEVEL=$(python -I -c "import json;print(json.load(open('skilltotal.json')).get('risk_level',''))" 2>/dev/null || echo "")
         echo "risk-score=$SCORE" >> "$GITHUB_OUTPUT"
         echo "risk-level=$LEVEL" >> "$GITHUB_OUTPUT"
-        echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '${{ inputs.source }}'"
+        echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '$INPUT_SOURCE'"
 
         # 2 = a high/critical finding under --fail-on-high; 1 = collection error. Both should fail
         # the build, but only after the SARIF upload step runs (which is why we defer the failure).
@@ -145,8 +171,9 @@ runs:
     - name: Enforce gate
       if: ${{ always() }}
       shell: bash
+      env:
+        EXIT: ${{ steps.scan.outputs.gate-exit }}
       run: |
-        EXIT="${{ steps.scan.outputs.gate-exit }}"
         # Empty means the scan step never reached its last line -- the install failed, or the
         # runner killed it. That is a failure, but `exit ""` is a shell error rather than a
         # verdict, so name it instead of letting bash report "numeric argument required".

@@ -292,6 +292,11 @@ _DOC_KEYWORDS: frozenset[str] = frozenset(
         "license", "licence", "notice", "authors", "maintainers",
     }
 )
+# Release and legal records: never an instruction surface, even when the name says what they are a
+# record of (`RULES_CHANGELOG`, `PROMPT_HISTORY`). A subset of _DOC_KEYWORDS.
+_RECORD_KEYWORDS: frozenset[str] = frozenset(
+    {"changelog", "changes", "history", "license", "licence", "notice", "authors", "maintainers"}
+)
 _PROSE_SUFFIXES: frozenset[str] = frozenset({".md", ".mdx", ".rst", ".txt", ".adoc", ""})
 # The subset that is documentation by default (see is_doc_path); `.txt` deliberately not included.
 # (Distinct from `_MARKDOWN_SUFFIXES` further down, which serves a different purpose.)
@@ -385,6 +390,13 @@ def is_doc_path(relpath: str, skills: frozenset[str] = frozenset()) -> bool:
     # instruction surface with no naming convention to rely on.
     if suffix in _DOC_BY_DEFAULT_SUFFIXES and not _under_skill(relpath.lower(), skills):
         words = re.split(r"[._-]", stem)
+        # A file whose name ENDS in a release/legal record word is that record, whatever it is a
+        # record of: the ruleset's own `RULES_CHANGELOG.md` quotes the attacks its rules detect,
+        # and reading `rules` as an instruction surface scored the scanner's repository as
+        # malicious. Only the last word counts and only record words, so `agent-readme.md` or
+        # `prompt-security.md` stay under full scrutiny (no wider than CHANGELOG.md itself).
+        if words[-1] in _RECORD_KEYWORDS:
+            return True
         return not any(kw in word for word in words for kw in _INSTRUCTION_KEYWORDS)
     # Split on `.` too so a localized/variant doc keeps its keyword: README.zh-CN.md ->
     # ["readme","zh","cn"], CHANGELOG.fr.md -> ["changelog","fr"].

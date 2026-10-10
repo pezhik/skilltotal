@@ -6,7 +6,6 @@
 [![Python](https://img.shields.io/pypi/pyversions/skilltotal)](https://pypi.org/project/skilltotal/)
 [![License](https://img.shields.io/pypi/l/skilltotal)](LICENSE)
 [![CI](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml/badge.svg)](https://github.com/pezhik/skilltotal/actions/workflows/ci.yml)
-[![GitHub Marketplace](https://img.shields.io/badge/Marketplace-SkillTotal-2ea44f?logo=githubactions&logoColor=white)](https://github.com/marketplace/actions/skilltotal-ai-component-security-scan)
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/pezhik/skilltotal/badge)](https://scorecard.dev/viewer/?uri=github.com/pezhik/skilltotal)
 
 **AI Component Security Platform — open-source CLI engine.**

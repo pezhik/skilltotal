@@ -650,11 +650,11 @@ def _collect_remote(
 
 # --------------------------------------------------------------- package registries
 
-def _open(url: str):
+def _open(url: str, *, timeout: float = _HTTP_TIMEOUT):
     """Open an https URL (scheme enforced) with a timeout."""
     if not url.lower().startswith("https://"):
         raise CollectionError(f"refusing to fetch non-https URL: {url}")
-    return urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT)  # nosec B310 - https enforced above
+    return urllib.request.urlopen(url, timeout=timeout)  # nosec B310 - https enforced above
 
 
 def _http_get(url: str) -> bytes:
@@ -750,18 +750,67 @@ def _collect_archive(
         raise
 
 
+# An exact release, as opposed to a dist-tag (`latest`) or a range the installer resolves.
+_EXACT_NPM_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+_EXACT_PYPI_VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z.+!-]*$")
+
+
+def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> str | None:
+    """The exact release a registry source names right now, as a pinned source.
+
+    ``npm:x`` / ``npm:x@latest`` -> ``npm:x@1.2.3``; ``pypi:x`` -> ``pypi:x==1.2.3``. A source that
+    already pins an exact version comes back as is, without a request. Anything that is not an
+    npm or PyPI package (a git URL, a local path) returns None, as does a registry that does not
+    answer: the caller then knows only the name, not which release it would get.
+
+    One small request (npm's per-tag manifest, PyPI's project JSON), so a caller that keeps a
+    verdict per package can tell a new release from the one it checked.
+    """
+    kind = classify_source(source)
+    try:
+        if kind == "npm":
+            name, pin = npm_package_spec(source)
+            if not name:
+                return None
+            if pin and _EXACT_NPM_VERSION_RE.match(pin):
+                return f"npm:{name}@{pin}"
+            url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest')}"
+            with _open(url, timeout=timeout) as resp:
+                version = str(json.loads(resp.read(8 * 1024 * 1024)).get("version") or "")
+            return f"npm:{name}@{version}" if _EXACT_NPM_VERSION_RE.match(version) else None
+        if kind == "pypi":
+            name, pin = pypi_package_spec(source)
+            if not name:
+                return None
+            if pin and _EXACT_PYPI_VERSION_RE.match(pin):
+                return f"pypi:{name}=={pin}"
+            if pin:
+                return None
+            with _open(f"https://pypi.org/pypi/{name}/json", timeout=timeout) as resp:
+                info = json.loads(resp.read(_MAX_ARCHIVE_BYTES)).get("info") or {}
+            version = str(info.get("version") or "")
+            return f"pypi:{name}=={version}" if _EXACT_PYPI_VERSION_RE.match(version) else None
+    except (OSError, ValueError, CollectionError):
+        return None
+    return None
+
+
 def _collect_npm(source: str) -> SourceContext:
     name, pin = npm_package_spec(source)
     if not name:
         raise CollectionError(f"invalid npm package name in: {source}")
     meta = json.loads(_http_get(f"https://registry.npmjs.org/{quote(name, safe='@')}"))
     versions = meta.get("versions") or {}
+    tags = meta.get("dist-tags") or {}
     if pin:
+        # `x@latest` / `x@next` name a dist-tag, which npm resolves to a version the same way.
+        # npm refuses a tag that parses as a version, so a tag never shadows a real version.
+        pin = str(tags.get(pin, pin))
         if pin not in versions:
             raise CollectionError(f"npm package '{name}' has no version '{pin}'")
         chosen = pin
     else:
-        chosen = (meta.get("dist-tags") or {}).get("latest")
+        chosen = tags.get("latest")
     dist = (versions.get(chosen) or {}).get("dist") if chosen else None
     tarball = (dist or {}).get("tarball")
     if not (chosen and tarball):

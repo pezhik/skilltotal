@@ -9,7 +9,8 @@ Commands:
         file, a git URL, or an npm:<name> / pypi:<name> package spec.
         Optional project config: .skilltotal.toml (fail_on, fail_on_score, exclude, ignore,
         baseline, and a per-rule [policy] table with block/warn/ignore actions). CLI flags
-        override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a finding on its line.
+        override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a finding on its line
+        when the source is a local directory (never in a fetched package or repository).
     skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
@@ -282,7 +283,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.baseline import build_baseline, load_baseline
-    from skilltotal.collector import CollectionError
+    from skilltotal.collector import CollectionError, classify_source
     from skilltotal.engine import analyze
     from skilltotal.report import render_json, render_text
     from skilltotal.sarif import render_sarif
@@ -301,7 +302,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     exclude = [*config.exclude, *args.exclude]
     try:
         report = analyze(
-            args.source, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude
+            args.source, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude,
+            # A `skilltotal:ignore` marker is the code owner's decision. Only a local directory
+            # (a checkout, as in CI) is the person's own code; a fetched package or repository
+            # must not be able to silence its own findings.
+            inline_ignores=(classify_source(args.source) == "local"
+                            and Path(args.source).expanduser().is_dir()),
         )
     except CollectionError as exc:
         print(f"error: {exc}", file=sys.stderr)
@@ -556,9 +562,13 @@ def _cmd_hook() -> int:
     return EXIT_OK
 
 
-# How long the agent waits for the checks of one install command, and how long a verdict is reused.
+# How long the agent waits for the checks of one install command, and how long a verdict is reused:
+# a week for an exact npm/PyPI release (its files never change), an hour for anything that can
+# change under the same name (a git repository, or a package whose release could not be resolved).
 HOOK_BUDGET_S = 20.0
-HOOK_CACHE_TTL_S = 24 * 3600
+HOOK_RELEASE_TTL_S = 7 * 24 * 3600
+HOOK_MOVING_TTL_S = 3600
+HOOK_CACHE_MAX_ENTRIES = 500
 
 
 def _hook_cache_path() -> Path:
@@ -569,8 +579,20 @@ def _hook_cache_path() -> Path:
 
 
 def _hook_scan_cached(source: str, timeout: float) -> dict:
-    """``_hook_scan``, reusing a verdict for a day. Agents run the same ``npx tsc`` again and again,
-    and each must not cost a scan; a new engine version or a day (a new release) rescans."""
+    """``_hook_scan``, reusing a verdict. Agents run the same ``npx tsc`` again and again, and each
+    must not cost a scan.
+
+    A verdict belongs to one release. ``npm:x`` is first resolved to the release the registry
+    serves now (``npm:x@1.2.3``) and that is what is scanned and remembered, so a clean verdict
+    from this morning never vouches for a release published this afternoon. A new engine version
+    rescans everything.
+    """
+    from skilltotal.collector import resolve_release
+
+    started = time.monotonic()
+    release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
+    key = release or source
+    ttl = HOOK_RELEASE_TTL_S if release else HOOK_MOVING_TTL_S
     path = _hook_cache_path()
     try:
         cache = json.loads(path.read_text(encoding="utf-8"))
@@ -578,32 +600,68 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
             cache = {}
     except (OSError, ValueError):
         cache = {}
-    hit = cache.get(source)
+    now = time.time()
+    hit = cache.get(key)
     if (isinstance(hit, dict) and hit.get("engine") == __version__
-            and time.time() - float(hit.get("at", 0)) < HOOK_CACHE_TTL_S):
+            and now - _number(hit.get("at")) < _number(hit.get("ttl", ttl))):
         return hit["report"]
-    report = _hook_scan(source, timeout)  # raises on failure/timeout: nothing is cached then
+    # Raises on failure/timeout: nothing is cached then.
+    report = _hook_scan(key, timeout - (time.monotonic() - started))
     verdict = report.get("verdict") or {}
-    cache[source] = {
+    entry = {
         "engine": __version__,
-        "at": time.time(),
+        "at": now,
+        "ttl": ttl,
         "report": {
             "risk_level": report.get("risk_level"),
             "risk_score": report.get("risk_score"),
+            "component": {"version": (report.get("component") or {}).get("version", "")},
             "verdict": {
                 "has_malicious_indicators": bool(verdict.get("has_malicious_indicators")),
                 "headline": verdict.get("headline", ""),
             },
+            # The scored findings, trimmed to what a reason names (title, file:line), so a
+            # cached answer says what was found exactly like the first one did.
+            "findings": [
+                {
+                    "id": f.get("id"),
+                    "title": f.get("title"),
+                    "severity": f.get("severity"),
+                    "threat_class": f.get("threat_class"),
+                    "evidence": [
+                        {"file": e.get("file"), "line_start": e.get("line_start")}
+                        for e in (f.get("evidence") or [])[:1]
+                    ],
+                }
+                for f in report.get("findings") or []
+                if f.get("threat_class") in ("malicious_indicator", "risky_construct")
+            ],
         },
     }
+    # Keep the file small: drop what has expired, then the oldest past the cap.
+    live = {
+        k: v for k, v in cache.items()
+        if isinstance(v, dict)
+        and now - _number(v.get("at")) < _number(v.get("ttl", HOOK_MOVING_TTL_S))
+    }
+    newest = sorted(live, key=lambda k: _number(live[k].get("at")), reverse=True)
+    kept = {key: entry, **{k: live[k] for k in newest[: HOOK_CACHE_MAX_ENTRIES - 1] if k != key}}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(cache), encoding="utf-8")
+        tmp.write_text(json.dumps(kept), encoding="utf-8")
         tmp.replace(path)  # atomic: two hooks at once must not leave half a file
     except OSError:
         pass  # no cache this time; the verdict itself is still good
-    return cache[source]["report"]
+    return entry["report"]
+
+
+def _number(value: object) -> float:
+    """A cache timestamp or TTL as a float; anything malformed counts as 0 (expired)."""
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _hook_scan(source: str, timeout: float) -> dict:
@@ -611,6 +669,12 @@ def _hook_scan(source: str, timeout: float) -> dict:
 
     A scan that overruns is killed with its downloaded package still open, so it gets a temp dir of
     its own that is removed here whatever happened. Raises TimeoutError when it overruns.
+
+    The child starts in an empty directory, never in the project the agent works in. ``python -m``
+    puts its working directory first on ``sys.path``, so a ``json.py`` planted in an opened
+    repository would run inside the scanner before anyone approved anything, and a
+    ``.skilltotal.toml`` there would tune the scan of someone else's package. ``-P`` (3.11+) keeps
+    the directory off ``sys.path`` as well.
     """
     import os
     import shutil
@@ -618,11 +682,14 @@ def _hook_scan(source: str, timeout: float) -> dict:
     import tempfile
 
     tmp = tempfile.mkdtemp(prefix="skilltotal_hook_")
+    cwd = os.path.join(tmp, "cwd")
+    os.mkdir(cwd)
     env = {**os.environ, "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp, "PYTHONIOENCODING": "utf-8"}
+    safe_path = ["-P"] if sys.version_info >= (3, 11) else []
     try:
         proc = subprocess.run(  # nosec B603 - sys.executable and a parsed package name, no shell
-            [sys.executable, "-m", "skilltotal", "scan", source, "--json"],
-            capture_output=True, timeout=timeout, env=env, check=False,
+            [sys.executable, *safe_path, "-m", "skilltotal", "scan", source, "--json"],
+            capture_output=True, timeout=timeout, env=env, cwd=cwd, check=False,
         )
     except subprocess.TimeoutExpired as exc:
         raise TimeoutError(source) from exc

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+from skilltotal.engine import analyze_directory
+from skilltotal.models import Component
 from skilltotal.report import render_json, render_text
 from tests.conftest import analyze_fixture
 
@@ -53,3 +55,24 @@ def test_clean_text_reports_no_findings(clean_report):
     text = render_text(clean_report)
     assert "Findings (0):" in text
     assert "(none)" in text
+
+
+def test_text_report_leads_with_the_verdict(tmp_path, malicious_npm, clean_report):
+    # An install-time dropper scores only "medium"; the verdict line must say malicious, first.
+    (tmp_path / "package.json").write_text(
+        '{"name": "d", "version": "1.0.0", "scripts": {"postinstall": "node setup.js"}}',
+        encoding="utf-8",
+    )
+    (tmp_path / "setup.js").write_text(
+        'eval(Buffer.from("Y29uc29sZS5sb2coMSk=", "base64").toString());\n', encoding="utf-8"
+    )
+    report = analyze_directory(tmp_path, Component(name="d", type="directory", source="d"))
+    lines = render_text(report).splitlines()
+    verdict = next(i for i, line in enumerate(lines) if line.startswith("Verdict   :"))
+    risk = next(i for i, line in enumerate(lines) if line.startswith("Risk      :"))
+    assert verdict < risk
+    assert lines[verdict].startswith("Verdict   : MALICIOUS - Malicious indicators found (")
+    # High risk without malice says so, with no reasons tacked on; a clean report reads low.
+    assert "Verdict   : HIGH - High-risk capabilities" in render_text(malicious_npm)
+    clean = render_text(clean_report)
+    assert "Verdict   : LOW - " in clean and "MALICIOUS" not in clean

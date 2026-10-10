@@ -62,16 +62,19 @@ def test_ignore_rules_drops_whole_rule(tmp_path: Path):
 
 
 # --- inline ignore ------------------------------------------------------------------
+# A marker is the code owner's decision, so it counts only when the caller says the code is the
+# person's own (`scan` of a local directory). In a package someone else wrote, one comment from
+# its author would otherwise silence the finding that should stop the install.
 
 def test_inline_ignore_bare_marker(tmp_path: Path):
     (tmp_path / "m.py").write_text("eval(x)  # skilltotal:ignore\n", encoding="utf-8", newline="")
-    assert "ST-DYN-PY" not in _ids(_analyze(tmp_path))
+    assert "ST-DYN-PY" not in _ids(_analyze(tmp_path, inline_ignores=True))
 
 
 def test_inline_ignore_targeted_id(tmp_path: Path):
     code = "import marshal\nexec(marshal.loads(d))  # skilltotal:ignore[ST-OBF-DECODE-EXEC-PY]\n"
     (tmp_path / "m.py").write_text(code, encoding="utf-8", newline="")
-    ids = _ids(_analyze(tmp_path))
+    ids = _ids(_analyze(tmp_path, inline_ignores=True))
     assert "ST-OBF-DECODE-EXEC-PY" not in ids
     assert "ST-DYN-PY" in ids  # a targeted ignore leaves other rules on the line intact
 
@@ -80,7 +83,50 @@ def test_inline_ignore_on_line_above(tmp_path: Path):
     (tmp_path / "m.py").write_text(
         "# skilltotal:ignore[ST-DYN-PY]\neval(x)\n", encoding="utf-8", newline=""
     )
-    assert "ST-DYN-PY" not in _ids(_analyze(tmp_path))
+    assert "ST-DYN-PY" not in _ids(_analyze(tmp_path, inline_ignores=True))
+
+
+def test_a_package_cannot_silence_its_own_findings(tmp_path: Path):
+    # Found by a pre-launch audit: a dropper with the marker on the same line scanned as clean.
+    (tmp_path / "index.js").write_text(
+        "eval(Buffer.from('Y29uc29sZS5sb2coMSk=', 'base64').toString()); // skilltotal:ignore\n",
+        encoding="utf-8", newline="",
+    )
+    report = _analyze(tmp_path)
+    assert "ST-OBF-DECODE-EXEC" in _ids(report)
+    assert report.verdict["has_malicious_indicators"]
+
+
+def test_an_honored_marker_is_counted_as_suppressed(tmp_path: Path):
+    (tmp_path / "m.py").write_text("eval(x)  # skilltotal:ignore\n", encoding="utf-8", newline="")
+    assert _analyze(tmp_path, inline_ignores=True).metadata["suppressed_count"] == 1
+    assert _analyze(tmp_path).metadata["suppressed_count"] == 0
+
+
+def test_scan_honors_markers_only_in_a_local_directory(tmp_path: Path, capsys):
+    import io
+    import json
+    import tarfile
+
+    from skilltotal.cli import main
+
+    code = b"eval(x)  # skilltotal:ignore\n"
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "m.py").write_bytes(code)
+    archive = tmp_path / "pkg.tgz"
+    with tarfile.open(archive, "w:gz") as tf:
+        info = tarfile.TarInfo("package/m.py")
+        info.size = len(code)
+        tf.addfile(info, io.BytesIO(code))
+
+    main(["scan", str(project), "--json"])
+    own = json.loads(capsys.readouterr().out)
+    main(["scan", str(archive), "--json"])
+    downloaded = json.loads(capsys.readouterr().out)
+
+    assert "ST-DYN-PY" not in {f["id"] for f in own["findings"]}
+    assert "ST-DYN-PY" in {f["id"] for f in downloaded["findings"]}
 
 
 # --- path exclude -------------------------------------------------------------------

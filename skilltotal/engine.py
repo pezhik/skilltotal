@@ -61,6 +61,7 @@ def analyze(
     suppress: set[str] | None = None,
     ignore_rules: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
+    inline_ignores: bool = False,
 ) -> Report:
     """Resolve ``source`` (path or URL), analyze it, and return a Report."""
     with collect(source) as ctx:
@@ -70,6 +71,7 @@ def analyze(
             suppress=suppress,
             ignore_rules=ignore_rules,
             exclude=exclude,
+            inline_ignores=inline_ignores,
         )
         if ctx.note:
             report.needs_review.append(
@@ -85,11 +87,16 @@ def analyze_directory(
     suppress: set[str] | None = None,
     ignore_rules: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
+    inline_ignores: bool = False,
 ) -> Report:
     """Analyze an already-local component directory. Pure: no stdout, no exit.
 
     ``suppress`` is an optional set of baseline fingerprints to drop before scoring.
     ``ignore_rules`` drops whole rule ids; ``exclude`` is a list of path globs to skip.
+    ``inline_ignores`` honors ``skilltotal:ignore`` markers in the scanned files. Only the owner of
+    the code may turn it on (``scan`` of a local checkout, as in CI): in a package someone else
+    wrote, the marker is the author's own comment, and one line of it would silence the finding
+    that should stop the install.
     """
     # A published package artifact ships its build output and NOT its sources, so dist/ and build/
     # must be scanned there; in a repository they duplicate source that is checked in beside them.
@@ -125,7 +132,9 @@ def analyze_directory(
     if ignore_set:
         # Drop early so ignored base findings don't feed the synthesized rules below.
         findings = [f for f in findings if f.id not in ignore_set]
-    findings = _apply_inline_ignores(findings, index)
+    if inline_ignores:
+        findings, inline_count = _apply_inline_ignores(findings, index)
+        suppressed_count += inline_count
 
     # Demote evidence that does not represent executed/agent-facing behavior to needs_review
     # (never scored). Sibling gates, applied in order:
@@ -373,15 +382,23 @@ def _verdict_reasons(findings: list[Finding], limit: int = 3) -> list[str]:
 _INLINE_IGNORE_RE = re.compile(r"skilltotal:\s*ignore(?:\[([^\]]*)\])?", re.IGNORECASE)
 
 
-def _apply_inline_ignores(findings: list[Finding], index: FileIndex) -> list[Finding]:
-    """Drop evidence whose source line (or the line above) carries a skilltotal:ignore marker."""
+def _apply_inline_ignores(
+    findings: list[Finding], index: FileIndex
+) -> tuple[list[Finding], int]:
+    """Drop evidence whose source line (or the line above) carries a skilltotal:ignore marker.
+
+    Returns the kept findings and how many evidence occurrences were dropped, which the report
+    counts as suppressed: an ignored finding is the owner's decision, not something never seen.
+    """
     by_path = {f.relpath: f for f in index.files}
     kept: list[Finding] = []
+    dropped = 0
     for finding in findings:
         remaining = [e for e in finding.evidence if not _line_ignores(e, finding.id, by_path)]
+        dropped += len(finding.evidence) - len(remaining)
         if remaining:
             kept.append(_finding_with_evidence(finding, remaining))
-    return kept
+    return kept, dropped
 
 
 def _line_ignores(evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFile]) -> bool:
