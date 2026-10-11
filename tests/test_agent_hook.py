@@ -1118,3 +1118,90 @@ def test_creating_a_bare_package_json_installs_nothing(command):
 def test_a_scaffolder_from_another_registry_asks():
     reason = _ask_without_scan("npm create vite --registry https://registry.example.invalid")
     assert "create-vite from https://registry.example.invalid" in reason
+
+
+# --- A registry or index picked by the command: the public copy is not what gets installed -----
+
+REGISTRY_OVERRIDES = [
+    # The environment the installer reads its registry or index from.
+    ("bash", "npm_config_registry=https://registry.example.invalid npm install lodash"),
+    ("bash", "NPM_CONFIG_REGISTRY=https://registry.example.invalid npx -y lodash"),
+    ("bash", "env npm_config_registry=https://registry.example.invalid npm i lodash"),
+    ("bash", "export npm_config_registry=https://registry.example.invalid; npm i lodash"),
+    ("bash", "export npm_config_reg''istry=https://registry.example.invalid; npm i lodash"),
+    ("bash", "env 'npm_config_@types:registry=https://registry.example.invalid' npm i @types/node"),
+    ("bash", "npm_config_userconfig=./evil.npmrc npm i lodash"),
+    ("bash", "YARN_REGISTRY=https://registry.example.invalid yarn add lodash"),
+    ("bash", "YARN_NPM_REGISTRY_SERVER=https://registry.example.invalid yarn add lodash"),
+    ("bash", "BUN_CONFIG_REGISTRY=https://registry.example.invalid bun add lodash"),
+    ("bash", "PIP_INDEX_URL=https://pypi.example.invalid/simple pip install requests"),
+    ("bash", "PIP_EXTRA_INDEX_URL=https://pypi.example.invalid/simple pip install requests"),
+    ("bash", "PIP_FIND_LINKS=https://pypi.example.invalid/links pip install requests"),
+    ("bash", "UV_INDEX_URL=https://pypi.example.invalid/simple uv pip install requests"),
+    ("bash", "UV_EXTRA_INDEX_URL=https://pypi.example.invalid/simple uv add requests"),
+    ("bash", "UV_DEFAULT_INDEX=https://pypi.example.invalid/simple uvx requests"),
+    ("bash", "UV_INDEX=https://pypi.example.invalid/simple uv add requests"),
+    ("bash", "UV_FIND_LINKS=https://pypi.example.invalid/links uv pip install requests"),
+    ("bash", "sh -c 'export npm_config_registry=https://registry.example.invalid; npm i lodash'"),
+    ("powershell", "$env:npm_config_registry='https://registry.example.invalid'; npm i lodash"),
+    ("powershell", '$env:PIP_INDEX_URL = "https://pypi.example.invalid/simple"; pip install x'),
+    ("powershell", 'cmd /c "set npm_config_registry=https://registry.example.invalid&& npm i x"'),
+    # The option spellings the tools accept: npm takes any unambiguous prefix and one dash.
+    ("bash", "npm i lodash --reg=https://registry.example.invalid/"),
+    ("bash", "npm i lodash --regi https://registry.example.invalid/"),
+    ("bash", "npm --reg https://registry.example.invalid/ install lodash"),
+    ("bash", "npm i lodash -registry=https://registry.example.invalid/"),
+    ("bash", "npm install @types/node --@types:registry=https://registry.example.invalid"),
+    ("bash", "npm install lodash --userconfig ./evil.npmrc"),
+    ("bash", "npm install lodash --globalconfig=./evil.npmrc"),
+    ("bash", "npx --reg=https://registry.example.invalid lodash"),
+    ("bash", "pnpm add lodash --config.registry=https://registry.example.invalid"),
+    ("bash", "bun add lodash --registry https://registry.example.invalid"),
+    # pip takes attached values and abbreviations; uv the exact names.
+    ("bash", "pip install -ihttps://pypi.example.invalid/simple requests"),
+    ("bash", "pip install --ind https://pypi.example.invalid/simple requests"),
+    ("bash", "pip install --index-u https://pypi.example.invalid/simple requests"),
+    ("bash", "pip install --extra https://pypi.example.invalid/simple requests"),
+    ("bash", "pip install --extra-index-url=https://pypi.example.invalid/simple requests"),
+    ("bash", "pip install -f https://pypi.example.invalid/links requests"),
+    ("bash", "pip install --find-links=https://pypi.example.invalid/links requests"),
+    ("bash", "pip install -Uihttps://pypi.example.invalid/simple requests"),
+    ("bash", "python -m pip install --ind=https://pypi.example.invalid/simple requests"),
+    ("bash", "uv pip install --index https://pypi.example.invalid/simple requests"),
+    ("bash", "uv pip install -i https://pypi.example.invalid/simple requests"),
+    ("bash", "uv add --default-index https://pypi.example.invalid/simple requests"),
+    ("bash", "uv add --extra-index-url https://pypi.example.invalid/simple requests"),
+    ("bash", "uv pip install --find-links https://pypi.example.invalid/links requests"),
+    ("bash", "uvx --index https://pypi.example.invalid/simple requests"),
+    ("bash", "uv tool install --index-url https://pypi.example.invalid/simple requests"),
+    ("bash", "pipx install requests --index-url https://pypi.example.invalid/simple"),
+    ("bash", "pipx install requests --pip-args='--index-url https://pypi.example.invalid/simple'"),
+]
+
+
+@pytest.mark.parametrize(("shell", "command"), REGISTRY_OVERRIDES)
+def test_a_registry_or_index_the_command_picks_asks_the_person(shell, command):
+    assert "SkillTotal can't check what this would install" in _ask_without_scan(command, shell)
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # The public registry named explicitly is still the public registry.
+        ("npm i lodash --registry=https://registry.npmjs.org/", ["npm:lodash"]),
+        ("npm i lodash --reg https://registry.npmjs.org", ["npm:lodash"]),
+        ("pip install -i https://pypi.org/simple requests", ["pypi:requests"]),
+        ("pip install --index-url=https://pypi.org/simple/ requests", ["pypi:requests"]),
+        # Options that do not touch the source.
+        ("uv add torch --extra cuda", ["pypi:torch"]),
+        ("pip install -U -q requests", ["pypi:requests"]),
+        ("npm i -g --prefix ~/.local typescript", ["npm:typescript"]),
+        ("pip install --no-binary requests requests", ["pypi:requests"]),
+        # An unrelated variable leaves the install checkable.
+        ("echo $NPM_TOKEN && npm i lodash", ["npm:lodash"]),
+        ("PIP_NO_CACHE_DIR=1 pip install requests", ["pypi:requests"]),
+        ("UV_INDEX_STRATEGY=first-index uv add requests", ["pypi:requests"]),
+    ],
+)
+def test_options_that_keep_the_public_source_are_still_checked(command, expected):
+    assert install_targets(command) == expected

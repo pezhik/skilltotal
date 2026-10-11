@@ -146,10 +146,27 @@ _UV_VALUE_FLAGS = {"--python", "-p", "--with", "--index", "--index-url", "--extr
                    "--project", "--cache-dir", "--config-file", "--color", "-f", "--find-links",
                    "--from", "--with-editable", "--with-requirements"}
 _PY_VALUE_FLAGS = {"-X", "-W", "-c"}
-# Flags that make the package come from somewhere the public-registry scan does not cover.
-_NPM_SOURCE_FLAGS = {"--registry"}
-_PIP_SOURCE_FLAGS = {"-i", "--index-url", "--extra-index-url", "-f", "--find-links", "--index",
-                     "--default-index"}
+# pip and uv options that name where packages come from (pip also takes an abbreviation).
+_PIP_SOURCE_OPTIONS = ("index-url", "extra-index-url", "find-links")
+_UV_SOURCE_OPTIONS = frozenset({"index-url", "extra-index-url", "find-links", "index",
+                                "default-index", "config-file"})
+# Short options of pip and uv whose value is the rest of the word or the next one (`-rreq.txt`).
+_SHORT_VALUE_OPTIONS = frozenset("rcetpPobdCw")
+_PIPX_VALUE_FLAGS = {"--pip-args", "--suffix", "--index-url", "-i", "--python", "--preinstall",
+                     "--backend", "--spec"}
+# Environment variables an installer reads its registry or index from, or the config file that
+# names one (npm reads any `npm_config_<key>`, scoped registries included, whatever its case).
+_NPM_REGISTRY_ENV = re.compile(
+    r"(?<![A-Za-z0-9_])(?:npm_config_(?:@[^\s=:]*:)?(?:registry|userconfig|globalconfig)"
+    r"|yarn_registry|yarn_npm_registry_server|bun_config_registry)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
+_PY_INDEX_ENV = re.compile(
+    r"(?<![A-Za-z0-9_])(?:pip_(?:index_url|extra_index_url|find_links|config_file)"
+    r"|uv_(?:index_url|extra_index_url|default_index|index|find_links|config_file)"
+    r"|pdm_pypi_url|pipenv_pypi_mirror)(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 
 
 def install_targets(command: str, shell: str = "bash") -> list[str]:
@@ -193,12 +210,14 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
         return _net(text)  # the shell would not run it as written; ask if it names an installer
     level = _Level(outer.ctx, tuple(lexed.subs))
     found: dict[Install, None] = {}
+    seen: list[str] = [text]
     # A command substitution runs too: `echo $(npm install x)` installs x.
     for sub in lexed.subs:
         found.update(dict.fromkeys(_parse(sub, shell, depth + 1, level)))
     for pipeline in lexed.pipelines:
         output: tuple[str, bool] | None = None  # what the previous command writes into this one
         for position, stage in enumerate(pipeline, 1):
+            seen.extend(stage.words)
             words, strings = _redirects(stage.words)
             feed = [(body, True) for body in (*stage.bodies, *strings)]
             if output is not None:
@@ -206,7 +225,26 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
             found.update(dict.fromkeys(_installs_in(words, shell, depth, level, feed)))
             if position < len(pipeline):
                 output = _output_of(words, feed, "".join(stage.text), shell)
-    return list(found)
+    return _registry_from_env(list(found), seen)
+
+
+def _registry_from_env(found: list[Install], words: list[str]) -> list[Install]:
+    """A command that sets the registry its installer reads (``npm_config_registry=... npm i x``,
+    ``export PIP_INDEX_URL=...; pip install x``, ``$env:...``) installs from there: the public
+    copy the scan reads is not what gets installed. The words are read after the shell's quote
+    removal, so ``npm_config_reg''istry`` counts too."""
+    npm = any(_NPM_REGISTRY_ENV.search(word) for word in words)
+    py = any(_PY_INDEX_ENV.search(word) for word in words)
+    if not (npm or py):
+        return found
+    out: dict[Install, None] = {}
+    for item in found:
+        source = item.source or ""
+        if (npm and source.startswith("npm:")) or (py and source.startswith("pypi:")):
+            name = source.split(":", 1)[1]
+            item = Install(None, f"{name} from a registry the command sets in its environment")
+        out[item] = None
+    return list(out)
 
 
 def _net(*texts: str) -> list[Install]:
@@ -923,7 +961,7 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _node_manager(head, rest)
     if _PIP_HEAD.fullmatch(head):
         sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
-        return _pip_install(args) if sub == "install" else []
+        return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
     if _PYTHON_HEAD.fullmatch(head):
         return _python_module(rest)
     if head == "uv":
@@ -1118,8 +1156,11 @@ def _start_process(rest: list[str]) -> list[str] | None:
     return [program, *(w for part in words for w in part)]
 
 
-def _subcommand(args: list[str], value_flags: set[str]) -> tuple[str | None, list[str]]:
-    """Skip global options (and their values) to the subcommand: ``npm --silent install x``."""
+def _subcommand(args: list[str], value_flags: set[str] | Callable[[str], bool]
+                ) -> tuple[str | None, list[str]]:
+    """Skip global options (and their values) to the subcommand: ``npm --silent install x``.
+    ``value_flags`` names the options that take a value, or tells them apart."""
+    takes = value_flags if callable(value_flags) else value_flags.__contains__
     i = 0
     while i < len(args):
         arg = args[i]
@@ -1127,25 +1168,63 @@ def _subcommand(args: list[str], value_flags: set[str]) -> tuple[str | None, lis
             i += 1
             continue
         if arg.startswith("-"):
-            i += 2 if (arg in value_flags and "=" not in arg) else 1
+            i += 2 if (takes(arg) and "=" not in arg) else 1
             continue
         return arg.lower(), args[i + 1:]
     return None, []
 
 
 def _node_manager(head: str, rest: list[str]) -> list[Install]:
-    sub, args = _subcommand(rest, _NPM_VALUE_FLAGS)
+    takes = functools.partial(_npm_takes_value, head=head)
+    sub, args = _subcommand(rest, takes)
     if head == "yarn" and sub == "global":
-        sub, args = _subcommand(args, _NPM_VALUE_FLAGS)
+        sub, args = _subcommand(args, takes)
+    registry = _npm_source(rest, head)
     if sub in ("exec", "x", "dlx") and not (head == "pnpm" and sub == "exec"):
-        return _npx(args)
+        return _npx(args, registry)
     if sub in _SCAFFOLDERS[head]:
-        return _scaffold(args, _custom_source(rest, _NPM_SOURCE_FLAGS))
+        return _scaffold(args, registry)
     if head == "yarn" and sub != "add":
         return []  # `yarn install` installs the lockfile only
     if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
-        return _npm_packages(args, _custom_source(rest, _NPM_SOURCE_FLAGS))
+        return _npm_packages(args, registry, head)
     return []
+
+
+def _npm_source_flag(arg: str, head: str = "npm") -> bool:
+    """A flag that points an npm-family installer at another registry, or at a config file that
+    can. npm takes one dash or two and any unambiguous prefix of an option (``--reg``)."""
+    if not arg.startswith("-") or arg in ("-", "--"):
+        return False
+    name = arg.lstrip("-").partition("=")[0].lower()
+    return (
+        (len(name) >= 3 and "registry".startswith(name)) or name.endswith(":registry")
+        or (len(name) >= 5 and "userconfig".startswith(name))
+        or (len(name) >= 7 and "globalconfig".startswith(name))
+        or name.startswith("config.")  # pnpm's `--config.registry=...`
+        or name == "use-yarnrc"
+        or (head == "bun" and name in ("c", "config"))  # bun's config file
+    )
+
+
+def _npm_takes_value(arg: str, head: str = "npm") -> bool:
+    return arg in _NPM_VALUE_FLAGS or _npm_source_flag(arg, head)
+
+
+def _npm_source(args: list[str], head: str = "npm") -> str | None:
+    """The registry, or registry config, a command names other than the public registry."""
+    for i, arg in enumerate(args):
+        if not _npm_source_flag(arg, head):
+            continue
+        name, eq, value = arg.lstrip("-").partition("=")
+        name = name.lower()
+        if not eq:
+            value = args[i + 1] if i + 1 < len(args) else ""
+        names_registry = "registry".startswith(name) or name.endswith("registry")
+        if names_registry and value.rstrip("/").lower() in _PUBLIC_SOURCES:
+            continue
+        return value or "a registry the command names"
+    return None
 
 
 # Subcommands that run an initializer package from the registry (`npm create vite`). `pnpm init`,
@@ -1165,7 +1244,8 @@ def _scaffold(args: list[str], registry: str | None) -> list[Install]:
     while i < len(args):
         arg = args[i]
         if arg.startswith("-"):
-            i += 2 if (arg in _INIT_VALUE_FLAGS and "=" not in arg) else 1
+            i += 2 if ((arg in _INIT_VALUE_FLAGS or _npm_source_flag(arg))
+                       and "=" not in arg) else 1
             continue
         return _npm_spec(_initializer_package(arg), registry)
     return []
@@ -1191,9 +1271,9 @@ def _initializer_package(spec: str) -> str:
     return f"create-{name}{at}{version}"
 
 
-def _npx(args: list[str]) -> list[Install]:
+def _npx(args: list[str], registry: str | None = None) -> list[Install]:
     """``npx [-y] [-p pkg] pkg args``: the explicit ``-p`` package, else the first positional."""
-    registry = _custom_source(args, _NPM_SOURCE_FLAGS)
+    registry = registry or _npm_source(args)
     i = 0
     while i < len(args):
         arg = args[i]
@@ -1202,13 +1282,13 @@ def _npx(args: list[str]) -> list[Install]:
         if arg.startswith("--package="):
             return _npm_spec(arg.split("=", 1)[1], registry)
         if arg.startswith("-"):
-            i += 2 if (arg in _NPM_VALUE_FLAGS and "=" not in arg) else 1
+            i += 2 if (_npm_takes_value(arg) and "=" not in arg) else 1
             continue
         return _npm_spec(arg, registry)
     return []
 
 
-def _npm_packages(args: list[str], registry: str | None) -> list[Install]:
+def _npm_packages(args: list[str], registry: str | None, head: str = "npm") -> list[Install]:
     """Every package named after the install subcommand, wherever the flags sit."""
     out: list[Install] = []
     skip = False
@@ -1217,7 +1297,7 @@ def _npm_packages(args: list[str], registry: str | None) -> list[Install]:
             skip = False
             continue
         if arg.startswith("-"):
-            skip = arg in _NPM_VALUE_FLAGS and "=" not in arg
+            skip = _npm_takes_value(arg, head) and "=" not in arg
             continue
         out.extend(_npm_spec(arg, registry))
     return out
@@ -1309,25 +1389,50 @@ _PUBLIC_SOURCES = frozenset({
 })
 
 
-def _custom_source(args: list[str], flags: set[str]) -> str | None:
-    """The first package source a command names other than the public registry, or None.
+def _py_option(arg: str, tool: str) -> tuple[bool, bool, str | None]:
+    """One option word of pip, uv or pipx: whether it names a package index, whether its value is
+    the next word, and its value when written in the same word.
 
-    Every source flag counts: `-i https://pypi.org/simple --extra-index-url https://x` installs
+    pip (like pipx) takes any unambiguous prefix of a long option (``--ind``) and a short option's
+    value glued on (``-ihttps://...``), after flags (``-Ui URL``); uv takes the exact names.
+    """
+    if arg.startswith("--"):
+        name, eq, attached = arg[2:].partition("=")
+        name = name.lower()
+        if tool == "pip":
+            source = bool(name) and any(option.startswith(name) for option in _PIP_SOURCE_OPTIONS)
+        else:
+            source = name in _UV_SOURCE_OPTIONS
+        takes = not eq and (source or arg in _PIP_VALUE_FLAGS or arg in _UV_VALUE_FLAGS)
+        return source, takes, (attached if eq else None)
+    if arg.startswith("-") and len(arg) > 1:
+        cluster = arg[1:]
+        for k, letter in enumerate(cluster):
+            if letter in "if" or letter in _SHORT_VALUE_OPTIONS:
+                attached = cluster[k + 1:]
+                return letter in "if", not attached, attached or None
+    return False, False, None
+
+
+def _py_source(args: list[str], tool: str = "pip") -> str | None:
+    """The first package index a command names other than PyPI, or None.
+
+    Every index option counts: `-i https://pypi.org/simple --extra-index-url https://x` installs
     from both, and the extra index can serve the higher version.
     """
     for i, arg in enumerate(args):
-        key, _, value = arg.partition("=")
-        if arg in flags and i + 1 < len(args):
-            value = args[i + 1]
-        elif not (value and key in flags):
+        source, takes, attached = _py_option(arg, tool)
+        if not source:
             continue
+        value = attached if attached is not None else (
+            args[i + 1] if takes and i + 1 < len(args) else "")
         if value.rstrip("/").lower() not in _PUBLIC_SOURCES:
-            return value
+            return value or "an index the command names"
     return None
 
 
-def _pip_install(args: list[str]) -> list[Install]:
-    index = _custom_source(args, _PIP_SOURCE_FLAGS)
+def _pip_install(args: list[str], tool: str = "pip", index: str | None = None) -> list[Install]:
+    index = index or _py_source(args, tool)
     out: list[Install] = []
     skip = False
     for i, arg in enumerate(args):
@@ -1346,7 +1451,7 @@ def _pip_install(args: list[str]) -> list[Install]:
             out.extend(_py_spec(editable, index))
             continue
         if arg.startswith("-"):
-            skip = (arg in _PIP_VALUE_FLAGS or arg in _UV_VALUE_FLAGS) and "=" not in arg
+            skip = _py_option(arg, tool)[1]
             continue
         out.extend(_py_spec(arg, index))
     return out
@@ -1384,7 +1489,8 @@ def _python_module(rest: list[str]) -> list[Install]:
             module, args = _base(rest[i + 1]), rest[i + 2:]
             if re.fullmatch(r"pip\d*", module):
                 sub, sub_args = _subcommand(args, _PIP_VALUE_FLAGS)
-                return _pip_install(sub_args) if sub == "install" else []
+                return _pip_install(sub_args, "pip", _py_source(args, "pip")) if (
+                    sub == "install") else []
             if module == "pipx":
                 return _pipx(args)
             if module == "uv":
@@ -1398,35 +1504,36 @@ def _python_module(rest: list[str]) -> list[Install]:
 
 
 def _uv(rest: list[str]) -> list[Install]:
+    index = _py_source(rest, "uv")
     sub, args = _subcommand(rest, _UV_VALUE_FLAGS)
     if sub == "add":
-        return _pip_install(args)
+        return _pip_install(args, "uv", index)
     if sub == "pip":
         sub2, args2 = _subcommand(args, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
-        return _pip_install(args2) if sub2 == "install" else []
+        return _pip_install(args2, "uv", index) if sub2 == "install" else []
     if sub == "tool":
         sub2, args2 = _subcommand(args, _UV_VALUE_FLAGS)
         if sub2 == "install":
-            return _first_py(args2) + _with_values(args2)
+            return _first_py(args2, index) + _with_values(args2, index)
         if sub2 == "run":
-            return _uvx(args2)
+            return _uvx(args2, index)
         return []
     if sub == "run":
-        return _with_values(args)  # `uv run --with pkg script.py` installs pkg
+        return _with_values(args, index)  # `uv run --with pkg script.py` installs pkg
     return []
 
 
-def _uvx(args: list[str]) -> list[Install]:
+def _uvx(args: list[str], index: str | None = None) -> list[Install]:
     """``uvx [--from pkg] [--with dep] tool args``: ``--from`` names the package, else the tool."""
-    found = _with_values(args)
+    index = index or _py_source(args, "uv")
+    found = _with_values(args, index)
     source = _flag_value(args, {"--from"})
     if source:
-        return _py_spec(source, _custom_source(args, _PIP_SOURCE_FLAGS)) + found
-    return _first_py(args) + found
+        return _py_spec(source, index) + found
+    return _first_py(args, index) + found
 
 
-def _with_values(args: list[str]) -> list[Install]:
-    index = _custom_source(args, _PIP_SOURCE_FLAGS)
+def _with_values(args: list[str], index: str | None) -> list[Install]:
     out: list[Install] = []
     for i, arg in enumerate(args):
         value = None
@@ -1439,28 +1546,55 @@ def _with_values(args: list[str]) -> list[Install]:
     return out
 
 
-def _first_py(args: list[str]) -> list[Install]:
+def _first_py(args: list[str], index: str | None) -> list[Install]:
     """The first positional (the tool or package), skipping flags and their values."""
-    index = _custom_source(args, _PIP_SOURCE_FLAGS)
+    names = _positionals(args, _UV_VALUE_FLAGS)
+    return _py_spec(names[0], index) if names else []
+
+
+def _positionals(args: list[str], value_flags: set[str]) -> list[str]:
+    """The words that are not options or option values."""
+    out: list[str] = []
     i = 0
     while i < len(args):
         arg = args[i]
         if arg.startswith("-"):
-            i += 2 if (arg in _UV_VALUE_FLAGS and "=" not in arg) else 1
+            i += 2 if (arg in value_flags and "=" not in arg) else 1
             continue
-        return _py_spec(arg, index)
-    return []
+        out.append(arg)
+        i += 1
+    return out
 
 
 def _pipx(rest: list[str]) -> list[Install]:
-    sub, args = _subcommand(rest, _UV_VALUE_FLAGS | _PIP_VALUE_FLAGS)
-    if sub in ("install", "run"):
-        return _first_py(args)
-    if sub == "inject":
-        positional = [a for a in args if not a.startswith("-")]
-        index = _custom_source(args, _PIP_SOURCE_FLAGS)
-        return [x for spec in positional[1:] for x in _py_spec(spec, index)]
-    return []
+    """``pipx install a b``, ``pipx run [--spec pkg] app``, ``pipx inject venv a b``."""
+    sub, args = _subcommand(rest, _PIPX_VALUE_FLAGS)
+    index = _py_source(args, "pip") or _pip_args_source(args)
+    spec = _flag_value(args, {"--spec"})
+    names = _positionals(args, _PIPX_VALUE_FLAGS)
+    if sub == "install":
+        specs = ([spec] if spec else []) + names
+    elif sub == "run":
+        specs = [spec] if spec else names[:1]
+    elif sub == "inject":
+        specs = names[1:]
+    else:
+        return []
+    return [item for s in specs for item in _py_spec(s, index)]
+
+
+def _pip_args_source(args: list[str]) -> str | None:
+    """``--pip-args='--index-url https://...'`` hands pip options of its own to pipx."""
+    for i, arg in enumerate(args):
+        name, eq, value = arg.partition("=")
+        if len(name) < 5 or not "--pip-args".startswith(name):  # argparse takes a prefix
+            continue
+        if not eq:
+            value = args[i + 1] if i + 1 < len(args) else ""
+        source = _py_source(_words(value, "bash") or value.split(), "pip")
+        if source:
+            return source
+    return None
 
 
 Scan = Callable[[str, float], dict[str, Any]]
