@@ -553,6 +553,9 @@ class _CallVisitor(ast.NodeVisitor):
         self._decode_exec_inner: set[int] = set()
         # Functions seen so far by name, for copyreg.pickle(cls, reducer_function).
         self._functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
+        # Loop variables that can only hold one of the literal strings of their loop, while the
+        # loop body is visited: `for cmd in ["npx.cmd", "npx"]: subprocess.run([cmd, ...])`.
+        self._loop_constants: list[str] = []
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import) -> None:
@@ -578,6 +581,29 @@ class _CallVisitor(ast.NodeVisitor):
             self._add(R_SHELL, node)
         self.generic_visit(node)
 
+    # -- loops -------------------------------------------------------------
+    def visit_For(self, node: ast.For) -> None:
+        self._visit_loop(node)
+
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
+        self._visit_loop(node)
+
+    def _visit_loop(self, node: ast.For | ast.AsyncFor) -> None:
+        name = _literal_loop_variable(node)
+        if name is None:
+            self.generic_visit(node)
+            return
+        self.visit(node.target)
+        self.visit(node.iter)
+        self._loop_constants.append(name)
+        try:
+            for stmt in node.body:
+                self.visit(stmt)
+        finally:
+            self._loop_constants.pop()
+        for stmt in node.orelse:
+            self.visit(stmt)
+
     # -- calls -------------------------------------------------------------
     def visit_Call(self, node: ast.Call) -> None:
         name = self._dotted(node.func)
@@ -588,7 +614,7 @@ class _CallVisitor(ast.NodeVisitor):
     def _classify_call(self, name: str, node: ast.Call) -> None:
         if name in SHELL_CALLS:
             self._add(R_SHELL, node)
-            if _is_command_injection(name, node):
+            if _is_command_injection(name, node, frozenset(self._loop_constants)):
                 self._add(R_CMDI, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:
             # Skip if this call is the payload of an enclosing exec/eval/compile — that's the
@@ -1121,32 +1147,61 @@ def _command_arg(node: ast.Call) -> ast.expr | None:
     return None
 
 
-def _is_dynamic_command(arg: ast.expr | None) -> bool:
-    """True if the command is built from anything other than pure constants."""
+def _is_dynamic_command(arg: ast.expr | None, constants: frozenset[str] = frozenset()) -> bool:
+    """True if the command is built from anything other than pure constants.
+
+    ``constants`` are names that can only hold literal strings here (the variable of a loop over a
+    literal list of strings, inside that loop)."""
     if arg is None:
         return False
     if isinstance(arg, ast.Constant):
         return False
-    if isinstance(arg, ast.JoinedStr):  # f-string: dynamic only if it interpolates
-        return any(isinstance(v, ast.FormattedValue) for v in arg.values)
-    if isinstance(arg, ast.BinOp):  # "a " + x  or  "fmt %s" % x
-        return isinstance(arg.op, (ast.Add, ast.Mod))
-    if isinstance(arg, (ast.List, ast.Tuple)):  # argv form: dynamic if any element is
-        return any(_is_dynamic_command(e) for e in arg.elts)
-    if isinstance(arg, ast.Constant):
+    if isinstance(arg, ast.Name) and arg.id in constants:
         return False
+    if isinstance(arg, ast.JoinedStr):  # f-string: dynamic only if it interpolates a non-constant
+        return any(
+            isinstance(v, ast.FormattedValue) and _is_dynamic_command(v.value, constants)
+            for v in arg.values
+        )
+    if isinstance(arg, ast.BinOp):  # "a " + x  or  "fmt %s" % x
+        if not isinstance(arg.op, (ast.Add, ast.Mod)):
+            return False
+        if constants:
+            return _is_dynamic_command(arg.left, constants) or _is_dynamic_command(
+                arg.right, constants
+            )
+        return True
+    if isinstance(arg, (ast.List, ast.Tuple)):  # argv form: dynamic if any element is
+        return any(_is_dynamic_command(e, constants) for e in arg.elts)
     # Name / Attribute / Subscript / Call (e.g. .format(), or any variable) -> dynamic.
     return isinstance(arg, (ast.Name, ast.Attribute, ast.Subscript, ast.Call))
 
 
-def _is_command_injection(name: str, node: ast.Call) -> bool:
+def _literal_loop_variable(node: ast.For | ast.AsyncFor) -> str | None:
+    """The variable of ``for x in ["a", "b"]`` when the loop body never rebinds it, else None."""
+    if not isinstance(node.target, ast.Name):
+        return None
+    elts = node.iter.elts if isinstance(node.iter, (ast.List, ast.Tuple, ast.Set)) else []
+    if not elts or not all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in elts):
+        return None
+    name = node.target.id
+    for stmt in node.body:
+        for sub in ast.walk(stmt):
+            if isinstance(sub, ast.Name) and sub.id == name and not isinstance(sub.ctx, ast.Load):
+                return None
+    return name
+
+
+def _is_command_injection(
+    name: str, node: ast.Call, constants: frozenset[str] = frozenset()
+) -> bool:
     """Shell call + dynamic command = injectable. Excludes argv-without-shell (safe)."""
     uses_shell = name in ALWAYS_SHELL_CALLS or (
         name.startswith("subprocess.") and _shell_true(node)
     )
     if not uses_shell:
         return False
-    return _is_dynamic_command(_command_arg(node))
+    return _is_dynamic_command(_command_arg(node), constants)
 
 
 def _yaml_load_is_unsafe(node: ast.Call) -> bool:

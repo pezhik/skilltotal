@@ -58,3 +58,55 @@ def test_an_address_passed_to_a_string_method_is_not_a_bind(tmp_path, line):
 )
 def test_a_real_bind_still_fires(tmp_path, line):
     assert "ST-EXPOSE-BIND" in _ids(_write(tmp_path, {"srv.py": line}))
+
+
+# --- ST-CMDI-PY: a loop over literal strings does not make the command dynamic ------------------
+
+_MCP_NPX_PROBE = (
+    "import subprocess\n"
+    'for cmd in ["npx.cmd", "npx.exe", "npx"]:\n'
+    "    try:\n"
+    '        subprocess.run([cmd, "--version"], check=True, capture_output=True, shell=True)\n'
+    "        break\n"
+    "    except subprocess.CalledProcessError:\n"
+    "        continue\n"
+)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # The official MCP Python SDK's npx probe (mcp/cli/cli.py); it scored the SDK medium 40.
+        _MCP_NPX_PROBE,
+        'import subprocess\nfor tool in ("git", "hg"):\n'
+        '    subprocess.run(f"{tool} --version", shell=True)\n',
+        'import subprocess\nfor flag in ["-a", "-l"]:\n'
+        '    subprocess.run("ls " + flag, shell=True)\n',
+    ],
+)
+def test_a_command_built_from_a_loop_over_literal_strings_is_not_injectable(tmp_path, source):
+    ids = _ids(_write(tmp_path, {"cli.py": source}))
+    assert "ST-CMDI-PY" not in ids
+    assert "ST-SHELL-PY" in ids  # still a shell capability
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # the loop runs over something that is not a list of literal strings
+        'import subprocess\nfor cmd in commands:\n    subprocess.run(cmd, shell=True)\n',
+        'import subprocess\nfor cmd in [user_cmd, "ls"]:\n    subprocess.run(cmd, shell=True)\n',
+        # the loop variable is rebound inside the body
+        'import subprocess\nfor cmd in ["ls"]:\n    cmd = cmd + arg\n'
+        '    subprocess.run(cmd, shell=True)\n',
+        # a constant loop variable next to a dynamic part
+        'import subprocess\nfor flag in ["-a"]:\n'
+        '    subprocess.run("ls " + flag + path, shell=True)\n',
+        # the same name used after the loop is not covered by it
+        'import subprocess\nfor cmd in ["ls"]:\n    pass\ncmd = input()\n'
+        'subprocess.run(cmd, shell=True)\n',
+    ],
+)
+def test_a_dynamic_command_near_a_loop_still_fires(tmp_path, source):
+    # A command traced from input() is raised as the stronger taint flow instead of ST-CMDI-PY.
+    assert {"ST-CMDI-PY", "ST-TAINT-SHELL-PY"} & _ids(_write(tmp_path, {"cli.py": source}))
