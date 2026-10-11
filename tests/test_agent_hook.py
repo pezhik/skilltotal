@@ -819,3 +819,259 @@ def test_a_cached_verdict_still_names_what_was_found(tmp_path, monkeypatch):
         reason = out["hookSpecificOutput"]["permissionDecisionReason"]
         assert "Decode-and-execute (obfuscated execution) at `scripts/setup.js:4`" in reason
     assert scans == ["npm:evil-pkg"]  # the second answer came from the cache
+
+
+# --- The command line as the shell reads it ----------------------------------------------------
+# Found by the pre-launch review: each of these installs the package when the shell runs it, and
+# the parser returned nothing, because it split the line before reading quotes, escapes, line
+# continuations, comments and shell keywords.
+
+BS, NL, CR, BT = "\\", "\n", "\r", "`"
+
+
+def _ask_without_scan(command, shell="bash"):
+    calls = []
+    event = _bash(command) if shell == "bash" else _powershell(command)
+    out = hook_response(event, scan=lambda s, t: calls.append(s) or _report())
+    assert calls == []
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    return out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    ("shell", "command", "expected"),
+    [
+        ("bash", "npm i " + BS + NL + "evil-pkg", ["npm:evil-pkg"]),
+        ("bash", "npm install " + BS + NL + "  --save " + BS + NL + "  evil-pkg", ["npm:evil-pkg"]),
+        ("bash", "npm install " + BS + CR + NL + "  evil-pkg", ["npm:evil-pkg"]),
+        ("bash", "pip install " + BS + NL + "evil-pkg", ["pypi:evil-pkg"]),
+        ("bash", "npm i lodash && " + BS + NL + "npx evil-pkg", ["npm:lodash", "npm:evil-pkg"]),
+        ("powershell", "npm i " + BT + NL + "evil-pkg", ["npm:evil-pkg"]),
+        ("powershell", "npm install " + BT + CR + NL + "  evil-pkg", ["npm:evil-pkg"]),
+        # An escaped backslash ends the line: the next line is a command of its own.
+        ("bash", "echo C:" + BS + BS + NL + "npm i evil-pkg", ["npm:evil-pkg"]),
+    ],
+)
+def test_a_line_continuation_joins_the_install_back_together(shell, command, expected):
+    assert install_targets(command, shell=shell) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if ! command -v tsc >/dev/null; then npm i -g evil-pkg; fi",
+        "if true; then npm i evil-pkg; fi",
+        "if npm i evil-pkg; then echo ok; fi",
+        "if false; then :; else npm i evil-pkg; fi",
+        "if false; then :; elif npm i evil-pkg; then :; fi",
+        "until false; do npm i evil-pkg; done",
+        "while true; do npm i evil-pkg; break; done",
+        "while npm i evil-pkg; do break; done",
+        "! npm i evil-pkg",
+        "{ npm i evil-pkg; }",
+        "[ -d node_modules/x ] || { npm i evil-pkg; }",
+        "coproc npm i evil-pkg",
+        "case x in x) npm i evil-pkg;; esac",
+    ],
+)
+def test_installs_behind_shell_keywords_are_found(command):
+    assert install_targets(command) == ["npm:evil-pkg"]
+
+
+@pytest.mark.parametrize(
+    ("shell", "command", "expected"),
+    [
+        ("bash", "npm i evil-pkg # comment", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg #comment", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg;# comment", ["npm:evil-pkg"]),
+        ("bash", "npm i lodash # evil-pkg" + NL + "npx other-pkg", ["npm:lodash", "npm:other-pkg"]),
+        # `#` inside a word is not a comment: npm reads it as the git ref.
+        ("bash", "npm i someone/tool#v1.2.0 # pinned", ["https://github.com/someone/tool/tree/v1.2.0"]),
+        ("bash", "npm i 'evil-pkg' '#not-a-comment'", ["npm:evil-pkg"]),
+        # The shell does not run a comment, so neither is it read as a command.
+        ("bash", "ls # ; npm i evil-pkg", []),
+        ("powershell", "npm i evil-pkg # comment", ["npm:evil-pkg"]),
+        ("powershell", "npm i evil-pkg <# block #> other-pkg", ["npm:evil-pkg", "npm:other-pkg"]),
+    ],
+)
+def test_comments_are_not_package_names(shell, command, expected):
+    assert install_targets(command, shell=shell) == expected
+
+
+@pytest.mark.parametrize(
+    ("shell", "command", "expected"),
+    [
+        # A separator inside quotes is part of an argument, not the end of the command.
+        ("bash", 'npm i evil-pkg "a;b"', ["npm:evil-pkg"]),
+        ("bash", 'npm i evil-pkg --foo="(x)"', ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg --message='a|b'", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg 'x{y}'", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg 'a && b'", ["npm:evil-pkg"]),
+        ("bash", "npx -y evil-pkg --arg='(1)'", ["npm:evil-pkg"]),
+        ("bash", "pip install evil-pkg --config-settings='a=(1)'", ["pypi:evil-pkg"]),
+        ("bash", "npm i evil-pkg \"it's (fine)\"", ["npm:evil-pkg"]),
+        ("powershell", "npm i evil-pkg 'a;b'", ["npm:evil-pkg"]),
+        ("powershell", 'npm i evil-pkg "a|b"', ["npm:evil-pkg"]),
+        ("powershell", "npm i evil-pkg 'it''s;x'", ["npm:evil-pkg"]),
+        # PowerShell takes typographic quotes as quotes.
+        ("powershell", "npm i evil-pkg ‘a;b’", ["npm:evil-pkg"]),
+        ("cmd", 'npm i evil-pkg "a&b"', ["npm:evil-pkg"]),
+        # ANSI-C quoting: the shell decodes the escapes before npm sees the name.
+        ("bash", "npm i $'evil-pkg'", ["npm:evil-pkg"]),
+        ("bash", "npm i $'\\x65vil-pkg'", ["npm:evil-pkg"]),
+        ("bash", "echo $'it\\'s' && npm i evil-pkg", ["npm:evil-pkg"]),
+    ],
+)
+def test_quoted_separators_do_not_hide_the_install(shell, command, expected):
+    assert install_targets(command, shell=shell) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A here-document is data for the command reading it: an apostrophe in it is not a quote.
+        ("cat > notes.md <<'EOF'\ndon't run npm install evil-pkg here\nEOF\nnpm i other-pkg",
+         ["npm:other-pkg"]),
+        ("git commit -m \"$(cat <<'EOF'\nExplain why we don't pin it (see npm i notes)\nEOF\n)\" "
+         "&& npm i evil-pkg", ["npm:evil-pkg"]),
+        ("cat <<-EOF\n\tdon't\n\tEOF\nnpm i evil-pkg", ["npm:evil-pkg"]),
+        # A shell reading one runs it.
+        ("bash <<'EOF'\nnpm i evil-pkg\nEOF", ["npm:evil-pkg"]),
+        ("cat <<EOF | sh\nnpm i evil-pkg\nEOF", ["npm:evil-pkg"]),
+        # An unquoted delimiter: the shell runs the substitutions in the body as it reads it.
+        ("cat > /dev/null <<EOF\n$(npm i evil-pkg)\nEOF", ["npm:evil-pkg"]),
+        # A shift in arithmetic is not a here-document.
+        ("echo $((1<<2))\nnpm i evil-pkg", ["npm:evil-pkg"]),
+        ("((x = 1 << 2))\nnpm i evil-pkg", ["npm:evil-pkg"]),
+        # Nested substitutions, inside and outside double quotes.
+        ('echo "$(echo "$(npm i evil-pkg)")"', ["npm:evil-pkg"]),
+        ("echo $(echo $(npm i evil-pkg))", ["npm:evil-pkg"]),
+        ("diff <(npm i evil-pkg) /dev/null", ["npm:evil-pkg"]),
+        ("echo \"${HOME:-$(npm i evil-pkg)}\"", ["npm:evil-pkg"]),
+        # Single quotes keep a substitution from running.
+        ("echo '$(npm i evil-pkg)'", []),
+    ],
+)
+def test_here_documents_and_substitutions_are_read_as_the_shell_reads_them(command, expected):
+    assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm i evil-pkg > install.log",
+        "npm i evil-pkg >install.log 2>&1",
+        "npm i evil-pkg &> install.log",
+        "npm i evil-pkg 2> /dev/null < /dev/null",
+        "npm i evil-pkg >| install.log",
+    ],
+)
+def test_a_redirection_target_is_not_a_package(command):
+    assert install_targets(command) == ["npm:evil-pkg"]
+
+
+@pytest.mark.parametrize(
+    ("shell", "command"),
+    [
+        ("powershell", "npm i evil-pkg *> install.log"),
+        ("powershell", "npm i evil-pkg 2>&1 > install.log"),
+        ("cmd", "npm i evil-pkg > install.log 2>&1"),
+    ],
+)
+def test_a_redirection_target_is_not_a_package_on_windows_shells(shell, command):
+    assert install_targets(command, shell=shell) == ["npm:evil-pkg"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npm i $P",
+        "P=evil-pkg; npm i $P",
+        'npm i "$(printf evil-pkg)"',
+        "npm i `printf evil-pkg`",
+        "npm i {evil-pkg,}",
+        "pip install ${PKG}",
+        "uv add $PKG",
+    ],
+)
+def test_a_package_name_the_shell_computes_asks_the_person(command):
+    assert "SkillTotal can't check what this would install" in _ask_without_scan(command)
+
+
+@pytest.mark.parametrize(
+    ("shell", "command"),
+    [
+        ("bash", "npm install 'unterminated"),
+        ("bash", 'pip install "evil-pkg'),
+        ("bash", "npm i $(npm i evil-pkg"),
+        ("powershell", "npm i 'evil-pkg"),
+    ],
+)
+def test_a_command_the_parser_cannot_read_asks_when_it_names_an_installer(shell, command):
+    assert "could not read" in _ask_without_scan(command, shell)
+
+
+NORMAL_COMMANDS = [
+    "git status",
+    "ls -la",
+    "python script.py",
+    "python -m pytest",
+    "npm test",
+    "npm run build",
+    "npm ls",
+    "pip list",
+    "pip show requests",
+    "uv run x.py",
+    "echo hello",
+    "cat package.json",
+    'python -c "print(1)"',
+    "npm run lint -- --fix",
+    "git log --oneline -5 | cat",
+    "echo 'npm install evil'",
+    "grep -rn 'pip install' docs | head",
+    "cat > notes.md <<'EOF'\nRun npm install x; don't forget (really)\nEOF",
+    "git commit -m \"$(cat <<'EOF'\nDocument npm i usage (it's fine)\nEOF\n)\"",
+    "for f in *.py; do python -m py_compile \"$f\"; done",
+    "if [ -f package.json ]; then npm test; fi",
+    "echo $((1 << 4))",
+    "npm i # nothing new: the lockfile",
+    "cd web && npm ci",
+    "",
+]
+
+
+@pytest.mark.parametrize("command", NORMAL_COMMANDS)
+def test_everyday_commands_install_nothing_and_get_no_answer(command):
+    from skilltotal.agent_hook import parse_installs
+
+    assert parse_installs(command) == []
+    calls = []
+    assert hook_response(_bash(command), scan=lambda s, t: calls.append(s) or _report()) is None
+    assert calls == []
+
+
+def test_the_parser_stays_fast_on_adversarial_command_lines():
+    """The hook runs before every command; a line built to be slow to read must not outlast the
+    hook's timeout, after which Claude Code lets the command through unchecked."""
+    import time as clock
+
+    from skilltotal.agent_hook import parse_installs
+
+    lines = [
+        "npm i " + "a" * 200_000,
+        "echo " + "'x' " * 50_000,
+        "echo " + '"$(echo ' * 2_000 + '")' * 2_000,
+        "$(" * 5_000 + "npm i evil-pkg" + ")" * 5_000,
+        "npm i " + " ".join(f"p{i}" for i in range(20_000)),
+        "echo " + "\\" * 100_001 + "\nnpm i evil-pkg",
+        "cat <<EOF\n" + "$x " * 50_000 + "\nEOF",
+        "npx " * 20_000 + "evil-pkg",
+        "# " + "npm i x " * 30_000,
+        "echo " + "${a:-" * 3_000 + "}" * 3_000,
+        ";" * 100_000 + "npm i evil-pkg",
+    ]
+    for line in lines:
+        started = clock.monotonic()
+        parse_installs(line)
+        parse_installs(line, shell="powershell")
+        assert clock.monotonic() - started < 5, line[:40]
