@@ -108,7 +108,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 - **The ruleset 64 rules can no longer be sidestepped by rewriting the same code** (ruleset 65).
   A security review of 0.60.0 found ways around each new rule that change nothing about what
   runs. A composite action's `run:` command is now read as the runner's shell receives it, so a
-  command written as a quoted or escaped YAML string (`|` for `|`), continued on the next
+  command written as a quoted or escaped YAML string (`\u007C` for `|`), continued on the next
   line, placed in a flow mapping (`{ run: … }`), behind an alias or under a quoted key is read
   like any other, and a `#` inside shell quotes no longer hides the rest of the line. An action
   under `.github/` is now read too and shown for review instead of being left out. A function
@@ -143,7 +143,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 - **Four more 2026 attack techniques are detected** (ruleset 63). A wallet private key, seed
   phrase or mnemonic read from an environment variable is now a sensitivity signal
   (`ST-SECRET-ENV`), so reading one and sending it off-host is flagged as credential
-  exfiltration (gadgethumans-mcp). Code that writes a server into another AI client's MCP config
+  exfiltration. Code that writes a server into another AI client's MCP config
   (`ST-AGENT-CONFIG-INJECT`) or repoints git's global template/hooks path for persistence
   (`ST-GIT-HOOK-PERSIST`) is flagged (SANDWORM_MODE). An Agent Skill that auto-runs a `!`
   dynamic-context command to steal a token or fetch-and-run code is flagged as malicious
@@ -571,7 +571,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 ### Changed
 - **Fixtures in a `test-site/` (or `test_data/`, `spec-helpers/`) directory no longer score
   (ruleset 48).** The test-path rule matched only the suffix form of a compound segment, so a
-  directory a project builds *for* its tests was read as shipped behaviour. firecrawl's
+  directory a project builds *for* its tests was read as shipped behaviour. A web scraper's
   `apps/test-site/` — a site it ships to exercise its own scraper, containing a deliberate
   prompt-injection sample — was scored as a malicious indicator against the project. The word
   boundary that keeps `latest` and `contest` out of the suffix form now guards the prefix form too.
@@ -625,7 +625,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
   kind. PostHog project keys (`phc_`, documented as safe to expose in client code) and base58
   on-chain addresses (a Solana program id or mint — public data, and length-bounded so a keypair
   still counts) now join the Algolia DocSearch and client-telemetry keys the scanner already
-  recognised. `browser-use` went `high` → `low`, `zeta-chain/cli` `high` → `low`.
+  recognised.
 - **A comment mentioning `eval` was read as dynamic execution.** `ST-DYN-NODE` declared no
   code-context policy, so `// guarded string eval (no DOM types)` matched — the same demotion the
   exposure and shell rules already use now applies.
@@ -688,7 +688,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 - **Prompt-injection FP: negation-guarded exfil directive (ruleset 42).** "never/cannot/does not
   exfiltrate ... to ..." defensive prose in agent prompts no longer raises `ST-PROMPT-INJECTION`
   (and no longer escalates into `ST-FLOW-TRIFECTA`/a `malicious` verdict). Found by the
-  reputable-corpus tripwire (claude-blog). See `RULES_CHANGELOG.md`.
+  reputable-corpus tripwire. See `RULES_CHANGELOG.md`.
 
 ## [0.38.0]
 
@@ -752,69 +752,69 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 - **Ruleset 39 — two embedded-secret false positives (closes the tripwire secret sub-cluster)**
   (see `RULES_CHANGELOG.md`): (1) a secret next to a client-telemetry ingestion URL
   (`*.client-telemetry.<vendor>/enqueue`) is a publishable key (Sentry-DSN class) →
-  `needs_review`, not scored — snowflake-connector-python's `telemetry_oob.py`; (2) a
+  `needs_review`, not scored — a database connector's `telemetry_oob.py`; (2) a
   `testing_utils.py` / `test_utils.py` module is recognised as test-support code so a hardcoded CI
-  token there is demoted — transformers' `src/transformers/testing_utils.py` `hf_` token. Recall
-  preserved (secret without a telemetry URL, and non-test `*_utils.py`, still score).
+  token there is demoted — a machine-learning library's `hf_` token in its `testing_utils.py`.
+  Recall preserved (secret without a telemetry URL, and non-test `*_utils.py`, still score).
 
 ## [0.34.6]
 
 ### Fixed
 - **Ruleset 38 — sensitive-path precision + provider-SDK credential-domain calibration** (see
   `RULES_CHANGELOG.md`), clearing the `ST-SENS-PATH` → `ST-COMBO-EXFIL` false-positive cluster from
-  the reputable-corpus tripwire (botocore, awscli, docker, dulwich, gcsfs, pyarrow, pyzmq). Three
-  coordinated fixes: (1) `~/.ssh/known_hosts` (public host keys) is no longer treated as a
-  credential; (2) a credential token as a `.json`/`.yaml` string value is inert data, not path
-  access (botocore ships the AWS API models under `botocore/data/*.json`); (3) a provider SDK
-  reading its OWN provider's credentials (botocore→`~/.aws`, docker→`.docker/config`, …; a curated
-  exact-name allowlist) no longer synthesizes the exfil combo. Recall preserved: off-domain access,
-  non-SDK packages reading any credential path, embedded secrets, and SSH-config writes all still
-  fire (efficacy 100% recall / 0 FP).
+  the reputable-corpus tripwire (seven widely used cloud, container, git, data and messaging
+  libraries). Three coordinated fixes: (1) `~/.ssh/known_hosts` (public host keys) is no longer
+  treated as a credential; (2) a credential token as a `.json`/`.yaml` string value is inert data,
+  not path access (an AWS SDK ships its API models as `data/*.json` files); (3) a provider SDK
+  reading its OWN provider's credentials (AWS SDKs→`~/.aws`, Docker clients→`.docker/config`, …; a
+  curated exact-name allowlist) no longer synthesizes the exfil combo. Recall preserved: off-domain
+  access, non-SDK packages reading any credential path, embedded secrets, and SSH-config writes all
+  still fire (efficacy 100% recall / 0 FP).
 
 ## [0.34.5]
 
 ### Fixed
 - **Ruleset 37 — test-certificate private keys no longer scored** (see `RULES_CHANGELOG.md`),
   a false positive from the reputable-corpus tripwire. Packages ship dummy TLS certificate +
-  private-key pairs for their own test HTTPS servers (`urllib3` `dummyserver/certs/*.key`,
-  `grpcio` `src/core/tsi/test_creds/*.key`); a "Private key block" whose directory path carries a
-  test/dummy/fixture marker next to a cert/cred/tls/ssl marker is routed to `needs_review`, not
-  scored. Effect: `urllib3`, `grpcio` high → low. Recall preserved: a private key on a normal
-  path (`id_rsa`, `config/deploy.key`) still scores.
+  private-key pairs for their own test HTTPS servers (an HTTP client's `dummyserver/certs/*.key`,
+  an RPC framework's `src/core/tsi/test_creds/*.key`); a "Private key block" whose directory path
+  carries a test/dummy/fixture marker next to a cert/cred/tls/ssl marker is routed to
+  `needs_review`, not scored. Recall preserved: a private key on a normal path (`id_rsa`,
+  `config/deploy.key`) still scores.
 
 ## [0.34.4]
 
 ### Fixed
 - **Ruleset 36 — precision fixes from the reputable-corpus tripwire** (see `RULES_CHANGELOG.md`).
   `ST-HIDDEN-UNICODE` no longer treats valid emoji tag sequences (UTS #51 subdivision flags,
-  e.g. the England flag in Unicode's own `emoji-test.txt`) as ASCII smuggling — effect:
-  `wcwidth` malicious -> low. `ST-TYPOSQUAT` curated PyPI list gains `pynacl` and `authlib`
-  (popular packages previously flagged as near-misses of `pyyaml`/`oauthlib`); near-miss
-  impersonations of both now fire. Recall preserved: any non-flag tag character still raises
-  the malicious indicator, incl. a smuggle run on the same line as a legitimate flag.
+  e.g. the England flag in Unicode's own `emoji-test.txt`) as ASCII smuggling. `ST-TYPOSQUAT`
+  curated PyPI list gains two popular packages previously flagged as near-misses of
+  `pyyaml`/`oauthlib`; near-miss impersonations of both now fire. Recall preserved: any non-flag
+  tag character still raises the malicious indicator, incl. a smuggle run on the same line as a
+  legitimate flag.
 
 ## [0.34.3]
 
 ### Fixed
 - **Ruleset 35 — the OpenAI `sk-` secret pattern no longer over-matches short `sk-…` tokens**
-  (see `RULES_CHANGELOG.md`). The pattern matched `sk-` + 20 chars, catching litellm proxy
+  (see `RULES_CHANGELOG.md`). The pattern matched `sk-` + 20 chars, catching an LLM proxy's
   virtual keys (`sk-P1zJMds…`), `sk-1234` docstring examples, and `org/sk-model-name` Hugging
   Face model ids. It now requires a real OpenAI key shape: a legacy `sk-` + ≥40-char base62 body,
-  or a `sk-proj-`/`sk-svcacct-`/`sk-admin-` prefixed key. Effect: `litellm` critical → high,
-  not-malicious. Recall preserved: real 48-char legacy and long project keys still match, and an
-  `api_key = "sk-short"` *assignment* is still caught by the generic secret-assignment rule.
+  or a `sk-proj-`/`sk-svcacct-`/`sk-admin-` prefixed key. Recall preserved: real 48-char legacy
+  and long project keys still match, and an `api_key = "sk-short"` *assignment* is still caught
+  by the generic secret-assignment rule.
 
 ## [0.34.2]
 
 ### Fixed
 - **Ruleset 34 — decode-and-execute token in a structured-data file no longer scores** (see
   `RULES_CHANGELOG.md`). `ST-OBF-DECODE-EXEC` matching inside a `.yaml`/`.json`/`.toml` value is
-  a keyword/pattern in a security tool's own detection list (litellm ships a content-filter
-  guardrail YAML listing decode-and-execute tokens as things to *catch*), not code that runs —
-  the same "detection literal, not behavior" class the engine already demotes for its own
-  patterns. Extended the structured-data demotion (previously prompt-injection only) to cover it.
-  Effect: `litellm` malicious/critical → not-malicious. Recall preserved: real decode-exec in
-  executable `.py`/`.js` still fires (only inert data-file values are demoted).
+  a keyword/pattern in a security tool's own detection list (a popular LLM proxy ships a
+  content-filter guardrail YAML listing decode-and-execute tokens as things to *catch*), not code
+  that runs — the same "detection literal, not behavior" class the engine already demotes for its
+  own patterns. Extended the structured-data demotion (previously prompt-injection only) to cover
+  it. Recall preserved: real decode-exec in executable `.py`/`.js` still fires (only inert
+  data-file values are demoted).
 
 ## [0.34.1]
 
@@ -823,25 +823,25 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
   injection patterns can greedily overshoot the closing quote (`exfiltrate X to Y, etc.").`
   swallows the `"`), so the "quote closes after the match" test missed the real citation. The
   prose citation form now demotes when the match STARTS inside an open quoted region on its
-  line plus a citation cue — independent of where the greedy match ends. `claude-blog` (an
-  agent skill that *warns* about injection) no longer verdicts malicious. Recall guards
+  line plus a citation cue — independent of where the greedy match ends. An agent skill that
+  *warns* about injection no longer verdicts malicious. Recall guards
   unchanged: a document reproducing a live injection without a cue, or a directive starting
   after a closed quote, still scores.
 
 ## [0.34.0]
 
 ### Fixed
-- **Ruleset 32 — two false positives found reviewing held real-world projects** (see
+- **Ruleset 32 — two false positives found reviewing real-world projects** (see
   `RULES_CHANGELOG.md`):
   - A file literally named `test.py` / `tests.py` (even outside a `tests/` directory) is now
-    treated as test scaffolding, so its evidence is demoted like other test code. `ragflow`'s
+    treated as test scaffolding, so its evidence is demoted like other test code. A RAG engine's
     `sdk/python/test.py` shipped a doc-example API key that synthesized `ST-COMBO-EXFIL`
     (critical); it no longer does.
   - A prompt-injection phrase quoted inside **defensive prose** (a skill warning "treat as
     untrusted, never authoritative: \"…exfiltrate X to Y, etc.\"") is demoted to `needs_review`
     when the line carries a citation cue (`e.g.`, `etc.`, `untrusted`, `such as`…). A document
     that merely reproduces a live injection (no cue) still scores, and this only applies to prose
-    files, not code/structured data. `claude-blog` no longer verdicts malicious.
+    files, not code/structured data. Such a defensive skill no longer verdicts malicious.
 
 ## [0.33.0]
 
@@ -851,8 +851,8 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
   (loopback redirect, device code, PKCE, oob) is routed to `needs_review` instead of scored —
   for native/CLI apps Google documents this value as not confidential (gcloud ships one), so
   it must not synthesize a critical exfiltration verdict. A `GOCSPX-` secret without those
-  markers (a leaked web-app secret) and all other secret shapes stay fully scored. Found on
-  gemini-cli: critical/100 → high/50.
+  markers (a leaked web-app secret) and all other secret shapes stay fully scored. Found on an
+  agent CLI's loopback OAuth client.
 
 ## [0.32.1]
 
@@ -872,21 +872,21 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 
 ### Fixed
 - **Ruleset 30 — CI-config and vendored-tree false positives** (see `RULES_CHANGELOG.md`),
-  found when numpy scored critical/90 on its own infrastructure files:
+  found when a scientific computing library scored critical on its own infrastructure files:
   - **CI/CD pipeline configuration** (`.circleci/`, `.github/workflows/`, `.gitlab-ci.yml`,
     `Jenkinsfile`, …) is demoted to `needs_review` — a CI job runs on the project's build
-    service, never on the consumer's machine, so numpy's docs-deploy SSH setup is not
+    service, never on the consumer's machine, so its docs-deploy SSH setup is not
     component behavior and can no longer feed `ST-COMBO-EXFIL`. Install-time hooks
     (`setup.py`, npm `postinstall`) are unaffected and stay fully scored.
-  - **`vendored-*` directories** (numpy's `vendored-meson/`, which bundles the meson build
-    system with meson's own CI docker scripts) are now skipped like `vendor/` and
-    `node_modules`. Effect: numpy critical/90 → low/20; recall floors unchanged.
+  - **`vendored-*` directories** (a `vendored-<name>/` copy of a build system, with that build
+    system's own CI docker scripts) are now skipped like `vendor/` and `node_modules`. Recall
+    floors unchanged.
 
 ## [0.31.0]
 
 ### Fixed
 - **Ruleset 29 — four architectural false-positive fixes from a full audit of production
-  reports** (see `RULES_CHANGELOG.md`). The tandem "critical exfil" verdict was a symptom of
+  reports** (see `RULES_CHANGELOG.md`). One project's "critical exfil" verdict was a symptom of
   broader engine gaps in *where* evidence is trusted; each class is fixed at the demotion layer
   so recall is preserved (efficacy + FP floors stay at 0):
   - **Example/demo/benchmark scaffolding** (`examples/`, `demo/`, `samples/`, `.env.example`
@@ -899,9 +899,6 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
   - **Over-broad MCP scope** (`ST-MCP-OVERBROAD-SCOPE`) now only applies in an MCP context and
     ignores file-path globs (`**/*.ts`, `.github/**`) — a build-tool `angular.json` / `greptile.json`
     `scope` key is no longer misread as a permission wildcard.
-  - Net effect on audited projects: `nopua` high→low, `ECC` low/0, `browser-use` scaffold FP
-    removed (real findings kept), and the `tandem` false "critical/malicious" collapses to
-    `medium`/not-malicious.
 
 ## [0.30.0]
 
@@ -915,11 +912,11 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 
 ### Fixed
 - **Two false positives from a report audit of trusted high-cap projects** (see
-  `RULES_CHANGELOG.md`): vendored dependency trees (`vendor/`, like Go cloud SDKs bundled by
-  `wandb`) are now skipped like `node_modules`, and a security tool's own regex-literal denylist
-  (e.g. `/id_rsa/` in a `SENSITIVE_PATHS` pattern array) is demoted to `needs_review` instead of
-  scored. Effect: `wandb` critical→high, `ECC` critical→low, both driven by code that is not the
-  component's own behavior; recall preserved (real path access still fires).
+  `RULES_CHANGELOG.md`): vendored dependency trees (`vendor/`, like Go cloud SDKs bundled by an
+  ML experiment-tracking package) are now skipped like `node_modules`, and a security tool's own
+  regex-literal denylist (e.g. `/id_rsa/` in a `SENSITIVE_PATHS` pattern array) is demoted to
+  `needs_review` instead of scored. Both were driven by code that is not the component's own
+  behavior; recall preserved (real path access still fires).
 
 ## [0.29.0]
 
@@ -978,10 +975,10 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 ## [0.26.0]
 
 ### Changed
-- **Prompt-injection precision (ruleset 27): one FP on a real popular project
-  (firecrawl/firecrawl) closed, recall-preserving.** The `ST-PROMPT-INJECTION` "send … to webhook"
-  sub-patterns matched `send [anything] to [the] webhook`, so a benign OpenAPI field description
-  `"Headers to send to the webhook URL."` flipped firecrawl to `has_malicious_indicators`. They are
+- **Prompt-injection precision (ruleset 27): one FP on a real popular project closed,
+  recall-preserving.** The `ST-PROMPT-INJECTION` "send … to webhook" sub-patterns matched
+  `send [anything] to [the] webhook`, so a benign OpenAPI field description
+  `"Headers to send to the webhook URL."` flipped the project to `has_malicious_indicators`. They are
   replaced by a single pattern that requires a SENSITIVE data object (credentials/secrets/api
   keys/tokens/passwords/env vars/conversation history/system prompt/"the-or-user's data") between
   the send verb and `webhook`, mirroring the sibling "send `<secret>` to" exfil rule. Recall
@@ -993,8 +990,8 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 ## [0.25.0]
 
 ### Changed
-- **Prompt-injection/secret precision (ruleset 26): two FPs on a real popular project
-  (infiniflow/ragflow) closed, recall-preserving.** (1) Prompt-injection phrases held in C-family
+- **Prompt-injection/secret precision (ruleset 26): two FPs on a real popular project closed,
+  recall-preserving.** (1) Prompt-injection phrases held in C-family
   value-strings — a security tool's own pattern table (`Description: "prompt injection: ignore
   previous instructions"`, `"DAN (Do Anything Now) …"` in a Go file) — no longer flag
   `ST-PROMPT-INJECTION`. A new `code_context` policy `strings_and_comments_all` demotes matches inside
@@ -1010,10 +1007,10 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 ### Changed
 - **Prompt-injection/secret precision (ruleset 25): two more FPs on defensive/security content
   closed, recall-preserving.** (1) A `-----BEGIN PRIVATE KEY-----` format marker held as a string
-  constant (auth code building a PEM, e.g. `@ai-sdk/google-vertex`) no longer flags
+  constant (auth code building a PEM, e.g. in an AI SDK's cloud-provider package) no longer flags
   `ST-SECRET-EMBEDDED` — the pattern now requires actual base64 key material after the marker; a real
   multi-line key still fires. (2) A credential path cited inside a markdown inline-code span in a
-  security guide (`` `write to ~/.ssh` ``, e.g. `claude-blog`) is routed to `needs_review` instead of
+  security guide (`` `write to ~/.ssh` ``) is routed to `needs_review` instead of
   `ST-SENS-PATH` — scoped to markdown, so a JS template literal in code and a bare path in prose still
   fire. Both removed spurious `ST-COMBO-EXFIL` escalations. New unit tests + negative corpus samples;
   FP floor and benign corpus stay at zero.
@@ -1023,8 +1020,8 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 ### Changed
 - **Prompt-injection precision (ruleset 24): two false positives on defensive/educational content
   closed, recall-preserving.** A security-education skill was wrongly flagged `ST-PROMPT-INJECTION`
-  on its `references/*.md` (an instruction surface, not doc-demoted), holding a legitimate component
-  from publication. Fixed in `scanners/prompt_surface.py`: (1) a negation guard on the safety-disable
+  on its `references/*.md` (an instruction surface, not doc-demoted). Fixed in
+  `scanners/prompt_surface.py`: (1) a negation guard on the safety-disable
   rule so defensive guarantees ("cannot override safety policy", "will not bypass safety filters",
   "can't disable guardrails") no longer match; (2) a phrase wrapped in quotes on both sides is
   treated as a cited example → `needs_review`, never scored (`"Ignore all previous instructions"`).
@@ -1064,9 +1061,8 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
   consumers, so a fake `sk-…` / `xoxb-…` key or `~/.ssh/id_rsa` path there is a test fixture, not
   behavior. The engine now demotes evidence inside inline Rust test blocks to `needs_review`
   exactly as it already demotes path-based test code (`__tests__/`, `*.test.*`). This fixes two
-  known false positives on real projects — **tandem** (`malicious` already cleared, was still
-  `critical`/90 from `ST-SECRET-EMBEDDED` + `ST-COMBO-EXFIL` over `#[test]` fixtures → now
-  `medium`) and **codescene** (`high`/70 from a `#[test]` error-message fixture → now `low`).
+  known false positives on real projects: `ST-SECRET-EMBEDDED` + `ST-COMBO-EXFIL` over `#[test]`
+  fixtures in one, and a `#[test]` error-message fixture in the other.
   Production secrets in non-test Rust code, and `#[cfg(not(test))]` code, still fire.
 
 ### Fixed
@@ -1088,7 +1084,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 - **FP calibration (ruleset 21): cloud metadata endpoints no longer trigger the exfiltration
   combo.** A reference to `169.254.169.254` / `metadata.google.internal` is a network token-fetch
   (legitimate Azure/AWS/GCP managed-identity auth), not a local secret read, so it no longer
-  counts as the sensitive-data side of `ST-COMBO-EXFIL` — fixing the official `openai` npm SDK
+  counts as the sensitive-data side of `ST-COMBO-EXFIL` — fixing an official model-provider npm SDK
   (and similar cloud SDKs) being scored `high` / "credential-exfiltration path". The endpoint is
   still reported as an SSRF/token-theft surface (`ST-SENS-PATH`); a real credential-file read plus
   network still fires the combo.
@@ -1108,7 +1104,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
   (4) public **Algolia DocSearch** search keys (read-only, safe to embed); (5) command-injection in
   **compound test trees** (`cli-e2e-tests/`); (6) security prose in **C-family code/JSDoc comments**
   (`.ts`/`.js`/`.go`/`.rs`) plus defensive "refuse to send credentials to …" phrasing — which had
-  mislabeled the official MCP TypeScript SDK as `malicious`. No detection was removed; report schema
+  mislabeled a widely used official SDK as `malicious`. No detection was removed; report schema
   unchanged.
 
 ## [0.18.0]
@@ -1198,7 +1194,8 @@ runtime/sandbox, dependency CVEs, prioritization) is delivered by SkillTotal Clo
 
 > 0.15.0 was tagged but never published: CI caught that a test fixture's `package.json` was
 > git-ignored (so absent on a fresh clone), and the `ST-PTH-EXEC` rule's bare-`exec` token gave a
-> benign false positive on coverage.py's `.pth`. Both fixed here; this is the first published cut.
+> benign false positive on a code-coverage tool's `.pth`. Both fixed here; this is the first
+> published cut.
 
 ### Added (ruleset 16 — real supply-chain attack signatures)
 - **`ST-PTH-EXEC`** (malicious) — a `.pth` file carrying code-execution / obfuscation tokens
@@ -1367,8 +1364,8 @@ No detection-rule changes (RULESET 11 unchanged); detection on the new sources u
 
 ### Fixed
 - **Prompt-injection false positives on trusted packages.** The `ST-PROMPT-INJECTION`
-  "ignore … above" pattern was too broad and flagged benign text — a minified Jupyter
-  `notebook` bundle (`// IGNORE ABOVE ELSE`) and ruff's own suppression docs ("ignore above a
+  "ignore … above" pattern was too broad and flagged benign text — a notebook application's
+  minified bundle (`// IGNORE ABOVE ELSE`) and a linter's own suppression docs ("ignore above a
   multi-line statement"). It now requires an intent quantifier (`everything`/`all`) or an
   explicit instruction object, surfaced by the expanded calibration corpus. (RULESET 10.)
 
@@ -1425,8 +1422,7 @@ No detection-rule changes (RULESET 11 unchanged); detection on the new sources u
 
 ### Fixed
 - **False-positive "malicious" verdicts on real MCP servers** (ruleset 8). A scan of 37 popular
-  MCP servers flagged 6 legitimate ones (awslabs, apify, exa, Figma-Context-MCP,
-  DesktopCommander, serena) as malicious. Recalibrated:
+  MCP servers flagged 6 legitimate ones as malicious. Recalibrated:
   - `ST-MCP-TOOL-SHADOWING` → **needs_review** (no longer a scored malicious indicator): "use X
     instead" / "do not use the Y tool" is indistinguishable from legitimate intra-server routing
     and code comments.
@@ -1458,29 +1454,30 @@ No detection-rule changes (RULESET 11 unchanged); detection on the new sources u
 
 ## [0.7.1]
 
-Calibration hardening: a labeled-corpus run (django, numpy, typescript, webpack, the MCP
-SDK, github-mcp-server, …) surfaced false "malicious" verdicts on trusted packages. All were
+Calibration hardening: a labeled-corpus run over popular frameworks, libraries, build tools and MCP
+servers surfaced false "malicious" verdicts on trusted packages. All were
 over-broad `malicious_indicator` rules; this release fixes them and adds regression tests so
 they cannot recur. Net effect: 0 benign false positives on the calibration corpus.
 
 ### Fixed
 - **Removed `ST-PROMPT-EXFIL-MD`** (added in the yanked 0.7.0): it fired on any markdown
   link whose URL contained a literal `$`/`{` (e.g. AngularJS `$http` doc links, dynamic
-  shields badges), wrongly flagging trusted packages (axios, django, numpy, typescript, …)
-  as malicious. Reliable markdown-exfil detection needs prompt-instruction context that
+  shields badges), wrongly flagging trusted packages as malicious. Reliable markdown-exfil
+  detection needs prompt-instruction context that
   pure static regex can't supply — deferred to the runtime/paid layer (see open-core.md).
 - **`ST-HIDDEN-UNICODE` now flags only tag characters (U+E0000+)** as malicious — the
   unambiguous ASCII-smuggling signal. **Bidi overrides and zero-width characters** moved to
   `needs_review` (`ST-HIDDEN-UNICODE-AMBIG`): they appear legitimately in RTL-locale `.po`
-  files, CJK text, HTML-entity tables (webpack), and emoji, so they no longer raise a malware
+  files, CJK text, HTML-entity tables, and emoji, so they no longer raise a malware
   verdict on their own.
 - **`ST-MCP-TOOL-POISONING`**: dropped the over-broad `always/first … before` sub-pattern,
   which fired on benign call-ordering guidance ("Always call list_tables before queries" in
-  the MCP TypeScript SDK examples).
+  an official SDK's examples).
 - **`ST-PROMPT-INJECTION`**: `do not tell the user` / `without telling the user` moved from a
   scored finding to `needs_review` — a genuine concealment marker that also appears in benign
-  UX guardrails (GitHub's official MCP server: "Do NOT tell the user the issue was updated;
-  the user MUST click Submit"). Real concealment still co-occurs with stronger scored signals.
+  UX guardrails (a code-hosting platform's official MCP server: "Do NOT tell the user the issue
+  was updated; the user MUST click Submit"). Real concealment still co-occurs with stronger scored
+  signals.
 - Regression tests added for each of the above (the calibration corpus cases).
 
 ## [0.7.0] — YANKED
@@ -1537,7 +1534,7 @@ popular trusted packages. Superseded by 0.7.1.
 - MCP exfiltration-surface signal now treats **browser** as an off-host channel (web
   automation can ingest untrusted content and exfiltrate), so a browser+credential or
   browser+filesystem server is flagged even without a `network` tool. The 0.5.0 logic
-  anchored only on `network` and missed this (e.g. the `mcp` package itself).
+  anchored only on `network` and missed this.
 
 ## [0.5.0]
 
