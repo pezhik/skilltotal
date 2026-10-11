@@ -18,8 +18,8 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 |---|---|---|
 | **Install-time execution** (npm pre/post/install, `setup.py`/cmdclass) | `ST-INSTALL-NPM`, `ST-INSTALL-NPM-PREPARE`, `ST-INSTALL-PY` | `npm-postinstall-exfil`, `pypi-typosquat-dropper` |
 | **Import-time / second-stage download-and-execute** | `ST-OBF-DECODE-EXEC` (malicious), `ST-DYN-PY`/`ST-DYN-NODE`, `ST-NET-PY`/`ST-NET-NODE` | `pypi-typosquat-dropper`, `pypi-importtime-stealer` |
-| **Credential / secret exfiltration** (read `~/.aws`, `~/.ssh`, `.env` → POST) | `ST-COMBO-EXFIL` (critical), `ST-SENS-PATH`/`ST-SENS-PATH-PY`, `ST-FS-*-READ` + `ST-NET-*` | `npm-postinstall-exfil`, `npm-trapdoor-stealer` |
-| **Obfuscation** (base64/hex/codecs decode → exec) | `ST-OBF-DECODE-EXEC` (malicious); heuristics `ST-OBF-BASE64-BLOB`/`ST-OBF-HEX`/`ST-OBF-MINIFIED` (needs_review) | `pypi-importtime-stealer` |
+| **Credential / secret exfiltration** (read `~/.aws`, `~/.ssh`, `.env` → POST; the path written out or joined onto the home directory) | `ST-COMBO-EXFIL` (critical), `ST-SENS-PATH`/`ST-SENS-PATH-PY`, `ST-FS-*-READ` + `ST-NET-*` | `npm-postinstall-exfil`, `npm-trapdoor-stealer` |
+| **Obfuscation** (base64/hex/codecs decode → `exec` / `eval` / `new Function`, directly or through a variable) | `ST-OBF-DECODE-EXEC` (malicious); heuristics `ST-OBF-BASE64-BLOB`/`ST-OBF-HEX`/`ST-OBF-MINIFIED` (needs_review) | `pypi-importtime-stealer` |
 | **Unsafe deserialization** (pickle/marshal/dill loader) | `ST-DESERIALIZE-PY` | `py-marshal-loader` |
 | **Deserialize-and-execute dropper** (`exec(marshal.loads(<remote>))`) | `ST-OBF-DECODE-EXEC-PY` (malicious) | `py-marshal-loader` |
 | **Shell / command execution & injection** | `ST-SHELL-PY`/`ST-SHELL-NODE`, `ST-CMDI-PY`/`ST-CMDI-NODE` | `pypi-typosquat-dropper` |

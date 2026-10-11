@@ -1,8 +1,8 @@
 {
   "engine_version": "0.63.0",
-  "ruleset_version": 67,
-  "positives": 66,
-  "negatives": 46,
+  "ruleset_version": 68,
+  "positives": 73,
+  "negatives": 50,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -42,20 +42,20 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 12,
-      "python": 8,
+      "node": 14,
+      "python": 9,
       "manifest/text": 7,
       "shell": 2
     },
     "AST02": {
       "manifest/text": 5,
-      "node": 8,
+      "node": 9,
       "python": 2
     },
     "AST04": {
       "node": 2,
-      "python": 5,
-      "manifest/text": 11
+      "python": 6,
+      "manifest/text": 13
     },
     "AST05": {
       "python": 4
