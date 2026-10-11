@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import bisect
 import re
+from collections.abc import Iterator
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
@@ -343,33 +344,37 @@ def _line_quoted_segment(line_text: str, col: int) -> str | None:
     return None
 
 
-def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
-    """True if the line names a credential location without reading it (see above)."""
-    col = match.start() - f.text.rfind("\n", 0, match.start()) - 1
+def _not_a_read(f, start: int, matched: str, line_text: str) -> bool:
+    """True if the line names a credential location without reading it (see above).
+
+    ``start`` is where the reference begins in the file and ``matched`` the credential path it
+    names: the regex match for a written path, the built path for a joined one.
+    """
+    col = start - f.text.rfind("\n", 0, start) - 1
     before = line_text[: max(0, col)]
-    if _BARE_DIR_MATCH.match(match.group(0)) and _DIR_SETUP_BEFORE.search(before):
+    if _BARE_DIR_MATCH.match(matched) and _DIR_SETUP_BEFORE.search(before):
         return True
     if _SSH_IDENTITY_BEFORE.search(before) or _SSH_KEY_VARIABLE_BEFORE.search(before):
         return True
     if _KUBECONFIG_FLAG_BEFORE.search(before) and not _SHELL_PLUMBING.search(
-        line_text[col + len(match.group(0)):]
+        line_text[col + len(matched):]
     ):
         return True
     if _POLICY_GLOB_BEFORE.search(before) or _EXISTS_TEST_BEFORE.search(before):
         return True
-    if is_metadata_without_credentials(match.group(0), line_text):
+    if is_metadata_without_credentials(matched, line_text):
         return True
     name = f.relpath.rsplit("/", 1)[-1].lower()
     config_suffix = name if name.startswith(".") and "." not in name[1:] else f.suffix
     if config_suffix in _CONFIG_SUFFIXES and _CONFIG_COMMENT_LINE.match(line_text):
         return True
-    if f.string_is_executed(match.start()):
+    if f.string_is_executed(start):
         return False
-    span = f.string_span_at(match.start())
+    span = f.string_span_at(start)
     if span is not None:
         # Judge the part of the literal on this line: a blog post kept in one template literal
         # contains tables and code, yet each sentence in it is still a sentence.
-        line_start = match.start() - col
+        line_start = start - col
         line_end = line_start + len(line_text)
         segment = f.text[max(span[0], line_start) : min(span[1], line_end)]
         # The key in front of the literal, with its opening quote: `placeholder: "~/.ssh/id_rsa"`.
@@ -384,7 +389,7 @@ def _not_a_read(f, match: re.Match[str], line_text: str) -> bool:
         # No string lexer for this file type (.astro, .vue): a line of Chinese or Japanese around
         # the path is a sentence wherever it sits.
         return True
-    return f.in_rendered_markup_text(match.start())
+    return f.in_rendered_markup_text(start)
 
 
 # Markdown files where an inline-code span (`...`) is a *cited example*, not path access. A security
@@ -403,6 +408,147 @@ def _cited_in_markdown_code(relpath: str, line_text: str, matched: str) -> bool:
         return False
     segments = line_text.split("`")
     return any(matched in segments[i] for i in range(1, len(segments), 2))
+
+
+# A credential path built from segments instead of written out: joined onto the home directory
+# (`path.join(os.homedir(), '.aws', 'credentials')`, or TypeScript's compiled
+# `(0, path_1.join)((0, os_1.homedir)(), ...)`), concatenated to it
+# (`os.homedir() + '/.aws/config'`) or interpolated (`${os.homedir()}/.npmrc`). The segments are
+# read as the path they build -- the home directory as `~`, a string as written, anything else as a
+# segment nothing can match -- and that path is matched like a written one, with the same
+# suppressions. Python builds paths the same ways and is read by the AST scanner (ST-SENS-PATH-PY).
+_JS_HOME_EXPR = (
+    r"(?<![\w$.])(?:\(\s*0\s*,\s*)?"
+    r"(?:require\(\s*['\"](?:node:)?os['\"]\s*\)\.|(?:[A-Za-z_$][\w$]{0,60}\.){0,2})"
+    r"homedir\s*\)?\s*\(\s*\)"
+    r"|(?<![\w$.])process\.env(?:\.(?:HOME|USERPROFILE)\b|\[\s*['\"](?:HOME|USERPROFILE)['\"]\s*\])"
+    r"|(?<![\w$.])(?:[A-Za-z_$][\w$]{0,60}\.)?userInfo\(\s*\)\.homedir\b"
+)
+# `const home = os.homedir();` (or `process.env.HOME || os.homedir()`): the name stands for the
+# home directory in the rest of the file.
+_JS_HOME_VAR = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*(?:" + _JS_HOME_EXPR + r")"
+    r"(?:\s*(?:\|\||\?\?)\s*(?:" + _JS_HOME_EXPR + r"|''|\"\")){0,3}\s*[;\n]"
+)
+_JS_JOIN_CALL = re.compile(
+    r"(?<![\w$.])(?:\(\s*0\s*,\s*)?"
+    r"(?:require\(\s*['\"](?:node:)?path['\"]\s*\)\.|(?:[A-Za-z_$][\w$]{0,60}\.){0,3})"
+    r"(?:join|resolve)\s*\)?\s*\("
+)
+_JS_STRING = re.compile(
+    r"""(['"])((?:(?!\1)[^\\\n]|\\.){0,300})\1|`((?:[^`\\$]|\\.|\$(?!\{)){0,300})`"""
+)
+_JS_PLUS_STRING = re.compile(r"""\s*\+\s*(['"])((?:(?!\1)[^\\\n]|\\.){0,300})\1""")
+_JS_ARGS_LIMIT = 600
+_UNKNOWN_SEGMENT = "\x00"
+
+
+def _js_string_end(text: str, i: int, stop: int) -> int | None:
+    """Index just past the string literal opening at ``text[i]``, or None if it does not close."""
+    quote = text[i]
+    k = i + 1
+    while k < stop:
+        ch = text[k]
+        if ch == "\\":
+            k += 2
+            continue
+        if ch == quote:
+            return k + 1
+        if ch == "\n" and quote != "`":
+            return None
+        k += 1
+    return None
+
+
+def _js_call_args(text: str, open_at: int) -> tuple[list[str], int] | None:
+    """The top-level arguments of the call whose ``(`` is at ``open_at`` and the index past its
+    ``)``, or None when the call does not close within a few hundred characters."""
+    args: list[str] = []
+    depth, start, i = 0, open_at + 1, open_at + 1
+    stop = min(len(text), open_at + _JS_ARGS_LIMIT)
+    while i < stop:
+        ch = text[i]
+        if ch in "'\"`":
+            end = _js_string_end(text, i, stop)
+            if end is None:
+                return None
+            i = end
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                if ch != ")":
+                    return None
+                args.append(text[start:i])
+                return [a.strip() for a in args if a.strip()], i + 1
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append(text[start:i])
+            start = i + 1
+        i += 1
+    return None
+
+
+def _js_segment(arg: str, home: re.Pattern[str]) -> str:
+    """A path segment as written: a string literal's text, ``~`` for the home directory (also
+    `process.env.HOME || ''`), or a segment nothing matches."""
+    literal = _JS_STRING.fullmatch(arg)
+    if literal:
+        return literal.group(2) if literal.group(1) else literal.group(3)
+    if home.fullmatch(arg):
+        return "~"
+    inner = arg[1:-1].strip() if arg.startswith("(") and arg.endswith(")") else arg
+    alternatives = [a.strip() for a in re.split(r"\|\||\?\?", inner)]
+    if len(alternatives) > 1 and any(home.fullmatch(a) for a in alternatives) and all(
+        home.fullmatch(a) or a in ("''", '""', "``") for a in alternatives
+    ):
+        return "~"
+    return _UNKNOWN_SEGMENT
+
+
+def _built_path(segments: list[str]) -> str:
+    return re.sub(r"/{2,}", "/", "/".join(segments))
+
+
+def joined_js_paths(f: IndexedFile) -> Iterator[tuple[int, int, str]]:
+    """``(start, end, path)`` for each path a JS/TS file builds from the home directory or from
+    joined string segments. ``start``/``end`` span the expression in the source."""
+    text = f.text
+    names = {m.group(1) for m in _JS_HOME_VAR.finditer(text)}
+    home_alts = [_JS_HOME_EXPR] + [rf"(?<![\w$.]){re.escape(n)}(?![\w$])" for n in sorted(names)]
+    home = re.compile("|".join(f"(?:{a})" for a in home_alts))
+    # Rooted at the home directory, as `~/…` is: the first argument must be it (or a `~` string).
+    # A base the scanner cannot name -- an SDK's own `getHomeDir()`, a parameter -- could be any
+    # directory; a credential path written whole inside a segment is matched as written by the
+    # first pass. Checked before the arguments are read, so ordinary joins cost nothing more.
+    first_arg = re.compile(r"\s*(?:\(\s*)?(?:" + home.pattern + r"|['\"`]~)")
+    for m in _JS_JOIN_CALL.finditer(text):
+        if not first_arg.match(text, m.end()):
+            continue
+        call = _js_call_args(text, m.end() - 1)
+        if call is None or len(call[0]) < 2:
+            continue
+        segments = [_js_segment(a, home) for a in call[0]]
+        if not segments[0].startswith("~") or all(
+            s in ("~", _UNKNOWN_SEGMENT) for s in segments
+        ):
+            continue
+        yield m.start(), call[1], _built_path(segments)
+    if "+" not in text and "${" not in text:
+        return
+    for m in home.finditer(text):
+        end, built = m.end(), "~"
+        for _ in range(9):
+            plus = _JS_PLUS_STRING.match(text, end)
+            if plus is None:
+                break
+            end, built = plus.end(), built + plus.group(2)
+        if end > m.end():
+            yield m.start(), end, built
+    template = r"`\$\{\s*(?:" + home.pattern + r")\s*\}((?:[^`\\$]|\\.|\$(?!\{)){1,200})"
+    for m in re.finditer(template, text):
+        yield m.start(), m.end(), "~" + m.group(1)
 
 
 # A dotenv file that ships INSIDE a released package. `.env` is where a project keeps its
@@ -552,7 +698,7 @@ class SensitivePathScanner(Scanner):
                 if ev.file not in guard_files:
                     guard_files.append(ev.file)
                 continue
-            if _not_a_read(f, _m, line_text):
+            if _not_a_read(f, _m.start(), _m.group(0), line_text):
                 if ev.file not in unread_files:
                     unread_files.append(ev.file)
                 continue
@@ -585,6 +731,36 @@ class SensitivePathScanner(Scanner):
                     guard_files.append(ev.file)
                 continue
             evidence.append(ev)
+
+        # Third pass: a credential path built from segments -- joined onto the home directory,
+        # concatenated to it or interpolated (see joined_js_paths). It is the same path, so it is
+        # judged like a written one: the denylist, sandbox-deny and not-a-read suppressions all
+        # apply. A line the passes above already judged keeps their verdict.
+        covered = {(file, n) for file, first, last in seen_ev for n in range(first, last + 1)}
+        for f in index.select(suffixes=_JS_FAMILY):
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                break
+            for start, end, built in joined_js_paths(f):
+                m = _STRONG_PATHS.search(built)
+                if m is None:
+                    continue
+                ev = f.evidence_for_span(start, end)
+                lines = range(ev.line_start, ev.line_end + 1)
+                if any((ev.file, n) in covered for n in lines):
+                    continue
+                covered.update((ev.file, n) for n in lines)
+                line_text = f.line_text(ev.line_start)
+                if _is_guardlist_context(ev.file, line_text, m.group(0)) or in_deny_rule(
+                    f, start
+                ):
+                    if ev.file not in guard_files:
+                        guard_files.append(ev.file)
+                    continue
+                if _not_a_read(f, start, m.group(0), line_text):
+                    if ev.file not in unread_files:
+                        unread_files.append(ev.file)
+                    continue
+                evidence.append(ev)
 
         if guard_files:
             shown = ", ".join(guard_files[:_SENS_WORD_EXAMPLES])

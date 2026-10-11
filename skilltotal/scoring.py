@@ -70,14 +70,26 @@ _UNTRUSTED_CONTENT_IDS = frozenset({"ST-PROMPT-INJECTION"})
 # whose own identity IS that provider reads that provider's credentials as its documented function
 # (botocore reads ~/.aws), so that specific access is not, by itself, an exfiltration signal. This
 # is matched against the evidence snippet (the sensitive_paths scanner's own path alternation).
+# A path built from segments names its directory as a segment of its own (`".aws"` in
+# `join(home, ".aws", "credentials")`, `/ ".ssh" /`), so a directory name standing alone as a path
+# segment counts too.
+_SEGMENT = r"(?<![\w.-]){}(?![\w.-])"
 _CREDENTIAL_DOMAINS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"(?i)~/\.aws|\.aws/credentials"), "aws"),
-    (re.compile(r"(?i)\.docker/config\.json"), "docker"),
-    (re.compile(r"(?i)~/\.config/gcloud|application_default_credentials\.json"), "gcp"),
-    (re.compile(r"(?i)~/\.azure"), "azure"),
-    (re.compile(r"(?i)~/\.kube"), "kube"),
+    (re.compile(r"(?i)~/\.aws|\.aws/credentials|" + _SEGMENT.format(r"\.aws")), "aws"),
+    (re.compile(r"(?i)\.docker/config\.json|" + _SEGMENT.format(r"\.docker")), "docker"),
+    (
+        re.compile(
+            r"(?i)~/\.config/gcloud|application_default_credentials\.json|"
+            + _SEGMENT.format("gcloud")
+        ),
+        "gcp",
+    ),
+    (re.compile(r"(?i)~/\.azure|" + _SEGMENT.format(r"\.azure")), "azure"),
+    (re.compile(r"(?i)~/\.kube|" + _SEGMENT.format(r"\.kube")), "kube"),
     (re.compile(r"(?i)\.git-credentials"), "git"),
-    (re.compile(r"(?i)~/\.ssh|\bid_rsa\b"), "ssh"),
+    (re.compile(r"(?i)~/\.ssh|\bid_rsa\b|" + _SEGMENT.format(r"\.ssh")), "ssh"),
+    (re.compile(r"(?i)" + _SEGMENT.format(r"\.npmrc")), "npm"),
+    (re.compile(r"(?i)" + _SEGMENT.format(r"\.pypirc")), "pypi"),
 )
 
 # Known official SDK / client packages mapped to the credential domain(s) they exist to use.
@@ -87,8 +99,9 @@ _CREDENTIAL_DOMAINS: tuple[tuple[re.Pattern[str], str], ...] = (
 # and embedded secrets are unaffected and still synthesize the exfil combo.
 _SDK_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
     "botocore": frozenset({"aws"}), "boto3": frozenset({"aws"}), "boto": frozenset({"aws"}),
-    # awscli's `eks update-kubeconfig` writes ~/.kube/config.
-    "awscli": frozenset({"aws", "kube"}), "aiobotocore": frozenset({"aws"}),
+    # awscli's `eks update-kubeconfig` writes ~/.kube/config, and `codeartifact login` writes the
+    # repository token into ~/.npmrc and ~/.pypirc.
+    "awscli": frozenset({"aws", "kube", "npm", "pypi"}), "aiobotocore": frozenset({"aws"}),
     "aioboto3": frozenset({"aws"}), "s3transfer": frozenset({"aws"}),
     # docker's SSH transport (docker-over-ssh) reads ~/.ssh/config.
     "docker": frozenset({"docker", "ssh"}),
@@ -106,8 +119,20 @@ _SDK_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
     "adlfs": frozenset({"azure"}), "fsspec": frozenset({"aws", "gcp", "azure"}),
     # The Firebase CLI keeps its login as an Application Default Credentials file.
     "firebase-tools": frozenset({"gcp"}),
+    # The Azure CLI keeps its configuration and login under ~/.azure. Named exactly: the `azure-`
+    # prefix below is anyone's to publish under, so it does not clear a credential read itself.
+    "azure-cli": frozenset({"azure"}), "azure-cli-core": frozenset({"azure"}),
 }
 _AZURE_SDK_PREFIX = "azure-"  # the azure-* SDK family (azure-identity, azure-storage-blob, …)
+# npm scopes belong to one organization, so a scope names its owner as surely as an exact name:
+# only AWS publishes under @aws-sdk/ (the JavaScript SDK v3) and @smithy/ (the toolkit it is built
+# on, whose shared-ini loader reads ~/.aws/credentials and ~/.aws/config).
+_NPM_SCOPE_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
+    "@aws-sdk/": frozenset({"aws"}),
+    "@smithy/": frozenset({"aws"}),
+}
+# The sensitive-path findings a provider SDK's own-credential reads are taken out of.
+_SENSITIVE_PATH_IDS = frozenset({"ST-SENS-PATH", "ST-SENS-PATH-PY"})
 
 
 # Files that describe or configure rather than run: markup, prose, manifests, infrastructure
@@ -176,16 +201,39 @@ def _package_base_name(component: Component) -> str:
     return re.sub(r"-\d+(?:\.\d+)*.*$", "", name)
 
 
-def _package_provider_domains(component: Component | None) -> frozenset[str]:
-    """Credential domains this package legitimately accesses as its own documented function."""
+def _package_provider_domains(
+    component: Component | None, *, owned_names_only: bool = False
+) -> frozenset[str]:
+    """Credential domains this package legitimately accesses as its own documented function.
+
+    ``owned_names_only`` leaves out the ``azure-`` name prefix: anyone can publish a PyPI name
+    that starts with it, while an exact curated name and an npm scope each have one owner.
+    """
     if component is None:
         return frozenset()
     name = _package_base_name(component)
     if name in _SDK_PROVIDER_DOMAINS:
         return _SDK_PROVIDER_DOMAINS[name]
-    if name.startswith(_AZURE_SDK_PREFIX):
+    for scope, domains in _NPM_SCOPE_PROVIDER_DOMAINS.items():
+        if name.startswith(scope):
+            return domains
+    if not owned_names_only and name.startswith(_AZURE_SDK_PREFIX):
         return frozenset({"azure"})
     return frozenset()
+
+
+def is_own_provider_read(finding_id: str, evidence: Evidence, component: Component | None) -> bool:
+    """True for a credential path that belongs to the provider whose own SDK this package is.
+
+    botocore reading ~/.aws and the AWS JavaScript SDK reading ~/.aws/credentials do what they
+    exist to do, whether the path is written out or joined onto the home directory. Only an exact
+    curated package name or an owned npm scope counts; the same read in any other package, and
+    another provider's credentials read by an SDK (an AWS SDK reading ~/.ssh), are unaffected.
+    """
+    if finding_id not in _SENSITIVE_PATH_IDS:
+        return False
+    domains = _package_provider_domains(component, owned_names_only=True)
+    return bool(domains) and _credential_domain(evidence.snippet) in domains
 
 
 def _dedupe(evidence: list[Evidence]) -> list[Evidence]:

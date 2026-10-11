@@ -50,7 +50,7 @@ from skilltotal.owasp import owasp_for
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
-from skilltotal.scoring import compute_score, risk_level
+from skilltotal.scoring import compute_score, is_own_provider_read, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID, package_name_typosquatting
 
@@ -192,6 +192,8 @@ def analyze_directory(
     needs_review.extend(structured_data_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
+    findings, provider_review = _split_own_provider_reads(findings, component)
+    needs_review.extend(provider_review)
     if published:
         findings, build_review = _hold_out(install_files, _split_build_output_evidence, findings)
         needs_review.extend(build_review)
@@ -826,6 +828,43 @@ def _split_doc_evidence(
             kept.append(_finding_with_evidence(finding, prod))
         if docs:
             review.append(_demoted_review(finding, docs, "documentation only"))
+    return kept, review
+
+
+def _split_own_provider_reads(
+    findings: list[Finding], component: Component
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Demote a provider SDK's reads of its own provider's credential files to needs_review.
+
+    Reading ~/.aws is what botocore and the AWS JavaScript SDK are for, and they build the path by
+    joining it onto the home directory as often as they write it out. See
+    ``scoring.is_own_provider_read`` for which packages count. Runs before synthesis, so the read
+    cannot feed ST-COMBO-EXFIL either.
+    """
+    kept: list[Finding] = []
+    review: list[NeedsReview] = []
+    for finding in findings:
+        own = [e for e in finding.evidence if is_own_provider_read(finding.id, e, component)]
+        if not own:
+            kept.append(finding)
+            continue
+        rest = [e for e in finding.evidence if not is_own_provider_read(finding.id, e, component)]
+        if rest:
+            kept.append(_finding_with_evidence(finding, rest))
+        files = sorted({e.file for e in own})
+        review.append(
+            NeedsReview(
+                category=finding.category,
+                title=f"{finding.title} (the provider SDK's own credentials)",
+                reason=(
+                    f"{finding.id} matched where this package, an SDK of the provider those "
+                    f"credentials belong to, reads them ({', '.join(files[:5])}); reading them is "
+                    "what it is for, so it is not scored."
+                ),
+                file=files[0],
+                line=next((e.line_start for e in own if e.file == files[0]), None),
+            )
+        )
     return kept, review
 
 
