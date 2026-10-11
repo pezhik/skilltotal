@@ -705,7 +705,6 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     file, published this afternoon. A new engine version rescans everything.
     """
     from skilltotal.collector import resolve_release
-    from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
 
     started = time.monotonic()
     release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
@@ -713,23 +712,40 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     target = release.source if release else source
     ttl = _hook_cache_ttl(key)
     path = _hook_cache_path()
-    try:
-        cache = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(cache, dict):
-            cache = {}
-    except (OSError, ValueError):
-        cache = {}
     now = time.time()
-    hit = cache.get(key)
+    hit = _hook_cache_read(path).get(key)
     if isinstance(hit, dict) and hit.get("engine") == __version__ and _fresh(hit, now, ttl):
         return hit["report"]
+    # What the verdict is kept under, and for which file: everything that keeps it needs to know.
+    job = {"key": key, "ttl": ttl, "artifact": release.artifact if release else "", "at": now,
+           "engine": __version__, "cache": str(path)}
     # Raises on failure/timeout: nothing is cached then.
     report = _hook_scan(target, timeout - (time.monotonic() - started))
+    return _hook_remember(job, report)
+
+
+def _hook_cache_read(path: Path) -> dict:
+    """The verdict cache; a missing or corrupt file is an empty one."""
+    try:
+        cache = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return cache if isinstance(cache, dict) else {}
+
+
+def _hook_remember(job: dict, report: dict) -> dict:
+    """The verdict of a scan as the cache keeps it, kept under ``job["key"]``; returns it.
+
+    The one way a verdict is kept, whoever keeps it: the hook, for a scan that finished while it
+    waited, or the check itself, for one that finished after the hook had stopped waiting.
+    """
+    from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
+
     verdict = report.get("verdict") or {}
     entry = {
-        "engine": __version__,
-        "at": now,
-        "ttl": ttl,
+        "engine": job["engine"],
+        "at": job["at"],
+        "ttl": job["ttl"],
         "report": {
             "risk_level": report.get("risk_level"),
             "risk_score": report.get("risk_score"),
@@ -764,23 +780,33 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         },
     }
     scanned = str((report.get("component") or {}).get("download_url") or "").rsplit("/", 1)[-1]
-    if release and release.artifact and scanned != release.artifact:
+    if job["artifact"] and scanned != job["artifact"]:
         # A file was added to the release between the lookup and the scan: the verdict is good
         # for what was scanned, but it is not the artifact the key names, so it is not kept.
         return entry["report"]
-    # Keep the file small: drop what has expired, then the oldest past the cap.
-    live = {k: v for k, v in cache.items()
-            if isinstance(v, dict) and _fresh(v, now, _hook_cache_ttl(k))}
-    newest = sorted(live, key=lambda k: _number(live[k].get("at")), reverse=True)
-    kept = {key: entry, **{k: live[k] for k in newest[: HOOK_CACHE_MAX_ENTRIES - 1] if k != key}}
+    _hook_cache_store(Path(job["cache"]), job["key"], entry)
+    return entry["report"]
+
+
+def _hook_cache_store(path: Path, key: str, entry: dict) -> None:
+    """Add ``entry`` to the cache file. Every writer holds the cache's lock from reading the file to
+    writing it back: two checks that finish at once must both be kept."""
+    from skilltotal.hook_scan import file_lock, write_atomic
+
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(kept), encoding="utf-8")
-        tmp.replace(path)  # atomic: two hooks at once must not leave half a file
-    except OSError:
+        with file_lock(path.with_name(path.name + ".lock")):
+            now = time.time()
+            cache = _hook_cache_read(path)
+            # Keep the file small: drop what has expired, then the oldest past the cap.
+            live = {k: v for k, v in cache.items()
+                    if isinstance(v, dict) and _fresh(v, now, _hook_cache_ttl(k))}
+            newest = sorted(live, key=lambda k: _number(live[k].get("at")), reverse=True)
+            kept = {key: entry,
+                    **{k: live[k] for k in newest[: HOOK_CACHE_MAX_ENTRIES - 1] if k != key}}
+            write_atomic(path, json.dumps(kept))
+    except (OSError, TimeoutError):
         pass  # no cache this time; the verdict itself is still good
-    return entry["report"]
 
 
 # A key that names one exact artifact: an npm release, or a PyPI release with the file pip installs
