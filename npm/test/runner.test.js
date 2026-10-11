@@ -142,3 +142,67 @@ test("arguments reach the engine unchanged, spaces and all, with its exit code",
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// --- Windows looks for a bare program name in the current directory first ---------------------
+// CreateProcess, and the libuv of Node before 22, try the current directory before PATH, so
+// `npx skilltotal scan .` inside a cloned repository would run a `uvx.exe` or `py.exe` committed
+// to it instead of the real one.
+
+const runnerLib = require("../lib/runner");
+
+test("the wrapper turns off the current-directory lookup on Windows only", () => {
+  assert.equal(typeof runnerLib.noCurrentDirectoryLookup, "function");
+  const win = runnerLib.noCurrentDirectoryLookup({}, "win32");
+  assert.equal(win.NoDefaultCurrentDirectoryInExePath, "1");
+  const linux = runnerLib.noCurrentDirectoryLookup({}, "linux");
+  assert.equal(linux.NoDefaultCurrentDirectoryInExePath, undefined);
+});
+
+test("a command is found in PATH, never in the current directory", {
+  skip: process.platform !== "win32",
+}, () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "planted-"));
+  const onPath = fs.mkdtempSync(path.join(os.tmpdir(), "onpath-"));
+  fs.writeFileSync(path.join(cwd, "faketool.exe"), "");
+  fs.writeFileSync(path.join(onPath, "faketool.exe"), "");
+  const saved = process.cwd();
+  try {
+    process.chdir(cwd);
+    const env = { PATH: [".", "relative\\dir", "", `"${onPath}"`].join(";") };
+    assert.equal(runnerLib.resolveCommand("faketool", env, "win32"),
+      path.win32.join(onPath, "faketool.exe"));
+    assert.equal(runnerLib.resolveCommand("faketool", { PATH: "." }, "win32"), null);
+    assert.equal(runnerLib.resolveCommand("faketool", env, "linux"), "faketool");
+  } finally {
+    process.chdir(saved);
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(onPath, { recursive: true, force: true });
+  }
+});
+
+test("programs planted in the current directory are never what runs", {
+  skip: process.platform !== "win32" || !runner,
+}, () => {
+  // Copies of a harmless system program, named after every way the wrapper starts the engine:
+  // if one of them ran, the probes would fail and nothing would run the engine.
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "planted-"));
+  const where = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "where.exe");
+  for (const name of ["uvx", "pipx", "py", "python", "python3"]) {
+    fs.copyFileSync(where, path.join(dir, `${name}.exe`));
+  }
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (key.toLowerCase() === "nodefaultcurrentdirectoryinexepath") delete env[key];
+  }
+  try {
+    const r = spawnSync(process.execPath, [bin, "--version"], { encoding: "utf8", cwd: dir, env });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^skilltotal \d+\.\d+\.\d+/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

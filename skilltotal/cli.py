@@ -269,7 +269,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _no_lookup_in_current_directory(environ=os.environ, os_name: str = os.name) -> None:
+    """Windows runs a bare program name from the current directory before PATH, so a scan run
+    inside a cloned repository would start a ``git.exe`` committed to it. This variable turns that
+    lookup off for this process and everything it starts."""
+    if os_name == "nt":
+        environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+
+
 def main(argv: list[str] | None = None) -> int:
+    _no_lookup_in_current_directory()  # before anything can start a program
     # Redirected output on Windows is written in the legacy code page, which cannot encode much of
     # what a scanned package may contain: a `✓` in one snippet crashed `scan --json > r.json` and
     # left the file empty. Reports go out as UTF-8 and never fail on their own content.

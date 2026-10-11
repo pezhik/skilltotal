@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -232,3 +233,52 @@ def test_guard_installed_text_never_carries_terminal_escapes(monkeypatch, capsys
     out = capsys.readouterr().out
     assert esc not in out and bel not in out
     assert "srv\\x1b[2J" in out
+
+
+def test_the_cli_turns_off_the_current_directory_lookup_on_windows_only():
+    from skilltotal.cli import _no_lookup_in_current_directory
+
+    windows: dict[str, str] = {}
+    _no_lookup_in_current_directory(windows, "nt")
+    assert windows == {"NoDefaultCurrentDirectoryInExePath": "1"}
+    posix: dict[str, str] = {}
+    _no_lookup_in_current_directory(posix, "posix")
+    assert posix == {}
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the current-directory lookup is Windows' own")
+def test_a_program_planted_in_the_current_directory_never_runs(tmp_path):
+    """Windows looks for a bare program name in the current directory before PATH: a `git.exe`
+    committed to a repository would run when the CLI calls `git` from inside it. A copy of a
+    harmless system program stands in for the planted one."""
+    import shutil
+    import subprocess
+    import sys
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    where = Path(os.environ.get("SystemRoot", "C:/Windows")) / "System32" / "where.exe"
+    shutil.copyfile(where, repo / "git.exe")
+    script = (
+        "import contextlib, io, subprocess\n"
+        "from skilltotal import cli\n"
+        "with contextlib.redirect_stdout(io.StringIO()):\n"
+        "    cli.main(['rules', 'list', '--json'])\n"
+        "try:\n"
+        "    done = subprocess.run(['git', '--version'], capture_output=True, text=True,\n"
+        "                          timeout=60)\n"
+        "    print(done.stdout.strip() or f'exit {done.returncode}, no output')\n"
+        "except FileNotFoundError:\n"
+        "    print('not found')\n"
+    )
+    env = {k: v for k, v in os.environ.items()
+           if k.lower() != "nodefaultcurrentdirectoryinexepath"}
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+    try:
+        done = subprocess.run([sys.executable, "-c", script], cwd=repo, env=env,  # noqa: S603
+                              capture_output=True, text=True, timeout=120)
+    finally:
+        (repo / "git.exe").unlink()  # no planted program is left behind
+    assert done.returncode == 0, done.stderr
+    shown = done.stdout.strip()
+    assert shown.startswith("git version") or shown == "not found", shown
