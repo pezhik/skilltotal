@@ -151,3 +151,53 @@ def test_a_tool_named_in_a_comment_or_a_python_string_is_not_a_tool(tmp_path, na
 )
 def test_a_real_tool_definition_still_fires(tmp_path, name, source):
     assert "ST-MCP-DANGEROUS-TOOL" in _ids(_write(tmp_path, {name: source}))
+
+
+# --- ST-NET-PY: only an imported network library is network -----------------------------------
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # a parameter that happens to be called `requests` (mcp, langchain)
+        "def handle(requests: dict):\n    for key, req in requests.items():\n        print(key)\n",
+        # the package's own module named requests (fastapi, django)
+        "from .requests import Request\n",
+        "from ..requests import RequestSite\n",
+        # a variable whose name starts with urllib (requests' own version check)
+        'urllib3_version_list = []\nurllib3_version_list.append("0")\n',
+        # the status-code table of http.client (fastapi)
+        "import http.client\nSTATUS = http.client.responses[404]\n",
+    ],
+)
+def test_a_name_that_only_looks_like_a_network_library_is_not_network(tmp_path, source):
+    assert "ST-NET-PY" not in _ids(_write(tmp_path, {"mod.py": source}))
+
+
+def test_a_credentials_reader_with_a_requests_dict_is_not_exfiltration(tmp_path):
+    # The path to a false critical: reading an AWS profile plus `requests.items()` on a dict made
+    # ST-COMBO-EXFIL (credential read + network egress).
+    source = (
+        "from pathlib import Path\n"
+        "def profiles(requests: dict) -> dict:\n"
+        '    text = (Path.home() / ".aws" / "credentials").read_text()\n'
+        "    return {k: v for k, v in requests.items() if k in text}\n"
+    )
+    ids = _ids(_write(tmp_path, {"aws.py": source}))
+    assert "ST-NET-PY" not in ids
+    assert "ST-COMBO-EXFIL" not in ids
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import requests\nrequests.get(url)\n",
+        "import requests as r\nr.post(url, data=x)\n",
+        "from urllib.request import urlopen\nurlopen(url)\n",
+        'import http.client\nconn = http.client.HTTPSConnection("example.invalid")\n',
+        "import httpx\n",
+        "from requests import Session\n",
+        "import urllib.request\nurllib.request.urlopen(url)\n",
+    ],
+)
+def test_a_real_network_library_still_fires(tmp_path, source):
+    assert "ST-NET-PY" in _ids(_write(tmp_path, {"mod.py": source}))

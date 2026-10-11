@@ -562,7 +562,7 @@ class _CallVisitor(ast.NodeVisitor):
         for alias in node.names:
             local = alias.asname or alias.name.split(".")[0]
             self.aliases[local] = alias.name
-            if _is_network_module(alias.name):
+            if _is_network_import(alias.name):
                 self._add(R_NET, node)
             if alias.name.split(".")[0] in SHELL_MODULES:
                 self._add(R_SHELL, node)
@@ -570,10 +570,16 @@ class _CallVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = node.module or ""
+        # A relative import names the package's own module: `from .requests import Request` is
+        # the package's requests.py, not the requests library. Its names keep their leading dots,
+        # so no check below mistakes them for the library that shares the name.
+        prefix = "." * node.level
         for alias in node.names:
             local = alias.asname or alias.name
-            self.from_imports[local] = f"{module}.{alias.name}" if module else alias.name
-        if _is_network_module(module):
+            self.from_imports[local] = (
+                f"{prefix}{module}.{alias.name}" if module else f"{prefix}{alias.name}"
+            )
+        if node.level == 0 and _is_network_import(module):
             self._add(R_NET, node)
         # Only an absolute import names the library: `from .git import x` is the package's own
         # module, which happens to share the name.
@@ -639,7 +645,7 @@ class _CallVisitor(ast.NodeVisitor):
             self._add(R_FS_READ, node)
         elif name.startswith(FS_WRITE_PREFIXES):
             self._add(R_FS_WRITE, node)
-        elif _is_network_call(name):
+        elif _is_network_call(name) and self._root_is_imported(node.func):
             self._add(R_NET, node)
         elif name in _COPYREG_PICKLE and len(node.args) >= 2:
             self._check_copyreg_reducer(node, node.args[1])
@@ -748,6 +754,17 @@ class _CallVisitor(ast.NodeVisitor):
     def _dotted(self, func: ast.expr) -> str | None:
         """Resolve a call target to a canonical dotted name, applying import aliases."""
         return _resolve_dotted(func, self.aliases, self.from_imports)
+
+    def _root_is_imported(self, func: ast.expr) -> bool:
+        """Whether a call's leftmost name was bound by an import in this module.
+
+        `requests.items()` on a parameter called requests is a dict, not the library."""
+        root = func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if not isinstance(root, ast.Name):
+            return True  # a resolved lookup: __import__("requests").get(...)
+        return root.id in self.aliases or root.id in self.from_imports
 
     def _add(self, rule_id: str, node: ast.AST) -> None:
         bucket = self.hits.setdefault(rule_id, [])
@@ -1245,14 +1262,24 @@ def _is_network_module(module: str) -> bool:
     if not module or module.startswith(_NON_NETWORK_MODULES):
         return False
     head = module.split(".")[0]
-    return head in NETWORK_HEADS or module.startswith(("urllib", "http.client"))
+    # Whole names only: `urllib3_version_list.append` is a list, not urllib.
+    return (
+        head in NETWORK_HEADS or head in ("urllib", "urllib3") or _is_under(module, "http.client")
+    )
+
+
+def _is_network_import(module: str) -> bool:
+    """Importing ``module`` counts as network access. Not ``http.client`` by itself: its status
+    table (``http.client.responses``) is read for reason phrases; a connection is a call."""
+    return _is_network_module(module) and module != "http.client"
 
 
 def _is_network_call(name: str) -> bool:
-    if name.startswith(_NON_NETWORK_MODULES):
-        return False
-    head = name.split(".")[0]
-    return head in NETWORK_HEADS or name.startswith(("urllib", "http.client"))
+    return _is_network_module(name)
+
+
+def _is_under(name: str, module: str) -> bool:
+    return name == module or name.startswith(module + ".")
 
 
 def _dedupe(evidence: list[Evidence]) -> list[Evidence]:
