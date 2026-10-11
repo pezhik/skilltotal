@@ -672,7 +672,10 @@ def _clone(clone_url: str, ref: str | None, subpath: str | None, dest: Path, env
     _run_git([*args, clone_url, str(dest)], dest, env, url)
     if subpath:
         try:
-            _git(dest, ["sparse-checkout", "set", subpath.strip("/")], env, timeout=60)
+            # The folder comes from the URL: after --end-of-options a name such as "-x" or
+            # "--output=…" is a path to git, never a switch.
+            _git(dest, ["sparse-checkout", "set", "--end-of-options", subpath.strip("/")], env,
+                 timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             raise CollectionError(f"could not narrow the checkout to '{subpath}'") from exc
     if is_sha:  # fetch + check out the requested commit (GitHub allows reachable SHAs)
@@ -698,8 +701,11 @@ def _collect_remote(
 
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     dest = Path(tmp.name) / "repo"
-    # Non-interactive (no credential prompt that could block) and bounded in time + size.
-    clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    # Non-interactive (no credential prompt that could block) and bounded in time + size. LFS
+    # objects are left as pointer files: fetching them would download from wherever the scanned
+    # repository's own .lfsconfig points, and the scan reads source, not large binaries.
+    clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
+                 "GIT_LFS_SKIP_SMUDGE": "1"}
     try:
         _clone(clone_url, ref, subpath, dest, clone_env, url)
     except CollectionError:
