@@ -1089,13 +1089,24 @@ def _is_hidden_codepoint(cp: int) -> bool:
     return cp < 0x20 and cp not in (0x09, 0x0A)  # C0 controls except tab/newline
 
 
+# The code points ``_is_hidden_codepoint`` accepts, as one character class, so they are found and
+# rendered in C. A Python loop over every character of every snippet did not keep up with a long
+# line full of matches. tests/test_long_line_matches.py checks the two agree on every code point.
+_HIDDEN_RANGES = (
+    (0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x9F), (0xAD, 0xAD), (0x200B, 0x200F), (0x202A, 0x202E),
+    (0x2060, 0x2060), (0x2066, 0x2069), (0xFEFF, 0xFEFF), (0xE0000, 0xE007F),
+)
+# Built from numbers, so this source file holds no hidden characters itself.
+_HIDDEN_CODEPOINT = re.compile(
+    "[" + "".join(f"{chr(lo)}-{chr(hi)}" for lo, hi in _HIDDEN_RANGES) + "]"
+)
+
+
 def neutralize_hidden(text: str) -> str:
     """Render hidden/deceptive code points as a visible ``<U+XXXX>`` token (display safety)."""
-    if not any(_is_hidden_codepoint(ord(c)) for c in text):
+    if not _HIDDEN_CODEPOINT.search(text):
         return text  # fast path: the vast majority of snippets are clean
-    return "".join(
-        f"<U+{ord(c):04X}>" if _is_hidden_codepoint(ord(c)) else c for c in text
-    )
+    return _HIDDEN_CODEPOINT.sub(lambda m: f"<U+{ord(m.group()):04X}>", text)
 
 
 # Files larger than this are not loaded as text (still recorded in stats).
@@ -1123,6 +1134,20 @@ def _sniffed_text(name: str, raw: bytes) -> str | None:
 
 # Maximum characters kept in an evidence snippet (protects against minified one-liners).
 MAX_SNIPPET_CHARS = 240
+
+
+def _snippet(text: str) -> str:
+    """``text`` as an evidence snippet: hidden code points made visible, cut to the limit.
+
+    Only the part that can be shown is rendered. Every code point renders as one character or
+    more, so the first MAX_SNIPPET_CHARS of the rendered text come from the first
+    MAX_SNIPPET_CHARS code points; rendering the rest of a long line is wasted, and with many
+    matches on one line it was quadratic.
+    """
+    snippet = neutralize_hidden(text[: MAX_SNIPPET_CHARS + 1])
+    if len(snippet) > MAX_SNIPPET_CHARS:
+        snippet = snippet[:MAX_SNIPPET_CHARS].rstrip() + " …"
+    return snippet
 
 
 @dataclass
@@ -1158,6 +1183,15 @@ class IndexedFile:
         default=None, repr=False, compare=False
     )
     _sampling_cache: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
+    # Per line: the quoted regions ``in_printed_command`` reads, and whether each one is printed
+    # (filled in when first asked); see ``_quoted_regions``.
+    _quoted_cache: dict[int, tuple[list[int], list[int], dict[int, bool]]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
+    # Per line: where its text starts and ends once surrounding whitespace is stripped.
+    _stripped_cache: dict[int, tuple[int, int]] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     # Lazily-computed char-spans of Python docstrings; see ``in_python_docstring``.
     _docstring_cache: list[tuple[int, int]] | None = field(
         default=None, repr=False, compare=False
@@ -1461,19 +1495,38 @@ class IndexedFile:
         that prints its own instructions is not running them.
         """
         line_no = self.line_of_offset(offset)
-        line = self._line_text(line_no)
         col = offset - self._line_starts[line_no - 1]
-        quote, start = "", -1
-        for k, ch in enumerate(line):
-            if quote:
-                if ch == quote:
-                    if start <= col < k:
-                        prefix = _QUOTED_ARG.sub(" ", line[: start - 1])
-                        return bool(_PRINT_COMMAND.search(prefix))
-                    quote = ""
-            elif ch in ("'", '"', "`"):
-                quote, start = ch, k + 1
-        return False
+        starts, ends, printed = self._quoted_regions(line_no)
+        k = bisect.bisect_right(starts, col) - 1
+        if k < 0 or col >= ends[k]:
+            return False
+        if k not in printed:
+            line = self._line_text(line_no)
+            prefix = _QUOTED_ARG.sub(" ", line[: starts[k] - 1])
+            printed[k] = bool(_PRINT_COMMAND.search(prefix))
+        return printed[k]
+
+    def _quoted_regions(self, line_no: int) -> tuple[list[int], list[int], dict[int, bool]]:
+        """The closed quoted regions of one line, as parallel lists of [start, end) columns.
+
+        Read once per line: with many matches on one long line, reading it again for each match
+        was quadratic. A quote closes at the next same quote character, as before.
+        """
+        cached = self._quoted_cache.get(line_no)
+        if cached is None:
+            starts: list[int] = []
+            ends: list[int] = []
+            quote, start = "", -1
+            for k, ch in enumerate(self._line_text(line_no)):
+                if quote:
+                    if ch == quote:
+                        starts.append(start)
+                        ends.append(k)
+                        quote = ""
+                elif ch in ("'", '"', "`"):
+                    quote, start = ch, k + 1
+            cached = self._quoted_cache[line_no] = (starts, ends, {})
+        return cached
 
     def in_js_regex(self, offset: int) -> bool:
         """True if ``offset`` falls inside a JavaScript-family regex literal (``/…/flags``).
@@ -1615,10 +1668,14 @@ class IndexedFile:
         # end_offset is exclusive; subtract 1 so a match ending at a newline does not
         # spill onto the next line.
         line_end = self.line_of_offset(max(start_offset, end_offset - 1))
-        lines = [self._line_text(n) for n in range(line_start, line_end + 1)]
-        snippet = neutralize_hidden("\n".join(lines).strip())
-        if len(snippet) > MAX_SNIPPET_CHARS:
-            snippet = snippet[:MAX_SNIPPET_CHARS].rstrip() + " …"
+        if line_start == line_end:
+            # Cut from the file text itself: copying a long line for each of its matches was
+            # quadratic. The snippet only ever reads the first MAX_SNIPPET_CHARS + 1 characters.
+            first, last = self._stripped_bounds(line_start)
+            snippet = _snippet(self.text[first : min(last, first + MAX_SNIPPET_CHARS + 1)])
+        else:
+            lines = [self._line_text(n) for n in range(line_start, line_end + 1)]
+            snippet = _snippet("\n".join(lines).strip())
         return Evidence(
             file=self.relpath,
             line_start=line_start,
@@ -1627,6 +1684,28 @@ class IndexedFile:
             match_offset=start_offset,
         )
 
+    def line_bounds(self, start: int, end: int) -> tuple[int, int]:
+        """From the start of the line holding ``start`` to the newline at or after ``end``.
+
+        The same two offsets as ``text.rfind("\\n", 0, start) + 1`` and ``text.find("\\n", end)``
+        (the end of the text when there is no newline), read from the line index: scanning for
+        them again for each of many matches on one long line was quadratic.
+        """
+        first = self._line_starts[self.line_of_offset(start) - 1]
+        after = self.line_of_offset(end)
+        last = self._line_starts[after] - 1 if after < len(self._line_starts) else len(self.text)
+        return first, last
+
+    def _stripped_bounds(self, line_no: int) -> tuple[int, int]:
+        """Offsets of one line's text as ``strip()`` leaves it, worked out once per line."""
+        bounds = self._stripped_cache.get(line_no)
+        if bounds is None:
+            line = self._line_text(line_no)
+            start = self._line_starts[line_no - 1]
+            first = start + len(line) - len(line.lstrip())
+            bounds = self._stripped_cache[line_no] = (first, max(first, start + len(line.rstrip())))
+        return bounds
+
     def evidence_for_lines(self, line_start: int, line_end: int) -> Evidence:
         """Build Evidence from 1-based line numbers (used by AST-based scanners)."""
         line_start = max(1, line_start)
@@ -1634,14 +1713,11 @@ class IndexedFile:
         # Cap the span so a call spanning many lines does not produce a huge snippet.
         line_end = min(line_end, line_start + 10, len(self._line_starts))
         lines = [self._line_text(n) for n in range(line_start, line_end + 1)]
-        snippet = neutralize_hidden("\n".join(lines).strip())
-        if len(snippet) > MAX_SNIPPET_CHARS:
-            snippet = snippet[:MAX_SNIPPET_CHARS].rstrip() + " …"
         return Evidence(
             file=self.relpath,
             line_start=line_start,
             line_end=line_end,
-            snippet=snippet,
+            snippet=_snippet("\n".join(lines).strip()),
         )
 
     def finditer(self, pattern: re.Pattern[str]) -> Iterator[tuple[re.Match[str], Evidence]]:
@@ -1778,7 +1854,7 @@ class FileIndex:
             text = _sniffed_text(path.name, raw)
             if text is None:
                 continue
-            text = text.removeprefix("﻿")
+            text = text.removeprefix("\ufeff")
             files.append(IndexedFile(path=path, relpath=relpath, text=text,
                                      _line_starts=cls._compute_line_starts(text)))
             stats["indexed"] += 1

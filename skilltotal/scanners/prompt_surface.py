@@ -7,6 +7,7 @@ inflate the risk score without a human confirming intent.
 
 from __future__ import annotations
 
+import bisect
 import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
@@ -234,13 +235,33 @@ _DEFENSIVE_FRAME = re.compile(
 )
 
 
-def _is_defensive_frame(text: str, start: int, end: int) -> bool:
-    """True if the line around the match is a guard AGAINST injection rather than one."""
-    line_start = text.rfind("\n", 0, start) + 1
+def _line_span(text: str, start: int, end: int) -> tuple[int, int]:
+    """From the start of the line holding ``start`` to the newline at or after ``end``."""
     line_end = text.find("\n", end)
-    if line_end == -1:
-        line_end = len(text)
-    return bool(_DEFENSIVE_FRAME.search(text[line_start:line_end]))
+    return text.rfind("\n", 0, start) + 1, len(text) if line_end == -1 else line_end
+
+
+def _is_defensive_frame(
+    text: str,
+    start: int,
+    end: int,
+    memo: dict | None = None,
+    bounds: tuple[int, int] | None = None,
+) -> bool:
+    """True if the line around the match is a guard AGAINST injection rather than one.
+
+    ``memo`` keeps the answer per line for one file: the answer depends on the line alone, and
+    many matches on one long line made searching it again for each match quadratic. ``bounds``,
+    the line's span from the file's line index, saves scanning the line for its ends.
+    """
+    line_start, line_end = bounds or _line_span(text, start, end)
+    key = ("frame", line_start, line_end)
+    if memo is not None and key in memo:
+        return memo[key]
+    found = bool(_DEFENSIVE_FRAME.search(text[line_start:line_end]))
+    if memo is not None:
+        memo[key] = found
+    return found
 
 
 # The data-theft and instruction-planting phrasings (steal / harvest / exfiltrate / read-then-send /
@@ -329,7 +350,15 @@ def _paragraph_start(text: str, line_start: int) -> int:
     return start
 
 
-def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False) -> bool:
+def _is_quoted_citation(
+    text: str,
+    start: int,
+    end: int,
+    *,
+    prose: bool = False,
+    memo: dict | None = None,
+    bounds: tuple[int, int] | None = None,
+) -> bool:
     """True if the matched span is being *cited* rather than issued as a live directive.
 
     Two forms (the use–mention distinction: quoted text is mentioned, not asserted):
@@ -366,21 +395,45 @@ def _is_quoted_citation(text: str, start: int, end: int, *, prose: bool = False)
         return True
     if not prose:
         return False
-    line_start = text.rfind("\n", 0, start) + 1
-    line_end = text.find("\n", end)
-    if line_end == -1:
-        line_end = len(text)
-    if not _CITATION_CUE.search(text[_paragraph_start(text, line_start):line_end]):
+    line_start, line_end = bounds or _line_span(text, start, end)
+    key = ("cue", line_start, line_end)  # the cue depends on the paragraph alone; see memo above
+    cued = memo.get(key) if memo is not None else None
+    if cued is None:
+        cued = bool(_CITATION_CUE.search(text[_paragraph_start(text, line_start):line_end]))
+        if memo is not None:
+            memo[key] = cued
+    if not cued:
         return False
-    line_before = text[line_start:start]
+    marks = _quote_marks(text, line_start, line_end, memo)
     for opener, closer in _ENCLOSING_QUOTE_PAIRS.items():
+        opened = bisect.bisect_left(marks[opener], start)  # quote marks on the line before it
         if opener == closer:
             # Symmetric quote: an odd count before the match means a span is open at the match.
-            if line_before.count(opener) % 2 == 1:
+            if opened % 2 == 1:
                 return True
-        elif line_before.count(opener) > line_before.count(closer):
+        elif opened > bisect.bisect_left(marks[closer], start):
             return True
     return False
+
+
+_QUOTE_MARK = re.compile("[" + "".join(sorted({*_ENCLOSING_QUOTE_PAIRS,
+                                               *_ENCLOSING_QUOTE_PAIRS.values()})) + "]")
+
+
+def _quote_marks(text: str, line_start: int, line_end: int, memo: dict | None) -> dict:
+    """Offsets of each quote mark on one line, so counting those before a match is a lookup.
+
+    Counting them again in the text before each match was quadratic on a long line.
+    """
+    key = ("marks", line_start, line_end)
+    marks = memo.get(key) if memo is not None else None
+    if marks is None:
+        marks = {ch: [] for ch in (*_ENCLOSING_QUOTE_PAIRS, *_ENCLOSING_QUOTE_PAIRS.values())}
+        for m in _QUOTE_MARK.finditer(text, line_start, line_end):
+            marks[m.group()].append(m.start())
+        if memo is not None:
+            memo[key] = marks
+    return marks
 
 
 class PromptSurfaceScanner(Scanner):
@@ -465,13 +518,17 @@ class PromptSurfaceScanner(Scanner):
                 )
             )
 
+        line_memos: dict[str, dict] = {}  # per file: answers that depend on the line alone
+
         def classify(f: IndexedFile, start: int, end: int, ev: Evidence) -> None:
             # A match wrapped in quotes is a cited example, a line that guards against injection
             # is a defence, and a theft phrase with an attacker as its subject is a threat
             # description: all go to needs_review (ambiguous), never scored.
-            if _is_quoted_citation(f.text, start, end, prose=_is_prose(f)) or (
-                _is_defensive_frame(f.text, start, end)
-            ):
+            memo = line_memos.setdefault(f.relpath, {})
+            bounds = f.line_bounds(start, end)
+            if _is_quoted_citation(
+                f.text, start, end, prose=_is_prose(f), memo=memo, bounds=bounds
+            ) or _is_defensive_frame(f.text, start, end, memo, bounds):
                 review_citation(ev, f.text[start:end])
             elif _is_threat_description(f.text, start, end):
                 review_citation(ev, f.text[start:end], described=True)
