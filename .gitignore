@@ -5,6 +5,9 @@ __pycache__/
 .eggs/
 build/
 dist/
+# Eval-corpus samples are package trees: their build/ and dist/ are part of the sample.
+!tests/eval_corpus/**/build/
+!tests/eval_corpus/**/dist/
 *.egg
 
 # Virtual environments
