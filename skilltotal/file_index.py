@@ -1004,6 +1004,22 @@ MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
 # Checking the WHOLE file dropped bundled `dist/*.js` that carried a single NUL inside a string
 # literal deep in the file -- and with the file, every finding in it, including the MCP surface.
 _BINARY_SNIFF_BYTES = 8000
+# Code whose interpreter runs the file even with a NUL byte in it: Node reads a NUL inside a
+# comment or a string, Python's `site` runs the import lines of a .pth file whatever else it holds,
+# and a shell skips NULs. For these a NUL does not make the file binary: it is read as a space, so a
+# stray byte cannot buy a clean report, and every line stays where it was.
+_NUL_TOLERANT_SUFFIXES = frozenset(
+    {".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".pth", ".sh", ".bash"}
+)
+
+
+def _sniffed_text(name: str, raw: bytes) -> str | None:
+    """The file's text, or None when the sniff says it is binary."""
+    if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:
+        if Path(name).suffix.lower() not in _NUL_TOLERANT_SUFFIXES:
+            return None
+        raw = raw.replace(b"\x00", b" ")
+    return raw.decode("utf-8", errors="replace")
 
 # Maximum characters kept in an evidence snippet (protects against minified one-liners).
 MAX_SNIPPET_CHARS = 240
@@ -1599,10 +1615,10 @@ class FileIndex:
                 raw = path.read_bytes()
             except OSError:
                 continue
-            if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:  # git-style sniff; see the constant
+            text = _sniffed_text(path.name, raw)  # git-style sniff; see the constant
+            if text is None:
                 stats["skipped_binary"] += 1
                 continue
-            text = raw.decode("utf-8", errors="replace")
             # Strip a leading UTF-8 BOM (common in Windows-authored configs). Left in, it breaks
             # JSON parsing of manifests (e.g. an MCP config → missed ST-MCP-* findings) and is
             # mis-flagged as hidden zero-width Unicode. It precedes line 1, so line offsets are
@@ -1647,9 +1663,10 @@ class FileIndex:
                 raw = path.read_bytes()
             except OSError:
                 continue
-            if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:
+            text = _sniffed_text(path.name, raw)
+            if text is None:
                 continue
-            text = raw.decode("utf-8", errors="replace").removeprefix("﻿")
+            text = text.removeprefix("﻿")
             files.append(IndexedFile(path=path, relpath=relpath, text=text,
                                      _line_starts=cls._compute_line_starts(text)))
             stats["indexed"] += 1
