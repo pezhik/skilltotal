@@ -168,7 +168,9 @@ What happens to the install:
   - an install inside a `node -e` or `python -c` one-liner
   - a direct archive URL
   - a git ref the scan cannot reproduce exactly
-  - a check that failed or did not finish within the 20 seconds that all checks of one command share
+  - a check that failed
+  - a check that did not finish within the 60 seconds that all checks of one command share (it
+    goes on in the background, so the same command, run again once it is done, gets its verdict)
   - the sixth and later packages in one command
   - a package name a letter or two away from a popular one
   - a package with an install script SkillTotal could not read, or with nothing it could read
@@ -177,17 +179,23 @@ What happens to the install:
   that was checked and its score.
 
 Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) are scanned
-at the ref that will be installed. A first check takes a second or two for a small package, about
-10 seconds for one the size of `typescript` or `lodash`, and close to a minute or more for the
-largest (`openai` and `django` ship about 2,000 files each). All checks of one command share
-20 seconds, and Claude Code asks you about any package not checked in time. To wait longer, set
-`SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). A verdict is reused for the same artifact (an
-exact npm release or PyPI file for a week, a git repository for an hour), so repeated
-`npx prettier` or `uvx ruff` calls don't trigger a rescan. When the engine version changes,
-everything is scanned again. In an unattended run (`claude -p`), Claude Code turns a question
-nobody can answer into a denial, so a package the hook could not check is not installed there; give
-large packages more time with the same variable. The plugin also adds a `/skilltotal:scan <target>`
-command and registers the MCP server described below.
+at the ref that will be installed. A verdict is reused for the same artifact (an exact npm release
+or PyPI file for a week, a git repository for an hour), so repeated `npx prettier` or `uvx ruff`
+calls don't trigger a rescan. When the engine version changes, everything is scanned again.
+
+A first check takes a second or two for a small package, about 10 seconds for one the size of
+`typescript` or `lodash`, and two to three minutes for the largest common ones, such as `openai`
+and `django` (about 2,000 files each). All checks of one command share 60 seconds; to wait longer
+before asking, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). Once a package is downloaded,
+the hook uses its size to estimate how long the check will take. If that does not fit in the time
+left, Claude Code asks you right away instead of waiting it out. A check the hook stops waiting for
+goes on in the background (two at a time at most, for up to 20 minutes) and saves its verdict, so
+the same command, run again once it is done, gets that verdict at once.
+
+In an unattended run (`claude -p`), Claude Code turns a question nobody can answer into a denial,
+so a package that has not been checked yet is not installed there. Once its background check is
+done, the same command goes through if the package is clean. The plugin also adds a
+`/skilltotal:scan <target>` command and registers the MCP server described below.
 
 The plugin calls the CLI, so install the CLI where Claude Code can find it: `skilltotal --version`
 should work in the terminal you start Claude Code from. If the CLI is missing or fails to start,
