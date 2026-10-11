@@ -19,7 +19,7 @@ Each is modeled on a documented, real-world attack technique — built from the 
 not from SkillTotal's own rules, so they probe for real gaps. All endpoints are
 non-existent `.test` domains and payloads are inert; SkillTotal only analyzes statically.
 
-| Fixture | Real-world technique | Engine result (0.47.0 / ruleset 51; capability findings omitted) |
+| Fixture | Real-world technique | Engine result (0.63.0 / ruleset 67, same as 0.47.0 / ruleset 51; capability findings omitted) |
 |---------|----------------------|------------------------|
 | `agent-instruction-override/` | **Prompt injection in agent instructions** (`AGENTS.md`): "ignore previous instructions", "do not tell the user", collect tokens / read credentials, send to webhook. | `ST-PROMPT-INJECTION` -> **malicious verdict**, risk low (10) |
 | `mcp-tool-poisoning/` | **MCP Tool Poisoning** (Invariant Labs, Apr 2025): hidden instructions in a tool `description`/`inputSchema` that the model reads but the user never sees, telling the agent to read `~/.ssh`/`~/.aws` and hide it. | `ST-MCP-TOOL-POISONING`, `ST-SENS-PATH` -> **malicious verdict**, risk medium (40) |
