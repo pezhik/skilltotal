@@ -21,8 +21,8 @@ only through files in the check's directory:
     cwd/          the empty directory both processes run in
     scan.json     what to scan, the hook's process id and the ceiling (written by the hook)
     size          how much text the scan is about to read, in megabytes (written by the scan as
-                  soon as it knows; the hook stops waiting at once when that says it can't wait
-                  long enough)
+                  soon as it knows; the hook stops waiting at once when that says the scan cannot
+                  finish in the time left)
     report.json   the report (written by the scan)
     job.json      where and under which key to record the verdict (written by the hook when it
                   stops waiting)
@@ -75,9 +75,9 @@ _CREATE_NO_WINDOW = 0x08000000
 
 # How long a scan takes once it knows its size: seconds ~ _SCAN_FIXED_S + _SCAN_S_PER_MB * MB, the
 # megabytes of readable text it reports (``tree_size``, whole megabytes). Measured on 2026-10-11 on
-# an Intel i7-3770 (4 cores) with Windows 11 and Python 3.14, twice, while other work kept the CPU
-# busy as it is on an agent's machine: seconds from the size report to the report, and seconds to
-# fetch and extract the package before it.
+# an Intel i7-3770 (4 cores) with Windows 11 and Python 3.14, on 16 packages, 12 of them twice,
+# while other work kept the CPU busy as it is on an agent's machine: seconds from the size report
+# to the report, and seconds to fetch and extract the package before it.
 #
 #     package                      readable MB   after the size, s   fetch, s
 #     npm express 5.3.0                   0.07        0.6 /   0.6      1 /  1
