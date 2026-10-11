@@ -1,0 +1,3 @@
+# The sdist carries the package, not the test suite: the tests need fixtures and an eval corpus
+# that stay in the repository, and their synthetic attack strings would only trip other scanners.
+prune tests

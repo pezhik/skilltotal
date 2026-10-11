@@ -246,7 +246,7 @@ def _two_row_dataset(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 def test_calibrate_reports_each_row_as_it_starts(tmp_path, capsys):
-    # deploy.ps1 tails these lines to show how far the ~85-minute release calibration has got.
+    # The release script tails these lines to show how far the ~85-minute calibration has got.
     csv_path, a, b = _two_row_dataset(tmp_path)
     progress = io.StringIO()
     calibrate.calibrate(csv_path, progress=progress)
