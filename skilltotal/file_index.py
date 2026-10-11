@@ -807,6 +807,15 @@ def _python_agent_facing_spans(
             return target.attr
         return target.id if isinstance(target, ast.Name) else ""
 
+    # A description kept in a module-level name (`HINT = "..." + "..."`, then
+    # `@mcp.tool(description=HINT)`) is the same text the model reads.
+    module_values = {
+        stmt.targets[0].id: stmt.value
+        for stmt in tree.body
+        if isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+    }
     spans: list[tuple[int, int]] = []
     regions: list[tuple[int, int]] = []
     for node in ast.walk(tree):
@@ -823,6 +832,8 @@ def _python_agent_facing_spans(
                     for kw in dec.keywords:
                         if kw.arg in ("description", "title"):
                             spans.append(span(kw.value))
+                            if isinstance(kw.value, ast.Name) and kw.value.id in module_values:
+                                spans.append(span(module_values[kw.value.id]))
             # The tool's return value is exactly what an MCP client hands back to the model as
             # the call result -- a poisoning phrase built there at runtime (not just in the
             # static description) still reaches the agent (Deadbugz, August 2026: a server stays
