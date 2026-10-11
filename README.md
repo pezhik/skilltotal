@@ -160,14 +160,17 @@ What happens to the install:
   that was checked and its score.
 
 Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) are scanned
-at the ref that will be installed. A verdict is reused for the same artifact (an exact npm release
+at the ref that will be installed. A first check takes a second or two for a small package, about
+10 seconds for one the size of `typescript` or `lodash`, and close to a minute or more for the
+largest (`openai` and `django` ship about 2,000 files each). All checks of one command share 20
+seconds, and a package not checked in time is asked about; set `SKILLTOTAL_HOOK_BUDGET` (in
+seconds, up to 100) to wait longer. A verdict is reused for the same artifact (an exact npm release
 or PyPI file for a week, a git repository for an hour), so repeated `npx tsc` or `npx prettier`
-calls don't trigger a rescan. When the engine version changes, everything is scanned again. For
-large packages, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100) to wait longer than 20
-seconds. In an unattended run (`claude -p`), Claude Code turns a question nobody can answer into a
-denial, so a package the hook could not check is not installed there; give large packages more
-time with the same variable. The plugin also adds a `/skilltotal:scan <target>` command and
-registers the MCP server described below.
+calls don't trigger a rescan. When the engine version changes, everything is scanned again. In an
+unattended run (`claude -p`), Claude Code turns a question nobody can answer into a denial, so a
+package the hook could not check is not installed there; give large packages more time with the
+same variable. The plugin also adds a `/skilltotal:scan <target>` command and registers the MCP
+server described below.
 
 The plugin calls the CLI, so install the CLI where Claude Code can find it: `skilltotal --version`
 should work in the terminal you start Claude Code from. If the CLI is missing or fails to start,
