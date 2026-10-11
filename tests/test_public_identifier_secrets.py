@@ -19,6 +19,8 @@ from skilltotal.models import Component
 POSTHOG_PUBLIC = "phc_" + "9aPzNVOhUXbYcmZoLpQrStUvWxYz4k7Qm2Rt8Wn5Hc3J"
 # Solana SPL Token program address: a fixed, on-chain, public constant.
 SOLANA_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+# The USDC mint on Solana: an on-chain address every wallet shows.
+USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
 
 def _report(tmp_path, code: str, name: str = "index.ts"):
@@ -46,6 +48,19 @@ def test_posthog_key_is_still_disclosed(tmp_path):
 def test_solana_program_address_is_not_a_secret(tmp_path):
     report = _report(tmp_path, f'const SPL_TOKEN = "{SOLANA_PROGRAM}";')
     assert "ST-SECRET-EMBEDDED" not in _ids(report)
+
+
+def test_a_solana_mint_named_as_a_mint_is_not_a_secret(tmp_path):
+    # The `mint` word boundaries in the context pattern had been written as two backspace bytes
+    # since ruleset 45, so "mint" never matched and a token's mint address read as a secret.
+    report = _report(tmp_path, f'// USDC mint\nconst token = "{USDC_MINT}";')
+    assert "ST-SECRET-EMBEDDED" not in _ids(report)
+
+
+def test_mint_only_counts_as_a_word(tmp_path):
+    # "peppermint" is not a mint; the word boundaries are the point.
+    report = _report(tmp_path, f'// peppermint\nconst token = "{USDC_MINT}";')
+    assert "ST-SECRET-EMBEDDED" in _ids(report)
 
 
 def test_a_solana_keypair_is_still_a_secret(tmp_path):

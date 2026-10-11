@@ -223,7 +223,7 @@ def _is_public_analytics_key(value: str) -> bool:
 # material in scope. The adjacent naming requirement keeps ordinary base58 blobs out.
 _BASE58 = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 _CHAIN_ADDRESS_CTX = re.compile(
-    r"(?i)solana|spl[_-]?token|program[_-]?id|mint|pubkey|public[_-]?key|wallet|address"
+    r"(?i)solana|spl[_-]?token|program[_-]?id|\bmint\b|pubkey|public[_-]?key|wallet|address"
 )
 
 
