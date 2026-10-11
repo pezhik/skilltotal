@@ -1853,3 +1853,127 @@ def test_a_resolved_pypi_release_is_kept_for_a_week(tmp_path, monkeypatch):
     clock[0] += 3 * 24 * 3600
     cli._hook_scan_cached("pypi:x", 20)
     assert calls == ["pypi:x==1.0"]
+
+
+# --- Every way to point an installer elsewhere, on every way to install -------------------------
+
+REG = "https://registry.example.invalid"
+IDX = "https://pypi.example.invalid/simple"
+
+NPM_PATHS = [
+    "npm i lodash", "npm install lodash", "npx lodash", "npx -y lodash", "npm exec lodash",
+    "npm x -- lodash", "pnpm add lodash", "pnpm dlx lodash", "pnpm exec npm i lodash",
+    "yarn add lodash", "yarn dlx lodash", "bun add lodash", "bun x lodash", "bunx lodash",
+    "pnpx lodash", "npm init lodash", "corepack pnpm add lodash",
+    "claude mcp add srv -- npx -y lodash",
+]
+NPM_FORMS = [
+    f"npm_config_registry={REG} {{c}}",
+    f"export NPM_CONFIG_REGISTRY={REG}; {{c}}",
+    f"env npm_config_registry={REG} {{c}}",
+    "npm_config_userconfig=./custom.npmrc {c}",
+    "npm_config_globalconfig=./custom.npmrc {c}",
+    f"YARN_REGISTRY={REG} {{c}}",
+    f"BUN_CONFIG_REGISTRY={REG} {{c}}",
+    f"{{c}} --registry={REG}",
+    f"{{c}} --reg {REG}",
+    f"{{c}} -registry={REG}",
+    "{c} --userconfig ./custom.npmrc",
+    "{c} --globalconfig=./custom.npmrc",
+]
+PY_PATHS = [
+    "pip install requests", "pip3 install requests", "python -m pip install requests",
+    "python3 -m pip install requests", "uv pip install requests", "uv add requests",
+    "uv tool install requests", "uv run --with requests x.py", "uvx requests",
+    "uv tool run requests", "pipx install requests", "pipx run requests",
+    "claude mcp add srv -- uvx requests",
+]
+PY_FORMS = [
+    f"PIP_INDEX_URL={IDX} {{c}}",
+    f"PIP_EXTRA_INDEX_URL={IDX} {{c}}",
+    f"PIP_FIND_LINKS={IDX} {{c}}",
+    "PIP_CONFIG_FILE=./custom.conf {c}",
+    f"export UV_INDEX_URL={IDX}; {{c}}",
+    f"UV_EXTRA_INDEX_URL={IDX} {{c}}",
+    f"UV_DEFAULT_INDEX={IDX} {{c}}",
+    f"UV_INDEX={IDX} {{c}}",
+    f"UV_FIND_LINKS={IDX} {{c}}",
+    "UV_CONFIG_FILE=./uv.toml {c}",
+    f"{{c}} --index-url {IDX}",
+    f"{{c}} -i {IDX}",
+    f"{{c}} --extra-index-url={IDX}",
+    f"{{c}} --find-links {IDX}",
+    f"{{c}} -f {IDX}",
+    f"{{c}} --index {IDX}",
+    f"{{c}} --default-index {IDX}",
+    f"{{c}} --ind {IDX}",
+]
+
+
+def test_a_package_manager_option_with_an_e_or_a_p_is_not_code():
+    # `bun -e CODE` runs code; `bun x -p pkg cmd` and `bun add x -registry=...` do not.
+    assert install_targets("bun x -p evil-pkg cmd") == ["npm:evil-pkg"]
+    assert "can't check" in _ask_without_scan(f"bun add lodash -registry={REG}")
+
+
+@pytest.mark.parametrize("path", NPM_PATHS)
+@pytest.mark.parametrize("form", NPM_FORMS)
+def test_every_npm_override_asks_on_every_npm_path(form, path):
+    assert "can't check" in _ask_without_scan(form.format(c=path))
+
+
+@pytest.mark.parametrize("path", PY_PATHS)
+@pytest.mark.parametrize("form", PY_FORMS)
+def test_every_index_override_asks_on_every_python_path(form, path):
+    assert "can't check" in _ask_without_scan(form.format(c=path))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        f"$env:npm_config_registry = '{REG}'; npx -y lodash",
+        f"$env:PIP_INDEX_URL = '{IDX}'; python -m pip install requests",
+        f"$env:UV_DEFAULT_INDEX = '{IDX}'; uvx requests",
+        f"[Environment]::SetEnvironmentVariable('npm_config_registry', '{REG}'); npm i lodash",
+        f"Set-Item env:NPM_CONFIG_REGISTRY '{REG}'; pnpm add lodash",
+    ],
+)
+def test_powershell_environment_overrides_ask(command):
+    assert "can't check" in _ask_without_scan(command, "powershell")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The server's environment in an add-json config, JSON escapes and all.
+        "claude mcp add-json srv '{\"command\": \"npx\", \"args\": [\"-y\", \"lodash\"], "
+        "\"env\": {\"npm_config_registry\": \"" + REG + "\"}}'",
+        "claude mcp add-json srv '{\"command\": \"npx\", \"args\": [\"-y\", \"lodash\"], "
+        "\"env\": {\"npm_config_reg\\u0069stry\": \"" + REG + "\"}}'",
+        "claude mcp add-json srv '{\"command\": \"uvx\", \"args\": [\"requests\"], "
+        "\"env\": {\"UV_INDEX_URL\": \"" + IDX + "\"}}'",
+        # `claude mcp add -e` sets the server's environment.
+        f"claude mcp add -e npm_config_registry={REG} srv -- npx -y lodash",
+        f"claude mcp add srv -e PIP_INDEX_URL={IDX} -- uvx requests",
+    ],
+)
+def test_an_mcp_server_environment_that_picks_a_registry_asks(command):
+    assert "can't check" in _ask_without_scan(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # The command writes the installer's configuration, then installs.
+        f"echo registry={REG} > .npmrc && npm i lodash",
+        f"npm config set registry {REG} && npx -y lodash",
+        f"npm set registry {REG}; npm i lodash",
+        f"pnpm config set registry {REG} && pnpm add lodash",
+        f"yarn config set registry {REG} && yarn add lodash",
+        f"printf '[global]\\nindex-url = {IDX}\\n' > pip.conf && pip install requests",
+        f"pip config set global.index-url {IDX} && pip install requests",
+        "echo '[[index]]' > uv.toml && uv add requests",
+    ],
+)
+def test_a_command_that_writes_the_installer_config_asks(command):
+    assert "can't check" in _ask_without_scan(command)

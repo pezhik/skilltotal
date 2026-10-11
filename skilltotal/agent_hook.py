@@ -297,6 +297,7 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
         for position, stage in enumerate(pipeline, 1):
             seen.extend(stage.words)
             words, strings = _redirects(_expand_aliases(stage.words, aliases, shell))
+            seen.extend(_configures(stage.words))
             if _sets_computed_name(words):
                 # `a=npm_config_; export ${a}registry=...`: a variable name built from parts the
                 # line holds counts as the registry variable those parts could spell.
@@ -361,6 +362,36 @@ def _ps_named(args: list[str], names: tuple[str, ...]) -> tuple[dict[str, str], 
         positional.append(arg)
         i += 1
     return named, positional
+
+
+# Configuration files an installer reads its registry or index from.
+_NPM_CONFIG_FILES = (".npmrc", ".yarnrc", ".yarnrc.yml", "bunfig.toml")
+_PY_CONFIG_FILES = ("pip.conf", "pip.ini", "uv.toml", ".pydistutils.cfg", "pydistutils.cfg")
+
+
+def _configures(words: list[str]) -> list[str]:
+    """Stand-ins for the registry variables when a command writes the installer's configuration
+    (``echo registry=... > .npmrc``, ``npm config set registry ...``, ``pip config set
+    global.index-url ...``): an install after it in the line reads that configuration. A word
+    naming the file counts, whatever the command does with it."""
+    out: list[str] = []
+    names = [word.replace("\\", "/").rsplit("/", 1)[-1].lower() for word in words]
+    if any(name.endswith(_NPM_CONFIG_FILES) for name in names):
+        out.append("npm_config_registry")
+    if any(name.endswith(_PY_CONFIG_FILES) for name in names):
+        out.append("pip_index_url")
+    command = _unwrap(_redirects(words)[0])
+    head = _base(command[0]) if command else ""
+    rest = [w.lower() for w in command[1:4]]
+    if head in ("npm", "pnpm", "yarn", "bun") and "set" in rest and (
+            "config" in rest or rest[:1] == ["set"]):
+        out.append("npm_config_registry")
+    if (_PIP_HEAD.fullmatch(head) or head == "uv") and "config" in rest:
+        out.append("pip_index_url")
+    if _PYTHON_HEAD.fullmatch(head) and "config" in rest and "pip" in [w.lower() for w in
+                                                                       command[1:4]]:
+        out.append("pip_index_url")
+    return out
 
 
 # Commands that set variables, and whether one of the names is computed: `export ${a}x=1`.
@@ -1228,7 +1259,7 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _xargs(rest, shell, depth, level, feed)
     if head == "find":
         return _find_exec(rest, shell, depth, level)
-    if head in _CODE_OPTIONS and (head != "bun" or _code_args(rest, *_CODE_OPTIONS["bun"])):
+    if head in _CODE_OPTIONS and (head != "bun" or _code_args(rest[:1], *_CODE_OPTIONS["bun"])):
         return _interpreter(head, rest, feed)
     if shell == "powershell" and head in _PS_START:
         started = _start_process(rest)
@@ -1425,7 +1456,11 @@ def _add_json(args: list[str], shell: str, depth: int, level: _Level) -> list[In
             continue  # a remote server: nothing is installed
         words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
             isinstance(extra, list)) else [command]
-        found.update(dict.fromkeys(_launched(["<name>", *words], shell, depth, level)))
+        items = _launched(["<name>", *words], shell, depth, level)
+        env = config.get("env")
+        if isinstance(env, dict):  # the server's environment, after JSON escapes are decoded
+            items = _registry_from_env(items, [f"{key}={value}" for key, value in env.items()])
+        found.update(dict.fromkeys(items))
     return list(found) if configs else unreadable
 
 
@@ -1845,15 +1880,17 @@ def _py_option(arg: str, tool: str) -> tuple[bool, bool, str | None]:
     the next word, and its value when written in the same word.
 
     pip (like pipx) takes any unambiguous prefix of a long option (``--ind``) and a short option's
-    value glued on (``-ihttps://...``), after flags (``-Ui URL``); uv takes the exact names.
+    value glued on (``-ihttps://...``), after flags (``-Ui URL``). Every Python installer is read
+    with pip's prefixes and uv's names together: one that does not take an option fails on it,
+    so reading it as an index costs nothing. uv's own ``--extra <name>`` is not an index.
     """
     if arg.startswith("--"):
         name, eq, attached = arg[2:].partition("=")
         name = name.lower()
-        if tool == "pip":
-            source = bool(name) and any(option.startswith(name) for option in _PIP_SOURCE_OPTIONS)
-        else:
-            source = name in _UV_SOURCE_OPTIONS
+        source = bool(name) and (
+            name in _UV_SOURCE_OPTIONS
+            or (any(option.startswith(name) for option in _PIP_SOURCE_OPTIONS)
+                and not (tool == "uv" and name == "extra")))
         takes = not eq and (source or arg in _PIP_VALUE_FLAGS or arg in _UV_VALUE_FLAGS)
         return source, takes, (attached if eq else None)
     if arg.startswith("-") and len(arg) > 1:
