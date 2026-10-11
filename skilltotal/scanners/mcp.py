@@ -186,15 +186,25 @@ _BROAD_SCOPE = re.compile(
 
 
 def _iter_scope_values(data: object):
-    """Yield (key, value) for any permission/scope-bearing key anywhere in a manifest."""
-    if isinstance(data, dict):
-        for k, v in data.items():
-            if isinstance(k, str) and k.lower() in _SCOPE_KEYS:
-                yield k, v
-            yield from _iter_scope_values(v)
-    elif isinstance(data, list):
-        for item in data:
-            yield from _iter_scope_values(item)
+    """Yield (key, value) for any permission/scope-bearing key anywhere in a manifest.
+
+    Depth-first in document order, with an explicit stack: json accepts nesting far deeper than
+    a recursive walk survives (thousands of levels on Python 3.14), and a manifest must not be
+    able to stop its own analysis that way.
+    """
+    stack = [iter([(None, data)])]
+    while stack:
+        pair = next(stack[-1], None)
+        if pair is None:
+            stack.pop()
+            continue
+        key, value = pair
+        if isinstance(key, str) and key.lower() in _SCOPE_KEYS:
+            yield key, value
+        if isinstance(value, dict):
+            stack.append(iter(value.items()))
+        elif isinstance(value, list):
+            stack.append((None, item) for item in value)
 
 
 def _is_broad_scope(value: object) -> bool:
@@ -446,25 +456,24 @@ class McpScanner(Scanner):
 
         for f in index.select(suffixes=(".json",)):
             is_manifest_name = f.name.lower() in MANIFEST_NAMES
+            looks_like_manifest = (
+                is_manifest_name or "mcpServers" in f.text or '"tools"' in f.text
+            )
             try:
                 data = json.loads(f.text)
-            except (json.JSONDecodeError, ValueError) as exc:
-                if is_manifest_name or "mcpServers" in f.text or '"tools"' in f.text:
-                    needs_review.append(
-                        NeedsReview(
-                            category=CATEGORY,
-                            title="Unparseable potential MCP manifest",
-                            reason="File resembles an MCP manifest but is not valid JSON.",
-                            file=f.relpath,
-                            line=getattr(exc, "lineno", None),
-                        )
-                    )
+            except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+                if looks_like_manifest:
+                    needs_review.append(_unparseable_manifest(f, exc))
                 continue
 
-            self._analyze_json(
-                f, data, is_manifest_name, detected, dangerous, server_exec,
-                poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
-            )
+            try:
+                self._analyze_json(
+                    f, data, is_manifest_name, detected, dangerous, server_exec,
+                    poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
+                )
+            except RecursionError as exc:  # a value nested too deep to turn into text
+                if looks_like_manifest:
+                    needs_review.append(_unparseable_manifest(f, exc))
 
         # Source-level tool definitions (Python / JS decorators & SDK calls).
         for _f, _m, ev in index.search(_CODE_SURFACE):
@@ -727,7 +736,7 @@ class McpScanner(Scanner):
                 continue
             try:
                 data = json.loads(f.text)
-            except (json.JSONDecodeError, ValueError):
+            except (json.JSONDecodeError, ValueError, RecursionError):
                 continue
             if isinstance(data, dict) and isinstance(data.get("mcpName"), str):
                 return NeedsReview(
@@ -812,6 +821,22 @@ class McpScanner(Scanner):
             evidence=evidence[:MAX_EVIDENCE_SCANNED],
             recommendation=rule.recommendation,
         )
+
+
+def _unparseable_manifest(f: IndexedFile, exc: Exception) -> NeedsReview:
+    """A file that looks like an MCP manifest but could not be analyzed as JSON."""
+    reason = (
+        "File resembles an MCP manifest but is nested too deeply to parse."
+        if isinstance(exc, RecursionError)
+        else "File resembles an MCP manifest but is not valid JSON."
+    )
+    return NeedsReview(
+        category=CATEGORY,
+        title="Unparseable potential MCP manifest",
+        reason=reason,
+        file=f.relpath,
+        line=getattr(exc, "lineno", None),
+    )
 
 
 def _evidence_for(f: IndexedFile, needle: str, start: int = 0) -> Evidence | None:

@@ -465,18 +465,26 @@ class PythonAstScanner(Scanner):
         for f in index.select(suffixes=PY_SUFFIXES):
             try:
                 tree = ast.parse(f.text, filename=f.relpath)
-            except SyntaxError as exc:
+            # ValueError: a NUL byte on older Pythons. RecursionError / MemoryError: nesting
+            # deeper than the parser's own stack (`x = 1+1+...`), which a file can force.
+            except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
                 self._regex_fallback(f, acc)
-                unparseable.append((f.relpath, exc.lineno))
+                unparseable.append((f.relpath, getattr(exc, "lineno", None)))
                 continue
-            visitor = _CallVisitor(f)
-            visitor.visit(tree)
+            try:
+                visitor = _CallVisitor(f)
+                visitor.visit(tree)
+                taint = _TaintVisitor(f)
+                taint.analyze(tree)
+            except RecursionError:
+                # Parsed, but nested deeper than the visitors can walk: read like unparseable
+                # source, so nothing half-visited is reported.
+                self._regex_fallback(f, acc)
+                unparseable.append((f.relpath, None))
+                continue
             for rid, evidence in visitor.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
             dynamic_imports.extend((ev.file, ev.line_start) for ev in visitor.dynamic_imports)
-
-            taint = _TaintVisitor(f)
-            taint.analyze(tree)
             for rid, evidence in taint.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
 

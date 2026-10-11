@@ -14,9 +14,11 @@ import bisect
 import fnmatch
 import io
 import json
+import os
 import re
+import stat
 import tokenize
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -130,7 +132,7 @@ def _is_codeless_source_map(filename: str, text: str) -> bool:
         return False
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):  # nested deeper than json can parse: read it as text
         return False
     if not (isinstance(data, dict) and set(data) <= _SOURCE_MAP_KEYS):
         return False
@@ -169,6 +171,104 @@ def _is_skipped_dir(part: str, *, skip_build_output: bool = True) -> bool:
     if skip_build_output and part in BUILD_OUTPUT_DIRS:
         return True
     return part in SKIP_DIRS or part.startswith("vendored-")
+
+
+# A Windows reparse tag with this bit stands for another path: a symbolic link, a junction, a
+# mount point. Other reparse points (cloud-file placeholders, deduplicated files) are the file
+# itself, so a component in a synced folder is still read.
+_REPARSE_NAME_SURROGATE = 0x20000000
+
+
+def _stat_is_link(st: os.stat_result) -> bool:
+    """True for an ``lstat`` result that is a link rather than a file or directory of its own.
+
+    On Windows a junction is not a symbolic link (``S_ISLNK`` is false and Python < 3.12 has no
+    ``is_junction``); it shows as a reparse point whose tag stands for another path.
+    """
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    attributes = getattr(st, "st_file_attributes", 0)
+    return bool(attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT) and bool(
+        getattr(st, "st_reparse_tag", 0) & _REPARSE_NAME_SURROGATE
+    )
+
+
+def is_link(path: Path) -> bool:
+    """True when ``path`` itself is a symbolic link or a Windows junction (it is not followed)."""
+    try:
+        return _stat_is_link(os.lstat(path))
+    except (OSError, ValueError):
+        return False
+
+
+def is_regular_file(path: Path) -> bool:
+    """True when ``path`` is a regular file in its own right, not a link to one.
+
+    Manifest checks use this instead of ``exists()``: a ``package.json`` that is a link can point
+    at any file on the machine that runs the scan, and a directory of that name is no manifest.
+    """
+    try:
+        st = os.lstat(path)
+    except (OSError, ValueError):
+        return False
+    return stat.S_ISREG(st.st_mode) and not _stat_is_link(st)
+
+
+def _entry_is_link(entry: os.DirEntry) -> bool:
+    if entry.is_symlink():
+        return True
+    # A junction is visible only through its reparse data, which Windows hands over with the
+    # directory listing; elsewhere `is_symlink` is the whole answer and costs no extra call.
+    return os.name == "nt" and _stat_is_link(entry.stat(follow_symlinks=False))
+
+
+def walk_files(
+    root: Path,
+    *,
+    skip: Callable[[str], bool] | None = None,
+    links: list[str] | None = None,
+    unreadable: list[str] | None = None,
+) -> Iterator[Path]:
+    """Every regular file under ``root``, never reached through a link.
+
+    A symbolic link or a Windows junction can point anywhere on the machine that runs the scan --
+    the home directory of whoever runs it -- so neither is entered nor read: its relative path
+    goes to ``links`` instead. A directory or file whose name ``skip`` rejects is passed over
+    without being entered, so a skipped ``node_modules`` (where package managers plant links) is
+    never walked at all. A directory that cannot be listed goes to ``unreadable`` with a trailing
+    ``/``. FIFOs, sockets and devices are not yielded: they hold no content, and opening a FIFO
+    blocks. The walk keeps its own stack, so a deep tree cannot exhaust the recursion limit.
+    """
+    pending: list[tuple[str, ...]] = [()]
+    while pending:
+        parts = pending.pop()
+        try:
+            with os.scandir(root.joinpath(*parts)) as listing:
+                entries = list(listing)
+        except OSError:
+            if unreadable is not None:
+                unreadable.append("/".join(parts) + "/" if parts else "./")
+            continue
+        for entry in entries:
+            if skip is not None and skip(entry.name):
+                continue
+            rel = (*parts, entry.name)
+            try:
+                if _entry_is_link(entry):
+                    if links is not None:
+                        links.append("/".join(rel))
+                    continue
+                is_dir = entry.is_dir(follow_symlinks=False)
+                is_file = not is_dir and entry.is_file(follow_symlinks=False)
+            except OSError:
+                if unreadable is not None:
+                    unreadable.append("/".join(rel))
+                continue
+            if is_dir:
+                pending.append(rel)
+            elif is_file:
+                yield Path(entry.path)
+
 
 # Directory segments and filename patterns that indicate non-shipped test code.
 _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
@@ -663,7 +763,7 @@ def _python_agent_facing_spans(
     """
     try:
         tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack
         return [], []
     lines = text.splitlines(keepends=True)
 
@@ -739,7 +839,7 @@ def _python_docstring_spans(text: str, line_starts: list[int]) -> list[tuple[int
     """
     try:
         tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack
         return []
     lines = text.splitlines(keepends=True)
 
@@ -1560,6 +1660,9 @@ class FileIndex:
         stats: dict[str, int],
         minified: list[str] | None = None,
         git_config: IndexedFile | None = None,
+        *,
+        links: list[str] | None = None,
+        unreadable: list[str] | None = None,
     ):
         self.root = root
         self.files = files
@@ -1570,6 +1673,10 @@ class FileIndex:
         self.git_config = git_config
         # Relative paths of shipped bundles that were deliberately not indexed (see _is_minified).
         self.minified = minified or []
+        # Relative paths of symbolic links and junctions that were not followed (see walk_files).
+        self.links = links or []
+        # Relative paths the walk found but could not read; a directory ends with "/".
+        self.unreadable = unreadable or []
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -1601,12 +1708,16 @@ class FileIndex:
         }
         excludes = tuple(exclude or ())
         always = frozenset(always_index)
+        links: list[str] = []
+        unreadable: list[str] = []
 
-        for path in cls._walk(root, excludes, skip_build_output=skip_build_output):
+        for path in cls._walk(root, excludes, skip_build_output=skip_build_output,
+                              links=links, unreadable=unreadable):
             stats["total_seen"] += 1
             try:
                 size = path.stat().st_size
             except OSError:
+                unreadable.append(path.relative_to(root).as_posix())
                 continue
             if size > MAX_FILE_BYTES:
                 stats["skipped_large"] += 1
@@ -1614,6 +1725,7 @@ class FileIndex:
             try:
                 raw = path.read_bytes()
             except OSError:
+                unreadable.append(path.relative_to(root).as_posix())
                 continue
             text = _sniffed_text(path.name, raw)  # git-style sniff; see the constant
             if text is None:
@@ -1672,29 +1784,49 @@ class FileIndex:
             stats["indexed"] += 1
 
         files.sort(key=lambda f: f.relpath)
-        return cls(root, files, stats, sorted(minified), git_config)
+        return cls(root, files, stats, sorted(minified), git_config,
+                   links=sorted(links), unreadable=sorted(unreadable))
 
     @staticmethod
     def _walk(
-        root: Path, exclude: tuple[str, ...] = (), *, skip_build_output: bool = True
+        root: Path,
+        exclude: tuple[str, ...] = (),
+        *,
+        skip_build_output: bool = True,
+        links: list[str] | None = None,
+        unreadable: list[str] | None = None,
     ) -> Iterator[Path]:
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(root)
-            # `.git/config` is the one file under a skipped VCS directory whose own content is
-            # an auto-exec surface: `core.fsmonitor` names a command git runs on every `status`/
-            # `diff`, before an agent shows a trust prompt (GitSpawn, 2026). Everything else
-            # inside `.git` (objects, refs, hook samples, ...) stays skipped.
-            if rel.parts == (".git", "config"):
-                pass
-            elif any(
-                _is_skipped_dir(part, skip_build_output=skip_build_output) for part in rel.parts
-            ):
-                continue
-            if exclude and _matches_any(rel.as_posix(), exclude):
-                continue
-            yield path
+        """The files to index: everything ``walk_files`` finds outside skipped directories and
+        ``exclude``, plus ``.git/config``. Links and unreadable paths that are not excluded are
+        appended to ``links`` / ``unreadable``."""
+
+        def excluded(relpath: str) -> bool:
+            return bool(exclude) and _matches_any(relpath.rstrip("/"), exclude)
+
+        found_links: list[str] = []
+        found_unreadable: list[str] = []
+        # `.git/config` is the one file under a skipped VCS directory whose own content is an
+        # auto-exec surface: `core.fsmonitor` names a command git runs on every `status`/`diff`,
+        # before an agent shows a trust prompt (GitSpawn, 2026). Everything else inside `.git`
+        # (objects, refs, hook samples, ...) is never walked.
+        dot_git = root / ".git"
+        if is_link(dot_git):
+            found_links.append(".git")
+        elif is_link(dot_git / "config"):
+            found_links.append(".git/config")
+        elif is_regular_file(dot_git / "config") and not excluded(".git/config"):
+            yield dot_git / "config"
+
+        def skipped(name: str) -> bool:
+            return _is_skipped_dir(name, skip_build_output=skip_build_output)
+
+        for path in walk_files(root, skip=skipped, links=found_links, unreadable=found_unreadable):
+            if not excluded(path.relative_to(root).as_posix()):
+                yield path
+        if links is not None:
+            links.extend(rel for rel in found_links if not excluded(rel))
+        if unreadable is not None:
+            unreadable.extend(rel for rel in found_unreadable if not excluded(rel))
 
     @staticmethod
     def _compute_line_starts(text: str) -> list[int]:

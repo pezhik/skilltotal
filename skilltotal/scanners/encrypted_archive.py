@@ -15,7 +15,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from skilltotal.file_index import SKIP_DIRS, FileIndex
+from skilltotal.file_index import SKIP_DIRS, FileIndex, walk_files
 from skilltotal.models import Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -53,11 +53,10 @@ class EncryptedArchiveScanner(Scanner):
 
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
-        for path in sorted(index.root.rglob("*")):
-            if not path.is_file() or path.suffix.lower() not in _ZIP_SUFFIXES:
-                continue
-            rel_parts = path.relative_to(index.root).parts
-            if any(part in SKIP_DIRS for part in rel_parts):
+        # The same link-free walk as the index: an archive behind a symlink or a junction may lie
+        # outside the component.
+        for path in sorted(walk_files(index.root, skip=SKIP_DIRS.__contains__)):
+            if path.suffix.lower() not in _ZIP_SUFFIXES:
                 continue
             count = _encrypted_entry_count(path)
             if count:

@@ -19,6 +19,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -34,7 +35,7 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
-from skilltotal.file_index import neutralize_hidden
+from skilltotal.file_index import is_regular_file, neutralize_hidden, walk_files
 from skilltotal.models import Component
 
 _GIT_URL_RE = re.compile(r"^(?:https?://|git@|ssh://|git://).+", re.IGNORECASE)
@@ -54,8 +55,20 @@ _HTTP_TIMEOUT = 60  # seconds for a registry/download request
 _MAX_ARCHIVE_BYTES = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MB", "150")) * 1024 * 1024
 _MAX_EXTRACT_BYTES = int(os.environ.get("SKILLTOTAL_MAX_EXTRACT_MB", "400")) * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", "30000"))
-# Local archive / single-file sources accepted by `scan <path>` (besides a directory).
-_LOCAL_ARCHIVE_EXTS = (".zip", ".tar.gz", ".tgz", ".tar", ".tar.bz2", ".tar.xz")
+# Local archive sources accepted by `scan <path>` (besides a directory and a single file). Zip is
+# also the container of formats that carry their own extension: Claude Desktop extensions (.mcpb,
+# formerly .dxt), Python wheels and VS Code extensions. Any other local file that starts with the
+# zip signature is extracted as one too.
+_TAR_SUFFIXES = (".tar.gz", ".tgz", ".tar", ".tar.bz2", ".tar.xz")
+_ZIP_SUFFIXES = (".zip", ".mcpb", ".dxt", ".whl", ".vsix")
+_ZIP_MAGIC = b"PK\x03\x04"
+# PEP 706 extraction filters: Python 3.12+, and the security releases that backported them to
+# 3.8-3.11 (where `tarfile.data_filter` exists, so does the `filter=` argument). "data" refuses
+# absolute paths, paths out of the destination and special files, and makes files owner-readable.
+_TAR_FILTER: dict[str, str] = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+# Inflated bytes a tar may hold beyond its members' data: one header block, padding and pax
+# records per member. Past _MAX_EXTRACT_BYTES plus this much, inflating stops (see _BoundedReader).
+_TAR_OVERHEAD_PER_MEMBER = 4096
 # Bound a git clone so a slow/huge remote can't hang the caller (a long-lived server holds a
 # request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
 # blocking forever on an interactive credential prompt for a private/typo'd URL.
@@ -122,6 +135,8 @@ class SourceContext:
     # Set when a browser URL was normalized to scan something other than what was pasted
     # (e.g. a /issues link reduced to the repo's default branch); surfaced in the report.
     note: str | None = None
+    # Archive entries that were deliberately not extracted (links, FIFOs, devices).
+    skipped_entries: int = 0
 
     def __enter__(self) -> SourceContext:
         return self
@@ -225,9 +240,48 @@ def collect(source: str, *, on_size: Callable[[TreeSize], None] | None = None) -
     return _collect_local(source)
 
 
-def _is_archive_name(name: str) -> bool:
-    n = name.lower()
-    return any(n.endswith(ext) for ext in _LOCAL_ARCHIVE_EXTS)
+def _local_archive_kind(path: Path) -> str | None:
+    """``"zip"`` or ``"tar"`` for a local archive, None for any other file.
+
+    A zip is recognized by its signature as well as by its name: read as a single file, a Claude
+    Desktop extension (.mcpb) was one opaque binary, and a malicious server inside it was reported
+    as "No significant risks found" with nothing indexed.
+    """
+    name = path.name.lower()
+    if name.endswith(_ZIP_SUFFIXES):
+        return "zip"
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(len(_ZIP_MAGIC))
+    except OSError as exc:
+        raise _unreadable_source(path, exc) from exc
+    if head == _ZIP_MAGIC:
+        return "zip"
+    if name.endswith(_TAR_SUFFIXES):
+        return "tar"
+    return None
+
+
+def _unreadable_source(path: Path, exc: OSError) -> CollectionError:
+    return CollectionError(
+        f"could not read {neutralize_hidden(path.name)}: {exc.strerror or type(exc).__name__}"
+    )
+
+
+def _archive_identity(filename: str) -> tuple[str, str]:
+    """(name, version) a local archive's own file name gives, for when nothing inside names it.
+
+    A wheel's file name is standardized (``name-version[-build]-python-abi-platform.whl``); any
+    other archive is named after its file without the archive extension, with no version.
+    """
+    lower = filename.lower()
+    suffix = next((s for s in (*_TAR_SUFFIXES, *_ZIP_SUFFIXES) if lower.endswith(s)), None)
+    stem = filename[: -len(suffix)] if suffix else Path(filename).stem
+    if lower.endswith(".whl"):
+        parts = stem.split("-")
+        if len(parts) >= 5:
+            return parts[0], parts[1]
+    return stem or filename, ""
 
 
 def _collect_local(source: str) -> SourceContext:
@@ -248,48 +302,61 @@ def _collect_local(source: str) -> SourceContext:
         # A project archive (zip/tar.gz/…) or a single code file: extract/stage to a temp dir and
         # scan it with the same engine. The display source is the file name (neutralized), never the
         # temp path.
-        if _is_archive_name(root.name):
-            return _collect_local_archive(root)
+        kind = _local_archive_kind(root)
+        if kind is not None:
+            return _collect_local_archive(root, kind)
         return _collect_local_file(root)
     raise CollectionError(f"Path is not a file or directory: {source}")
 
 
-def _collect_local_archive(path: Path) -> SourceContext:
-    if path.stat().st_size > _MAX_ARCHIVE_BYTES:
-        raise CollectionError("archive is too large")
-    data = path.read_bytes()
+def _collect_local_archive(path: Path, kind: str) -> SourceContext:
+    try:
+        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+            raise CollectionError("archive is too large")
+        data = path.read_bytes()
+    except OSError as exc:
+        raise _unreadable_source(path, exc) from exc
     display = neutralize_hidden(path.name)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
         extract_dir = Path(tmp.name) / "x"
         extract_dir.mkdir()
-        if path.name.lower().endswith(".zip"):
-            _safe_extract_zip(data, extract_dir)
+        if kind == "zip":
+            skipped = _safe_extract_zip(data, extract_dir)
         else:  # .tar.gz / .tgz / .tar / .tar.bz2 / .tar.xz
-            _safe_extract_tar(data, extract_dir)
+            skipped = _safe_extract_tar(data, extract_dir)
         root = _single_root(extract_dir)
-        component = detect_component(root, source=display)
+        # Files at the top of the archive (a wheel, an extension bundle) have no folder to be named
+        # after: the archive's own file name stands in, never the temporary directory.
+        name, version = _archive_identity(path.name) if root == extract_dir else (None, "")
+        component = detect_component(root, source=display, default_name=name)
         if component.type == "directory":
             component = replace(component, type="project")
-        return SourceContext(root=root, component=component, _tempdir=tmp)
+        if version and not component.version:
+            component = replace(component, version=neutralize_hidden(version))
+        return SourceContext(root=root, component=component, _tempdir=tmp,
+                             skipped_entries=skipped)
     except Exception:
         tmp.cleanup()
         raise
 
 
 def _collect_local_file(path: Path) -> SourceContext:
-    if path.stat().st_size > _MAX_ARCHIVE_BYTES:
-        raise CollectionError("file is too large")
     display = neutralize_hidden(path.name)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
+        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+            raise CollectionError("file is too large")
         root = Path(tmp.name)
         # path.name is a bare filename; we control `root`, so the destination stays inside it.
         shutil.copy2(path, root / path.name)
-        component = detect_component(root, source=display)
+        component = detect_component(root, source=display, default_name=path.name)
         if component.type == "directory":
             component = replace(component, type="project")
         return SourceContext(root=root, component=component, _tempdir=tmp)
+    except OSError as exc:
+        tmp.cleanup()
+        raise _unreadable_source(path, exc) from exc
     except Exception:
         tmp.cleanup()
         raise
@@ -376,14 +443,15 @@ def _dir_size_bytes(root: Path, *, skip_git: bool = False) -> int:
     ``skip_git`` leaves out ``.git/``: the scan reads the working tree, and a shallow clone's
     pack is roughly a compressed second copy of it, so counting both made a 168 MB checkout
     read as 234 MB and fail the 200 MB limit.
+
+    Links are not followed (a junction could lead anywhere), and the walk keeps its own stack: a
+    repository nested deeper than the recursion limit must not kill the watchdog thread.
     """
     total = 0
-    for p in root.rglob("*"):
-        if skip_git and ".git" in p.relative_to(root).parts:
-            continue
+    skip = (lambda name: name == ".git") if skip_git else None
+    for p in walk_files(root, skip=skip):
         try:
-            if p.is_file() and not p.is_symlink():
-                total += p.stat().st_size
+            total += p.stat().st_size
         except OSError:
             continue
     return total
@@ -605,7 +673,10 @@ def _clone(clone_url: str, ref: str | None, subpath: str | None, dest: Path, env
     _run_git([*args, clone_url, str(dest)], dest, env, url)
     if subpath:
         try:
-            _git(dest, ["sparse-checkout", "set", subpath.strip("/")], env, timeout=60)
+            # The folder comes from the URL: after --end-of-options a name such as "-x" or
+            # "--output=…" is a path to git, never a switch.
+            _git(dest, ["sparse-checkout", "set", "--end-of-options", subpath.strip("/")], env,
+                 timeout=60)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
             raise CollectionError(f"could not narrow the checkout to '{subpath}'") from exc
     if is_sha:  # fetch + check out the requested commit (GitHub allows reachable SHAs)
@@ -631,8 +702,11 @@ def _collect_remote(
 
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     dest = Path(tmp.name) / "repo"
-    # Non-interactive (no credential prompt that could block) and bounded in time + size.
-    clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    # Non-interactive (no credential prompt that could block) and bounded in time + size. LFS
+    # objects are left as pointer files: fetching them would download from wherever the scanned
+    # repository's own .lfsconfig points, and the scan reads source, not large binaries.
+    clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
+                 "GIT_LFS_SKIP_SMUDGE": "1"}
     try:
         _clone(clone_url, ref, subpath, dest, clone_env, url)
     except CollectionError:
@@ -694,42 +768,153 @@ def _within(dest_resolved: Path, name: str, dest: Path) -> bool:
         return False
 
 
-def _safe_extract_tar(data: bytes, dest: Path) -> None:
+def _unextractable(kind: str, exc: Exception) -> CollectionError:
+    """The error for an archive that cannot be extracted. Nothing from inside the archive is
+    quoted (a member name is its author's text): only the system's reason or the error type."""
+    if isinstance(exc, OSError) and exc.strerror:
+        return CollectionError(f"archive could not be extracted: {exc.strerror}")
+    return CollectionError(
+        f"archive could not be read: it is damaged, truncated or not a {kind} archive "
+        f"({type(exc).__name__})"
+    )
+
+
+class _BoundedReader:
+    """A decompressed tar stream that refuses to inflate past ``limit`` bytes.
+
+    The archive itself is size-capped, but gzip inflates about a thousand to one, and tarfile
+    inflates some data before any member can be checked: it reads a pax or GNU long-name record
+    whole into memory, and it skips the data of an entry of unknown type by decompressing it. A
+    read or a seek past ``limit`` raises instead, so reading an archive costs at most that much.
+    """
+
+    def __init__(self, stream: io.IOBase, limit: int) -> None:
+        self._stream = stream
+        self._limit = limit
+
+    def _refuse_past(self, end: int) -> None:
+        if end > self._limit:
+            raise CollectionError("archive too large when extracted")
+
+    def read(self, size: int | None = -1) -> bytes:
+        room = self._limit - self._stream.tell()
+        if size is None or size < 0:
+            data = self._stream.read(room + 1)
+            self._refuse_past(self._limit - room + len(data))
+            return data
+        self._refuse_past(self._limit - room + size)
+        return self._stream.read(size)
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        target = offset + (self._stream.tell() if whence == io.SEEK_CUR else 0)
+        if whence in (io.SEEK_SET, io.SEEK_CUR):
+            self._refuse_past(target)
+        return self._stream.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._stream.tell()
+
+
+def _tar_stream(data: bytes) -> io.IOBase:
+    """The tar bytes inside ``data``: gzip, bzip2 and xz are recognized by their signatures (as
+    tarfile's own "r:*" does), anything else is read as a plain tar."""
+    raw = io.BytesIO(data)
+    if data[:2] == b"\x1f\x8b":
+        import gzip
+
+        return gzip.GzipFile(fileobj=raw, mode="rb")
+    if data[:3] == b"BZh":
+        import bz2  # imported here: a Python built without it can still read other archives
+
+        return bz2.BZ2File(raw, mode="rb")
+    if data[:6] == b"\xfd7zXZ\x00":
+        import lzma
+
+        return lzma.LZMAFile(raw, mode="rb")
+    return raw
+
+
+def _safe_extract_tar(data: bytes, dest: Path) -> int:
+    """Extract the files and directories of a tar archive into ``dest``.
+
+    Returns how many entries were left out: symbolic and hard links (a link can point anywhere,
+    and a later entry could write through it), FIFOs and devices (never component content, and
+    opening a FIFO blocks). Every limit applies to a header as it is read, before the data behind
+    it is inflated, and the inflated stream is capped as a whole (see _BoundedReader). Stored
+    permissions are never applied: a file archived as mode 000 stays readable for the scan. A
+    damaged or truncated archive is a CollectionError.
+    """
     dest_resolved = dest.resolve()
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
-        safe, total = [], 0
-        for m in tf.getmembers():
-            if len(safe) >= _MAX_ARCHIVE_MEMBERS:
+    limit = _MAX_EXTRACT_BYTES + _MAX_ARCHIVE_MEMBERS * _TAR_OVERHEAD_PER_MEMBER
+    skipped = entries = total = 0
+    try:
+        with _tar_stream(data) as stream, tarfile.open(
+            fileobj=_BoundedReader(stream, limit), mode="r:"
+        ) as tf:
+            for member in tf:
+                entries += 1
+                if entries > _MAX_ARCHIVE_MEMBERS:
+                    raise CollectionError("archive has too many entries")
+                if member.issym() or member.islnk() or member.isdev():
+                    skipped += 1
+                    continue
+                if not _within(dest_resolved, member.name, dest):
+                    raise CollectionError("archive contains an unsafe path")
+                if member.type not in tarfile.SUPPORTED_TYPES:
+                    # tarfile (and pip with it) writes an entry of unknown type as a regular file,
+                    # so its content is installed; the data filter would refuse it instead.
+                    member.type = tarfile.REGTYPE
+                if not member.isdir():
+                    total += member.size
+                    if total > _MAX_EXTRACT_BYTES:
+                        raise CollectionError("archive too large when extracted")
+                tf.extract(member, dest, set_attrs=False, **_TAR_FILTER)
+    except CollectionError:
+        raise
+    except ImportError as exc:
+        raise CollectionError(f"this Python cannot decompress the archive ({exc.name})") from exc
+    except Exception as exc:  # whatever tarfile or a decompressor raises on bytes it cannot read
+        if isinstance(exc, getattr(tarfile, "FilterError", ())):
+            raise CollectionError("archive contains an unsafe path") from exc
+        raise _unextractable("tar", exc) from exc
+    return skipped
+
+
+def _safe_extract_zip(data: bytes, dest: Path) -> int:
+    """Extract a zip archive into ``dest``; return how many entries were left out (symlinks).
+
+    Every check runs on the central directory before anything is written. Declared sizes bound
+    the work, since an entry never inflates past its declared size. A damaged, truncated,
+    password-protected or unsupported archive is a CollectionError.
+    """
+    dest_resolved = dest.resolve()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            infos = zf.infolist()
+            if len(infos) > _MAX_ARCHIVE_MEMBERS:
                 raise CollectionError("archive has too many entries")
-            if m.issym() or m.islnk():
-                continue  # never extract links (path-escape risk)
-            if not _within(dest_resolved, m.name, dest):
-                raise CollectionError("archive contains an unsafe path")
-            if m.isfile():
-                total += m.size
+            safe, total, skipped = [], 0, 0
+            for info in infos:
+                # zipfile.extractall can create symlinks from the stored unix mode on some
+                # platforms.
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    skipped += 1
+                    continue  # never extract symlinks (path-escape risk)
+                if info.flag_bits & 0x1:
+                    raise CollectionError(
+                        "archive is password-protected, so its contents cannot be read")
+                if not _within(dest_resolved, info.filename, dest):
+                    raise CollectionError("archive contains an unsafe path")
+                total += info.file_size
                 if total > _MAX_EXTRACT_BYTES:
                     raise CollectionError("archive too large when extracted")
-            safe.append(m)
-        tf.extractall(dest, members=safe)  # nosec B202 - members validated above
-
-
-def _safe_extract_zip(data: bytes, dest: Path) -> None:
-    dest_resolved = dest.resolve()
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        safe, total = [], 0
-        for info in zf.infolist():
-            if len(safe) >= _MAX_ARCHIVE_MEMBERS:
-                raise CollectionError("archive has too many entries")
-            # zipfile.extractall can create symlinks from the stored unix mode on some platforms.
-            if stat.S_ISLNK(info.external_attr >> 16):
-                continue  # never extract symlinks (path-escape risk)
-            if not _within(dest_resolved, info.filename, dest):
-                raise CollectionError("archive contains an unsafe path")
-            total += info.file_size
-            if total > _MAX_EXTRACT_BYTES:
-                raise CollectionError("archive too large when extracted")
-            safe.append(info)
-        zf.extractall(dest, members=safe)  # nosec B202 - members validated above
+                safe.append(info)
+            zf.extractall(dest, members=safe)  # nosec B202 - members validated above
+    except CollectionError:
+        raise
+    except Exception as exc:  # whatever zipfile or a decompressor raises on bytes it cannot read
+        raise _unextractable("zip", exc) from exc
+    return skipped
 
 
 def _collect_archive(
@@ -744,10 +929,10 @@ def _collect_archive(
     try:
         extract_dir = Path(tmp.name) / "x"
         extract_dir.mkdir()
-        if filename.lower().endswith(".whl") or filename.lower().endswith(".zip"):
-            _safe_extract_zip(data, extract_dir)
+        if filename.lower().endswith((".whl", ".zip")) or data.startswith(_ZIP_MAGIC):
+            skipped = _safe_extract_zip(data, extract_dir)
         else:  # .tgz / .tar.gz / .tar.*
-            _safe_extract_tar(data, extract_dir)
+            skipped = _safe_extract_tar(data, extract_dir)
         root = _single_root(extract_dir)
         component = detect_component(root, source=source)
         component = replace(
@@ -757,7 +942,8 @@ def _collect_archive(
             version=component.version or version,
             download_url=archive_url,
         )
-        return SourceContext(root=root, component=component, _tempdir=tmp)
+        return SourceContext(root=root, component=component, _tempdir=tmp,
+                             skipped_entries=skipped)
     except Exception:
         tmp.cleanup()
         raise
@@ -834,11 +1020,59 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
     return None
 
 
+def _registry_json(url: str) -> dict:
+    """A registry document as a JSON object; anything else is a CollectionError, not a traceback."""
+    data = _http_get(url)
+    try:
+        doc = json.loads(data)
+    except (ValueError, RecursionError) as exc:
+        raise CollectionError(f"unexpected response from {url}") from exc
+    if not isinstance(doc, dict):
+        raise CollectionError(f"unexpected response from {url}")
+    return doc
+
+
+def _npm_release(name: str, pin: str | None) -> tuple[str, str] | None:
+    """``(version, tarball)`` of one version or dist-tag of ``name``, from the registry's
+    per-version document (a few KB) instead of the packument, which lists every version ever
+    published (31 MB for ``next``). The registry resolves a dist-tag there the same way, and
+    answers 404 for anything else (a missing version, a range).
+
+    None when the registry answered without a usable release: the caller then reads the
+    packument, so every outcome, error messages included, stays what it was. A registry that
+    cannot be reached raises: asking it a second time would only double the wait.
+    """
+    url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest', safe='')}"
+    try:
+        data = _http_get(url)
+    except CollectionError as exc:
+        if isinstance(exc.__cause__, urllib.error.HTTPError):
+            return None  # the registry answered: no such version or tag here
+        raise
+    try:
+        manifest = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    version, dist = manifest.get("version"), manifest.get("dist")
+    tarball = dist.get("tarball") if isinstance(dist, dict) else None
+    if not (isinstance(version, str) and version and isinstance(tarball, str) and tarball):
+        return None
+    if pin and _EXACT_NPM_VERSION_RE.match(pin) and version != pin:
+        return None
+    return version, tarball
+
+
 def _collect_npm(source: str) -> SourceContext:
     name, pin = npm_package_spec(source)
     if not name:
         raise CollectionError(f"invalid npm package name in: {source}")
-    meta = json.loads(_http_get(f"https://registry.npmjs.org/{quote(name, safe='@')}"))
+    release = _npm_release(name, pin)
+    if release is not None:
+        chosen, tarball = release
+        return _collect_archive(source, "npm_package", chosen, tarball, tarball)
+    meta = _registry_json(f"https://registry.npmjs.org/{quote(name, safe='@')}")
     versions = meta.get("versions") or {}
     tags = meta.get("dist-tags") or {}
     if pin:
@@ -882,10 +1116,10 @@ def _collect_pypi(source: str) -> SourceContext:
         if not _EXACT_PYPI_VERSION_RE.match(pin):
             raise CollectionError(f"invalid PyPI version in: {source}")
         # Per-version metadata endpoint lists that release's distributions directly.
-        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/{quote(pin)}/json"))
+        meta = _registry_json(f"https://pypi.org/pypi/{name}/{quote(pin)}/json")
         version = str((meta.get("info") or {}).get("version") or pin)
     else:
-        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/json"))
+        meta = _registry_json(f"https://pypi.org/pypi/{name}/json")
         version = str((meta.get("info") or {}).get("version") or "")
     chosen = _pick_distribution(meta.get("urls") or [])
     if not (version and chosen and chosen.get("url")):
@@ -897,9 +1131,13 @@ def _collect_pypi(source: str) -> SourceContext:
     )
 
 
-def detect_component(root: Path, source: str) -> Component:
-    """Derive component name/type/version solely from files inside ``root``."""
-    name = root.name
+def detect_component(root: Path, source: str, default_name: str | None = None) -> Component:
+    """Derive component name/type/version solely from files inside ``root``.
+
+    The name falls back to ``default_name``, else the folder name, when no manifest gives one.
+    Manifests are read only when they are regular files: one that is a link is not followed.
+    """
+    name = default_name or root.name
     version = ""
     ctype = "directory"
 
@@ -907,22 +1145,22 @@ def detect_component(root: Path, source: str) -> Component:
     pyproject = root / "pyproject.toml"
     setup_py = root / "setup.py"
 
-    if pkg.exists():
+    if is_regular_file(pkg):
         ctype = "npm_package"
         meta = _read_package_json(pkg)
         name = meta.get("name") or name
         version = meta.get("version") or ""
-    elif pyproject.exists() or setup_py.exists():
+    elif is_regular_file(pyproject) or is_regular_file(setup_py):
         ctype = "python_package"
-        meta = _read_pyproject(pyproject) if pyproject.exists() else {}
+        meta = _read_pyproject(pyproject) if is_regular_file(pyproject) else {}
         name = meta.get("name") or name
         version = meta.get("version") or ""
 
     # Label common non-Python/Node project shapes so an uploaded project reads better than a bare
     # "directory" (detection itself is language-agnostic for the cross-cutting rules).
-    elif (root / "go.mod").exists():
+    elif is_regular_file(root / "go.mod"):
         ctype = "go_project"
-    elif any((root / f).exists() for f in ("pom.xml", "build.gradle", "build.gradle.kts")):
+    elif any(is_regular_file(root / f) for f in ("pom.xml", "build.gradle", "build.gradle.kts")):
         ctype = "java_project"
 
     # MCP / AI-component overrides take precedence when their artifacts are present.
@@ -943,7 +1181,7 @@ def detect_component(root: Path, source: str) -> Component:
 def _read_package_json(path: Path) -> dict[str, str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError, RecursionError):  # RecursionError: nested deeper than json allows
         return {}
     if not isinstance(data, dict):
         return {}
@@ -954,7 +1192,10 @@ def _read_package_json(path: Path) -> dict[str, str]:
 
 
 def _read_pyproject(path: Path) -> dict[str, str]:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
     if tomllib is not None:
         try:
             data = tomllib.loads(text)
@@ -963,7 +1204,8 @@ def _read_pyproject(path: Path) -> dict[str, str]:
                 "name": str(project.get("name", "")),
                 "version": str(project.get("version", "")),
             }
-        except (tomllib.TOMLDecodeError, ValueError):
+        # tomllib recurses: a value nested a few hundred levels deep exhausts the stack.
+        except (tomllib.TOMLDecodeError, ValueError, RecursionError):
             pass
     # Fallback: best-effort regex for name/version.
     name = _toml_value(text, "name")
@@ -978,12 +1220,12 @@ def _toml_value(text: str, key: str) -> str:
 
 def _has_mcp_manifest(root: Path) -> bool:
     for name in ("mcp.json", ".mcp.json", "mcp.config.json"):
-        if (root / name).exists():
+        if is_regular_file(root / name):
             return True
     # A package.json / manifest that declares mcpServers also counts.
     for candidate in ("package.json", "manifest.json", "server.json"):
         p = root / candidate
-        if p.exists():
+        if is_regular_file(p):
             try:
                 if "mcpServers" in p.read_text(encoding="utf-8", errors="replace"):
                     return True
@@ -993,11 +1235,11 @@ def _has_mcp_manifest(root: Path) -> bool:
 
 
 def _has_skill_manifest(root: Path) -> bool:
-    return (root / "SKILL.md").exists() or (root / "skill.md").exists()
+    return is_regular_file(root / "SKILL.md") or is_regular_file(root / "skill.md")
 
 
 def _has_ai_artifacts(root: Path) -> bool:
     for name in ("SKILL.md", "AGENTS.md", "skill.md", "agents.md", "CLAUDE.md"):
-        if (root / name).exists():
+        if is_regular_file(root / name):
             return True
     return False
