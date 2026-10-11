@@ -43,10 +43,13 @@ def _parses(text: str) -> bool:
 
 # --- manifests read by the collector -----------------------------------------------------------
 def test_a_deep_package_json_still_yields_a_component(tmp_path):
-    (tmp_path / "package.json").write_text(
-        '{"name": "x", "version": "1.0.0", "a": ' + _array(DEEP) + "}", encoding="utf-8")
+    text = '{"name": "x", "version": "1.0.0", "a": ' + _array(DEEP) + "}"
+    (tmp_path / "package.json").write_text(text, encoding="utf-8")
     component = detect_component(tmp_path, source=str(tmp_path))
-    assert (component.type, component.name) == ("npm_package", tmp_path.name)
+    # Python 3.14 on Linux reads this depth, so the manifest names the package; where json
+    # gives up (3.10-3.13, or Windows' smaller stack) the folder does.
+    expected = "x" if _parses(text) else tmp_path.name
+    assert (component.type, component.name) == ("npm_package", expected)
 
 
 @pytest.mark.parametrize("value", [_array(600), "{b = " * 600 + "1" + "}" * 600],
@@ -62,11 +65,15 @@ def test_a_deep_pyproject_falls_back_to_reading_name_and_version(tmp_path, value
 # --- MCP manifests -------------------------------------------------------------------------------
 @pytest.mark.parametrize("name", ["mcp.json", "manifest.json", "server.json"])
 def test_a_deep_mcp_manifest_is_unparseable_not_a_crash(tmp_path, name):
-    (tmp_path / name).write_text(
-        '{"mcpServers": {"a": {"command": "npx"}}, "x": ' + _array(DEEP) + "}", encoding="utf-8")
+    text = '{"mcpServers": {"a": {"command": "npx"}}, "x": ' + _array(DEEP) + "}"
+    (tmp_path / name).write_text(text, encoding="utf-8")
     report = _report(tmp_path)
     notes = [n for n in report.needs_review if n.title == "Unparseable potential MCP manifest"]
-    assert [n.file for n in notes] == [name]
+    if _parses(text):  # Python 3.14 on Linux: the server behind the nesting is analyzed
+        assert notes == []
+        assert {"ST-MCP-DETECTED", "ST-MCP-SERVER-EXEC"} <= {f.id for f in report.findings}
+    else:
+        assert [n.file for n in notes] == [name]
 
 
 def test_nesting_inside_a_manifest_does_not_hide_its_servers(tmp_path):
