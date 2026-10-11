@@ -79,6 +79,21 @@ _INSTALL_WORDS = re.compile(
 )
 # A word the shell fills in when it runs: a variable, a substitution, a brace expansion.
 _COMPUTED = re.compile(r"[$`{}]")
+
+
+def _globbed(word: str) -> bool:
+    """Whether ``word`` holds a pattern bash replaces with the names of matching files: `*`, `?`
+    or a bracket expression (`[a]`; a lone `[` is the test command)."""
+    if "*" in word or "?" in word:
+        return True
+    start = word.find("[")
+    return start >= 0 and word.find("]", start + 2) >= 0  # in `[]a]` the first `]` is a member
+
+
+def _filled_in(word: str) -> bool:
+    """Whether the shell fills ``word`` in when the line runs: a variable, a substitution, a
+    brace expansion, or a pattern that names files on disk the hook does not see."""
+    return bool(_COMPUTED.search(word)) or _globbed(word)
 _COMPUTED_HEAD = {"bash": _COMPUTED, "powershell": _COMPUTED, "cmd": re.compile(r"[%!]")}
 # An installer named anywhere, verb or not: what a command name the shell computes can turn into.
 _INSTALLER_NAME = re.compile(
@@ -302,13 +317,20 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
     cwd = outer.cwd
     if cwd and _moves(lexed.pipelines, text):
         cwd = None
-    level = _Level(outer.ctx, cwd, tuple(lexed.subs))
     found: dict[Install, None] = {}
+    subs = list(lexed.subs)
+    for expansion in lexed.expansions:
+        inside = _expansion_subs(expansion, shell)
+        if inside is None:
+            found.update(dict.fromkeys(_net(expansion)))
+        else:
+            subs.extend(inside)
+    level = _Level(outer.ctx, cwd, tuple(subs))
     if shell == "powershell" and _PS_DYNAMIC.search(text):
         found.update(dict.fromkeys(_net(text)))  # `[scriptblock]::Create('npm i x')`
     seen: list[str] = [text]
     # A command substitution runs too: `echo $(npm install x)` installs x.
-    for sub in lexed.subs:
+    for sub in subs:
         found.update(dict.fromkeys(_parse(sub, shell, depth + 1, level)))
     aliases: dict[str, list[str]] = {}
     for pipeline in lexed.pipelines:
@@ -327,7 +349,8 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
             feed = [(body, True) for body in (*stage.bodies, *strings)]
             if output is not None:
                 feed.append(output)
-            found.update(dict.fromkeys(_installs_in(words, shell, depth, level, feed)))
+            found.update(dict.fromkeys(
+                _installs_in(words, shell, depth, level, feed, pattern=stage.pattern)))
             if position < len(pipeline):
                 output = _output_of(words, feed, "".join(stage.text), shell)
     return _registry_from_env(list(found), seen)
@@ -520,6 +543,17 @@ def _words(text: str, shell: str, marked: bool = False) -> list[str] | None:
     return words if marked else [_unmarked(word) for word in words]
 
 
+def _expansion_subs(text: str, shell: str) -> list[str] | None:
+    """The command substitutions in text the shell expands but does not run as a command, an
+    array's elements (``a=(x $(npm i y))``) or arithmetic (``$((n*$(npm i y)))``): they run, the
+    rest is words and numbers. None when it does not read. An array inside an array is not read:
+    bash rejects the line, and runs none of it."""
+    try:
+        return _Lexer(text, shell).lex().subs
+    except _Unreadable:
+        return None
+
+
 # --- Reading the command line ----------------------------------------------------------------
 
 
@@ -536,6 +570,7 @@ class _Stage:
     words: list[str] = field(default_factory=list)
     text: list[str] = field(default_factory=list)
     bodies: list[str] = field(default_factory=list)
+    pattern: bool = False  # it may be a case pattern (`*.js)`) rather than a command
 
 
 _ESCAPE = {"bash": "\\", "powershell": "`", "cmd": "^"}
@@ -617,6 +652,8 @@ class _Lexer:
         self.shell = shell
         self.esc = _ESCAPE[shell]
         self.subs: list[str] = []
+        # Text the shell expands but does not run as a command: array elements, arithmetic.
+        self.expansions: list[str] = []
         self.pipelines: list[list[_Stage]] = []
         self.safe = 0  # where the last complete top-level line ends
 
@@ -684,12 +721,16 @@ class _Lexer:
         def cut(piped: bool) -> None:
             nonlocal stage, pipeline, last
             end_word()
+            # A case pattern goes on past `|` (`*.js|*.ts)`) and past a line break before it; the
+            # first one follows `case x in`.
+            opens = stage.words[:1] == ["case"] and (piped or stage.words[-1:] == ["in"])
+            carry = opens or (stage.pattern and (piped or not stage.words))
             if top:
                 pipeline.append(stage)
                 if not piped:
                     self.pipelines.append(pipeline)
                     pipeline = []
-            stage = _Stage()
+            stage = _Stage(pattern=carry)
             last = ""
 
         while i < n:
@@ -813,9 +854,11 @@ class _Lexer:
             # Operators that end a command.
             if c == ";":
                 cut(False)
+                start = i
                 i += 1
-                while i < n and s[i] in ";&":  # `;;`, `;&` and `;;&` end a case branch
-                    i += 1
+                while i < n and s[i] in ";&":  # `;;`, `;&` and `;;&` end a case branch, and a
+                    i += 1  # pattern starts the next one
+                stage.pattern = sh == "bash" and i - start > 1
                 continue
             if c == "&":
                 if nx == "&":
@@ -849,7 +892,7 @@ class _Lexer:
             if sh == "bash" and c == "(" and in_word and _ARRAY_TARGET.fullmatch("".join(word)):
                 end = self._commands(i + 1, ")", nest + 1)  # `a=(x y)`: an array, not a subshell
                 if top:
-                    self.subs.append(s[i + 1:end])  # its elements may run substitutions
+                    self.expansions.append(s[i + 1:end])  # its elements may run substitutions
                 put(s[i:end + 1])
                 i = end + 1
                 continue
@@ -993,7 +1036,7 @@ class _Lexer:
             end = self._arithmetic(i + 1, nest + 1, False)
             if end is not None:
                 if record:
-                    self.subs.append(s[i + 1:end - 2])
+                    self.expansions.append(s[i + 1:end - 2])
                 return end
         end = self._commands(i, ")", nest + 1)
         if record:
@@ -1324,9 +1367,11 @@ def _env_command(args: list[str]) -> list[str]:
 
 
 def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
-                 feed: list[tuple[str, bool]] | None = None) -> list[Install]:
+                 feed: list[tuple[str, bool]] | None = None, pattern: bool = False
+                 ) -> list[Install]:
     """What one command installs. ``feed`` is what it reads on stdin: a here-document, a
-    here-string, or the output of the command piped into it (with whether it could be read)."""
+    here-string, or the output of the command piped into it (with whether it could be read).
+    ``pattern``: the words may be a case pattern (`*)`) rather than a command."""
     tokens = _unwrap(tokens)
     if not tokens:
         return []
@@ -1348,6 +1393,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if _COMPUTED_HEAD[shell].search(command):
         # `N=npm; $N i x`, `$(echo npm) i x`, `{npm,} i x`: the shell decides what runs.
         return [_NOT_READ] if level.ctx.root_names_installer else []
+    if shell == "bash" and not pattern and _globbed(command):
+        return [_NOT_READ]  # `*pip install x`: the shell runs whichever file name matches
     if head in _SHELLS or head in ("cmd", "powershell", "pwsh"):
         return _shell(head, rest, shell, depth, level, feed)
     if shell == "bash" and head == "eval":
@@ -1386,7 +1433,7 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _node_manager(head, rest, shell, depth, level)
     if _PIP_HEAD.fullmatch(head):
         sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
-        if _COMPUTED.search(sub or ""):
+        if _filled_in(sub or ""):
             return [_NOT_READ]  # `pip $C x`: the subcommand is filled in when the line runs
         return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
     if _PYTHON_HEAD.fullmatch(head):
@@ -1718,7 +1765,7 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
     quiet = all(a in _NPX_QUIET for a in rest[:len(rest) - len(args) - 1])  # before `exec`
     if head == "yarn" and sub == "global":
         sub, args = _subcommand(args, takes)
-    if _COMPUTED.search(sub or ""):
+    if _filled_in(sub or ""):
         return [_NOT_READ]  # `npm $C x`, PowerShell's `npm @args`: filled in when the line runs
     registry = _npm_source(rest, head)
     if head == "pnpm" and sub == "exec":
@@ -2119,6 +2166,8 @@ def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
                         i += 1
                         value = rest[i] if i < len(rest) else ""
                     if letter == "m":
+                        if _globbed(value):
+                            return [_NOT_READ]  # `-m p*ip`: a module named by files on disk
                         if _COMPUTED.search(value):
                             return [_NOT_READ] if level.ctx.root_names_installer else []
                         return _python_m(_base(value), rest[i + 1:], shell, depth, level)
@@ -2146,7 +2195,7 @@ def _python_m(module: str, args: list[str], shell: str, depth: int,
 def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     index = _py_source(rest, "uv")
     sub, args = _subcommand(rest, _UV_VALUE_FLAGS)
-    if _COMPUTED.search(sub or ""):
+    if _filled_in(sub or ""):
         return [_NOT_READ]
     if sub == "add":
         return _pip_install(args, "uv", index)
@@ -2228,7 +2277,7 @@ def _positionals(args: list[str], value_flags: set[str]) -> list[str]:
 def _pipx(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     """``pipx install a b``, ``pipx run [--spec pkg] app args``, ``pipx inject venv a b``."""
     sub, args = _subcommand(rest, _PIPX_VALUE_FLAGS)
-    if _COMPUTED.search(sub or ""):
+    if _filled_in(sub or ""):
         return [_NOT_READ]
     index = _py_source(args, "pip") or _pip_args_source(args)
     spec = _flag_value(args, {"--spec"})
@@ -2265,7 +2314,7 @@ def _pyproject(head: str, rest: list[str], shell: str, depth: int,
     their own is named (``--source``, ``--index``, ``--pypi-mirror``); ``run`` starts a command
     in the project's environment. Installing the lockfile names nothing new."""
     sub, args = _subcommand(rest, _PYPROJECT_VALUE_FLAGS)
-    if _COMPUTED.search(sub or ""):
+    if _filled_in(sub or ""):
         return [_NOT_READ]
     if sub == "run":
         start = _command_start(args, _PYPROJECT_VALUE_FLAGS)

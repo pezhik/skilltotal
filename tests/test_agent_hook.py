@@ -1073,6 +1073,7 @@ def test_the_parser_stays_fast_on_adversarial_command_lines():
         "npm i evil-pkg 2" + ">|" * 50_000,
         "npm i evil-pkg " + "<<<" * 33_000,
         "npm i evil-pkg 2" + "<" * 100_000,
+        "a=(" * 30_000 + "npm i evil-pkg" + ")" * 30_000,
     ]
     for line in lines:
         started = clock.monotonic()
@@ -2276,6 +2277,79 @@ def test_a_star_before_a_redirection_is_a_pattern_in_bash():
     """`*>` redirects every stream in PowerShell; in bash `*` is a pattern, replaced with the
     names of the files in the directory, each one a package to install."""
     assert "can't check" in _ask_without_scan("npm i *>/dev/null")
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # An array's elements are words: the output of `git ls-files` is not a command to ask about.
+        ("files=($(git ls-files)); npm i lodash", ["npm:lodash"]),
+        ("files=(\n  $(git ls-files)\n); npm i lodash", ["npm:lodash"]),
+        # The substitutions in them run, and are read.
+        ("a=($(npm i evil-pkg))", ["npm:evil-pkg"]),
+        ("a=(x \"$(npm i evil-pkg)\" `npm i other-pkg`)", ["npm:evil-pkg", "npm:other-pkg"]),
+        # Words in an array run nothing until a command runs them, which asks.
+        ("a=(npm i evil-pkg)", []),
+        ("a=(npm i evil-pkg); \"${a[@]}\"", [None]),
+    ],
+)
+def test_an_array_runs_the_substitutions_in_its_elements_only(command, expected):
+    from skilltotal.agent_hook import parse_installs
+
+    assert [item.source for item in parse_installs(command)] == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Bash replaces a pattern with the names of matching files, in any word: with a file named
+        # `install` (or `pip`) in the directory these install evil-pkg.
+        "npm ins*tall evil-pkg",
+        "nohup npm ins?all --save evil-pkg 2>&1",
+        "pip inst[a]ll evil-pkg",
+        "uv p*p install evil-pkg",
+        "*pip install evil-pkg",
+        "[[ 1 ]] && *pip install evil-pkg; :",
+        "sudo n?m i evil-pkg",
+        "python -m p*ip install evil-pkg",
+    ],
+)
+def test_a_pattern_in_a_command_or_subcommand_name_asks(command):
+    assert "a command SkillTotal could not read" in _ask_without_scan(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Case patterns are patterns, not commands; `[` and `[[` are commands.
+        "case \"$f\" in *.js) echo js;; *) npm i lodash;; esac",
+        "case \"$f\" in\n  *.js|*.ts) echo code;;\n  *) npm i lodash;;\nesac",
+        "case \"$f\" in (*.js) echo js;; (*) npm i lodash;; esac",
+        "[ -f package.json ] && npm i lodash",
+        "[[ -f package.json ]] && npm i lodash",
+        "for f in *.json; do echo \"$f\"; done; npm i lodash",
+    ],
+)
+def test_patterns_that_are_not_command_names_do_not_ask(command):
+    from skilltotal.agent_hook import parse_installs
+
+    assert [item.source for item in parse_installs(command)] == ["npm:lodash"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # Arithmetic is not a command: `x*2` names no file.
+        ("echo $((x*2)) $((a[1]?1:0)); npm i lodash", ["npm:lodash"]),
+        # The substitutions in it run.
+        ("echo $((n*$(npm i evil-pkg)))", ["npm:evil-pkg"]),
+        ("echo $(( $(npm i evil-pkg) + 1 ))", ["npm:evil-pkg"]),
+    ],
+)
+def test_arithmetic_runs_only_the_substitutions_in_it(command, expected):
+    from skilltotal.agent_hook import parse_installs
+
+    assert [item.source for item in parse_installs(command)] == expected
 
 
 def test_words_handed_on_without_a_shell_lose_the_redirection_mark():
