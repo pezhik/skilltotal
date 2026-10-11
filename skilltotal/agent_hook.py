@@ -722,7 +722,9 @@ class _Lexer:
                         end_word()
                     end, delimiter, strip, expand = self._heredoc_operator(i + 2)
                     heredocs.append((delimiter, strip, expand, stage))
-                    put(s[i:end], "<<" + delimiter)
+                    # A word the redirection reading drops whole: `<<` and the delimiter could
+                    # spell `<<<` (a delimiter `\<`) and pass for a here-string.
+                    put(s[i:end], "<<\x00")
                     i = end
                     continue
                 if c == "(" and nx == "(" and not in_word:
@@ -1842,6 +1844,8 @@ def _npm_spec(spec: str, registry: str | None) -> list[Install]:
         return [Install(None, f"{spec} (a remote archive or repository)")]
     versioned = spec.count("@") > (1 if spec.startswith("@") else 0)
     name, version = spec.rsplit("@", 1) if versioned else (spec, "")
+    if any(c in name for c in "*?[]"):
+        return _computed(spec)  # a glob in the name: the shell puts a file name in its place
     if not _NPM_NAME.match(name):
         return []
     if registry:
@@ -1992,6 +1996,8 @@ def _py_spec(spec: str, index: str | None) -> list[Install]:
     m = _PY_NAME.match(spec)
     if not m:
         return []
+    if spec[m.end():m.end() + 1] in ("*", "?"):
+        return _computed(spec)  # a glob in the name: the shell puts a file name in its place
     if index:
         return [Install(None, f"{m.group(0)} from {index}")]
     # `requests==2.31.0` checks 2.31.0; a range or wildcard is resolved by pip, so it checks latest.

@@ -2075,3 +2075,29 @@ def test_the_right_side_of_a_powershell_assignment_runs(command, expected):
 )
 def test_powershell_invoking_a_command_name_from_a_variable_asks(command):
     assert "a command SkillTotal could not read" in _ask_without_scan(command, "powershell")
+
+
+# --- Found by fuzzing against bash (second round) ------------------------------------------------
+
+
+@pytest.mark.parametrize("command", ["npm i evil-pk*g", "npm i evil-pk?", "pip install evil-p*kg",
+                                     "yarn add evil-[p]kg"])
+def test_a_glob_in_a_package_name_asks(command):
+    """Bash replaces an unquoted glob with the names of files that match it: `evil-pk*g` installs
+    `evil-pkg` wherever a file of that name exists."""
+    assert "can't check" in _ask_without_scan(command)
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A wildcard in the version is a range for the installer, not a file name.
+        ("npm i lodash@4.*", ["npm:lodash"]),
+        ("pip install 'requests==2.*'", ["pypi:requests"]),
+        ("pip install 'fastapi[standard]'", ["pypi:fastapi"]),
+        # A here-document whose delimiter is `<` is not a here-string: `x` stays an argument.
+        ("env pnpm add evil-pkg <<\\< x\nbody\n<", ["npm:evil-pkg", "npm:x"]),
+    ],
+)
+def test_wildcards_in_versions_and_odd_delimiters_read_as_the_shell_reads_them(command, expected):
+    assert install_targets(command) == expected
