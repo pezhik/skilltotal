@@ -132,7 +132,7 @@ def _is_codeless_source_map(filename: str, text: str) -> bool:
         return False
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):  # nested deeper than json can parse: read it as text
         return False
     if not (isinstance(data, dict) and set(data) <= _SOURCE_MAP_KEYS):
         return False
@@ -763,7 +763,7 @@ def _python_agent_facing_spans(
     """
     try:
         tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack
         return [], []
     lines = text.splitlines(keepends=True)
 
@@ -839,7 +839,7 @@ def _python_docstring_spans(text: str, line_starts: list[int]) -> list[tuple[int
     """
     try:
         tree = ast.parse(text)
-    except (SyntaxError, ValueError):
+    except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack
         return []
     lines = text.splitlines(keepends=True)
 

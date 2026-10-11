@@ -1126,7 +1126,7 @@ def detect_component(root: Path, source: str, default_name: str | None = None) -
 def _read_package_json(path: Path) -> dict[str, str]:
     try:
         data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, ValueError, RecursionError):  # RecursionError: nested deeper than json allows
         return {}
     if not isinstance(data, dict):
         return {}
@@ -1137,7 +1137,10 @@ def _read_package_json(path: Path) -> dict[str, str]:
 
 
 def _read_pyproject(path: Path) -> dict[str, str]:
-    text = path.read_text(encoding="utf-8", errors="replace")
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
     if tomllib is not None:
         try:
             data = tomllib.loads(text)
@@ -1146,7 +1149,8 @@ def _read_pyproject(path: Path) -> dict[str, str]:
                 "name": str(project.get("name", "")),
                 "version": str(project.get("version", "")),
             }
-        except (tomllib.TOMLDecodeError, ValueError):
+        # tomllib recurses: a value nested a few hundred levels deep exhausts the stack.
+        except (tomllib.TOMLDecodeError, ValueError, RecursionError):
             pass
     # Fallback: best-effort regex for name/version.
     name = _toml_value(text, "name")
