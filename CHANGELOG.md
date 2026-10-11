@@ -4,6 +4,68 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.63.0]
+
+Found by pre-launch reviews of 0.62.0. Ruleset 67.
+
+### Security
+- **What npm runs at install time is read and scored wherever it is filed**, including in the
+  package's build output and test folders, and through dependencies the package bundles. A NUL
+  byte no longer hides a JS, `.pth` or shell file from the scan.
+- **Code the scan could not read is never called clean.** A component of which no file could be
+  read gets the headline "Not analyzed - nothing in this component could be read"; files that
+  could not be read and links that were not followed are listed for review. `guard` blocks such
+  a component, and `--fail-on` fails on it, as both do on an install script the scan could not
+  analyze.
+- **Links do not lead out of the component.** Symbolic links and Windows junctions are not
+  followed: a repository could link a file to one elsewhere on the machine and have it quoted in
+  the report. A `package.json` that is a link is not read.
+- **Hostile archives fail cleanly.** A corrupt, truncated or password-protected archive is a
+  collection error instead of a traceback; links, FIFOs and devices inside a tar are never
+  extracted; size and entry limits apply while entries are read, so a compressed bomb stops at
+  the limit. MCP bundles (`.mcpb`, `.dxt`), wheels and `.vsix` files are recognized as zip
+  archives and scanned, not read as one binary file.
+- **Deep nesting degrades, never crashes.** A manifest, agent config or Python file nested
+  thousands of levels deep is reported as unparseable, and the rest of the component is still
+  analyzed.
+- **git:** the scanned repository's Git LFS settings are not followed (`GIT_LFS_SKIP_SMUDGE=1`),
+  and a sparse checkout path is passed after `--end-of-options`.
+- **`guard` blocks a name a letter or two from a popular package**, as the Claude Code hook asks
+  about it.
+
+### Changed
+- **`--fail-on` counts risk, not capabilities.** The severity gate counted every finding: a shell
+  call or network access, which many tools exist to do, is high severity, so the GitHub Action's
+  default `fail-on: high` failed 21 of 31 popular components that score low. A malicious indicator
+  now trips any level (prompt injection is medium severity), a risky construct or a shipped secret
+  trips at its severity, and a capability never trips it on its own; a `block` policy still
+  forbids a capability rule. What the scan could not read fails it closed (above). Applies to
+  `--fail-on`, `--fail-on-high`, `fail_on` in `.skilltotal.toml` and the Action's `fail-on`.
+- Verdict headlines: "No malicious indicators - secret-like values found" (was "exposed secrets
+  found"); "Name resembles a popular package - check it before installing"; "Low risk - review
+  the findings before installing" where one risky construct read "No significant risks found".
+- The Action's pull request comment shows 🔴 and the verdict headline when malicious indicators
+  fired, finds its earlier comment on any page, and no longer fails a fork's job when the token
+  cannot comment.
+- Rule descriptions no longer name malware campaigns.
+- An `npm:` source fetches the one version document it needs instead of the package's whole
+  history (3 KB instead of 30 MB for a large package).
+
+### Added
+- `scan` shows what a long scan is doing, with the elapsed seconds, on one line that is erased
+  before the report, and only when stderr is a terminal. `analyze()` and `analyze_directory()`
+  take an optional `progress` callback.
+
+### Fixed
+- False positives on widely used packages (ruleset 67): a string split at `::`, a loop over literal
+  command names, MCP tool shapes quoted in comments, a dict parameter named like a network
+  library, example keys and public build variables. See `RULES_CHANGELOG.md`.
+- One long line no longer takes minutes to scan.
+- The sdist no longer ships the test suite (it could not run without its fixtures).
+- GitHub Release notes are the CHANGELOG section with wrapped lines joined.
+- Docs: report schema 1.7 documented in full; the registry survey names rulesets 56–59, says what
+  a re-run reads and that its rules were tuned on that population; `python -P -m skilltotal`.
+
 ## [0.62.0]
 
 Found by pre-launch security reviews of 0.61.1. Ruleset 66.

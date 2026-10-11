@@ -4,6 +4,59 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 67 (engine 0.63.0)
+
+Pre-launch review of engine 0.62.0 (2026-10-11): ways a malicious install script could avoid being
+read or scored, and false positives on widely used packages. Each fix is pinned by a test that
+fails on 0.62.0 and by a test that the attack it resembles still fires (`tests/test_ruleset67.py`,
+`tests/test_install_script_coverage.py`, `tests/test_nul_bytes.py`). Detection-efficacy corpus,
+now 66 positive / 46 negative: 66/66 flagged, 0 false positives (0.62.0 misses the two new
+positives).
+
+- **Install scripts are behavior wherever they live** (demotion): the path layers (test code,
+  documentation, examples, CI, a published package's build output) no longer demote evidence in
+  the files npm runs at install time. A `postinstall` dropper filed under `dist/`, `build/`,
+  `tests/`, `docs/` or `examples/` was demoted with its folder and the package scored clean. The
+  content layers (a match inside a string or comment) still apply. Two new eval-corpus positives
+  pin it.
+- **Install scripts: bundled dependencies** (scan scope): a bare `require("x")` / `import` from an
+  install script is followed into `node_modules/x` when the package bundles it (bundled
+  dependencies ship in the tarball and run with the script). A dependency npm installs separately
+  is still not read, and nothing is read through a link out of the component.
+- **NUL bytes** (scan scope): a NUL in the first 8 KB no longer makes a JS/TS, `.pth` or shell
+  file binary; it is read as a space (line numbers unchanged). Node runs a `.js` file with a NUL in
+  a comment, and Python's `site` runs a `.pth` file's import lines whatever else it holds. Other
+  files with a NUL are still binary.
+- **Rule texts describe behavior** (wording): five descriptions named the malware campaign that
+  used a technique; they now describe what the code does. A test keeps campaign names out of
+  rule titles, descriptions and recommendations.
+- **`ST-EXPOSE-BIND`** (changed): an address that is the first argument of a string method
+  (`split`, `rsplit`, `partition`, `replace`, `startswith`, ...) is text, not a bind
+  (`nodeid.split("::", 1)` read as address `::` and port 1).
+- **`ST-CMDI-PY`** (changed): inside a loop over a literal list of strings whose body never rebinds
+  the variable, the variable is a constant for the command check (argv lists, f-strings,
+  concatenation); an f-string that interpolates only constants is not dynamic.
+- **`ST-MCP-DETECTED`, `ST-MCP-DANGEROUS-TOOL`** (changed): a tool registration inside a comment or
+  a Python string is documentation (`strings_and_comments` context); manifests and real
+  definitions still fire.
+- **`ST-NET-PY`** (changed): a network call needs its leftmost name bound by an import in the module
+  (a parameter named `requests` is not the library), relative imports keep their dots (a package's
+  own `requests.py`), module names compare whole (`urllib3_version_list` is not urllib), and
+  importing `http.client` alone is not egress. This removed a path to a false `ST-COMBO-EXFIL`.
+- **Secrets** (wording and scope): the verdict headline says "secret-like values found" instead of
+  "exposed secrets found", and `ST-SECRET-EMBEDDED` / `ST-ENV-SHIPPED` advise rotating only a real
+  credential. Python docstring examples are demoted like comments; values holding `abc123`,
+  `123456`, `xyz789` or `qwerty` are placeholders; a shipped `.env` whose variables all carry a
+  prefix front-end builds publish (`VITE_`, `NEXT_PUBLIC_`, `REACT_APP_`, ...) is not a shipped
+  secret. The word `mint` next to a base58 Solana address marks it public again: since ruleset 45
+  its word boundaries had been two backspace bytes, so the word never matched.
+- **Verdict headlines** (wording): a name a letter or two from a popular package reads "Name
+  resembles a popular package - check it before installing", and a low score that still carries
+  risky constructs reads "Low risk - review the findings before installing"; both read "No
+  significant risks found". Level and score are unchanged.
+- **Linear time** (engine): one long line no longer scans in quadratic time (a run of whitespace
+  before a credential path, a 40,000-character hook command).
+
 ## ruleset 66 (engine 0.62.0)
 
 Pre-launch reviews of engine 0.61.1 (2026-10-10): false positives on widely used projects, and
