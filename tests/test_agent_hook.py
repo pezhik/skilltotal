@@ -1205,3 +1205,61 @@ def test_a_registry_or_index_the_command_picks_asks_the_person(shell, command):
 )
 def test_options_that_keep_the_public_source_are_still_checked(command, expected):
     assert install_targets(command) == expected
+
+
+# --- Runners: every package they fetch, and the program they start ---------------------------
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npx -y -p clean-pkg -p evil-pkg clean-cmd",
+        "npx --package=clean-pkg --package=evil-pkg -- clean-cmd",
+        "npm exec --package=clean-pkg --package=evil-pkg -- clean-cmd",
+        "npm exec -p clean-pkg --package evil-pkg -- clean-cmd",
+        "npm x --package clean-pkg -p evil-pkg clean-cmd",
+        "pnpm dlx --package clean-pkg --package evil-pkg clean-cmd",
+        "yarn dlx -p clean-pkg -p evil-pkg clean-cmd",
+    ],
+)
+def test_every_package_of_a_multi_package_exec_is_checked(command):
+    assert install_targets(command) == ["npm:clean-pkg", "npm:evil-pkg"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # The program a runner starts runs with the rest of the line: it can be an installer.
+        ("npx npm i evil-pkg", ["npm:npm", "npm:evil-pkg"]),
+        ("npx npm@10.9.0 install evil-pkg", ["npm:npm@10.9.0", "npm:evil-pkg"]),
+        ("npx -p npm npm i evil-pkg", ["npm:npm", "npm:evil-pkg"]),
+        ("npm exec -- pnpm add evil-pkg", ["npm:pnpm", "npm:evil-pkg"]),
+        ("pnpm exec npm i evil-pkg", ["npm:evil-pkg"]),
+        ("pnpm exec --recursive npm i evil-pkg", ["npm:evil-pkg"]),
+        ("uv run pip install evil-pkg", ["pypi:evil-pkg"]),
+        ("uv run --with rich python -m pip install evil-pkg", ["pypi:rich", "pypi:evil-pkg"]),
+        ("uv run -- npm i evil-pkg", ["npm:evil-pkg"]),
+        ("uvx pip install evil-pkg", ["pypi:pip", "pypi:evil-pkg"]),
+        ("uv tool run pip install evil-pkg", ["pypi:pip", "pypi:evil-pkg"]),
+        ("pipx run pip install evil-pkg", ["pypi:pip", "pypi:evil-pkg"]),
+        ("python -m uv run pip install evil-pkg", ["pypi:evil-pkg"]),
+    ],
+)
+def test_the_program_a_runner_starts_is_read_as_a_command(command, expected):
+    assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("npx tsc --noEmit", ["npm:tsc"]),
+        ("npx -y prettier --write .", ["npm:prettier"]),
+        ("pnpm exec tsc --noEmit", []),
+        ("uv run pytest -q", []),
+        ("uv run --with rich script.py", ["pypi:rich"]),
+        ("uvx ruff check .", ["pypi:ruff"]),
+        ("pipx run black --check .", ["pypi:black"]),
+    ],
+)
+def test_a_runner_starting_an_ordinary_program_finds_only_its_package(command, expected):
+    assert install_targets(command) == expected

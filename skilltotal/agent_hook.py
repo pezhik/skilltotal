@@ -152,6 +152,8 @@ _UV_SOURCE_OPTIONS = frozenset({"index-url", "extra-index-url", "find-links", "i
                                 "default-index", "config-file"})
 # Short options of pip and uv whose value is the rest of the word or the next one (`-rreq.txt`).
 _SHORT_VALUE_OPTIONS = frozenset("rcetpPobdCw")
+# Where a requirement's name ends: `tool==1.0`, `tool@latest`, `tool[extra]`.
+_PY_SPEC_END = re.compile(r"[@=<>!~\[;]")
 _PIPX_VALUE_FLAGS = {"--pip-args", "--suffix", "--index-url", "-i", "--python", "--preinstall",
                      "--backend", "--spec"}
 # Environment variables an installer reads its registry or index from, or the config file that
@@ -956,20 +958,20 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head == "claude" and rest[:2] == ["mcp", "add-json"]:
         return _add_json(rest[2:], shell, depth, level)
     if head in _NPM_RUNNERS:
-        return _npx(rest)
+        return _npx(rest, shell, depth, level)
     if head in ("npm", "pnpm", "yarn", "bun"):
-        return _node_manager(head, rest)
+        return _node_manager(head, rest, shell, depth, level)
     if _PIP_HEAD.fullmatch(head):
         sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
         return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
     if _PYTHON_HEAD.fullmatch(head):
-        return _python_module(rest)
+        return _python_module(rest, shell, depth, level)
     if head == "uv":
-        return _uv(rest)
+        return _uv(rest, shell, depth, level)
     if head == "uvx":
-        return _uvx(rest)
+        return _uvx(rest, shell, depth, level)
     if head == "pipx":
-        return _pipx(rest)
+        return _pipx(rest, shell, depth, level)
     return []
 
 
@@ -1174,14 +1176,17 @@ def _subcommand(args: list[str], value_flags: set[str] | Callable[[str], bool]
     return None, []
 
 
-def _node_manager(head: str, rest: list[str]) -> list[Install]:
+def _node_manager(head: str, rest: list[str], shell: str, depth: int,
+                  level: _Level) -> list[Install]:
     takes = functools.partial(_npm_takes_value, head=head)
     sub, args = _subcommand(rest, takes)
     if head == "yarn" and sub == "global":
         sub, args = _subcommand(args, takes)
     registry = _npm_source(rest, head)
-    if sub in ("exec", "x", "dlx") and not (head == "pnpm" and sub == "exec"):
-        return _npx(args, registry)
+    if head == "pnpm" and sub == "exec":
+        return _launched(args, shell, depth, level)  # runs a command; fetches nothing itself
+    if sub in ("exec", "x", "dlx"):
+        return _npx(args, shell, depth, level, registry)
     if sub in _SCAFFOLDERS[head]:
         return _scaffold(args, registry)
     if head == "yarn" and sub != "add":
@@ -1271,21 +1276,42 @@ def _initializer_package(spec: str) -> str:
     return f"create-{name}{at}{version}"
 
 
-def _npx(args: list[str], registry: str | None = None) -> list[Install]:
-    """``npx [-y] [-p pkg] pkg args``: the explicit ``-p`` package, else the first positional."""
+def _npx(args: list[str], shell: str, depth: int, level: _Level,
+         registry: str | None = None) -> list[Install]:
+    """``npx [-y] [-p pkg]... pkg args`` (and ``npm exec``, ``pnpm dlx``, ``yarn dlx``): every
+    ``-p`` package, else the first positional; and the program it starts, which runs with the
+    rest of the line and can itself install (``npx npm i x``)."""
     registry = registry or _npm_source(args)
+    packages: list[str] = []
     i = 0
     while i < len(args):
         arg = args[i]
-        if arg in ("-p", "--package") and i + 1 < len(args):
-            return _npm_spec(args[i + 1], registry)
-        if arg.startswith("--package="):
-            return _npm_spec(arg.split("=", 1)[1], registry)
-        if arg.startswith("-"):
+        if arg in ("-p", "--package"):
+            packages.extend(args[i + 1:i + 2])
+            i += 2
+        elif arg.startswith("--package="):
+            packages.append(arg.split("=", 1)[1])
+            i += 1
+        elif arg.startswith("-"):
             i += 2 if (_npm_takes_value(arg) and "=" not in arg) else 1
-            continue
-        return _npm_spec(arg, registry)
-    return []
+        else:
+            break
+    command = args[i:]
+    found: dict[Install, None] = {}
+    for spec in packages or command[:1]:
+        found.update(dict.fromkeys(_npm_spec(spec, registry)))
+    if command:
+        program = command[0] if packages else _npm_bin(command[0])
+        found.update(dict.fromkeys(
+            _installs_in([program, *command[1:]], shell, depth + 1, level)))
+    return list(found)
+
+
+def _npm_bin(spec: str) -> str:
+    """The program ``npx <spec>`` runs: the package without its version (``_base`` drops the
+    scope)."""
+    versioned = spec.count("@") > (1 if spec.startswith("@") else 0)
+    return spec.rsplit("@", 1)[0] if versioned else spec
 
 
 def _npm_packages(args: list[str], registry: str | None, head: str = "npm") -> list[Install]:
@@ -1480,7 +1506,7 @@ def _py_spec(spec: str, index: str | None) -> list[Install]:
     return [Install(f"pypi:{m.group(0)}=={pin.group(1)}" if pin else f"pypi:{m.group(0)}")]
 
 
-def _python_module(rest: list[str]) -> list[Install]:
+def _python_module(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     """``python [-I] [-X opt] -m pip install x`` (and ``-m pipx`` / ``-m uv``)."""
     i = 0
     while i < len(rest):
@@ -1492,9 +1518,9 @@ def _python_module(rest: list[str]) -> list[Install]:
                 return _pip_install(sub_args, "pip", _py_source(args, "pip")) if (
                     sub == "install") else []
             if module == "pipx":
-                return _pipx(args)
+                return _pipx(args, shell, depth, level)
             if module == "uv":
-                return _uv(args)
+                return _uv(args, shell, depth, level)
             return []
         if arg.startswith("-"):
             i += 2 if arg in _PY_VALUE_FLAGS else 1
@@ -1503,7 +1529,7 @@ def _python_module(rest: list[str]) -> list[Install]:
     return []
 
 
-def _uv(rest: list[str]) -> list[Install]:
+def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     index = _py_source(rest, "uv")
     sub, args = _subcommand(rest, _UV_VALUE_FLAGS)
     if sub == "add":
@@ -1516,21 +1542,38 @@ def _uv(rest: list[str]) -> list[Install]:
         if sub2 == "install":
             return _first_py(args2, index) + _with_values(args2, index)
         if sub2 == "run":
-            return _uvx(args2, index)
+            return _uvx(args2, shell, depth, level, index)
         return []
     if sub == "run":
-        return _with_values(args, index)  # `uv run --with pkg script.py` installs pkg
+        # `uv run --with pkg script.py` installs pkg, and the command it runs can install too.
+        start = _command_start(args, _UV_VALUE_FLAGS)
+        return _with_values(args, index) + _installs_in(args[start:], shell, depth + 1, level)
     return []
 
 
-def _uvx(args: list[str], index: str | None = None) -> list[Install]:
-    """``uvx [--from pkg] [--with dep] tool args``: ``--from`` names the package, else the tool."""
+def _uvx(args: list[str], shell: str, depth: int, level: _Level,
+         index: str | None = None) -> list[Install]:
+    """``uvx [--from pkg] [--with dep] tool args``: ``--from`` names the package, else the tool;
+    and the tool runs with the rest of the line (``uvx pip install x``)."""
     index = index or _py_source(args, "uv")
     found = _with_values(args, index)
-    source = _flag_value(args, {"--from"})
-    if source:
-        return _py_spec(source, index) + found
-    return _first_py(args, index) + found
+    start = _command_start(args, _UV_VALUE_FLAGS)
+    source = _flag_value(args, {"--from"}) or (args[start] if start < len(args) else None)
+    if source is None:
+        return found
+    found = _py_spec(source, index) + found
+    if start < len(args):
+        tool = _PY_SPEC_END.split(args[start], maxsplit=1)[0]
+        found += _installs_in([tool, *args[start + 1:]], shell, depth + 1, level)
+    return found
+
+
+def _command_start(args: list[str], value_flags: set[str]) -> int:
+    """Where the first word that is not an option or an option's value sits."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if (args[i] in value_flags and "=" not in args[i]) else 1
+    return min(i, len(args))
 
 
 def _with_values(args: list[str], index: str | None) -> list[Install]:
@@ -1566,8 +1609,8 @@ def _positionals(args: list[str], value_flags: set[str]) -> list[str]:
     return out
 
 
-def _pipx(rest: list[str]) -> list[Install]:
-    """``pipx install a b``, ``pipx run [--spec pkg] app``, ``pipx inject venv a b``."""
+def _pipx(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    """``pipx install a b``, ``pipx run [--spec pkg] app args``, ``pipx inject venv a b``."""
     sub, args = _subcommand(rest, _PIPX_VALUE_FLAGS)
     index = _py_source(args, "pip") or _pip_args_source(args)
     spec = _flag_value(args, {"--spec"})
@@ -1580,7 +1623,13 @@ def _pipx(rest: list[str]) -> list[Install]:
         specs = names[1:]
     else:
         return []
-    return [item for s in specs for item in _py_spec(s, index)]
+    found = [item for s in specs for item in _py_spec(s, index)]
+    if sub == "run":
+        start = _command_start(args, _PIPX_VALUE_FLAGS)
+        if start < len(args):  # the app runs with the rest of the line
+            app = _PY_SPEC_END.split(args[start], maxsplit=1)[0]
+            found += _installs_in([app, *args[start + 1:]], shell, depth + 1, level)
+    return found
 
 
 def _pip_args_source(args: list[str]) -> str | None:
