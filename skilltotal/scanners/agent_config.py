@@ -549,27 +549,28 @@ class AgentConfigScanner(Scanner):
         text = re.sub(r"^\s*//.*$", "", f.text, flags=re.MULTILINE)  # tasks.json allows comments
         try:
             return json.loads(text)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, RecursionError):  # nested deeper than json can
             return None
 
     def _hook_commands(self, f: IndexedFile) -> list[str]:
         data = self._load(f)
         hooks = data.get("hooks") if isinstance(data, dict) else None
         found: list[str] = []
-
-        def walk(node: object) -> None:
-            if isinstance(node, dict):
+        # Depth-first in document order with an explicit stack: json accepts deeper nesting than
+        # a recursive walk survives, and a hook must not hide behind it.
+        end = object()  # marks an exhausted level (None is a JSON value)
+        stack = [iter([hooks])] if hooks is not None else []
+        while stack:
+            node = next(stack[-1], end)
+            if node is end:
+                stack.pop()
+            elif isinstance(node, dict):
                 command = node.get("command")
                 if isinstance(command, str) and command.strip():
                     found.append(command)
-                for value in node.values():
-                    walk(value)
+                stack.append(iter(node.values()))
             elif isinstance(node, list):
-                for item in node:
-                    walk(item)
-
-        if hooks is not None:
-            walk(hooks)
+                stack.append(iter(node))
         return found
 
     def _folder_open_tasks(self, f: IndexedFile) -> list[str]:
