@@ -8,15 +8,17 @@ to ``needs_review`` rather than inflating the score.
 
 from __future__ import annotations
 
+import bisect
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, NeedsReview, Severity, ThreatClass
+from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
     RuleSpec,
     Scanner,
     ScanResult,
+    _finding_from_rule,
     aggregated_review,
     alternation,
     findings_from_rules,
@@ -26,18 +28,94 @@ CATEGORY = "obfuscation"
 
 # The optional ``\w+\.`` prefix tolerates a module alias (``import base64 as b`` ->
 # ``b.b64decode``); a method literally named ``b64decode`` is essentially always base64.
+# A hex decoder by its usual names (`hexDecode`, `fromHex`, `hex2str`, `unhex`, ...).
+_HEX_DECODER = (
+    r"(?:[\w$]+\.)?(?i:hex_?decode|decode_?hex|from_?hex|unhex|"
+    r"hex_?(?:2|to_?)(?:str|string|ascii|utf8|text))\s*\("
+)
 _DECODE_EXEC = alternation(
     r"exec\s*\(\s*(?:\w+\.)?b64decode",
     r"eval\s*\(\s*(?:\w+\.)?b64decode",
     r"exec\s*\(\s*bytes\.fromhex",
     r"eval\s*\(\s*bytes\.fromhex",
-    r"exec\s*\(\s*codecs\.decode",
+    r"(?:exec|eval)\s*\(\s*codecs\.decode",
+    r"(?:exec|eval)\s*\(\s*(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\(",
     r"eval\s*\(\s*atob\s*\(",
     # Indirect eval to dodge a literal ``eval(`` token: ``(0, eval)(atob(...))``.
     r"\(\s*0\s*,\s*eval\s*\)\s*\(\s*(?:atob|Buffer\.from)\s*\(",
     r"Function\s*\(\s*atob\s*\(",
-    r"eval\s*\(\s*Buffer\.from\s*\([^)]*['\"]base64['\"]",
+    # Buffer-decoded text run by eval or the Function constructor, base64 or hex:
+    # `new Function(Buffer.from(h, "hex").toString())()`.
+    r"(?:\beval|\bFunction)\s*\(\s*Buffer\.from\s*\([^)]*['\"](?:base64|hex)['\"]",
+    r"(?:\beval|\bFunction)\s*\(\s*" + _HEX_DECODER,
+    # A string literal written entirely as escapes and handed straight to eval / Function: the
+    # parser decodes it, the sink runs it.
+    r"(?:\beval|\bFunction)\s*\(\s*['\"`](?:\\x[0-9A-Fa-f]{2}|\\u00[0-9A-Fa-f]{2}){8}",
 )
+
+# The same decode and execute split over two statements: the decoded text is kept in a variable
+# that eval / the Function constructor / exec then runs (`const stage = Buffer.from(h, "hex")
+# .toString(); new Function(stage)()`, or `stage` assigned a literal written entirely as escapes).
+# Both halves must be there, and the sink must take that very variable: a hex utility, or a
+# `new Function("return this")`, is not a decode-and-execute.
+_JS_DECODED_VARIABLE = re.compile(
+    # An optional TypeScript annotation: `const stage: string = ...`.
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})(?:\s*:\s*[\w$.<>\[\]| ]{1,40}?)?\s*=\s*(?:"
+    r"Buffer\.from\s*\([^;\n]{0,200}?['\"](?:hex|base64)['\"]"
+    r"|(?:window\.|globalThis\.)?atob\s*\("
+    r"|" + _HEX_DECODER
+    + r"|['\"`](?:\\x[0-9A-Fa-f]{2}|\\u00[0-9A-Fa-f]{2}){8}"
+    r")"
+)
+# A code sink and the variable it runs (for the Function constructor, its last argument, the body).
+_JS_CODE_SINK = re.compile(
+    r"(?:\beval|(?:\bnew\s+)?\bFunction|\bsetTimeout|\bsetInterval|\bvm\.runIn(?:This|New)Context"
+    r"|\bnew\s+vm\.Script)\s*\(\s*(?:[^()\n]{0,200},\s*)?([A-Za-z_$][\w$]{0,60})"
+    r"(?:\.toString\(\s*\))?\s*[,)]"
+)
+_PY_DECODED_VARIABLE = re.compile(
+    r"(?m)^[ \t]*([A-Za-z_]\w{0,60})\s*=\s*(?:"
+    r"bytes\.fromhex\s*\(|(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\("
+    r"|codecs\.decode\s*\([^)\n]{0,200}['\"]hex['\"]|(?:\w+\.)?b64decode\s*\("
+    r"|[bru]{0,2}['\"](?:\\x[0-9A-Fa-f]{2}){8}"
+    r")"
+)
+_PY_CODE_SINK = re.compile(r"(?<![\w.])(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w{0,60})\b")
+_FLOW_REACH = 4000
+_JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+_PY_SUFFIXES = (".py", ".pyw")
+
+
+def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
+    """Evidence for a decoded value kept in a variable and run a few statements later: the
+    assignment that decodes it, then the call that executes it. Each file's sinks are indexed by
+    the variable they run once, so the cost stays linear in the file."""
+    evidence: list[Evidence] = []
+    for f in index.select(suffixes=_JS_SUFFIXES + _PY_SUFFIXES):
+        if f.suffix in _PY_SUFFIXES:
+            source, sink = _PY_DECODED_VARIABLE, _PY_CODE_SINK
+        else:
+            source, sink = _JS_DECODED_VARIABLE, _JS_CODE_SINK
+        decoded = list(source.finditer(f.text))
+        if not decoded:
+            continue
+        runs: dict[str, list[re.Match[str]]] = {}
+        for run in sink.finditer(f.text):
+            runs.setdefault(run.group(1), []).append(run)
+        starts = {name: [r.start() for r in found] for name, found in runs.items()}
+        for m in decoded:
+            found = runs.get(m.group(1))
+            if not found:
+                continue
+            k = bisect.bisect_left(starts[m.group(1)], m.end())
+            if k == len(found) or found[k].start() >= m.end() + _FLOW_REACH:
+                continue
+            run = found[k]
+            evidence.append(f.evidence_for_span(m.start(), m.end()))
+            evidence.append(f.evidence_for_span(run.start(), run.end()))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                return evidence
+    return evidence
 
 # A decode-function name resolved dynamically instead of written as a literal attribute access,
 # so the call never shows the ``exec(``/``eval(`` immediately followed by ``b64decode``/``atob``
@@ -92,8 +170,9 @@ class ObfuscationScanner(Scanner):
             severity=Severity.HIGH,
             title="Decode-and-execute (obfuscated execution)",
             description=(
-                "A pattern that decodes data and immediately executes it was detected "
-                "(e.g. eval(atob(...)) or exec(b64decode(...)))."
+                "A pattern that decodes data and executes it was detected "
+                "(e.g. eval(atob(...)), new Function(Buffer.from(x, 'hex').toString()) or "
+                "exec(b64decode(...)), directly or through a variable that holds the decoded text)."
             ),
             recommendation=(
                 "Decoding and executing data hides behavior from review. Decode the payload "
@@ -166,6 +245,18 @@ class ObfuscationScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         scored_ids = {"ST-OBF-DECODE-EXEC", "ST-OBF-DYNAMIC-DECODE-EXEC"}
         findings = findings_from_rules(index, [r for r in self.rules if r.id in scored_ids])
+        flow = _decoded_then_executed(index)
+        if flow:
+            rule = self.rules[0]
+            direct = next((f for f in findings if f.id == rule.id), None)
+            seen: set[tuple[str, int, int]] = set()
+            evidence: list[Evidence] = []
+            for ev in [*(direct.evidence if direct else ()), *flow]:
+                if (ev.file, ev.line_start, ev.line_end) not in seen:
+                    seen.add((ev.file, ev.line_start, ev.line_end))
+                    evidence.append(ev)
+            findings = [f for f in findings if f.id != rule.id]
+            findings.insert(0, _finding_from_rule(rule, evidence[:MAX_EVIDENCE_SCANNED]))
 
         needs_review: list[NeedsReview] = []
         self._heuristic(index, _BASE64_BLOB, "ST-OBF-BASE64-BLOB",

@@ -330,3 +330,70 @@ def test_the_credential_send_pass_is_linear(text):
     from skilltotal.scanners.prompt_surface import _covert_credential_sends
 
     _timed(lambda: _covert_credential_sends(text))
+
+
+# --- Gap 3: hex decoded and handed to the Function constructor / eval -----------------------
+
+# console.log(1), written as hex escapes / as hex digits.
+_ESCAPED = r'"\x63\x6f\x6e\x73\x6f\x6c\x65\x2e\x6c\x6f\x67\x28\x31\x29"'
+_HEX = '"636f6e736f6c652e6c6f67283129"'
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        ("a.js", f"new Function(Buffer.from({_HEX}, 'hex').toString())();\n"),
+        ("b.js", f"eval(Buffer.from({_HEX}, \"hex\").toString('utf8'));\n"),
+        ("c.js", f"Function(hexDecode({_HEX}))();\n"),
+        ("d.js", f"const code = Buffer.from({_HEX}, 'hex').toString();\nnew Function(code)();\n"),
+        ("e.js", f"const stage = {_ESCAPED};\nconst run = new Function(stage);\nrun();\n"),
+        ("f.js", f"eval({_ESCAPED});\n"),
+        ("g.js", "const code = atob(payload);\nsetTimeout(code, 0);\n"),
+        ("h.ts", f"const s: string = Buffer.from({_HEX}, 'hex').toString();\neval(s);\n"),
+        ("i.py", f"import binascii\nexec(binascii.unhexlify({_HEX}))\n"),
+        ("j.py", f"payload = bytes.fromhex({_HEX}).decode()\nexec(payload)\n"),
+    ],
+)
+def test_hex_decoded_and_executed_is_decode_exec(tmp_path, name, source):
+    assert "ST-OBF-DECODE-EXEC" in _ids(_write(tmp_path, {name: source}))
+
+
+def test_an_install_hook_running_a_hex_stage_is_a_dropper(tmp_path):
+    _write(tmp_path, {
+        "package.json": '{"name": "x", "version": "1.0.0", '
+                        '"scripts": {"postinstall": "node setup.js"}}\n',
+        "setup.js": f"const stage = {_ESCAPED};\nnew Function(stage)();\n",
+    })
+    ids = _ids(tmp_path)
+    assert {"ST-OBF-DECODE-EXEC", "ST-INSTALL-DROPPER"} <= ids
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        # Hex decoded for crypto or display, never executed.
+        ("a.js", "const key = Buffer.from(hexKey, 'hex');\n"
+                 "const mac = crypto.createHmac('sha256', key);\n"),
+        ("b.js", "function hexDecode(s) { return Buffer.from(s, 'hex').toString(); }\n"
+                 "module.exports = { hexDecode };\n"),
+        ("c.js", "const text = Buffer.from(h, 'hex').toString();\nconsole.log(text);\n"
+                 "const add = new Function('a', 'return a + 1');\n"),
+        # The Function constructor on its own, the usual global-object probe.
+        ("d.js", "const g = new Function('return this')();\n"),
+        # The construct named in a comment and in a label string.
+        ("e.js", "// new Function(Buffer.from(h, 'hex').toString()) runs the stage\n"),
+        ("f.js", "const label = 'eval(Buffer.from(h, \"hex\").toString())';\n"),
+        ("g.py", "import hmac\nkey = bytes.fromhex(h)\nmac = hmac.new(key, msg, 'sha256')\n"),
+        ("h.py", "import base64\ndata = base64.b64decode(blob)\nprint(data)\n"),
+    ],
+)
+def test_hex_utilities_are_not_decode_exec(tmp_path, name, source):
+    assert "ST-OBF-DECODE-EXEC" not in _ids(_write(tmp_path, {name: source}))
+
+
+def test_the_decoded_variable_pass_is_linear(tmp_path):
+    from skilltotal.scanners.obfuscation import _decoded_then_executed
+
+    text = "".join(f"const v{i} = atob(p);\neval(w{i});\n" for i in range(20_000))
+    index = _one_file(tmp_path, "a.js", text)
+    _timed(lambda: _decoded_then_executed(index))
