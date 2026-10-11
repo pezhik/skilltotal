@@ -1473,7 +1473,7 @@ so it's nearly free on ordinary repos).
 - Curated confusable table covers the common Cyrillic/Greek→Latin homoglyph set; only multi-word
   English phrases are matched, so folding does not create matches on genuine non-Latin text.
 - Scope: deterministic only. Semantic paraphrase and arbitrary-language understanding stay in the
-  paid Deep Analysis layer (open-core boundary). Calibrated benign FP = 0.
+  paid SkillTotal Cloud (open-core boundary). Calibrated benign FP = 0.
 
 ## ruleset 10 (engine 0.8.1)
 
