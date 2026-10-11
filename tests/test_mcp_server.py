@@ -151,3 +151,68 @@ def test_serve_speaks_newline_delimited_jsonrpc(tmp_path: Path):
     assert responses[1]["error"]["code"] == -32700
     report = json.loads(responses[2]["result"]["content"][0]["text"])
     assert report["risk_score"] > 0
+
+
+# --- malformed requests: an error for the request, never the end of the session -----------------
+
+
+def test_params_that_are_not_an_object_get_an_error_not_a_crash():
+    for params in ("x", [1], 3, True):
+        resp = handle_message(
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": params})
+        assert resp["error"]["code"] == -32602
+        resp = handle_message({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": params})
+        assert resp["error"]["code"] == -32602
+    # No params at all, or an empty list, is no params.
+    empty = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": []}
+    assert handle_message(empty)["result"]["serverInfo"]["name"] == "skilltotal"
+
+
+def test_arguments_that_are_not_an_object_get_an_error():
+    for arguments in ("abc", [1], 5):
+        resp = _call("scan_component", arguments)
+        assert resp["error"]["code"] == -32602
+
+
+def test_the_stdio_loop_survives_malformed_messages():
+    deep = '{"jsonrpc": "2.0", "id": 20, "method": "ping", "params": ' + "[" * 200_000 + (
+        "]" * 200_000) + "}"
+    lines = [
+        json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": "x"}),
+        deep,
+        json.dumps({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": [1]}),
+        json.dumps({"jsonrpc": "2.0", "id": 3, "method": "ping"}),
+    ]
+    stdout = io.StringIO()
+    serve(io.StringIO("\n".join(lines) + "\n"), stdout)
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert [r.get("id") for r in responses] == [1, None, 2, 3]
+    assert [r["error"]["code"] for r in responses[:3]] == [-32602, -32700, -32602]
+    assert responses[3]["result"] == {}
+
+
+def test_a_failure_while_answering_is_an_internal_error_and_the_loop_goes_on(monkeypatch):
+    import skilltotal.mcp_server as mcp
+
+    def broken(message):
+        raise RuntimeError("a bug in a handler")
+
+    monkeypatch.setattr(mcp, "handle_message", broken)
+    stdout = io.StringIO()
+    lines = [json.dumps({"jsonrpc": "2.0", "id": n, "method": "ping"}) for n in (7, 8)]
+    serve(io.StringIO("\n".join(lines) + "\n"), stdout)
+    responses = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert [(r["id"], r["error"]["code"]) for r in responses] == [(7, -32603), (8, -32603)]
+
+
+def test_a_reply_utf8_cannot_carry_is_still_sent():
+    """A lone surrogate from the client (`"\\ud800"` is valid JSON) echoed in a reply cannot be
+    encoded as UTF-8; the reply goes out escaped instead of ending the session."""
+    raw = io.BytesIO()
+    out = io.TextIOWrapper(raw, encoding="utf-8", newline="\n", write_through=True)
+    lines = '{"jsonrpc": "2.0", "id": 1, "method": "\\ud800"}\n' + json.dumps(
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"}) + "\n"
+    serve(io.StringIO(lines), out)
+    replies = [json.loads(line) for line in raw.getvalue().decode("utf-8").splitlines()]
+    assert [r["id"] for r in replies] == [1, 2]
+    assert replies[0]["error"]["code"] == -32601

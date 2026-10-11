@@ -81,20 +81,28 @@ TOOLS: list[dict[str, Any]] = [
 
 
 def serve(stdin: TextIO, stdout: TextIO) -> None:
-    """Run the newline-delimited JSON-RPC loop until the client closes stdin."""
+    """Run the newline-delimited JSON-RPC loop until the client closes stdin.
+
+    A message the server cannot read or answer gets a JSON-RPC error, and the loop goes on: one
+    bad request must not end the client's session.
+    """
     for line in stdin:
         line = line.strip()
         if not line:
             continue
         try:
             message = json.loads(line)
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):  # not JSON, or nested past what Python reads
             _write(stdout, _error(None, -32700, "parse error"))
             continue
         if not isinstance(message, dict):
             _write(stdout, _error(None, -32600, "invalid request"))
             continue
-        response = handle_message(message)
+        try:
+            response = handle_message(message)
+        except Exception:  # noqa: BLE001 - a failure answering one request is that request's
+            response = _error(message.get("id"), -32603, "internal error") if (
+                message.get("id") is not None) else None
         if response is not None:
             _write(stdout, response)
 
@@ -108,7 +116,11 @@ def handle_message(message: dict[str, Any]) -> dict[str, Any] | None:
     if msg_id is None:
         # Notifications (e.g. notifications/initialized) get no response.
         return None
-    params = message.get("params") or {}
+    params = message.get("params")
+    if params is None or params == []:
+        params = {}
+    if not isinstance(params, dict):
+        return _error(msg_id, -32602, "invalid params: params must be an object")
     if method == "initialize":
         return _result(msg_id, _initialize(params))
     if method == "ping":
@@ -140,7 +152,11 @@ def _initialize(params: dict[str, Any]) -> dict[str, Any]:
 
 def _tools_call(msg_id: Any, params: dict[str, Any]) -> dict[str, Any]:
     name = params.get("name")
-    args = params.get("arguments") or {}
+    args = params.get("arguments")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        return _error(msg_id, -32602, "invalid params: arguments must be an object")
     try:
         if name == "scan_component":
             payload: Any = analyze(str(args["source"])).to_dict()
@@ -181,5 +197,12 @@ def _error(msg_id: Any, code: int, message: str) -> dict[str, Any]:
 
 def _write(stdout: TextIO, response: dict[str, Any]) -> None:
     # One message per line; json.dumps without indent never emits embedded newlines.
-    stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+    text = json.dumps(response, ensure_ascii=False)
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        # A lone surrogate (a client may send one as `\ud800`, a file name may hold one) cannot
+        # travel as UTF-8: escaped, the reply still goes out instead of ending the session.
+        text = json.dumps(response)
+    stdout.write(text + "\n")
     stdout.flush()
