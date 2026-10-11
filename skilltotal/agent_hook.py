@@ -31,10 +31,12 @@ import base64
 import binascii
 import functools
 import json
+import os
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from skilltotal.guard import PLAIN_PATH, evaluate, unanalyzed_install_scripts
@@ -200,26 +202,30 @@ _PY_INDEX_ENV = re.compile(
 )
 
 
-def install_targets(command: str, shell: str = "bash") -> list[str]:
+def install_targets(command: str, shell: str = "bash", cwd: str | None = None) -> list[str]:
     """Scannable sources (``npm:name``, ``pypi:name``, a GitHub URL) an install would bring in."""
-    return [i.source for i in parse_installs(command, shell) if i.source]
+    return [i.source for i in parse_installs(command, shell, cwd=cwd) if i.source]
 
 
-def parse_installs(command: str, shell: str = "bash", _depth: int = 0) -> list[Install]:
+def parse_installs(command: str, shell: str = "bash", _depth: int = 0,
+                   cwd: str | None = None) -> list[Install]:
     """Everything an install command would bring in, scannable or not.
 
     ``shell`` is how the command line is quoted: ``bash`` (POSIX), ``powershell`` or ``cmd``.
+    ``cwd`` is where it runs: ``npx tsc`` there runs the project's own ``tsc`` when the project
+    has one, and installs nothing.
 
     Claude Code on Windows hands a Bash command to Git Bash through the Windows command line,
     whose parser halves every run of backslashes that is not followed by a double quote: there
     `echo 'a\\b'` prints `a\b`, and `npm i ev\\il` installs `evil`. Both readings are checked.
     """
-    found = _parse(command, shell, _depth, _Level(_Context(command)))
+    found = _parse(command, shell, _depth, _Level(_Context(command), cwd))
     if shell == "bash" and "\\\\" in command:
         halved = _BACKSLASH_RUN.sub(
             lambda m: m.group() if command.startswith('"', m.end())
             else "\\" * ((len(m.group()) + 1) // 2), command)
-        found = list(dict.fromkeys(found + _parse(halved, shell, _depth, _Level(_Context(halved)))))
+        found = list(dict.fromkeys(
+            found + _parse(halved, shell, _depth, _Level(_Context(halved), cwd))))
     return found
 
 
@@ -231,6 +237,7 @@ class _Context:
     """The command line the hook was given, shared by every reading of the text inside it."""
 
     root: str
+    local_bins: dict[tuple[str, str], bool] = field(default_factory=dict)
 
     @functools.cached_property
     def root_installs(self) -> bool:
@@ -249,6 +256,7 @@ class _Level:
     ``bash -c`` inside it runs, with that piece's command substitutions."""
 
     ctx: _Context
+    cwd: str | None = None  # where it runs, unless the line changes directory
     subs: tuple[str, ...] = ()
 
     @functools.cached_property
@@ -267,7 +275,10 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
         lexed = _Lexer(text, shell).lex()
     except _Unreadable:
         return _net(text)  # the shell would not run it as written; ask if it names an installer
-    level = _Level(outer.ctx, tuple(lexed.subs))
+    cwd = outer.cwd
+    if cwd and _moves(lexed.pipelines, text):
+        cwd = None
+    level = _Level(outer.ctx, cwd, tuple(lexed.subs))
     found: dict[Install, None] = {}
     if shell == "powershell" and _PS_DYNAMIC.search(text):
         found.update(dict.fromkeys(_net(text)))  # `[scriptblock]::Create('npm i x')`
@@ -374,6 +385,30 @@ def _registry_from_env(found: list[Install], words: list[str]) -> list[Install]:
             item = Install(None, f"{name} from a registry the command sets in its environment")
         out[item] = None
     return list(out)
+
+
+# Commands that change the directory the rest of the line runs in.
+_CHDIR = frozenset({"cd", "pushd", "popd", "chdir", "set-location", "sl", "push-location",
+                    "pop-location"})
+# npm's configuration from the environment can move where npx looks for the project.
+_NPM_CONFIG_ENV = re.compile(r"npm_config_", re.IGNORECASE)
+
+
+def _moves(pipelines: list[list[_Stage]], text: str) -> bool:
+    """Whether the line may run npx somewhere other than where it was started: a ``cd``
+    anywhere in it, ``env -C``/``sudo -D``, or npm configuration from the environment."""
+    if _NPM_CONFIG_ENV.search(text):
+        return True
+    for pipeline in pipelines:
+        for stage in pipeline:
+            words = stage.words
+            if words and _base(words[0]) in ("env", "sudo") and any(
+                    a in ("-C", "-D", "--chdir") or a.startswith("--chdir=") for a in words[1:]):
+                return True
+            words = _unwrap(_redirects(words)[0])
+            if words and _base(words[0]) in _CHDIR:
+                return True
+    return False
 
 
 def _net(*texts: str) -> list[Install]:
@@ -1192,7 +1227,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head == "claude" and rest[:2] == ["mcp", "add-json"]:
         return _add_json(rest[2:], shell, depth, level)
     if head in _NPM_RUNNERS:
-        return _npx(rest, shell, depth, level, _npm_source(rest, head))
+        return _npx(rest, shell, depth, level, _npm_source(rest, head),
+                    fetches=head == "pnpx")
     if head in ("npm", "pnpm", "yarn", "bun"):
         return _node_manager(head, rest, shell, depth, level)
     if _PIP_HEAD.fullmatch(head):
@@ -1501,6 +1537,7 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
                   level: _Level) -> list[Install]:
     takes = functools.partial(_npm_takes_value, head=head)
     sub, args = _subcommand(rest, takes)
+    quiet = all(a in _NPX_QUIET for a in rest[:len(rest) - len(args) - 1])  # before `exec`
     if head == "yarn" and sub == "global":
         sub, args = _subcommand(args, takes)
     if _COMPUTED.search(sub or ""):
@@ -1509,7 +1546,7 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
     if head == "pnpm" and sub == "exec":
         return _launched(args, shell, depth, level)  # runs a command; fetches nothing itself
     if sub in ("exec", "x", "dlx"):
-        return _npx(args, shell, depth, level, registry)
+        return _npx(args, shell, depth, level, registry, fetches=sub == "dlx", quiet=quiet)
     if sub in _SCAFFOLDERS[head]:
         return _scaffold(args, registry)
     if head == "yarn" and sub != "add":
@@ -1599,11 +1636,19 @@ def _initializer_package(spec: str) -> str:
     return f"create-{name}{at}{version}"
 
 
-def _npx(args: list[str], shell: str, depth: int, level: _Level,
-         registry: str | None = None) -> list[Install]:
-    """``npx [-y] [-p pkg]... pkg args`` (and ``npm exec``, ``pnpm dlx``, ``yarn dlx``): every
-    ``-p`` package, else the first positional; and the program it starts, which runs with the
-    rest of the line and can itself install (``npx npm i x``)."""
+def _npx(args: list[str], shell: str, depth: int, level: _Level, registry: str | None = None,
+         *, fetches: bool = False, quiet: bool = True) -> list[Install]:
+    """``npx [-y] [-p pkg]... pkg args`` (and ``npm exec``, ``bunx``, ``pnpm dlx``, ``yarn dlx``):
+    every ``-p`` package, else the first positional; and the program it starts, which runs with
+    the rest of the line and can itself install (``npx npm i x``).
+
+    npx first looks for the program in the project (``node_modules/.bin`` in the directory it
+    runs in or a parent) and runs that copy without fetching anything: ``npx tsc`` in a project
+    with TypeScript is not an install. A version or tag (``npx next@15``), a ``-p`` package, a
+    runner that always fetches (``pnpm dlx``, ``yarn dlx``) or an option that moves the project
+    (``--prefix``) is checked as before. ``quiet`` says the options in front (``npm --silent
+    exec``) were only ones that do not.
+    """
     registry = registry or _npm_source(args)
     packages: list[str] = []
     calls: list[str] = []  # `npx -c 'cmd'` runs a command line
@@ -1623,12 +1668,15 @@ def _npx(args: list[str], shell: str, depth: int, level: _Level,
             calls.append(arg.split("=", 1)[1])
             i += 1
         elif arg.startswith("-"):
+            quiet = quiet and arg in _NPX_QUIET
             i += 2 if (_npm_takes_value(arg) and "=" not in arg) else 1
         else:
             break
     command = args[i:]
     found: dict[Install, None] = {}
-    for spec in packages or command[:1]:
+    local = (bool(command) and not packages and not fetches and quiet
+             and _local_bin(command[0], level))
+    for spec in [] if local else packages or command[:1]:
         found.update(dict.fromkeys(_npm_spec(spec, registry)))
     if command:
         program = command[0] if packages else _npm_bin(command[0])
@@ -1637,6 +1685,37 @@ def _npx(args: list[str], shell: str, depth: int, level: _Level,
     for call in calls:
         found.update(dict.fromkeys(_run(call, shell, depth, level)))
     return list(found)
+
+
+# npx options that leave where it looks for the project as it is.
+_NPX_QUIET = frozenset({"-y", "--yes", "--no", "--no-install", "-q", "--quiet", "-s", "--silent",
+                        "--"})
+# A program name npx could find in node_modules/.bin (no version, no scope, no path).
+_BIN_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
+
+
+def _local_bin(name: str, level: _Level) -> bool:
+    """Whether the project the command runs in has ``node_modules/.bin/<name>`` in its
+    directory or a parent, the copy npx runs (on Windows npm also writes ``.cmd`` and ``.ps1``
+    shims next to it)."""
+    if not level.cwd or not _BIN_NAME.fullmatch(name):
+        return False
+    key = (name, level.cwd)
+    if key not in level.ctx.local_bins:
+        level.ctx.local_bins[key] = _find_local_bin(name, level.cwd)
+    return level.ctx.local_bins[key]
+
+
+def _find_local_bin(name: str, cwd: str) -> bool:
+    try:
+        start = Path(cwd)
+        if not start.is_absolute():
+            return False
+        names = (name, f"{name}.cmd", f"{name}.ps1") if os.name == "nt" else (name,)
+        return any((folder / "node_modules" / ".bin" / n).is_file()
+                   for folder in (start, *start.parents) for n in names)
+    except (OSError, ValueError):
+        return False
 
 
 def _npm_bin(spec: str) -> str:
@@ -2019,7 +2098,8 @@ def hook_response(
     if shell is None:
         return None
     command = str((event.get("tool_input") or {}).get("command", ""))
-    installs = parse_installs(command, shell)
+    cwd = event.get("cwd")
+    installs = parse_installs(command, shell, cwd=cwd if isinstance(cwd, str) else None)
     if not installs:
         return None
 

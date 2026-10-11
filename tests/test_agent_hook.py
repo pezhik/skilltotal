@@ -1517,3 +1517,113 @@ def parse_installs_for(command):
     from skilltotal.agent_hook import parse_installs
 
     return parse_installs(command)
+
+
+# --- npx runs the project's own binary when it has one: nothing is installed -------------------
+
+
+def _project(tmp_path, *bins):
+    root = tmp_path / "proj"
+    bin_dir = root / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    for name in bins:
+        (bin_dir / name).write_text("#!/bin/sh\n", encoding="utf-8")
+    return root
+
+
+def _in(cwd, command, tool="Bash"):
+    return {"hook_event_name": "PreToolUse", "tool_name": tool, "cwd": str(cwd),
+            "tool_input": {"command": command}}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "npx next build",
+        "npx -y next build",
+        "npx --yes vite build",
+        "npx eslint .",
+        "npx tsc --noEmit",
+        "npm exec next build",
+        "npm x -- next build",
+        "bunx next build",
+        "bun x next build",
+        "pnpm exec next build",
+    ],
+)
+@pytest.mark.parametrize("tool", ["Bash", "PowerShell"])
+def test_a_binary_the_project_already_has_is_not_an_install(tmp_path, command, tool):
+    root = _project(tmp_path, "next", "vite", "eslint", "tsc")
+    calls = []
+    out = hook_response(_in(root, command, tool), scan=lambda s, t: calls.append(s) or _report())
+    assert out is None
+    assert calls == []
+
+
+def test_a_binary_in_a_parent_directory_counts(tmp_path):
+    root = _project(tmp_path, "next")
+    app = root / "packages" / "app"
+    app.mkdir(parents=True)
+    calls = []
+    assert hook_response(_in(app, "npx next build"), scan=lambda s, t: calls.append(s)) is None
+    assert calls == []
+
+
+def test_without_the_binary_the_package_is_checked(tmp_path):
+    root = tmp_path / "proj"
+    (root / "node_modules").mkdir(parents=True)  # dependencies, but no .bin/next
+    calls = []
+    hook_response(_in(root, "npx next build"), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ["npm:next"]
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A version or tag, or a package named with -p, is fetched from the registry.
+        ("npx next@15 build", "npm:next"),
+        ("npx -y next@latest build", "npm:next@latest"),
+        ("npx -p next next build", "npm:next"),
+        ("npx --package=next next build", "npm:next"),
+        # These always fetch.
+        ("pnpm dlx next build", "npm:next"),
+        ("yarn dlx next build", "npm:next"),
+        ("pnpx next build", "npm:next"),
+        # Where npx looks is not the project the hook was told about.
+        ("cd ../elsewhere && npx next build", "npm:next"),
+        ("npm --prefix ../x exec next build", "npm:next"),
+        ("npx --prefix ../x next build", "npm:next"),
+        ("npm_config_prefix=../x npx next build", "npm:next"),
+        ("env -C ../x npx next build", "npm:next"),
+    ],
+)
+def test_what_npx_would_fetch_is_still_checked(tmp_path, command, expected):
+    root = _project(tmp_path, "next")
+    calls = []
+    hook_response(_in(root, command), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == [expected]
+
+
+def test_a_local_binary_still_runs_the_line_it_is_given(tmp_path):
+    root = _project(tmp_path, "npm")
+    calls = []
+    hook_response(_in(root, "npx npm i evil-pkg"), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ["npm:evil-pkg"]
+
+
+def test_a_windows_shim_counts_only_on_windows(tmp_path):
+    import os
+
+    root = tmp_path / "proj"
+    bin_dir = root / "node_modules" / ".bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "next.cmd").write_text("@echo off\n", encoding="utf-8")
+    calls = []
+    hook_response(_in(root, "npx next build"), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ([] if os.name == "nt" else ["npm:next"])
+
+
+def test_no_working_directory_means_the_package_is_checked():
+    calls = []
+    hook_response(_bash("npx next build"), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ["npm:next"]
