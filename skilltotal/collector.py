@@ -54,8 +54,20 @@ _HTTP_TIMEOUT = 60  # seconds for a registry/download request
 _MAX_ARCHIVE_BYTES = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MB", "150")) * 1024 * 1024
 _MAX_EXTRACT_BYTES = int(os.environ.get("SKILLTOTAL_MAX_EXTRACT_MB", "400")) * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", "30000"))
-# Local archive / single-file sources accepted by `scan <path>` (besides a directory).
-_LOCAL_ARCHIVE_EXTS = (".zip", ".tar.gz", ".tgz", ".tar", ".tar.bz2", ".tar.xz")
+# Local archive sources accepted by `scan <path>` (besides a directory and a single file). Zip is
+# also the container of formats that carry their own extension: Claude Desktop extensions (.mcpb,
+# formerly .dxt), Python wheels and VS Code extensions. Any other local file that starts with the
+# zip signature is extracted as one too.
+_TAR_SUFFIXES = (".tar.gz", ".tgz", ".tar", ".tar.bz2", ".tar.xz")
+_ZIP_SUFFIXES = (".zip", ".mcpb", ".dxt", ".whl", ".vsix")
+_ZIP_MAGIC = b"PK\x03\x04"
+# PEP 706 extraction filters: Python 3.12+, and the security releases that backported them to
+# 3.8-3.11 (where `tarfile.data_filter` exists, so does the `filter=` argument). "data" refuses
+# absolute paths, paths out of the destination and special files, and makes files owner-readable.
+_TAR_FILTER: dict[str, str] = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+# Inflated bytes a tar may hold beyond its members' data: one header block, padding and pax
+# records per member. Past _MAX_EXTRACT_BYTES plus this much, inflating stops (see _BoundedReader).
+_TAR_OVERHEAD_PER_MEMBER = 4096
 # Bound a git clone so a slow/huge remote can't hang the caller (a long-lived server holds a
 # request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
 # blocking forever on an interactive credential prompt for a private/typo'd URL.
@@ -122,6 +134,8 @@ class SourceContext:
     # Set when a browser URL was normalized to scan something other than what was pasted
     # (e.g. a /issues link reduced to the repo's default branch); surfaced in the report.
     note: str | None = None
+    # Archive entries that were deliberately not extracted (links, FIFOs, devices).
+    skipped_entries: int = 0
 
     def __enter__(self) -> SourceContext:
         return self
@@ -225,9 +239,48 @@ def collect(source: str, *, on_size: Callable[[TreeSize], None] | None = None) -
     return _collect_local(source)
 
 
-def _is_archive_name(name: str) -> bool:
-    n = name.lower()
-    return any(n.endswith(ext) for ext in _LOCAL_ARCHIVE_EXTS)
+def _local_archive_kind(path: Path) -> str | None:
+    """``"zip"`` or ``"tar"`` for a local archive, None for any other file.
+
+    A zip is recognized by its signature as well as by its name: read as a single file, a Claude
+    Desktop extension (.mcpb) was one opaque binary, and a malicious server inside it was reported
+    as "No significant risks found" with nothing indexed.
+    """
+    name = path.name.lower()
+    if name.endswith(_ZIP_SUFFIXES):
+        return "zip"
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(len(_ZIP_MAGIC))
+    except OSError as exc:
+        raise _unreadable_source(path, exc) from exc
+    if head == _ZIP_MAGIC:
+        return "zip"
+    if name.endswith(_TAR_SUFFIXES):
+        return "tar"
+    return None
+
+
+def _unreadable_source(path: Path, exc: OSError) -> CollectionError:
+    return CollectionError(
+        f"could not read {neutralize_hidden(path.name)}: {exc.strerror or type(exc).__name__}"
+    )
+
+
+def _archive_identity(filename: str) -> tuple[str, str]:
+    """(name, version) a local archive's own file name gives, for when nothing inside names it.
+
+    A wheel's file name is standardized (``name-version[-build]-python-abi-platform.whl``); any
+    other archive is named after its file without the archive extension, with no version.
+    """
+    lower = filename.lower()
+    suffix = next((s for s in (*_TAR_SUFFIXES, *_ZIP_SUFFIXES) if lower.endswith(s)), None)
+    stem = filename[: -len(suffix)] if suffix else Path(filename).stem
+    if lower.endswith(".whl"):
+        parts = stem.split("-")
+        if len(parts) >= 5:
+            return parts[0], parts[1]
+    return stem or filename, ""
 
 
 def _collect_local(source: str) -> SourceContext:
@@ -248,48 +301,61 @@ def _collect_local(source: str) -> SourceContext:
         # A project archive (zip/tar.gz/…) or a single code file: extract/stage to a temp dir and
         # scan it with the same engine. The display source is the file name (neutralized), never the
         # temp path.
-        if _is_archive_name(root.name):
-            return _collect_local_archive(root)
+        kind = _local_archive_kind(root)
+        if kind is not None:
+            return _collect_local_archive(root, kind)
         return _collect_local_file(root)
     raise CollectionError(f"Path is not a file or directory: {source}")
 
 
-def _collect_local_archive(path: Path) -> SourceContext:
-    if path.stat().st_size > _MAX_ARCHIVE_BYTES:
-        raise CollectionError("archive is too large")
-    data = path.read_bytes()
+def _collect_local_archive(path: Path, kind: str) -> SourceContext:
+    try:
+        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+            raise CollectionError("archive is too large")
+        data = path.read_bytes()
+    except OSError as exc:
+        raise _unreadable_source(path, exc) from exc
     display = neutralize_hidden(path.name)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
         extract_dir = Path(tmp.name) / "x"
         extract_dir.mkdir()
-        if path.name.lower().endswith(".zip"):
-            _safe_extract_zip(data, extract_dir)
+        if kind == "zip":
+            skipped = _safe_extract_zip(data, extract_dir)
         else:  # .tar.gz / .tgz / .tar / .tar.bz2 / .tar.xz
-            _safe_extract_tar(data, extract_dir)
+            skipped = _safe_extract_tar(data, extract_dir)
         root = _single_root(extract_dir)
-        component = detect_component(root, source=display)
+        # Files at the top of the archive (a wheel, an extension bundle) have no folder to be named
+        # after: the archive's own file name stands in, never the temporary directory.
+        name, version = _archive_identity(path.name) if root == extract_dir else (None, "")
+        component = detect_component(root, source=display, default_name=name)
         if component.type == "directory":
             component = replace(component, type="project")
-        return SourceContext(root=root, component=component, _tempdir=tmp)
+        if version and not component.version:
+            component = replace(component, version=neutralize_hidden(version))
+        return SourceContext(root=root, component=component, _tempdir=tmp,
+                             skipped_entries=skipped)
     except Exception:
         tmp.cleanup()
         raise
 
 
 def _collect_local_file(path: Path) -> SourceContext:
-    if path.stat().st_size > _MAX_ARCHIVE_BYTES:
-        raise CollectionError("file is too large")
     display = neutralize_hidden(path.name)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
+        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
+            raise CollectionError("file is too large")
         root = Path(tmp.name)
         # path.name is a bare filename; we control `root`, so the destination stays inside it.
         shutil.copy2(path, root / path.name)
-        component = detect_component(root, source=display)
+        component = detect_component(root, source=display, default_name=path.name)
         if component.type == "directory":
             component = replace(component, type="project")
         return SourceContext(root=root, component=component, _tempdir=tmp)
+    except OSError as exc:
+        tmp.cleanup()
+        raise _unreadable_source(path, exc) from exc
     except Exception:
         tmp.cleanup()
         raise
@@ -695,42 +761,153 @@ def _within(dest_resolved: Path, name: str, dest: Path) -> bool:
         return False
 
 
-def _safe_extract_tar(data: bytes, dest: Path) -> None:
+def _unextractable(kind: str, exc: Exception) -> CollectionError:
+    """The error for an archive that cannot be extracted. Nothing from inside the archive is
+    quoted (a member name is its author's text): only the system's reason or the error type."""
+    if isinstance(exc, OSError) and exc.strerror:
+        return CollectionError(f"archive could not be extracted: {exc.strerror}")
+    return CollectionError(
+        f"archive could not be read: it is damaged, truncated or not a {kind} archive "
+        f"({type(exc).__name__})"
+    )
+
+
+class _BoundedReader:
+    """A decompressed tar stream that refuses to inflate past ``limit`` bytes.
+
+    The archive itself is size-capped, but gzip inflates about a thousand to one, and tarfile
+    inflates some data before any member can be checked: it reads a pax or GNU long-name record
+    whole into memory, and it skips the data of an entry of unknown type by decompressing it. A
+    read or a seek past ``limit`` raises instead, so reading an archive costs at most that much.
+    """
+
+    def __init__(self, stream: io.IOBase, limit: int) -> None:
+        self._stream = stream
+        self._limit = limit
+
+    def _refuse_past(self, end: int) -> None:
+        if end > self._limit:
+            raise CollectionError("archive too large when extracted")
+
+    def read(self, size: int | None = -1) -> bytes:
+        room = self._limit - self._stream.tell()
+        if size is None or size < 0:
+            data = self._stream.read(room + 1)
+            self._refuse_past(self._limit - room + len(data))
+            return data
+        self._refuse_past(self._limit - room + size)
+        return self._stream.read(size)
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        target = offset + (self._stream.tell() if whence == io.SEEK_CUR else 0)
+        if whence in (io.SEEK_SET, io.SEEK_CUR):
+            self._refuse_past(target)
+        return self._stream.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._stream.tell()
+
+
+def _tar_stream(data: bytes) -> io.IOBase:
+    """The tar bytes inside ``data``: gzip, bzip2 and xz are recognized by their signatures (as
+    tarfile's own "r:*" does), anything else is read as a plain tar."""
+    raw = io.BytesIO(data)
+    if data[:2] == b"\x1f\x8b":
+        import gzip
+
+        return gzip.GzipFile(fileobj=raw, mode="rb")
+    if data[:3] == b"BZh":
+        import bz2  # imported here: a Python built without it can still read other archives
+
+        return bz2.BZ2File(raw, mode="rb")
+    if data[:6] == b"\xfd7zXZ\x00":
+        import lzma
+
+        return lzma.LZMAFile(raw, mode="rb")
+    return raw
+
+
+def _safe_extract_tar(data: bytes, dest: Path) -> int:
+    """Extract the files and directories of a tar archive into ``dest``.
+
+    Returns how many entries were left out: symbolic and hard links (a link can point anywhere,
+    and a later entry could write through it), FIFOs and devices (never component content, and
+    opening a FIFO blocks). Every limit applies to a header as it is read, before the data behind
+    it is inflated, and the inflated stream is capped as a whole (see _BoundedReader). Stored
+    permissions are never applied: a file archived as mode 000 stays readable for the scan. A
+    damaged or truncated archive is a CollectionError.
+    """
     dest_resolved = dest.resolve()
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as tf:
-        safe, total = [], 0
-        for m in tf.getmembers():
-            if len(safe) >= _MAX_ARCHIVE_MEMBERS:
+    limit = _MAX_EXTRACT_BYTES + _MAX_ARCHIVE_MEMBERS * _TAR_OVERHEAD_PER_MEMBER
+    skipped = entries = total = 0
+    try:
+        with _tar_stream(data) as stream, tarfile.open(
+            fileobj=_BoundedReader(stream, limit), mode="r:"
+        ) as tf:
+            for member in tf:
+                entries += 1
+                if entries > _MAX_ARCHIVE_MEMBERS:
+                    raise CollectionError("archive has too many entries")
+                if member.issym() or member.islnk() or member.isdev():
+                    skipped += 1
+                    continue
+                if not _within(dest_resolved, member.name, dest):
+                    raise CollectionError("archive contains an unsafe path")
+                if member.type not in tarfile.SUPPORTED_TYPES:
+                    # tarfile (and pip with it) writes an entry of unknown type as a regular file,
+                    # so its content is installed; the data filter would refuse it instead.
+                    member.type = tarfile.REGTYPE
+                if not member.isdir():
+                    total += member.size
+                    if total > _MAX_EXTRACT_BYTES:
+                        raise CollectionError("archive too large when extracted")
+                tf.extract(member, dest, set_attrs=False, **_TAR_FILTER)
+    except CollectionError:
+        raise
+    except ImportError as exc:
+        raise CollectionError(f"this Python cannot decompress the archive ({exc.name})") from exc
+    except Exception as exc:  # whatever tarfile or a decompressor raises on bytes it cannot read
+        if isinstance(exc, getattr(tarfile, "FilterError", ())):
+            raise CollectionError("archive contains an unsafe path") from exc
+        raise _unextractable("tar", exc) from exc
+    return skipped
+
+
+def _safe_extract_zip(data: bytes, dest: Path) -> int:
+    """Extract a zip archive into ``dest``; return how many entries were left out (symlinks).
+
+    Every check runs on the central directory before anything is written. Declared sizes bound
+    the work, since an entry never inflates past its declared size. A damaged, truncated,
+    password-protected or unsupported archive is a CollectionError.
+    """
+    dest_resolved = dest.resolve()
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            infos = zf.infolist()
+            if len(infos) > _MAX_ARCHIVE_MEMBERS:
                 raise CollectionError("archive has too many entries")
-            if m.issym() or m.islnk():
-                continue  # never extract links (path-escape risk)
-            if not _within(dest_resolved, m.name, dest):
-                raise CollectionError("archive contains an unsafe path")
-            if m.isfile():
-                total += m.size
+            safe, total, skipped = [], 0, 0
+            for info in infos:
+                # zipfile.extractall can create symlinks from the stored unix mode on some
+                # platforms.
+                if stat.S_ISLNK(info.external_attr >> 16):
+                    skipped += 1
+                    continue  # never extract symlinks (path-escape risk)
+                if info.flag_bits & 0x1:
+                    raise CollectionError(
+                        "archive is password-protected, so its contents cannot be read")
+                if not _within(dest_resolved, info.filename, dest):
+                    raise CollectionError("archive contains an unsafe path")
+                total += info.file_size
                 if total > _MAX_EXTRACT_BYTES:
                     raise CollectionError("archive too large when extracted")
-            safe.append(m)
-        tf.extractall(dest, members=safe)  # nosec B202 - members validated above
-
-
-def _safe_extract_zip(data: bytes, dest: Path) -> None:
-    dest_resolved = dest.resolve()
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        safe, total = [], 0
-        for info in zf.infolist():
-            if len(safe) >= _MAX_ARCHIVE_MEMBERS:
-                raise CollectionError("archive has too many entries")
-            # zipfile.extractall can create symlinks from the stored unix mode on some platforms.
-            if stat.S_ISLNK(info.external_attr >> 16):
-                continue  # never extract symlinks (path-escape risk)
-            if not _within(dest_resolved, info.filename, dest):
-                raise CollectionError("archive contains an unsafe path")
-            total += info.file_size
-            if total > _MAX_EXTRACT_BYTES:
-                raise CollectionError("archive too large when extracted")
-            safe.append(info)
-        zf.extractall(dest, members=safe)  # nosec B202 - members validated above
+                safe.append(info)
+            zf.extractall(dest, members=safe)  # nosec B202 - members validated above
+    except CollectionError:
+        raise
+    except Exception as exc:  # whatever zipfile or a decompressor raises on bytes it cannot read
+        raise _unextractable("zip", exc) from exc
+    return skipped
 
 
 def _collect_archive(
@@ -745,10 +922,10 @@ def _collect_archive(
     try:
         extract_dir = Path(tmp.name) / "x"
         extract_dir.mkdir()
-        if filename.lower().endswith(".whl") or filename.lower().endswith(".zip"):
-            _safe_extract_zip(data, extract_dir)
+        if filename.lower().endswith((".whl", ".zip")) or data.startswith(_ZIP_MAGIC):
+            skipped = _safe_extract_zip(data, extract_dir)
         else:  # .tgz / .tar.gz / .tar.*
-            _safe_extract_tar(data, extract_dir)
+            skipped = _safe_extract_tar(data, extract_dir)
         root = _single_root(extract_dir)
         component = detect_component(root, source=source)
         component = replace(
@@ -758,7 +935,8 @@ def _collect_archive(
             version=component.version or version,
             download_url=archive_url,
         )
-        return SourceContext(root=root, component=component, _tempdir=tmp)
+        return SourceContext(root=root, component=component, _tempdir=tmp,
+                             skipped_entries=skipped)
     except Exception:
         tmp.cleanup()
         raise
@@ -898,12 +1076,13 @@ def _collect_pypi(source: str) -> SourceContext:
     )
 
 
-def detect_component(root: Path, source: str) -> Component:
+def detect_component(root: Path, source: str, default_name: str | None = None) -> Component:
     """Derive component name/type/version solely from files inside ``root``.
 
+    The name falls back to ``default_name``, else the folder name, when no manifest gives one.
     Manifests are read only when they are regular files: one that is a link is not followed.
     """
-    name = root.name
+    name = default_name or root.name
     version = ""
     ctype = "directory"
 

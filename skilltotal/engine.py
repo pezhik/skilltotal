@@ -81,6 +81,8 @@ def analyze(
             report.needs_review.append(
                 NeedsReview(category="source", title="Scan target normalized", reason=ctx.note)
             )
+        if ctx.skipped_entries:
+            report.needs_review.append(_skipped_entries_note(ctx.skipped_entries))
         return report
 
 
@@ -473,6 +475,18 @@ def _unread_notes(index: FileIndex) -> list[NeedsReview]:
             ),
         ))
     return notes
+
+
+def _skipped_entries_note(count: int) -> NeedsReview:
+    entries, were = ("1 entry", "was") if count == 1 else (f"{count} entries", "were")
+    return NeedsReview(
+        category="coverage",
+        title="Archive entries not extracted",
+        reason=(
+            f"{entries} of the archive {were} not extracted: symbolic and hard links, FIFOs and "
+            f"devices are never written to disk, so nothing they point to was read."
+        ),
+    )
 
 
 def _verdict(
