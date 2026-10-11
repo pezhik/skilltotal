@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skilltotal.agent_hook import hook_response
 from skilltotal.collector import detect_component
 from skilltotal.engine import analyze_directory
@@ -163,3 +165,60 @@ def test_a_require_that_leaves_the_package_is_not_followed(tmp_path):
     from skilltotal.engine import _install_script_files
 
     assert _install_script_files(tmp_path / "pkg") == {"setup.js": "postinstall"}
+
+
+# Folders the path layers treat as not shipped behavior: build output of a published package,
+# test code, documentation, example scaffolding.
+_PATH_LAYERS = ("dist/setup.js", "build/setup.js", "tests/setup.js", "docs/setup.js",
+                "examples/setup.js")
+
+
+def _script_at(root: Path, where: str, text: str) -> None:
+    script = root / where
+    script.parent.mkdir(parents=True, exist_ok=True)
+    script.write_text(text, encoding="utf-8")
+
+
+@pytest.mark.parametrize("where", _PATH_LAYERS)
+def test_an_install_script_is_behavior_wherever_it_lives(tmp_path, where):
+    # Found by the pre-launch review: a dropper that postinstall runs, filed under one of these
+    # folders, was demoted with the folder, so the package scored clean and the guard and the hook
+    # let the install through. What npm runs at install time is behavior wherever it lives.
+    _package(tmp_path, {"postinstall": f"node {where}"})
+    _script_at(tmp_path, where, _DROPPER)
+    report = _analyze(tmp_path)
+    assert report.component.type == "npm_package"
+    assert "ST-OBF-DECODE-EXEC" in {f.id for f in report.findings}
+    assert report.verdict["has_malicious_indicators"]
+    assert not evaluate(report.to_dict()).allow
+
+
+@pytest.mark.parametrize("where", _PATH_LAYERS)
+def test_the_same_file_when_npm_does_not_run_it_at_install_is_still_demoted(tmp_path, where):
+    # Only what npm runs at install time is exempt from the path layers.
+    _package(tmp_path, {"build": f"node {where}"})
+    _script_at(tmp_path, where, _DROPPER)
+    report = _analyze(tmp_path)
+    assert "ST-OBF-DECODE-EXEC" not in {f.id for f in report.findings}
+    assert evaluate(report.to_dict()).allow
+
+
+def test_a_quotation_in_an_install_script_comment_is_still_not_behavior(tmp_path):
+    # The exemption skips the PATH layers only: a pattern inside a comment stays a quotation.
+    _package(tmp_path, {"postinstall": "node dist/setup.js"})
+    _script_at(tmp_path, "dist/setup.js", "// before: " + _DROPPER + "\nconsole.log('ok');\n")
+    report = _analyze(tmp_path)
+    assert "ST-OBF-DECODE-EXEC" not in {f.id for f in report.findings}
+
+
+def test_install_script_evidence_keeps_its_place_among_the_findings_evidence(tmp_path):
+    # The install script's evidence goes back where it was: the first location a report shows
+    # (and the hook quotes) must not move because some other evidence was demoted.
+    _package(tmp_path, {"postinstall": "node dist/a.js"})
+    _script_at(tmp_path, "dist/a.js", _DROPPER)
+    _script_at(tmp_path, "lib/b.js", _DROPPER)
+    report = _analyze(tmp_path)
+    finding = next(f for f in report.findings if f.id == "ST-OBF-DECODE-EXEC")
+    files = [e.file for e in finding.evidence]
+    assert set(files) == {"dist/a.js", "lib/b.js"}
+    assert files == sorted(files, key=lambda f: ("dist/a.js", "lib/b.js").index(f))

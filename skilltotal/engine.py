@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -158,24 +158,28 @@ def analyze_directory(
     #   6. structured-data prompt evidence - an injection phrase in a data blob is inert
     #   7. Python/shell code-context - a pattern that only appears inside a string literal/comment
     #      is a literal or doc example (e.g. a scanner's own rule definitions), not behavior
-    findings, test_review = _split_test_evidence(findings, index)
+    # The layers that judge a file by its PATH (1-5 and build output) never demote what npm runs at
+    # install time: a dropper that postinstall runs from dist/ or tests/ is the attack, whatever
+    # the folder suggests. The content layers (6, 7) still apply to it.
+    install_files = frozenset(install_scripts)
+    findings, test_review = _hold_out(install_files, _split_test_evidence, findings, index)
     needs_review.extend(test_review)
-    findings, doc_review = _split_doc_evidence(
-        findings, skill_dirs(f.relpath for f in index.files)
+    findings, doc_review = _hold_out(
+        install_files, _split_doc_evidence, findings, skill_dirs(f.relpath for f in index.files)
     )
     needs_review.extend(doc_review)
-    findings, corpus_review = _split_data_corpus_evidence(findings)
+    findings, corpus_review = _hold_out(install_files, _split_data_corpus_evidence, findings)
     needs_review.extend(corpus_review)
-    findings, example_review = _split_example_evidence(findings)
+    findings, example_review = _hold_out(install_files, _split_example_evidence, findings)
     needs_review.extend(example_review)
-    findings, ci_review = _split_ci_evidence(findings)
+    findings, ci_review = _hold_out(install_files, _split_ci_evidence, findings)
     needs_review.extend(ci_review)
     findings, structured_data_review = _split_structured_data_evidence(findings)
     needs_review.extend(structured_data_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
     if published:
-        findings, build_review = _split_build_output_evidence(findings)
+        findings, build_review = _hold_out(install_files, _split_build_output_evidence, findings)
         needs_review.extend(build_review)
     else:
         findings, env_review = _split_unpublished_env_evidence(findings)
@@ -608,6 +612,43 @@ def _split_test_evidence(
                 )
             )
     return kept, review
+
+
+def _hold_out(
+    held_files: frozenset[str],
+    split: Callable[..., tuple[list[Finding], list[NeedsReview]]],
+    findings: list[Finding],
+    *args: object,
+) -> tuple[list[Finding], list[NeedsReview]]:
+    """Run the path-based demotion ``split`` on the evidence outside ``held_files`` only.
+
+    Evidence in a held file (one npm runs at install time) is behavior whatever folder it sits in,
+    so it skips ``split`` and goes back into its finding where it was: the first location a report
+    shows, and the hook quotes, does not move because other evidence was demoted.
+    """
+    held: dict[str, list[Evidence]] = {}
+    rest: list[Finding] = []
+    for finding in findings:
+        mine = [e for e in finding.evidence if e.file in held_files]
+        if mine:
+            held[finding.id] = mine
+        other = [e for e in finding.evidence if e.file not in held_files]
+        if other:
+            rest.append(_finding_with_evidence(finding, other))
+    if not held:
+        return split(findings, *args)
+    kept, review = split(rest, *args)
+    kept_by_id = {f.id: f for f in kept}
+    merged: list[Finding] = []
+    for finding in findings:
+        base = kept_by_id.get(finding.id)
+        evidence = [*(base.evidence if base else ()), *held.get(finding.id, ())]
+        if not evidence:
+            continue
+        order = {id(e): i for i, e in enumerate(finding.evidence)}
+        evidence.sort(key=lambda e: order.get(id(e), len(order)))
+        merged.append(_finding_with_evidence(base or finding, evidence))
+    return merged, review
 
 
 def _finding_with_evidence(finding: Finding, evidence: list[Evidence]) -> Finding:
