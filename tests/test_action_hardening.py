@@ -40,3 +40,9 @@ def test_an_unknown_fail_on_level_fails_instead_of_disabling_the_gate():
     text = ACTION.read_text(encoding="utf-8")
     assert "fail-on must be low, medium, high, critical or none" in text
     assert 'GATE+=(--fail-on "' in text
+
+
+def test_the_pull_request_comment_puts_malicious_indicators_first():
+    # A dropper can score 20/100 (low): the icon must not go green over malicious indicators.
+    text = ACTION.read_text(encoding="utf-8")
+    assert "verdict.has_malicious_indicators === true ? '🔴'" in text

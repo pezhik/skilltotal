@@ -14,10 +14,11 @@ Recognized top-level keys:
 Per-rule policy (reviewable, lives in the repo — no dashboard or account needed):
     [policy]
     "ST-SHELL-PIPE-EXEC" = "block"    # gate trips (exit 2) whenever this rule fires
-    "ST-DYN-PY"          = "warn"     # reported, but exempt from the fail_on severity gate
+    "ST-DESERIALIZE-PY"  = "warn"     # reported, but exempt from the fail_on severity gate
     "ST-SENS-WORD"       = "ignore"   # suppressed entirely (same effect as `ignore`)
 
-`block` overrides severity thresholds (it trips even with no `fail_on` configured); `warn`
+`block` overrides severity thresholds (it trips even with no `fail_on` configured, also for a
+capability rule, which the severity gate never counts on its own); `warn`
 is an explicit accept-but-show (the finding stays in the report and still counts toward the
 risk score / `fail_on_score`); unknown actions are dropped, not fatal.
 """
