@@ -1263,3 +1263,115 @@ def test_the_program_a_runner_starts_is_read_as_a_command(command, expected):
 )
 def test_a_runner_starting_an_ordinary_program_finds_only_its_package(command, expected):
     assert install_targets(command) == expected
+
+
+# --- Indirect execution: text another program runs as a command ------------------------------
+
+INDIRECT_COMMANDS = [
+    ("bash", "eval 'npm install evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "eval npm install evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "true && eval \"npm i evil-pkg\"", ["npm:evil-pkg"]),
+    ("bash", "bash <<< 'npm i evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "sh <<<'npm i evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "echo 'npm i evil-pkg' | sh", ["npm:evil-pkg"]),
+    ("bash", "echo evil-pkg | xargs npm install", ["npm:evil-pkg"]),
+    ("bash", "/usr/bin/env -S 'npm install evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "env -S'npm install evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "env -iS 'npm install evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "env --split-string='npm install evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "npx -c 'npm install evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "npm exec -c 'npx evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "npm exec --call='npm i evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "npx -p clean-pkg -c 'npm i evil-pkg'", ["npm:clean-pkg", "npm:evil-pkg"]),
+    ("bash", "watch -n 1 npm i evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "watch 'npm i evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "script -q -c 'npm i evil-pkg' /dev/null", ["npm:evil-pkg"]),
+    ("bash", "script -q /dev/null npm i evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "busybox sh -c 'npm i evil-pkg'", ["npm:evil-pkg"]),
+    ("bash", "corepack pnpm add evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "corepack yarn add evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "find . -maxdepth 0 -exec npm i evil-pkg \\;", ["npm:evil-pkg"]),
+    ("bash", "find . -maxdepth 0 -execdir sh -c 'npm i evil-pkg' \\;", ["npm:evil-pkg"]),
+    ("bash", "flock /tmp/lock npm i evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "setsid npm i evil-pkg", ["npm:evil-pkg"]),
+    ("bash", "su -c 'npm i evil-pkg' root", ["npm:evil-pkg"]),
+    ("bash", "xvfb-run npm i evil-pkg", ["npm:evil-pkg"]),
+    ("powershell", "'npm i evil-pkg' | iex", ["npm:evil-pkg"]),
+    ("powershell", "'npm i evil-pkg' | Invoke-Expression", ["npm:evil-pkg"]),
+    ("powershell", "@'\nnpm i evil-pkg\n'@ | iex", ["npm:evil-pkg"]),
+    ("powershell", "echo 'npm i evil-pkg' | powershell -Command -", ["npm:evil-pkg"]),
+    ("powershell", "'npm i evil-pkg' | cmd", ["npm:evil-pkg"]),
+]
+
+
+@pytest.mark.parametrize(("shell", "command", "expected"), INDIRECT_COMMANDS)
+def test_a_command_line_another_program_runs_is_read(shell, command, expected):
+    assert install_targets(command, shell=shell) == expected
+
+
+UNREADABLE_INDIRECT = [
+    # Code in another language: not read, but it names an installer.
+    ("bash", "node -e \"require('child_process').execSync('npm i evil-pkg')\""),
+    ("bash", "node --eval=\"require('child_process').execSync('npm i evil-pkg')\""),
+    ("bash", "node -pe \"require('child_process').execSync('npx evil-pkg')\""),
+    ("bash", "python -c \"import os; os.system('pip install evil-pkg')\""),
+    ("bash", "python3 -Ic \"import os; os.system('pip install evil-pkg')\""),
+    ("bash", "python3 -c 'import subprocess; subprocess.run([\"pip\", \"install\", \"x\"])'"),
+    ("bash", "perl -e 'system(\"npm i evil-pkg\")'"),
+    ("bash", "ruby -e 'system(\"npm i evil-pkg\")'"),
+    ("bash", "php -r 'system(\"npm i evil-pkg\");'"),
+    ("bash", "bun -e \"Bun.spawnSync(['npm', 'i', 'evil-pkg'])\""),
+    ("bash", "deno eval \"new Deno.Command('npm', {args: ['i', 'evil-pkg']}).outputSync()\""),
+    ("bash", "python - <<'EOF'\nimport os\nos.system('pip install evil-pkg')\nEOF"),
+    ("bash", "echo \"import os; os.system('pip install evil-pkg')\" | python"),
+    # A command line built when it runs, from text in the same line.
+    ("bash", "P='npm i evil-pkg'; eval \"$P\""),
+    ("bash", "P='npm i evil-pkg'; bash -c \"$P\""),
+    ("bash", "eval \"$(echo npm i evil-pkg)\""),
+    ("bash", "printf 'npm i %s' evil-pkg | sh"),
+    ("bash", "cat pkgs.txt | xargs npm install"),
+    ("bash", "xargs -a list.txt npx -y"),
+    ("powershell", "$c = 'npm i evil-pkg'; iex $c"),
+    ("powershell", "& ([scriptblock]::Create('npm i evil-pkg'))"),
+    ("powershell", "$ExecutionContext.InvokeCommand.InvokeScript('npm i evil-pkg')"),
+]
+
+
+@pytest.mark.parametrize(("shell", "command"), UNREADABLE_INDIRECT)
+def test_code_the_hook_cannot_read_asks_when_it_names_an_installer(shell, command):
+    assert "a command SkillTotal could not read" in _ask_without_scan(command, shell)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        'node -e "console.log(1)"',
+        "node --version",
+        "node server.js --port 3000",
+        "python -c 'import sys; print(sys.version)'",
+        "perl -e 'print 1'",
+        "ruby -e 'puts 1'",
+        "deno eval 'console.log(1)'",
+        "bun -e 'console.log(1)'",
+        'eval "$(ssh-agent -s)"',
+        'eval "$(fnm env)" && node -v',
+        "watch -n 5 ls",
+        "xargs -n1 echo < list.txt",
+        "git ls-files | xargs wc -l",
+        "find . -name '*.pyc' -delete",
+        "find . -type f -exec rm {} \\;",
+        "sh ./build.sh",
+        "bash scripts/test.sh --fast",
+        "echo done | tee log.txt",
+        "script -q /dev/null ls",
+        "setsid sleep 1",
+        "su -c 'whoami' root",
+        "flock /tmp/lock make",
+        "corepack enable",
+        "cat data.json | node process.js",
+    ],
+)
+def test_ordinary_indirect_commands_stay_silent(command):
+    from skilltotal.agent_hook import parse_installs
+
+    assert parse_installs(command) == []

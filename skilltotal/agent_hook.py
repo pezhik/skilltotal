@@ -121,6 +121,24 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 # PowerShell: wrappers that take the command line as a string, and the ones that start a program.
 _PS_EVAL = {"iex", "invoke-expression"}
 _PS_START = {"start-process", "saps", "start"}
+# PowerShell that runs a string as code: not read here.
+_PS_DYNAMIC = re.compile(r"\[scriptblock\]\s*::\s*create|\.invokescript\s*\(|\.newscriptblock\s*\(",
+                         re.IGNORECASE)
+# Programs that run the rest of their arguments as a command; where it starts is not parsed but
+# found (`watch -n 1 npm i x`, `script -c 'npm i x'`, `flock /tmp/l npm i x`).
+_LAUNCHERS = frozenset({
+    "watch", "script", "flock", "setsid", "chronic", "unbuffer", "ionice", "taskset", "chrt",
+    "caffeinate", "xvfb-run", "dbus-run-session", "strace", "ltrace", "firejail", "proxychains",
+    "proxychains4", "unshare", "systemd-run", "runuser", "su", "pkexec", "nsenter", "chroot", "sg",
+})
+# Wrappers whose first argument is the command: `corepack pnpm add x`, `busybox sh -c ...`.
+_PASSTHROUGH = frozenset({"corepack", "busybox"})
+# Interpreters that run code given on the command line (short and long options) or on stdin.
+_CODE_OPTIONS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "node": ("ep", ("eval", "print")), "nodejs": ("ep", ("eval", "print")),
+    "bun": ("ep", ("eval", "print")), "deno": ("", ()), "perl": ("eE", ()), "ruby": ("e", ()),
+    "php": ("r", ()), "osascript": ("e", ()),
+}
 _PIP_HEAD = re.compile(r"pip\d*(?:\.\d+)?")
 _PYTHON_HEAD = re.compile(r"(?:python|py)\d*(?:\.\d+)?")
 
@@ -145,7 +163,6 @@ _UV_VALUE_FLAGS = {"--python", "-p", "--with", "--index", "--index-url", "--extr
                    "--default-index", "--group", "--extra", "--package", "--directory",
                    "--project", "--cache-dir", "--config-file", "--color", "-f", "--find-links",
                    "--from", "--with-editable", "--with-requirements"}
-_PY_VALUE_FLAGS = {"-X", "-W", "-c"}
 # pip and uv options that name where packages come from (pip also takes an abbreviation).
 _PIP_SOURCE_OPTIONS = ("index-url", "extra-index-url", "find-links")
 _UV_SOURCE_OPTIONS = frozenset({"index-url", "extra-index-url", "find-links", "index",
@@ -189,6 +206,13 @@ class _Context:
     """The command line the hook was given, shared by every reading of the text inside it."""
 
     root: str
+    _root_installs: bool | None = None
+
+    def root_installs(self) -> bool:
+        """Whether the whole command line names an installer anywhere (worked out once)."""
+        if self._root_installs is None:
+            self._root_installs = bool(_INSTALL_WORDS.search(self.root))
+        return self._root_installs
 
 
 @dataclass(frozen=True)
@@ -198,6 +222,11 @@ class _Level:
 
     ctx: _Context
     subs: tuple[str, ...] = ()
+
+    @functools.cached_property
+    def subs_install(self) -> bool:
+        """Whether a command substitution here names an installer (worked out once)."""
+        return any(_INSTALL_WORDS.search(sub) for sub in self.subs)
 
 
 def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
@@ -212,6 +241,8 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
         return _net(text)  # the shell would not run it as written; ask if it names an installer
     level = _Level(outer.ctx, tuple(lexed.subs))
     found: dict[Install, None] = {}
+    if shell == "powershell" and _PS_DYNAMIC.search(text):
+        found.update(dict.fromkeys(_net(text)))  # `[scriptblock]::Create('npm i x')`
     seen: list[str] = [text]
     # A command substitution runs too: `echo $(npm install x)` installs x.
     for sub in lexed.subs:
@@ -256,8 +287,39 @@ def _net(*texts: str) -> list[Install]:
 
 
 def _run(text: str, shell: str, depth: int, level: _Level) -> list[Install]:
-    """What a command line another program runs would install (``bash -c``, ``iex``)."""
-    return _parse(text, shell, depth + 1, level)
+    """What a command line another program runs would install (``bash -c``, ``eval``, ``iex``,
+    a script piped into a shell)."""
+    return _parse(text, shell, depth + 1, level) + _unseen(text, shell, level)
+
+
+# A variable the shell fills in: `$P`, `${P}`, `$1`, `$env:P`, `%P%`.
+_VARIABLE = {
+    "bash": re.compile(r"\$[\w{@*#?$!-]"),
+    "powershell": re.compile(r"\$[\w{:?^$]"),
+    "cmd": re.compile(r"%[^%\s]+%|![^!\s]+!"),
+}
+
+
+def _unseen(text: str, shell: str, level: _Level) -> list[Install]:
+    """Text another program runs, with parts the shell fills in when it runs: a command
+    substitution's output (``eval "$(...)"``), a variable's value (``P='npm i x'; eval $P``).
+    What they hold comes from this command line if from anywhere, so the person is asked when
+    the substitution, or the line, names an installer."""
+    if _SUB in text and level.subs_install:
+        return [_NOT_READ]
+    if _VARIABLE[shell].search(text.replace(_SUB, "")) and level.ctx.root_installs():
+        return [_NOT_READ]
+    return []
+
+
+def _from_stdin(feed: list[tuple[str, bool]], shell: str, depth: int,
+                level: _Level) -> list[Install]:
+    """A script a shell (or ``iex``) reads on stdin: read as commands when the hook could read
+    it, else asked about when it names an installer."""
+    found: dict[Install, None] = {}
+    for text, readable in feed:
+        found.update(dict.fromkeys(_run(text, shell, depth, level) if readable else _net(text)))
+    return list(found)
 
 
 def _words(text: str, shell: str) -> list[str] | None:
@@ -913,19 +975,59 @@ def _unwrap(tokens: list[str]) -> list[str]:
             tokens = tokens[1:]
             continue
         head = _base(tokens[0])
+        if head in _PASSTHROUGH:
+            tokens = tokens[1:]
+            continue
+        if head == "env":
+            tokens = _env_command(tokens[1:])
+            continue
         if head not in _WRAPPERS:
             return tokens
         value_flags = _WRAPPERS[head]
         i = 1
-        # `env` sets any NAME=VALUE before the command, even one no shell would accept as a
-        # variable name (`npm_config_@scope:registry=...`).
-        while i < len(tokens) and (tokens[i].startswith("-") or _ENV_ASSIGN.match(tokens[i])
-                                   or (head == "env" and "=" in tokens[i])):
+        while i < len(tokens) and (tokens[i].startswith("-") or _ENV_ASSIGN.match(tokens[i])):
             i += 2 if tokens[i] in value_flags else 1
         if head == "timeout" and i < len(tokens):
             i += 1  # the duration
         tokens = tokens[i:]
     return tokens
+
+
+def _env_command(args: list[str]) -> list[str]:
+    """``env [-i] [-u NAME] [NAME=VALUE]... [-S 'command line'] command args``: what it runs.
+
+    It sets any NAME=VALUE before the command, even one no shell would take for a variable name
+    (``npm_config_@scope:registry=...``), and ``-S`` splits one argument into the command's
+    words.
+    """
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        split = None
+        if arg.startswith("--split-string"):
+            _, eq, split = arg.partition("=")
+            if not eq:
+                i += 1
+                split = args[i] if i < len(args) else ""
+        elif arg.startswith("-") and not arg.startswith("--") and len(arg) > 1:
+            for k, letter in enumerate(arg[1:], 1):
+                if letter in "uC":  # a value: the rest of the word, or the next word
+                    i += 1 if k == len(arg) - 1 else 0
+                    break
+                if letter == "S":
+                    split = arg[k + 1:]
+                    if not split:
+                        i += 1
+                        split = args[i] if i < len(args) else ""
+                    break
+        elif arg in ("--unset", "--chdir"):
+            i += 1
+        elif "=" not in arg and not arg.startswith("-"):
+            return args[i:]
+        if split is not None:
+            return (_words(split, "bash") or split.split()) + args[i + 1:]
+        i += 1
+    return []
 
 
 def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
@@ -943,11 +1045,24 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if shell == "cmd" and (head == "rem" or tokens[0].startswith("::")):
         return []  # a cmd comment
 
+    feed = feed or []
     if head in _SHELLS or head in ("cmd", "powershell", "pwsh"):
-        return _shell(head, rest, shell, depth, level, feed or [])
+        return _shell(head, rest, shell, depth, level, feed)
+    if head == "eval" and shell == "bash":
+        return _run(" ".join(rest), "bash", depth, level)
     if shell == "powershell" and head in _PS_EVAL:
         args = [a for a in rest if a.lower() != "-command"]
-        return _run(" ".join(args), "powershell", depth, level) if args else []
+        if args:
+            return _run(" ".join(args), "powershell", depth, level)
+        return _from_stdin(feed, "powershell", depth, level)  # `'npm i x' | iex`
+    if head in _LAUNCHERS or (shell == "cmd" and head == "start"):
+        return _launched(rest, shell, depth, level)
+    if head in ("xargs", "parallel"):
+        return _xargs(rest, shell, depth, level, feed)
+    if head == "find":
+        return _find_exec(rest, shell, depth, level)
+    if head in _CODE_OPTIONS and (head != "bun" or _code_args(rest, *_CODE_OPTIONS["bun"])):
+        return _interpreter(head, rest, feed)
     if shell == "powershell" and head in _PS_START:
         started = _start_process(rest)
         if started is None:
@@ -958,14 +1073,14 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head == "claude" and rest[:2] == ["mcp", "add-json"]:
         return _add_json(rest[2:], shell, depth, level)
     if head in _NPM_RUNNERS:
-        return _npx(rest, shell, depth, level)
+        return _npx(rest, shell, depth, level, _npm_source(rest, head))
     if head in ("npm", "pnpm", "yarn", "bun"):
         return _node_manager(head, rest, shell, depth, level)
     if _PIP_HEAD.fullmatch(head):
         sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
         return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
     if _PYTHON_HEAD.fullmatch(head):
-        return _python_module(rest, shell, depth, level)
+        return _python_module(rest, shell, depth, level, feed)
     if head == "uv":
         return _uv(rest, shell, depth, level)
     if head == "uvx":
@@ -984,10 +1099,66 @@ def _shell(head: str, rest: list[str], shell: str, depth: int, level: _Level,
     if not _reads_stdin(head, rest):
         return []
     flavor = {"cmd": "cmd", "powershell": "powershell", "pwsh": "powershell"}.get(head, "bash")
-    found: dict[Install, None] = {}
-    for text, readable in feed:
-        found.update(dict.fromkeys(_run(text, flavor, depth, level) if readable else _net(text)))
+    return _from_stdin(feed, flavor, depth, level)
+
+
+def _xargs(rest: list[str], shell: str, depth: int, level: _Level,
+           feed: list[tuple[str, bool]]) -> list[Install]:
+    """``... | xargs npm install``: the command xargs runs gets what it reads as more
+    arguments. Read from an ``echo`` they are checked; from anywhere else (a file, another
+    program) they cannot be, and the person is asked when the command installs."""
+    found = dict.fromkeys(_launched(rest, shell, depth, level))
+    start = next((i for i, word in enumerate(rest) if _could_launch(word)), None)
+    if start is not None:
+        command = rest[start:]
+        for text, readable in feed or [("", False)]:
+            words = _words(text, "bash") if readable else None
+            items = (_installs_in(command + words, shell, depth + 1, level) if words is not None
+                     else _net(" ".join(command)))
+            found.update(dict.fromkeys(items))
     return list(found)
+
+
+def _find_exec(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    """``find ... -exec npm i x {} ';'``: the command each ``-exec`` runs."""
+    found: dict[Install, None] = {}
+    i = 0
+    while i < len(rest):
+        if rest[i] in ("-exec", "-execdir", "-ok", "-okdir"):
+            end = i + 1
+            while end < len(rest) and rest[end] not in (";", "+"):
+                end += 1
+            found.update(dict.fromkeys(_launched(rest[i + 1:end], shell, depth, level)))
+            i = end
+        i += 1
+    return list(found)
+
+
+def _code_args(rest: list[str], short: str, long: tuple[str, ...]) -> list[str]:
+    """The code given to an interpreter on its command line (``-e CODE``, ``--eval=CODE``,
+    ``-pe CODE``): the rest of the option's word and the next word, to be safe."""
+    codes: list[str] = []
+    for i, arg in enumerate(rest):
+        following = rest[i + 1] if i + 1 < len(rest) else ""
+        if arg.startswith("--"):
+            name, eq, value = arg[2:].partition("=")
+            if name in long:
+                codes.append(value if eq else following)
+        elif arg.startswith("-") and len(arg) > 1:
+            for k, letter in enumerate(arg[1:], 1):
+                if letter in short:
+                    codes.extend((arg[k + 1:], following))
+                    break
+    return codes
+
+
+def _interpreter(head: str, rest: list[str], feed: list[tuple[str, bool]]) -> list[Install]:
+    """Code in another language (``node -e``, ``perl -e``, ``deno eval``, a script piped into
+    ``node``) is not read here: the person is asked when it names an installer."""
+    codes = _code_args(rest, *_CODE_OPTIONS[head])
+    if head == "deno" and "eval" in rest:
+        codes.append(" ".join(rest[rest.index("eval") + 1:]))
+    return _net(*codes, *(text for text, _ in feed))
 
 
 def _reads_stdin(head: str, rest: list[str]) -> bool:
@@ -1047,8 +1218,9 @@ def _could_launch(word: str) -> bool:
     head = _base(word)
     return (
         head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx", "cmd",
-                                         "powershell", "pwsh")
-        or head in _SHELLS or head in _WRAPPERS
+                                         "powershell", "pwsh", "eval", "xargs", "parallel")
+        or head in _SHELLS or head in _WRAPPERS or head in _LAUNCHERS or head in _PASSTHROUGH
+        or head in _CODE_OPTIONS or head in _PS_EVAL
         or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
     )
 
@@ -1283,6 +1455,7 @@ def _npx(args: list[str], shell: str, depth: int, level: _Level,
     rest of the line and can itself install (``npx npm i x``)."""
     registry = registry or _npm_source(args)
     packages: list[str] = []
+    calls: list[str] = []  # `npx -c 'cmd'` runs a command line
     i = 0
     while i < len(args):
         arg = args[i]
@@ -1291,6 +1464,12 @@ def _npx(args: list[str], shell: str, depth: int, level: _Level,
             i += 2
         elif arg.startswith("--package="):
             packages.append(arg.split("=", 1)[1])
+            i += 1
+        elif arg in ("-c", "--call"):
+            calls.extend(args[i + 1:i + 2])
+            i += 2
+        elif arg.startswith("--call="):
+            calls.append(arg.split("=", 1)[1])
             i += 1
         elif arg.startswith("-"):
             i += 2 if (_npm_takes_value(arg) and "=" not in arg) else 1
@@ -1304,6 +1483,8 @@ def _npx(args: list[str], shell: str, depth: int, level: _Level,
         program = command[0] if packages else _npm_bin(command[0])
         found.update(dict.fromkeys(
             _installs_in([program, *command[1:]], shell, depth + 1, level)))
+    for call in calls:
+        found.update(dict.fromkeys(_run(call, shell, depth, level)))
     return list(found)
 
 
@@ -1506,26 +1687,43 @@ def _py_spec(spec: str, index: str | None) -> list[Install]:
     return [Install(f"pypi:{m.group(0)}=={pin.group(1)}" if pin else f"pypi:{m.group(0)}")]
 
 
-def _python_module(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
-    """``python [-I] [-X opt] -m pip install x`` (and ``-m pipx`` / ``-m uv``)."""
+def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
+                   feed: list[tuple[str, bool]]) -> list[Install]:
+    """``python [-I] [-X opt] -m pip install x`` (and ``-m pipx`` / ``-m uv``). ``python -c CODE``
+    and a script read from stdin are Python the hook does not read: asked about when they name
+    an installer."""
     i = 0
     while i < len(rest):
         arg = rest[i]
-        if arg == "-m" and i + 1 < len(rest):
-            module, args = _base(rest[i + 1]), rest[i + 2:]
-            if re.fullmatch(r"pip\d*", module):
-                sub, sub_args = _subcommand(args, _PIP_VALUE_FLAGS)
-                return _pip_install(sub_args, "pip", _py_source(args, "pip")) if (
-                    sub == "install") else []
-            if module == "pipx":
-                return _pipx(args, shell, depth, level)
-            if module == "uv":
-                return _uv(args, shell, depth, level)
-            return []
-        if arg.startswith("-"):
-            i += 2 if arg in _PY_VALUE_FLAGS else 1
-            continue
-        return []  # `python script.py`
+        if arg == "-" or not arg.startswith("-"):
+            break  # a script, or `-` for stdin
+        if not arg.startswith("--"):
+            for k, letter in enumerate(arg[1:], 1):
+                if letter in "mcWX":  # options whose value is the rest of the word or the next
+                    value = arg[k + 1:]
+                    if not value:
+                        i += 1
+                        value = rest[i] if i < len(rest) else ""
+                    if letter == "m":
+                        return _python_m(_base(value), rest[i + 1:], shell, depth, level)
+                    if letter == "c":
+                        return _net(value)
+                    break
+        i += 1
+    if i >= len(rest) or rest[i] == "-":
+        return _net(*(text for text, _ in feed))  # the script comes from stdin
+    return []  # `python script.py`
+
+
+def _python_m(module: str, args: list[str], shell: str, depth: int,
+              level: _Level) -> list[Install]:
+    if re.fullmatch(r"pip\d*", module):
+        sub, sub_args = _subcommand(args, _PIP_VALUE_FLAGS)
+        return _pip_install(sub_args, "pip", _py_source(args, "pip")) if sub == "install" else []
+    if module == "pipx":
+        return _pipx(args, shell, depth, level)
+    if module == "uv":
+        return _uv(args, shell, depth, level)
     return []
 
 
