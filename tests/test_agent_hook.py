@@ -2101,3 +2101,33 @@ def test_a_glob_in_a_package_name_asks(command):
 )
 def test_wildcards_in_versions_and_odd_delimiters_read_as_the_shell_reads_them(command, expected):
     assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A backslash-newline continues a line outside quotes and inside double quotes, not inside
+        # single quotes.
+        ('npm i "evil\\\n-pkg"', ["npm:evil-pkg"]),
+        ("npm i 'evil\\\n-pkg' other-pkg", ["npm:other-pkg"]),
+        # A comment ends at its line, a backslash at its end included.
+        ("# comment \\\nnpm i evil-pkg", ["npm:evil-pkg"]),
+        ("npm i lodash # comment \\\nnpm i evil-pkg", ["npm:lodash", "npm:evil-pkg"]),
+        # `#` is a comment only where a word starts, unquoted and unescaped.
+        ("echo \\# ; npm i evil-pkg", ["npm:evil-pkg"]),
+        ("echo a\\ #b ; npm i evil-pkg", ["npm:evil-pkg"]),
+        ("echo ''#x; npm i evil-pkg", ["npm:evil-pkg"]),
+        ("echo $# ${#x} ; npm i evil-pkg", ["npm:evil-pkg"]),
+        # Keywords are keywords only where a command starts; glued to `;` they still are.
+        ("if true;then npm i evil-pkg;fi", ["npm:evil-pkg"]),
+        ("for x in a;do npm i evil-pkg;done", ["npm:evil-pkg"]),
+        ("npm i then do fi", ["npm:then", "npm:do", "npm:fi"]),
+        ("echo if then; npm i evil-pkg", ["npm:evil-pkg"]),
+        # Windows line ends.
+        ("npm i lodash\r\nnpm i evil-pkg\r\n", ["npm:lodash", "npm:evil-pkg"]),
+        ("if true\r\nthen npm i evil-pkg\r\nfi", ["npm:evil-pkg"]),
+        ("npm i \\\r\nevil-pkg", ["npm:evil-pkg"]),
+    ],
+)
+def test_quoting_and_escaping_around_continuations_comments_and_keywords(command, expected):
+    assert install_targets(command) == expected
