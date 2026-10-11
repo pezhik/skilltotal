@@ -21,6 +21,8 @@ The scanner itself is the `skilltotal` Python package (Python 3.10+). This npm p
 2. `pipx run`, which runs the same release, also isolated.
 3. An installed Python 3.11 or later that already has `skilltotal`, run as `python -P -m skilltotal`. This uses whatever version is installed. The `-P` flag, added in Python 3.11, keeps the current directory off the import path, so a `skilltotal/` or `json.py` in the folder you run it from (such as a repository you are scanning) cannot run in place of the engine.
 
+On Windows, the package looks for `uvx`, `pipx` and Python only in the directories on PATH, never in the current directory, so a `uvx.exe` or `python.exe` committed to a repository you scan cannot run in place of the real one.
+
 The package does not install anything itself, and it has no install scripts or dependencies. If none of the three is available, it exits with code 127 and prints how to install uv, pipx or the Python package.
 
 ## Links

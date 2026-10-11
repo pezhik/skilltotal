@@ -32,6 +32,46 @@ Found by pre-launch reviews of 0.62.0. Ruleset 67.
   and a sparse checkout path is passed after `--end-of-options`.
 - **`guard` blocks a name a letter or two from a popular package**, as the Claude Code hook asks
   about it.
+- **The Claude Code hook reads a command line the way the shell does.** It split the line at
+  separators before reading quotes, so a quoted `;`, `|` or `&` anywhere in an install command
+  hid the install, and so did a line continuation, a keyword such as `then` or `do`, or a
+  comment. A one-pass lexer now reads quotes and escapes (including `$'...'` and PowerShell's
+  doubled and typographic quotes), line continuations, comments, here-documents, here-strings and
+  substitutions, and drops redirections by each shell's own rules. Installs inside `if`, loops,
+  `case`, functions, and a script piped or fed through a here-document to a shell are read. Each
+  difference found by running the same lines through Git Bash and Windows PowerShell 5.1 with
+  stub installers is a test.
+- **The hook asks when it cannot read what will be installed:** a package name or an install
+  command the line builds at run time (`npm i $P`; `eval "$C"` with `C` set on the same line; a
+  computed command or subcommand; a glob in a command name), an install inside a `node -e`,
+  `python -c` or similar one-liner, and a line it cannot read to the end (an unclosed quote).
+- **Every registry or index override asks**, on every install path: an environment variable
+  (`npm_config_registry`, scoped registries, `npm_config_userconfig`, `PIP_INDEX_URL`,
+  `UV_INDEX_URL` and their kin) and an abbreviated option as well as the full one.
+- **More of what installs is checked:** every `-p`/`--package` of `npx`, `bunx`, `npm exec`,
+  `pnpm dlx` and `yarn dlx`, and the program the runner starts; scaffolders (`npm create x`
+  checks `create-x`; `npm init` alone installs nothing); `python -m pip`, `uv tool install`,
+  `uv run --with`, `pipx run` and `pipx inject`, `poetry add`, `pdm add`, `pipenv install`;
+  `eval` and `trap` with literal text, aliases defined on the line, `xargs` fed by a literal,
+  `find -exec`, and launchers such as `timeout`, `nohup`, `watch` and `systemd-run`; on
+  PowerShell, `$r = npm i x` and `&` or `.` with a literal name.
+- **A failure of the hook's own asks** ("SkillTotal could not check this command") instead of
+  letting the command run with a warning. It never denies because of it.
+- **Parsing takes time linear in the length of the line.** A command naming 20,000 packages took
+  148 s, and a long run of `>` over two minutes: longer than Claude Code waits for the hook,
+  after which the command runs.
+- **A hook cache entry lives as long as its key allows** (a week for one exact release, an hour
+  otherwise), whatever the cache file says.
+- **Windows: no program starts from the current directory.** Windows looks there before PATH, so
+  a `git.exe` or `uvx.exe` committed to a scanned repository could run instead of the real one.
+  The CLI and the npm wrapper set `NoDefaultCurrentDirectoryInExePath`, and the wrapper looks up
+  `uvx`, `pipx` and Python only in PATH's absolute directories (Node before 22 ignores the
+  variable).
+- `guard --installed` escapes control characters in names read from agent configs: an escape
+  sequence in a server name could rewrite what the terminal showed.
+- **The MCP server survives malformed requests.** `params` that is not an object, JSON nested too
+  deep to decode, or a reply UTF-8 cannot carry gets a JSON-RPC error (-32602, -32700, -32603),
+  and the session goes on instead of ending.
 
 ### Changed
 - **`--fail-on` counts risk, not capabilities.** The severity gate counted every finding: a shell
@@ -50,6 +90,13 @@ Found by pre-launch reviews of 0.62.0. Ruleset 67.
 - Rule descriptions no longer name malware campaigns.
 - An `npm:` source fetches the one version document it needs instead of the package's whole
   history (3 KB instead of 30 MB for a large package).
+- The hook does not check a program the project already has in `node_modules/.bin`, in the
+  working directory or a parent (on Windows also its `.cmd` and `.ps1` shims): `npx tsc` runs it
+  and installs nothing. A version or tag, `-p`, `pnpm dlx`, `yarn dlx` and `pnpx` still fetch, and
+  are checked.
+- The hook's note and questions name the release that was checked (`npm:x@1.2.3`, not
+  `@latest`), also when the answer comes from the cache, and a check that ran out of time says how
+  to allow more (`SKILLTOTAL_HOOK_BUDGET`, up to 100 seconds).
 
 ### Added
 - `scan` shows what a long scan is doing, with the elapsed seconds, on one line that is erased
