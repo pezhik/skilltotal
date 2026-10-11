@@ -108,7 +108,7 @@ Found by pre-launch security reviews of 0.61.1. Ruleset 66.
 - **The ruleset 64 rules can no longer be sidestepped by rewriting the same code** (ruleset 65).
   A security review of 0.60.0 found ways around each new rule that change nothing about what
   runs. A composite action's `run:` command is now read as the runner's shell receives it, so a
-  command written as a quoted or escaped YAML string (`|` for `|`), continued on the next
+  command written as a quoted or escaped YAML string (`\u007C` for `|`), continued on the next
   line, placed in a flow mapping (`{ run: … }`), behind an alias or under a quoted key is read
   like any other, and a `#` inside shell quotes no longer hides the rest of the line. An action
   under `.github/` is now read too and shown for review instead of being left out. A function

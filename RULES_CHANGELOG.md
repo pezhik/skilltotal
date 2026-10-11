@@ -94,7 +94,7 @@ test beside a benign look-alike. Measured on the detection-efficacy corpus (now 
 
 - **Composite GitHub Action `run:` steps** (scan scope): the command is decoded the way YAML
   delivers it to the runner's shell: plain scalars folded across lines (a ` #` ends them, as in
-  YAML), double-quoted escapes decoded (`|` is a `|`), single-quoted, block `|` and folded
+  YAML), double-quoted escapes decoded (`\u007C` is a `|`), single-quoted, block `|` and folded
   `>` scalars, an alias to an anchored value, a value that starts on the next line, flow
   mappings, quoted keys and JSON-style actions. Shell comments are removed with quotes tracked
   across lines, so `echo "a #b"; curl … | bash` in a block is read whole while a commented-out
