@@ -306,6 +306,50 @@ def main(argv: list[str] | None = None) -> int:
     return EXIT_ERROR
 
 
+class _ProgressLine:
+    """One line on a terminal that says what a long scan is doing and for how long, rewritten in
+    place and erased at the end. A clock thread keeps the seconds moving while one step runs."""
+
+    def __init__(self, stream) -> None:
+        import threading
+
+        self._stream = stream
+        self._started = time.monotonic()
+        self._message = ""
+        self._width = 0
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._clock = threading.Thread(target=self._tick, daemon=True)
+        self._clock.start()
+
+    def __call__(self, message: str) -> None:
+        with self._lock:
+            self._message = message
+            self._draw()
+
+    def _tick(self) -> None:
+        while not self._stop.wait(1.0):
+            with self._lock:
+                self._draw()
+
+    def _draw(self) -> None:
+        if not self._message:
+            return
+        line = f"{self._message}... {time.monotonic() - self._started:.0f}s"
+        self._stream.write("\r" + line.ljust(self._width))
+        self._stream.flush()
+        self._width = len(line)
+
+    def close(self) -> None:
+        self._stop.set()
+        self._clock.join(timeout=2)
+        with self._lock:
+            if self._width:
+                self._stream.write("\r" + " " * self._width + "\r")
+                self._stream.flush()
+            self._width = 0
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.baseline import build_baseline, load_baseline
     from skilltotal.collector import CollectionError, classify_source
@@ -325,7 +369,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             return EXIT_ERROR
 
     exclude = [*config.exclude, *args.exclude]
+    # A large package takes minutes (thousands of files): on a terminal, say what is happening so
+    # the wait does not read as a hang. Never in a pipe or a CI log.
+    progress = _ProgressLine(sys.stderr) if sys.stderr.isatty() else None
     try:
+        if progress is not None:
+            progress("Fetching")
         report = analyze(
             args.source, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude,
             # A `skilltotal:ignore` marker is the code owner's decision. Only a local directory
@@ -333,10 +382,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             # must not be able to silence its own findings.
             inline_ignores=(classify_source(args.source) == "local"
                             and Path(args.source).expanduser().is_dir()),
+            progress=progress,
         )
     except CollectionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
+    finally:
+        if progress is not None:
+            progress.close()
 
     if args.provenance:
         # Provenance is deliberately a CLI-layer add-on: the engine stays component-only,

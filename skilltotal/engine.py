@@ -67,6 +67,7 @@ def analyze(
     ignore_rules: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
     inline_ignores: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> Report:
     """Resolve ``source`` (path or URL), analyze it, and return a Report."""
     with collect(source) as ctx:
@@ -77,6 +78,7 @@ def analyze(
             ignore_rules=ignore_rules,
             exclude=exclude,
             inline_ignores=inline_ignores,
+            progress=progress,
         )
         if ctx.note:
             report.needs_review.append(
@@ -95,6 +97,7 @@ def analyze_directory(
     ignore_rules: Iterable[str] | None = None,
     exclude: Iterable[str] | None = None,
     inline_ignores: bool = False,
+    progress: Callable[[str], None] | None = None,
 ) -> Report:
     """Analyze an already-local component directory. Pure: no stdout, no exit.
 
@@ -104,7 +107,11 @@ def analyze_directory(
     the code may turn it on (``scan`` of a local checkout, as in CI): in a package someone else
     wrote, the marker is the author's own comment, and one line of it would silence the finding
     that should stop the install.
+    ``progress``, if given, is called with a short line at each stage (files read, each scanner),
+    so a caller can show that a long scan is moving; the engine itself never prints.
     """
+    if progress is not None:
+        progress("Reading files")
     # A published package artifact ships its build output and NOT its sources, so dist/ and build/
     # must be scanned there; in a repository they duplicate source that is checked in beside them.
     published = component.type in _PUBLISHED_PACKAGE_TYPES
@@ -138,7 +145,9 @@ def analyze_directory(
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
-    for scanner in SCANNERS:
+    for number, scanner in enumerate(SCANNERS, 1):
+        if progress is not None:
+            progress(f"Scanning {len(index.files)} files: check {number} of {len(SCANNERS)}")
         result = scanner.scan(index)
         findings.extend(result.findings)
         needs_review.extend(result.needs_review)
