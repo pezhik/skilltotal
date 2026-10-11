@@ -1464,6 +1464,7 @@ def test_a_powershell_alias_is_read_as_the_command_it_names(shell, command, expe
         ("bash", "a=npm_config_; export ${a}registry=https://r.example.invalid; npm i evil-pkg"),
         ("powershell", "function n { npm @args }; n i evil-pkg"),
         ("powershell", "$n = 'npm'; & $n i evil-pkg"),
+        ("powershell", "$n = 'npm'; . $n i evil-pkg"),
         # A subcommand the shell fills in: `npm $C x` runs `npm install x`.
         ("bash", "C=install; npm $C evil-pkg"),
         ("bash", 'set -- i evil-pkg; npm "$@"'),
@@ -2029,3 +2030,48 @@ def test_installing_a_lockfile_with_poetry_pdm_or_pipenv_stays_silent(command):
 )
 def test_a_custom_source_for_poetry_pdm_or_pipenv_asks(command):
     assert "can't check" in _ask_without_scan(command)
+
+
+# --- PowerShell statements: an assignment runs its right side, a variable alone runs nothing ---
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "$v = npm --version",
+        "$out = npm ls; $out | Select-String lodash",
+        "$ErrorActionPreference = 'Stop'; npm ci",
+        "[int]$n = 3; npm test",
+        "$env:Path += ';C:\\tools'; npm run build",
+        "$files = Get-ChildItem; $files.Count",
+        "$r = 5\n$r",
+    ],
+)
+def test_powershell_assignments_and_values_are_not_commands(command):
+    from skilltotal.agent_hook import parse_installs
+
+    assert parse_installs(command, "powershell") == []
+    calls = []
+    assert hook_response(_powershell(command), scan=lambda s, t: calls.append(s)) is None
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("$r = npm i evil-pkg", ["npm:evil-pkg"]),
+        ("$r=npm i evil-pkg", ["npm:evil-pkg"]),
+        ("[string]$r = npx evil-pkg", ["npm:evil-pkg"]),
+        ("$r = & npm i evil-pkg", ["npm:evil-pkg"]),
+    ],
+)
+def test_the_right_side_of_a_powershell_assignment_runs(command, expected):
+    assert install_targets(command, shell="powershell") == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["$n = 'npm'; & $n i evil-pkg", "$n = 'npm'; . $n i evil-pkg",
+     "$n = 'npm'; $r = & $n i evil-pkg"],
+)
+def test_powershell_invoking_a_command_name_from_a_variable_asks(command):
+    assert "a command SkillTotal could not read" in _ask_without_scan(command, "powershell")

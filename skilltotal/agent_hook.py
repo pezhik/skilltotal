@@ -747,6 +747,11 @@ class _Lexer:
                         end_word()  # `x&>log`: the word ends where the redirection starts
                     put(c)  # `2>&1`, `&> log`: a redirection
                     i += 1
+                elif sh == "powershell" and not in_word and (
+                        not stage.words or stage.words[-1] in _PS_ASSIGN_OPS):
+                    put(c)  # PowerShell's call operator: `& $n i x`, `$r = & $n i x`
+                    end_word()
+                    i += 1
                 else:
                     cut(False)
                     i += 1
@@ -1229,14 +1234,20 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return []
     if depth > _MAX_DEPTH:
         return _net(" ".join(tokens))
-    head, rest = _base(tokens[0]), tokens[1:]
-    if shell == "powershell" and head == "." and rest:  # dot-sourcing runs the command too
-        head, rest = _base(rest[0]), rest[1:]
-    if shell == "cmd" and (head == "rem" or tokens[0].startswith("::")):
+    invoked = False
+    if shell == "powershell":
+        tokens = _ps_statement(tokens)
+        while tokens and tokens[0] in ("&", "."):  # the call and dot-source operators
+            invoked, tokens = True, tokens[1:]
+        if not tokens or (tokens[0].startswith(("$", "@")) and not invoked):
+            return []  # a value (`$x`, `$x | Out-File f`): written out, not run
+    command, rest = tokens[0], tokens[1:]
+    head = _base(command)
+    if shell == "cmd" and (head == "rem" or command.startswith("::")):
         return []  # a cmd comment
 
     feed = feed or []
-    if _COMPUTED_HEAD[shell].search(tokens[0]):
+    if _COMPUTED_HEAD[shell].search(command):
         # `N=npm; $N i x`, `$(echo npm) i x`, `{npm,} i x`: the shell decides what runs.
         return [_NOT_READ] if level.ctx.root_names_installer else []
     if head in _SHELLS or head in ("cmd", "powershell", "pwsh"):
@@ -1291,6 +1302,23 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head in _PYPROJECT_ADD:
         return _pyproject(head, rest, shell, depth, level)
     return []
+
+
+# A PowerShell assignment: its target (`$x`, `$env:X`, `[int]$x`, `${x}`) and operator.
+_PS_TARGET = re.compile(r"(?:\[[^\]]*\])*\$(?:\{[^}]*\}|[\w:?]+)")
+_PS_ASSIGN_OPS = frozenset({"=", "+=", "-=", "*=", "/=", "%=", "??="})
+_PS_GLUED_ASSIGN = re.compile(r"(?:\[[^\]]*\])*\$[\w:?]+(?:[-+*/%]|\?\?)?=(.*)", re.DOTALL)
+
+
+def _ps_statement(tokens: list[str]) -> list[str]:
+    """What a PowerShell statement runs: ``$x = npm ls`` runs ``npm ls`` (the variable takes its
+    output), ``$x=npm ls`` too."""
+    while len(tokens) >= 2 and tokens[1] in _PS_ASSIGN_OPS and _PS_TARGET.fullmatch(tokens[0]):
+        tokens = tokens[2:]
+    glued = _PS_GLUED_ASSIGN.fullmatch(tokens[0]) if tokens else None
+    if glued:
+        tokens = ([glued.group(1)] if glued.group(1) else []) + tokens[1:]
+    return tokens
 
 
 def _shell(head: str, rest: list[str], shell: str, depth: int, level: _Level,
