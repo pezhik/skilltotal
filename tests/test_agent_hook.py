@@ -1767,3 +1767,89 @@ def test_an_add_json_config_nested_too_deep_to_read_asks():
 def test_an_event_that_is_not_json_stays_silent(monkeypatch, capsys):
     # Unchanged: what is not a hook event at all gets no answer.
     assert _run_hook(monkeypatch, capsys, "{not json") is None
+
+
+# --- The verdict cache decides how long an entry lives, not the entry --------------------------
+
+
+def _cache_entry(cache_dir, key, *, at, ttl):
+    import json
+
+    import skilltotal
+
+    entry = {"engine": skilltotal.__version__, "at": at, "ttl": ttl,
+             "report": {"risk_level": "low", "risk_score": 0, "component": {"version": ""},
+                        "verdict": {"has_malicious_indicators": False, "headline": ""},
+                        "findings": [], "needs_review": []}}
+    (cache_dir / "hook-cache.json").write_text(json.dumps({key: entry}), encoding="utf-8")
+
+
+WEEK, HOUR = 7 * 24 * 3600, 3600
+
+
+@pytest.mark.parametrize(
+    ("key", "age", "ttl", "rescanned"),
+    [
+        # A name whose release is unknown, a git repository: an hour, whatever the file says.
+        ("npm:x", 2 * HOUR, 10 ** 12, True),
+        ("https://github.com/o/r", 2 * HOUR, 10 ** 12, True),
+        ("pypi:x==1.0", 2 * HOUR, 10 ** 12, True),  # a PyPI version can gain files
+        # An exact npm release: a week, whatever the file says.
+        ("npm:tsc@5.0.0", 8 * 24 * HOUR, 10 ** 12, True),
+        # An entry claiming a longer life than its key allows is not used at all.
+        ("npm:tsc@5.0.0", 3 * 24 * HOUR, 10 ** 12, True),
+        ("npm:x", 30 * 60, WEEK, True),
+        # Within its key's life and claiming no more, an entry is reused.
+        ("npm:tsc@5.0.0", 3 * 24 * HOUR, WEEK, False),
+        ("npm:x", 30 * 60, HOUR, False),
+    ],
+)
+def test_a_cache_entry_cannot_extend_its_own_life(tmp_path, monkeypatch, key, age, ttl,
+                                                    rescanned):
+    import skilltotal.cli as cli
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    now = 1_000_000_000.0
+    monkeypatch.setattr(cli.time, "time", lambda: now)
+    _cache_entry(tmp_path, key, at=now - age, ttl=ttl)
+    calls = []
+    monkeypatch.setattr(cli, "_hook_scan", lambda s, t: calls.append(s) or _report())
+    cli._hook_scan_cached(key, 20)
+    assert calls == ([key] if rescanned else [])
+
+
+def test_a_cache_entry_dated_in_the_future_is_not_used(tmp_path, monkeypatch):
+    import skilltotal.cli as cli
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    now = 1_000_000_000.0
+    monkeypatch.setattr(cli.time, "time", lambda: now)
+    _cache_entry(tmp_path, "npm:tsc@5.0.0", at=now + 10 ** 9, ttl=7 * 24 * 3600)
+    calls = []
+    monkeypatch.setattr(cli, "_hook_scan", lambda s, t: calls.append(s) or _report())
+    cli._hook_scan_cached("npm:tsc@5.0.0", 20)
+    assert calls == ["npm:tsc@5.0.0"]
+
+
+def test_a_resolved_pypi_release_is_kept_for_a_week(tmp_path, monkeypatch):
+    import skilltotal.cli as cli
+    from skilltotal import collector
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(collector, "resolve_release", lambda source, timeout=0: collector.Release(
+        "pypi:x==1.0", "x-1.0-py3-none-any.whl", "0123456789abcdef"))
+    clock = [1_000_000_000.0]
+    monkeypatch.setattr(cli.time, "time", lambda: clock[0])
+    calls = []
+
+    def fake(source, timeout):
+        calls.append(source)
+        report = _report()
+        report["component"] = {"download_url": "https://files.example/x-1.0-py3-none-any.whl"}
+        return report
+
+    monkeypatch.setattr(cli, "_hook_scan", fake)
+    cli._hook_scan_cached("pypi:x", 20)
+    clock[0] += 3 * 24 * 3600
+    cli._hook_scan_cached("pypi:x", 20)
+    assert calls == ["pypi:x==1.0"]

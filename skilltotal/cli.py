@@ -41,6 +41,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -637,7 +638,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
     key = release.key if release else source
     target = release.source if release else source
-    ttl = HOOK_RELEASE_TTL_S if release else HOOK_MOVING_TTL_S
+    ttl = _hook_cache_ttl(key)
     path = _hook_cache_path()
     try:
         cache = json.loads(path.read_text(encoding="utf-8"))
@@ -647,8 +648,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         cache = {}
     now = time.time()
     hit = cache.get(key)
-    if (isinstance(hit, dict) and hit.get("engine") == __version__
-            and now - _number(hit.get("at")) < _number(hit.get("ttl", ttl))):
+    if isinstance(hit, dict) and hit.get("engine") == __version__ and _fresh(hit, now, ttl):
         return hit["report"]
     # Raises on failure/timeout: nothing is cached then.
     report = _hook_scan(target, timeout - (time.monotonic() - started))
@@ -695,11 +695,8 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         # for what was scanned, but it is not the artifact the key names, so it is not kept.
         return entry["report"]
     # Keep the file small: drop what has expired, then the oldest past the cap.
-    live = {
-        k: v for k, v in cache.items()
-        if isinstance(v, dict)
-        and now - _number(v.get("at")) < _number(v.get("ttl", HOOK_MOVING_TTL_S))
-    }
+    live = {k: v for k, v in cache.items()
+            if isinstance(v, dict) and _fresh(v, now, _hook_cache_ttl(k))}
     newest = sorted(live, key=lambda k: _number(live[k].get("at")), reverse=True)
     kept = {key: entry, **{k: live[k] for k in newest[: HOOK_CACHE_MAX_ENTRIES - 1] if k != key}}
     try:
@@ -710,6 +707,27 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     except OSError:
         pass  # no cache this time; the verdict itself is still good
     return entry["report"]
+
+
+# A key that names one exact artifact: an npm release, or a PyPI release with the file pip installs
+# (and a digest of every file in the release). Anything else can change under the same name.
+_RELEASE_KEY = re.compile(
+    r"npm:(?:@[^/\s@]+/)?[^/\s@]+@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?"
+    r"|pypi:[^\s=]+==\S+ \S+(?: [0-9a-f]{16})?"
+)
+
+
+def _hook_cache_ttl(key: str) -> float:
+    """How long a verdict kept under ``key`` may be reused: a week for one exact release, an hour
+    for anything else. It is worked out from the key, never taken from the cache file."""
+    return HOOK_RELEASE_TTL_S if _RELEASE_KEY.fullmatch(key) else HOOK_MOVING_TTL_S
+
+
+def _fresh(entry: dict, now: float, ttl: float) -> bool:
+    """Whether a cache entry is still good: younger than its key allows. An entry dated in the
+    future, or claiming a longer life than its key allows, is not."""
+    stored = _number(entry.get("ttl", ttl))
+    return stored <= ttl and 0 <= now - _number(entry.get("at")) < stored
 
 
 def _number(value: object) -> float:
