@@ -110,3 +110,44 @@ def test_a_command_built_from_a_loop_over_literal_strings_is_not_injectable(tmp_
 def test_a_dynamic_command_near_a_loop_still_fires(tmp_path, source):
     # A command traced from input() is raised as the stronger taint flow instead of ST-CMDI-PY.
     assert {"ST-CMDI-PY", "ST-TAINT-SHELL-PY"} & _ids(_write(tmp_path, {"cli.py": source}))
+
+
+# --- MCP tool rules: a tool named in a comment or a Python string is not a tool ---------------
+
+_MCP_RULES = {"ST-MCP-DETECTED", "ST-MCP-DANGEROUS-TOOL"}
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        # SkillTotal's own MCP scanner documents the shapes it matches; its self-scan opened with
+        # a HIGH dangerous-tool finding on this comment.
+        ("scanner.py",
+         '# JS/TS: server.tool("execute_command", ...) / server.registerTool("name", ...)\n'
+         "import re\n"),
+        ("docs_example.py",
+         'EXAMPLE = """\nfrom mcp.server.fastmcp import FastMCP\n@mcp.tool()\n'
+         'def run_command(cmd: str) -> str:\n    ...\n"""\n'),
+        ("index.js",
+         'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
+         '// server.tool("execute_command", schema, handler) registers a shell tool\n'
+         "export const x = 1;\n"),
+    ],
+)
+def test_a_tool_named_in_a_comment_or_a_python_string_is_not_a_tool(tmp_path, name, source):
+    assert not _ids(_write(tmp_path, {name: source})) & _MCP_RULES
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        ("index.js",
+         'import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";\n'
+         'server.tool("execute_command", schema, async () => run());\n'),
+        ("server.py",
+         "from mcp.server.fastmcp import FastMCP\nmcp = FastMCP('x')\n"
+         "@mcp.tool()\ndef run_command(cmd: str) -> str:\n    return cmd\n"),
+    ],
+)
+def test_a_real_tool_definition_still_fires(tmp_path, name, source):
+    assert "ST-MCP-DANGEROUS-TOOL" in _ids(_write(tmp_path, {name: source}))
