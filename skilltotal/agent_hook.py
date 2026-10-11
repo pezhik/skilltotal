@@ -11,7 +11,9 @@ packages an install command would bring in (``npx``, ``npm install``, ``pip inst
   because scanning the public copy would vouch for code that is not the code being installed;
 * a package that was not checked (the scan failed or ran out of time, or the command names more
   packages than one check covers): ``ask``. Letting it through would make the guard easy to step
-  around: pad a package until its scan times out, or name it sixth;
+  around: pad a package until its scan times out, or name it sixth. A check that runs out of
+  time is not lost: it goes on in the background and keeps its verdict, so the same command run
+  again is answered from it;
 * everything clean: no decision (the normal permission flow applies) plus a one-line note for the
   agent.
 
@@ -31,6 +33,7 @@ import base64
 import binascii
 import functools
 import json
+import math
 import os
 import re
 import time
@@ -2345,14 +2348,40 @@ Scan = Callable[[str, float], dict[str, Any]]
 _TOOL_SHELLS = {"Bash": "bash", "PowerShell": "powershell"}
 
 
+class CheckInBackground(TimeoutError):
+    """A check the hook stopped waiting for, which goes on without it and records its verdict: the
+    same command run again is answered from that verdict.
+
+    ``seconds_left`` is about how long it still takes, when that is known; ``started_ago`` is set
+    when the check was already running before this command.
+    """
+
+    def __init__(self, seconds_left: float | None = None, *,
+                 started_ago: float | None = None) -> None:
+        super().__init__("the check continues in the background")
+        self.seconds_left = seconds_left
+        self.started_ago = started_ago
+
+
+class BackgroundFull(TimeoutError):
+    """A check that would have had to go on in the background while ``running`` checks already do
+    there: it was stopped instead, so nothing was checked."""
+
+    def __init__(self, running: int) -> None:
+        super().__init__("too many checks running in the background")
+        self.running = running
+
+
 def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
     ``scan(source, timeout)`` returns a serialized report (``Report.to_dict()``) for a source such
-    as ``npm:name``, or raises ``TimeoutError`` when it runs out of time. All the command's checks
-    share ``budget_s`` seconds: each gets what is left, and none starts once it is spent.
+    as ``npm:name``, or raises ``TimeoutError`` when it runs out of time: ``CheckInBackground``
+    when the check goes on without the hook, ``BackgroundFull`` when it could not. All the
+    command's checks share ``budget_s`` seconds: each gets what is left, and none starts once it
+    is spent.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -2387,6 +2416,13 @@ def hook_response(
             continue
         try:
             report = scan(source, remaining)
+        except CheckInBackground as check:
+            asked.append(_background_detail(source, check, budget_s))
+            continue
+        except BackgroundFull as full:
+            asked.append(f"{source}: not checked; SkillTotal is already running {full.running} "
+                         f"checks in the background. Run the same command again in a few minutes.")
+            continue
         except TimeoutError:
             late.append(source)
             continue
@@ -2431,6 +2467,34 @@ def hook_response(
                        else reason)
     return _answer(context="SkillTotal checked " + "; ".join(clean)
                    + ", no malicious indicators.")
+
+
+def _background_detail(source: str, check: CheckInBackground, budget_s: float) -> str:
+    """Why a package goes to the person while its check goes on: what runs, for how much longer
+    when that is known, and when to run the command again."""
+    if check.started_ago is not None:
+        what = (f"{source}: a full check started {_ago(check.started_ago)} is still running in "
+                f"the background")
+    else:
+        what = (f"{source}: not checked within SkillTotal's {budget_s:g}-second time limit; the "
+                f"check continues in the background")
+    if check.seconds_left is None:
+        return f"{what}. Run the same command again in a few minutes."
+    return (f"{what} and takes {_about_minutes(check.seconds_left)} more. Run the same command "
+            f"again after that.")
+
+
+def _about_minutes(seconds: float) -> str:
+    minutes = max(1, math.ceil(seconds / 60))
+    return "about 1 minute" if minutes == 1 else f"about {minutes} minutes"
+
+
+def _ago(seconds: float) -> str:
+    if seconds < 60:
+        whole = max(1, round(seconds))
+        return "1 second ago" if whole == 1 else f"{whole} seconds ago"
+    minutes = int(seconds // 60)
+    return "1 minute ago" if minutes == 1 else f"{minutes} minutes ago"
 
 
 def _names(sources: list[str], shown: int = 3) -> str:

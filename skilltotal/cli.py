@@ -28,7 +28,8 @@ Commands:
     skilltotal hook claude-code
         Claude Code PreToolUse hook (used by the SkillTotal plugin): reads the hook event on
         stdin, scans any package the Bash command would install, and prints the decision.
-        Always exits 0; a failed scan never blocks the install.
+        Always exits 0; a failed scan never blocks the install. A scan that outlasts the wait
+        goes on in the background and keeps its verdict for the next run of the command.
 
 Exit codes:
     0  success
@@ -56,6 +57,7 @@ from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
 # loading the whole engine for a command that turns out to install nothing costs most of a second.
 if TYPE_CHECKING:
     from skilltotal.config import Config
+    from skilltotal.hook_scan import Marker, Pending, ScanContinues
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -272,6 +274,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Agent hook entry points (used by the SkillTotal Claude Code plugin).",
     )
     hook.add_argument("agent", choices=["claude-code"], help="Which agent's hook format.")
+    # The two processes a check runs in, started by the hook itself (see skilltotal.hook_scan).
+    hook.add_argument("--supervise", metavar="DIR", help=argparse.SUPPRESS)
+    hook.add_argument("--scan-into", metavar="DIR", help=argparse.SUPPRESS)
 
     return parser
 
@@ -311,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "mcp":
         return _cmd_mcp()
     if args.command == "hook":
-        return _cmd_hook()
+        return _cmd_hook(args)
     parser.error("unknown command")  # pragma: no cover
     return EXIT_ERROR
 
@@ -647,7 +652,13 @@ HOOK_FAILED = {
 }
 
 
-def _cmd_hook() -> int:
+def _cmd_hook(args: argparse.Namespace) -> int:
+    if args.supervise or args.scan_into:  # one of the processes of a check the hook started
+        from skilltotal import hook_scan
+
+        if args.scan_into:
+            return hook_scan.scan_into(Path(args.scan_into))
+        return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
     try:
         answer = _hook_answer()
     except Exception:  # noqa: BLE001 - any failure of ours asks; it must not pass silently
@@ -703,8 +714,14 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     serves now (``npm:x@1.2.3``; on PyPI, also the file pip would install) and that is what is
     scanned and remembered, so a clean verdict from this morning never vouches for a release, or a
     file, published this afternoon. A new engine version rescans everything.
+
+    One artifact is checked once at a time: while a check of it runs, the answer says so instead
+    of starting another. A check that outlasts the wait goes on in the background and keeps its
+    verdict itself (``_hook_hand_over``), and the same command run again is answered from it.
     """
+    from skilltotal.agent_hook import CheckInBackground
     from skilltotal.collector import resolve_release
+    from skilltotal.hook_scan import AlreadyRunning, Pending, ScanContinues
 
     started = time.monotonic()
     release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
@@ -719,9 +736,61 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     # What the verdict is kept under, and for which file: everything that keeps it needs to know.
     job = {"key": key, "ttl": ttl, "artifact": release.artifact if release else "", "at": now,
            "engine": __version__, "cache": str(path)}
-    # Raises on failure/timeout: nothing is cached then.
-    report = _hook_scan(target, timeout - (time.monotonic() - started))
+    pending = Pending(path.parent / "hook-pending")
+    try:
+        marker = pending.claim(key, now)
+    except AlreadyRunning as running:
+        raise CheckInBackground(running.seconds_left, started_ago=running.age) from None
+    try:
+        report = _hook_scan(target, timeout - (time.monotonic() - started))
+    except ScanContinues as late:
+        # Raises unless the check ended in the meantime; the marker is then the check's own.
+        report = _hook_hand_over(late, pending, marker, job)
+    except BaseException:
+        pending.release(marker)
+        raise  # a failed or late scan: nothing is cached
+    pending.release(marker)
     return _hook_remember(job, report)
+
+
+def _hook_hand_over(
+    late: ScanContinues, pending: Pending, marker: Marker | None, job: dict
+) -> dict:
+    """Decide the fate of a check the hook stops waiting for.
+
+    It goes on in the background and keeps its verdict itself, unless it could not be tracked (no
+    marker could be written) or ``MAX_BACKGROUND`` checks already go on without a hook: then it is
+    stopped, and records nothing. Raises what the answer then says; returns the report instead when
+    the check ended in the meantime.
+    """
+    from skilltotal.agent_hook import BackgroundFull, CheckInBackground
+    from skilltotal.hook_scan import MAX_BACKGROUND
+
+    scan = late.scan
+    running: int | None = None
+    if marker is not None:
+        try:
+            with pending.lock():  # counting the others and joining them is one step
+                running = pending.background(time.time(), exclude=marker)
+                if running < MAX_BACKGROUND:
+                    report = scan.hand_over({**job, "marker": str(marker.path),
+                                             "token": marker.token})
+                    if report is not None:
+                        return report
+                    ends = None if late.seconds_left is None else time.time() + late.seconds_left
+                    pending.go_background(marker, scan.pid, ends)
+                    raise CheckInBackground(late.seconds_left)
+        except CheckInBackground:
+            raise
+        except TimeoutError:
+            running = None  # the markers cannot be read safely: start nothing more
+    report = scan.hand_over(None)  # stop it
+    if report is not None:
+        return report
+    pending.release(marker)
+    if running is None:
+        raise TimeoutError(job["key"])  # answered as a check that ran out of time
+    raise BackgroundFull(running)
 
 
 def _hook_cache_read(path: Path) -> dict:
@@ -839,37 +908,15 @@ def _number(value: object) -> float:
 
 
 def _hook_scan(source: str, timeout: float) -> dict:
-    """Scan ``source`` in a child process the hook can kill at its deadline.
+    """Scan ``source`` in processes of its own and wait up to ``timeout`` seconds for the report.
 
-    A scan that overruns is killed with its downloaded package still open, so it gets a temp dir of
-    its own that is removed here whatever happened. Raises TimeoutError when it overruns.
-
-    The child starts in an empty directory, never in the project the agent works in. ``python -m``
-    puts its working directory first on ``sys.path``, so a ``json.py`` planted in an opened
-    repository would run inside the scanner before anyone approved anything, and a
-    ``.skilltotal.toml`` there would tune the scan of someone else's package. ``-P`` (3.11+) keeps
-    the directory off ``sys.path`` as well.
+    The scan outlives the wait: past it, this raises ``ScanContinues`` (a TimeoutError) with the
+    running check, and the caller hands it over or stops it. The check runs in an empty directory
+    with a temp directory of its own, never in the agent's project (see ``RunningScan.start``).
     """
-    import os
-    import shutil
-    import subprocess  # nosec B404 - runs this same CLI with fixed arguments
-    import tempfile
+    from skilltotal.hook_scan import RunningScan
 
-    tmp = tempfile.mkdtemp(prefix="skilltotal_hook_")
-    cwd = os.path.join(tmp, "cwd")
-    os.mkdir(cwd)
-    env = {**os.environ, "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp, "PYTHONIOENCODING": "utf-8"}
-    safe_path = ["-P"] if sys.version_info >= (3, 11) else []
-    try:
-        proc = subprocess.run(  # nosec B603 - sys.executable and a parsed package name, no shell
-            [sys.executable, *safe_path, "-m", "skilltotal", "scan", source, "--json"],
-            capture_output=True, timeout=timeout, env=env, cwd=cwd, check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise TimeoutError(source) from exc
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return json.loads(proc.stdout.decode("utf-8"))
+    return RunningScan.start(source).wait(timeout)
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:
