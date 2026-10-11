@@ -1288,6 +1288,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _uvx(rest, shell, depth, level)
     if head == "pipx":
         return _pipx(rest, shell, depth, level)
+    if head in _PYPROJECT_ADD:
+        return _pyproject(head, rest, shell, depth, level)
     return []
 
 
@@ -1423,6 +1425,7 @@ def _could_launch(word: str) -> bool:
     return (
         head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx", "cmd",
                                          "powershell", "pwsh", "eval", "xargs", "parallel")
+        or head in _PYPROJECT_ADD
         or head in _SHELLS or head in _WRAPPERS or head in _LAUNCHERS or head in _PASSTHROUGH
         or head in _CODE_OPTIONS or head in _PS_EVAL
         or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
@@ -2115,6 +2118,33 @@ def _pipx(rest: list[str], shell: str, depth: int, level: _Level) -> list[Instal
             app = _PY_SPEC_END.split(args[start], maxsplit=1)[0]
             found += _installs_in([app, *args[start + 1:]], shell, depth + 1, level)
     return found
+
+
+# poetry, pdm and pipenv: the subcommand that adds packages from PyPI, and their options that take
+# a value.
+_PYPROJECT_ADD = {"poetry": "add", "pdm": "add", "pipenv": "install"}
+_PYPROJECT_VALUE_FLAGS = {"--group", "-G", "--source", "--extras", "-E", "--python",
+                          "--platform", "--markers", "--directory", "-C", "--project", "-P",
+                          "-p", "--lockfile", "-L", "--venv", "--categories", "--index", "-i",
+                          "--extra-index-url", "--pypi-mirror", "-r", "--requirements"}
+
+
+def _pyproject(head: str, rest: list[str], shell: str, depth: int,
+               level: _Level) -> list[Install]:
+    """``poetry add x``, ``pdm add x``, ``pipenv install x`` install from PyPI unless a source of
+    their own is named (``--source``, ``--index``, ``--pypi-mirror``); ``run`` starts a command
+    in the project's environment. Installing the lockfile names nothing new."""
+    sub, args = _subcommand(rest, _PYPROJECT_VALUE_FLAGS)
+    if _COMPUTED.search(sub or ""):
+        return [_NOT_READ]
+    if sub == "run":
+        start = _command_start(args, _PYPROJECT_VALUE_FLAGS)
+        return _installs_in(args[start:], shell, depth + 1, level)
+    if sub != _PYPROJECT_ADD[head]:
+        return []
+    index = _py_source(args, "pip") or _flag_value(args, {"--source", "--pypi-mirror"})
+    return [item for spec in _positionals(args, _PYPROJECT_VALUE_FLAGS)
+            for item in _py_spec(spec, index)]
 
 
 def _pip_args_source(args: list[str]) -> str | None:

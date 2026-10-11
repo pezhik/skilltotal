@@ -1977,3 +1977,55 @@ def test_an_mcp_server_environment_that_picks_a_registry_asks(command):
 )
 def test_a_command_that_writes_the_installer_config_asks(command):
     assert "can't check" in _ask_without_scan(command)
+
+
+# --- poetry, pdm and pipenv install from PyPI too ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("poetry add evil-pkg", ["pypi:evil-pkg"]),
+        ("poetry add evil-pkg@^1.2 other==2.0", ["pypi:evil-pkg", "pypi:other==2.0"]),
+        ("poetry add --group dev evil-pkg", ["pypi:evil-pkg"]),
+        ("poetry add -G dev evil-pkg", ["pypi:evil-pkg"]),
+        ("poetry add git+https://github.com/someone/tool.git", ["https://github.com/someone/tool"]),
+        ("poetry add ./local-pkg", []),
+        ("pdm add evil-pkg", ["pypi:evil-pkg"]),
+        ("pdm add -d -G test evil-pkg", ["pypi:evil-pkg"]),
+        ("pipenv install evil-pkg", ["pypi:evil-pkg"]),
+        ("pipenv install --dev evil-pkg", ["pypi:evil-pkg"]),
+        # `run` starts a command in the project's environment, which can install.
+        ("poetry run pip install evil-pkg", ["pypi:evil-pkg"]),
+        ("pdm run python -m pip install evil-pkg", ["pypi:evil-pkg"]),
+        ("pipenv run pip install evil-pkg", ["pypi:evil-pkg"]),
+    ],
+)
+def test_poetry_pdm_and_pipenv_installs_are_checked(command, expected):
+    assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["poetry install", "pdm install", "pipenv install", "poetry run pytest", "pdm sync",
+     "pipenv sync", "poetry lock", "pipenv graph"],
+)
+def test_installing_a_lockfile_with_poetry_pdm_or_pipenv_stays_silent(command):
+    from skilltotal.agent_hook import parse_installs
+
+    assert parse_installs(command) == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "poetry add evil-pkg --source private",
+        "pipenv install evil-pkg --index https://pypi.example.invalid/simple",
+        "pipenv install evil-pkg -i https://pypi.example.invalid/simple",
+        "pipenv install evil-pkg --pypi-mirror https://pypi.example.invalid/simple",
+        "PDM_PYPI_URL=https://pypi.example.invalid/simple pdm add evil-pkg",
+        "PIPENV_PYPI_MIRROR=https://pypi.example.invalid/simple pipenv install evil-pkg",
+    ],
+)
+def test_a_custom_source_for_poetry_pdm_or_pipenv_asks(command):
+    assert "can't check" in _ask_without_scan(command)
