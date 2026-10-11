@@ -1487,6 +1487,10 @@ def test_text_run_from_a_file_or_name_the_shell_computes_asks(shell, command):
         ("bash", "npm i evil-pkg>>log", ["npm:evil-pkg"]),
         ("bash", "npm i evil-pkg&>log", ["npm:evil-pkg"]),
         ("bash", "npm i x2>/dev/null", ["npm:x2"]),
+        # A here-string's `<<<` is one operator: its second `<` does not start a here-document
+        # that would swallow the lines after it.
+        ("bash", "cat <<<'x y'\nnpm i evil-pkg", ["npm:evil-pkg"]),
+        ("bash", "cat x<<<'y'\nnpm i evil-pkg", ["npm:evil-pkg"]),
         # PowerShell 5.1 keeps it in a bare word (npm then rejects the name); taking the name
         # in front of it costs at most a check.
         ("powershell", "npm i evil-pkg>$null", ["npm:evil-pkg"]),

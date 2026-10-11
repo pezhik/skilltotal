@@ -680,7 +680,15 @@ class _Lexer:
                     i = self._substitution(i + 2, nest, top)
                     put(_SUB)
                     continue
-                if c == "<" and nx == "<" and s[i + 2:i + 3] != "<":
+                if s.startswith("<<<", i):  # a here-string: taken whole, so its second `<` does
+                    if in_word and not _REDIRECT_START.fullmatch("".join(word)):  # not start a
+                        end_word()  # here-document
+                    put("<<<")
+                    i += 3
+                    continue
+                if c == "<" and nx == "<":
+                    if in_word and not _REDIRECT_START.fullmatch("".join(word)):
+                        end_word()
                     end, delimiter, strip, expand = self._heredoc_operator(i + 2)
                     heredocs.append((delimiter, strip, expand, stage))
                     put(s[i:end], "<<" + delimiter)
