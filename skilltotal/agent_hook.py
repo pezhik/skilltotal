@@ -46,6 +46,10 @@ MAX_TARGETS = 5
 # How long the agent waits for all checks of one command. A large package can take longer to scan
 # than anyone will wait before every install; past this the person is asked instead.
 DEFAULT_BUDGET_S = 20.0
+# The variable that sets that time, and the most it may be: Claude Code lets a command through
+# when its hook outlives the hook's timeout (120 s in the plugin's hooks.json).
+BUDGET_ENV = "SKILLTOTAL_HOOK_BUDGET"
+MAX_BUDGET_S = 100.0
 _MAX_DEPTH = 4  # nested `bash -c "$(...)"`; deeper than this is not an honest install command
 # Quotes and substitutions nested deeper than this inside one command line are not read.
 _MAX_NESTING = 64
@@ -92,6 +96,7 @@ _PY_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
 # An exact version the registry can serve as is: npm `1.2.3` / `1.2.3-beta.1` or a dist-tag
 # (`latest`, `next`); PyPI `==2.31.0` (no wildcard). Anything else is a range for the installer.
 _NPM_EXACT = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?|[A-Za-z][\w.-]*")
+_NPM_RELEASE = re.compile(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?")
 _PY_EXACT = re.compile(r"\s*==\s*([0-9][0-9A-Za-z.+!-]*)\s*$")
 _NPM_NAME = re.compile(r"^(?:@[a-z0-9][\w.-]*/)?[a-z0-9][\w.-]*$", re.IGNORECASE)
 # `alias@npm:real@1.2.3` installs `real` under the name `alias`.
@@ -2152,6 +2157,8 @@ def hook_response(
     if late:
         asked.append(f"{_names(late)}: not checked within SkillTotal's {budget_s:g}-second "
                      f"time limit.")
+        asked.append(f"To give the checks more time, set {BUDGET_ENV} (seconds, up to "
+                     f"{MAX_BUDGET_S:g}).")
     if failed:
         asked.append(f"{_names(failed)}: not checked because the scan failed.")
     if skipped:
@@ -2182,14 +2189,17 @@ def _details(scanned: list[str]) -> str:
 
 
 def _checked_label(source: str, report: dict[str, Any]) -> str:
-    """``npm:express`` -> ``npm:express@5.1.0``: the version the verdict is about, when the command
-    named none. The version comes from the scanned manifest, so it is shown only when plain."""
+    """``npm:express`` / ``npm:express@latest`` -> ``npm:express@5.1.0``: the release the verdict
+    is about, when the command named none or a tag. The version comes from the scanned manifest,
+    so it is shown only when plain."""
     version = str((report.get("component") or {}).get("version") or "")
     if not _PLAIN_VERSION.fullmatch(version):
         return source
     if source.startswith("npm:"):
-        unpinned = source.count("@") == (1 if source.startswith("npm:@") else 0)
-        return f"{source}@{version}" if unpinned else source
+        spec = source[4:]
+        named = spec.count("@") > (1 if spec.startswith("@") else 0)
+        name, pin = spec.rsplit("@", 1) if named else (spec, "")
+        return source if _NPM_RELEASE.fullmatch(pin) else f"npm:{name}@{version}"
     if source.startswith("pypi:") and "==" not in source:
         return f"{source}=={version}"
     return source

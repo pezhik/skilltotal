@@ -1627,3 +1627,81 @@ def test_no_working_directory_means_the_package_is_checked():
     calls = []
     hook_response(_bash("npx next build"), scan=lambda s, t: calls.append(s) or _report())
     assert calls == ["npm:next"]
+
+
+# --- What the answer tells the person -----------------------------------------------------------
+
+
+def test_a_late_check_says_how_to_give_it_more_time():
+    from skilltotal import agent_hook, cli
+
+    def slow(source, timeout):
+        raise TimeoutError
+
+    out = hook_response(_bash("npm install huge"), scan=slow, budget_s=12.0)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "npm:huge: not checked within SkillTotal's 12-second time limit." in reason
+    assert "SKILLTOTAL_HOOK_BUDGET (seconds, up to 100)" in reason
+    # The limit named is the one the CLI applies.
+    assert agent_hook.MAX_BUDGET_S == cli.HOOK_MAX_BUDGET_S
+    assert agent_hook.BUDGET_ENV == "SKILLTOTAL_HOOK_BUDGET"
+
+
+def test_the_time_hint_appears_only_when_a_check_ran_out_of_time():
+    def boom(source, timeout):
+        raise RuntimeError("registry unreachable")
+
+    out = hook_response(_bash("npm install lodash"), scan=boom)
+    assert "SKILLTOTAL_HOOK_BUDGET" not in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize(
+    ("command", "label"),
+    [
+        ("npx -y @playwright/mcp@latest", "npm:@playwright/mcp@0.0.41"),
+        ("npx -y some-mcp@next", "npm:some-mcp@0.0.41"),
+        ("npx -y some-mcp", "npm:some-mcp@0.0.41"),
+        ("npx -y some-mcp@^0.0.1", "npm:some-mcp@0.0.41"),
+        # An exact release the command named stays as written.
+        ("npx -y some-mcp@0.0.41", "npm:some-mcp@0.0.41"),
+    ],
+)
+def test_the_note_names_the_release_that_was_checked_not_the_tag(command, label):
+    report = _report("low", 0)
+    report["component"] = {"version": "0.0.41"}
+    out = hook_response(_bash(command), scan=lambda s, t: report)
+    note = out["hookSpecificOutput"]["additionalContext"]
+    assert f"SkillTotal checked {label}: risk 0/100" in note
+    assert "@latest" not in note and "@next" not in note
+
+
+def test_an_ask_about_a_tag_names_the_release_to_scan():
+    report = _report("high", 60)
+    report["component"] = {"version": "1.4.2"}
+    out = hook_response(_bash("npx -y risky-mcp@latest"), scan=lambda s, t: report)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "npm:risky-mcp@1.4.2: risk 60/100" in reason
+    assert "Run `skilltotal scan npm:risky-mcp@1.4.2`" in reason
+
+
+def test_the_resolved_release_is_named_through_the_cache(tmp_path, monkeypatch):
+    import skilltotal.cli as cli
+    from skilltotal import collector
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(collector, "resolve_release",
+                        lambda source, timeout=0: collector.Release("npm:@playwright/mcp@0.0.41"))
+    scanned = []
+
+    def fake(source, timeout):
+        scanned.append(source)
+        report = _report("low", 0)
+        report["component"] = {"version": "0.0.41"}
+        return report
+
+    monkeypatch.setattr(cli, "_hook_scan", fake)
+    for _ in range(2):
+        out = hook_response(_bash("npx -y @playwright/mcp@latest"), scan=cli._hook_scan_cached)
+        assert "checked npm:@playwright/mcp@0.0.41: risk 0/100" in (
+            out["hookSpecificOutput"]["additionalContext"])
+    assert scanned == ["npm:@playwright/mcp@0.0.41"]

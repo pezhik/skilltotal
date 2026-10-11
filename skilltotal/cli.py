@@ -562,7 +562,7 @@ def _cmd_mcp() -> int:
 
 
 def _cmd_hook() -> int:
-    from skilltotal.agent_hook import hook_response
+    from skilltotal.agent_hook import BUDGET_ENV, hook_response
 
     if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
         sys.stdin.reconfigure(encoding="utf-8")
@@ -572,7 +572,7 @@ def _cmd_hook() -> int:
     except ValueError:
         return EXIT_OK  # not a hook event we can read: stay out of the agent's way
     try:
-        budget = float(os.environ.get("SKILLTOTAL_HOOK_BUDGET", HOOK_BUDGET_S))
+        budget = float(os.environ.get(BUDGET_ENV, HOOK_BUDGET_S))
     except ValueError:
         budget = HOOK_BUDGET_S
     # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
