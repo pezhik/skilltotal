@@ -705,7 +705,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     file, published this afternoon. A new engine version rescans everything.
     """
     from skilltotal.collector import resolve_release
-    from skilltotal.models import UNANALYZED_INSTALL_SCRIPT
+    from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
 
     started = time.monotonic()
     release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
@@ -754,11 +754,12 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
                 for f in report.get("findings") or []
                 if f.get("threat_class") in ("malicious_indicator", "risky_construct")
             ],
-            # An install script the scan could not read decides the answer as much as a finding.
+            # What the scan could not read decides the answer as much as a finding: an install
+            # script it could not analyze, or a component nothing of which was read.
             "needs_review": [
                 {"category": n.get("category"), "title": n.get("title"), "file": n.get("file")}
                 for n in report.get("needs_review") or []
-                if n.get("title") == UNANALYZED_INSTALL_SCRIPT
+                if n.get("title") in (UNANALYZED_INSTALL_SCRIPT, NOTHING_READ)
             ],
         },
     }

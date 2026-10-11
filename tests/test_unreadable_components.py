@@ -80,3 +80,23 @@ def test_the_hook_asks_the_person_and_says_why(tmp_path):
     spec = hook_response(event, scan=lambda source, timeout: report)["hookSpecificOutput"]
     assert spec["permissionDecision"] == "ask"
     assert "nothing in it could be read" in spec["permissionDecisionReason"]
+
+
+def test_a_cached_verdict_still_says_nothing_was_read(tmp_path, monkeypatch):
+    # The hook cache keeps a trimmed report. Trimming the note away turned the second
+    # `npm install x` into a silent pass for a package the first one asked about.
+    from skilltotal import cli, collector
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setattr(collector, "resolve_release", lambda source, timeout=0: None)
+    (tmp_path / "pkg").mkdir()
+    report = _package(_binary_only(tmp_path / "pkg")).to_dict()
+    scans = []
+    monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout: scans.append(source) or report)
+    event = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
+             "tool_input": {"command": "npm install x"}}
+    for _ in range(2):
+        spec = hook_response(event, scan=cli._hook_scan_cached)["hookSpecificOutput"]
+        assert spec["permissionDecision"] == "ask"
+        assert "nothing in it could be read" in spec["permissionDecisionReason"]
+    assert scans == ["npm:x"]  # the second answer came from the cache
