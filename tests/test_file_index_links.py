@@ -230,3 +230,33 @@ def test_a_directory_that_cannot_be_listed_is_reported(tmp_path, monkeypatch):
     index = FileIndex.build(tmp_path)
     assert [f.relpath for f in index.files] == ["ok.py"]
     assert index.unreadable == ["private/"]
+
+
+def test_install_scripts_named_by_a_linked_manifest_are_not_read(tmp_path):
+    from skilltotal.engine import _install_script_files
+
+    comp, outside = _layout(tmp_path)
+    (outside / "package.json").write_text('{"scripts": {"postinstall": "node main.py"}}',
+                                          encoding="utf-8")
+    _symlink(outside / "package.json", comp / "package.json")
+    assert _install_script_files(comp) == {}
+
+
+def test_a_bundled_module_behind_a_link_is_not_read(tmp_path, monkeypatch):
+    # node_modules/helper is a link out of the component: its package.json is never opened.
+    from skilltotal.engine import _install_script_files
+
+    comp, outside = _layout(tmp_path)
+    (comp / "package.json").write_text(
+        '{"name": "comp", "version": "1.0.0", "scripts": {"postinstall": "node setup.js"}}',
+        encoding="utf-8")
+    (comp / "setup.js").write_text('require("helper");\n', encoding="utf-8")
+    (outside / "package.json").write_text('{"main": "private.py"}', encoding="utf-8")
+    (comp / "node_modules").mkdir()
+    _junction(outside, comp / "node_modules" / "helper")
+    opened: list[Path] = []
+    read_text = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: (opened.append(self),
+                                                                 read_text(self, *a, **k))[1])
+    assert _install_script_files(comp) == {"setup.js": "postinstall"}
+    assert not [p for p in opened if outside.resolve() in p.resolve().parents]

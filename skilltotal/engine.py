@@ -30,6 +30,7 @@ from skilltotal.file_index import (
     is_data_corpus_path,
     is_doc_path,
     is_example_path,
+    is_regular_file,
     is_test_path,
     skill_dirs,
 )
@@ -306,10 +307,15 @@ def _install_script_files(root: Path) -> dict[str, str]:
     ``install.js``). So are the package's own modules those files load with a literal relative
     ``require``/``import``, transitively: a two-line ``postinstall`` that requires a minified
     ``lib/x.min.js`` runs that bundle too. Parsing only: nothing is run.
+
+    A ``package.json`` that is a link is not read: it can point at any file on the machine.
     """
+    manifest = root / "package.json"
+    if not is_regular_file(manifest):
+        return {}
     try:
-        data = json.loads((root / "package.json").read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
+        data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError, RecursionError):
         return {}
     scripts = data.get("scripts") if isinstance(data, dict) else None
     if not isinstance(scripts, dict):
@@ -391,13 +397,18 @@ def _module_file(base: Path, start: Path, spec: str) -> Path | None:
     only when it lies inside the component ``base``."""
     try:
         path = (start / spec).resolve()
+        # Outside the component (`../x`, or a link out of it) nothing is read, not even the
+        # `package.json` of a linked folder.
+        path.relative_to(base)
     except (OSError, ValueError):
         return None
     candidates = [path, *(path.with_name(path.name + s) for s in _MODULE_SUFFIXES)]
     if path.is_dir():
+        manifest = path / "package.json"
         try:
-            main = json.loads((path / "package.json").read_text(encoding="utf-8")).get("main")
-        except (OSError, ValueError, AttributeError):
+            main = (json.loads(manifest.read_text(encoding="utf-8")).get("main")
+                    if is_regular_file(manifest) else None)
+        except (OSError, ValueError, AttributeError, RecursionError):
             main = None
         if isinstance(main, str) and main:
             entry = path / main

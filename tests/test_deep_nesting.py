@@ -151,3 +151,24 @@ def test_a_nul_byte_in_python_source_is_unparseable_not_a_crash(tmp_path):
     (tmp_path / "x.py").write_bytes(("x = 1\n" * 2000).encode() + b'y = "\x00"\n')
     report = _report(tmp_path)
     assert any(n.title == "Unparseable Python file" for n in report.needs_review)
+
+
+# --- manifests read by the engine --------------------------------------------------------------
+def test_a_deep_package_json_does_not_crash_the_install_script_lookup(tmp_path):
+    # The engine reads package.json again for the scripts npm runs at install time.
+    (tmp_path / "package.json").write_text(
+        '{"name": "x", "version": "1.0.0", "a": ' + _array(DEEP) + "}", encoding="utf-8")
+    (tmp_path / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
+    assert _report(tmp_path).metadata["files_indexed"] >= 1
+
+
+def test_a_deep_package_json_of_a_bundled_module_does_not_crash(tmp_path):
+    (tmp_path / "package.json").write_text(
+        '{"name": "x", "version": "1.0.0", "scripts": {"postinstall": "node setup.js"}}',
+        encoding="utf-8")
+    (tmp_path / "setup.js").write_text('require("helper");\n', encoding="utf-8")
+    helper = tmp_path / "node_modules" / "helper"
+    helper.mkdir(parents=True)
+    (helper / "package.json").write_text('{"main": "x.js", "a": ' + _array(DEEP) + "}",
+                                         encoding="utf-8")
+    assert _report(tmp_path).metadata["files_indexed"] >= 1
