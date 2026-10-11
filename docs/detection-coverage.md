@@ -71,5 +71,5 @@ Rust/Java/Ruby/PHP semantic exec/network/deser is a documented gap). See `docs/l
 - **Obfuscated natural-language injection** — CLOSED (ruleset 11): instruction-override and
   tool-poisoning phrases hidden behind homoglyphs, full-width, diacritics, or zero-width-in-word
   are now de-obfuscated before matching (`skilltotal.text_normalize`). Still out of scope for the
-  free static engine (and deferred to paid Deep Analysis): semantic paraphrase and arbitrary
+  free static engine (and deferred to the paid SkillTotal Cloud): semantic paraphrase and arbitrary
   *non-English* natural-language understanding — those need an LLM, not a keyword list.

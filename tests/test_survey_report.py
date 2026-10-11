@@ -204,6 +204,28 @@ def test_report_discloses_a_mixed_ruleset_run():
     assert "Scanned components by ruleset" not in sr.render_markdown(sr.summarize(single), _META)
 
 
+def test_a_mixed_ruleset_run_names_the_range_in_the_lead():
+    """The lead said "ruleset 59" while 11,774 of 15,341 rows came from ruleset 56."""
+    rows = _rows()
+    for r in rows:
+        if r["status"] == "ok":
+            r["ruleset_version"] = 52
+    rows[1]["ruleset_version"] = 53
+    text = sr.render_markdown(sr.summarize(rows), _META)
+    lead = text.splitlines()[2]
+    assert "finished on 2026-08-19 with SkillTotal 0.41.0, rulesets 52–53 (see Method)" in lead
+    assert "ruleset 45" not in lead
+    assert "- Engine 0.41.0, rulesets 52–53 —" in text
+
+
+def test_report_says_what_a_rerun_reads():
+    """"So the run reproduces" did not hold: sources were read unpinned, at their latest."""
+    text = sr.render_markdown(sr.summarize(_rows()), _META)
+    assert "the same code through the same engine gives the same findings" in text
+    assert "so a re-run reads newer code" in text
+    assert "so the run reproduces" not in text
+
+
 def test_a_non_zero_count_never_prints_as_zero_percent():
     """4 critical of 15,457 rounds to 0.0%, which reads as none; the label says <0.1%."""
     assert sr.share_label(0.0, 4) == "<0.1%"

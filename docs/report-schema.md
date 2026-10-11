@@ -4,7 +4,7 @@ The JSON report (`--json` / `--output`) is the serialization of the core `Report
 It is the stable contract intended for the web and SaaS products.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
-> schema version **1.6**) is the machine-readable source of truth. Consumers should validate
+> schema version **1.7**) is the machine-readable source of truth. Consumers should validate
 > against it. `tests/test_report_schema.py` guards it: any change to the report shape that is
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
@@ -17,11 +17,13 @@ It is the stable contract intended for the web and SaaS products.
     "name": "evil-npm-pkg",
     "type": "npm_package",
     "source": "/abs/path/or/url",
-    "version": "0.0.1"
+    "version": "0.0.1",
+    "download_url": "https://registry.npmjs.org/evil-npm-pkg/-/evil-npm-pkg-0.0.1.tgz"
   },
   "risk_score": 100,
   "risk_level": "critical",
   "summary": "Risk level CRITICAL (score 100/100). 7 finding(s); capabilities: ...",
+  "verdict": { /* the plain-language answer; see below */ },
   "capabilities": {
     "shell_execution": [ { "file": "...", "line_start": 10, "line_end": 10, "snippet": "..." } ]
   },
@@ -41,16 +43,31 @@ It is the stable contract intended for the web and SaaS products.
 | `type` | string | `npm_package`, `python_package`, `mcp_server`, `ai_component`, `directory` |
 | `source` | string | Resolved local path or the original URL |
 | `version` | string | From manifest if available, else `""` |
+| `download_url` | string \| null | The distribution artifact fetched for an npm/PyPI source; `null` for git and local sources (added in 1.2) |
 
 ### `risk_score` / `risk_level`
 - `risk_score`: integer 0–100.
 - `risk_level`: `low` (0–24), `medium` (25–49), `high` (50–74), `critical` (75–100).
 
+### `verdict`
+The plain-language answer, read next to the score rather than derived from it (added in 1.3).
+What the plugin and `guard` act on: malicious indicators block whatever the score.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `level` | string | `malicious` when any malicious indicator fired, else the risk level |
+| `headline` | string | One line for a person, e.g. `Malicious indicators found` |
+| `has_malicious_indicators` | boolean | `true` when a `malicious_indicator` finding fired |
+| `reasons` | array | Up to three strings naming the findings that explain the verdict |
+| `malicious_indicators` / `risky_constructs` / `exposed_secrets` / `capabilities` | integer | Findings per threat class (`exposed_secrets` counts the `exposure` class, added in 1.6) |
+| `unanalyzed_code` | object | Present only when the component ships source in a language whose behavior is not analyzed yet, e.g. `{"Go": 12}`; a low verdict then says the analysis was partial (added in 1.7) |
+
 ### `capabilities`
 Object keyed by capability name; each value is a list of **evidence** objects.
 Possible keys: `filesystem_read`, `filesystem_write`, `shell_execution`, `network_egress`,
 `install_time_execution`, `dynamic_code_execution`, `mcp_tools_detected`,
-`prompt_surface_risk`. A capability is present only if at least one finding evidences it.
+`prompt_surface_risk`, `delegated_authentication`, `scoped_identity`. A capability is present
+only if at least one finding evidences it.
 
 ### `traits[]`
 A behavioral **fingerprint**: a higher-level projection over findings that names the traits a
@@ -80,6 +97,7 @@ mapping rationale: [`trait-crosswalk.md`](trait-crosswalk.md).
 | `evidence` | array | **Non-empty** list of evidence objects (invariant) |
 | `recommendation` | string | Actionable guidance |
 | `threat_class` | string | `malicious_indicator` (drives the malicious verdict), `risky_construct` (scored), `exposure` (a shipped credential: reported, not scored; added in 1.6), `capability` (informational) |
+| `owasp` | array | OWASP Agentic Skills Top 10 ids (`AST01`–`AST10`) for the rule; empty when there is no honest static fit; never scored (added in 1.4) |
 
 ### `evidence[]` (inside findings and capabilities)
 | Field | Type | Notes |
@@ -97,6 +115,7 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `title` | string | Short title |
 | `reason` | string | Why it could not be confirmed as a finding |
 | `file` | string \| null | File if known, else `null` |
+| `line` | integer \| null | 1-based line when the heuristic knows it (added in 1.1) |
 
 ### `metadata`
 | Field | Type | Notes |

@@ -15,7 +15,7 @@ versioned PyPI package plus the report JSON schema (`docs/report.schema.json`).
 - **Engine (OSS)** answers **WHAT** a component does — deterministic static facts with
   evidence (file/line/snippet): shell execution, filesystem/network/install/dynamic-code,
   sensitive paths, MCP dangerous tools, prompt-injection surface, hidden Unicode, the
-  filesystem+network exfiltration combo, a 0–100 score and risk level.
+  sensitive-data + network exfiltration combination, a 0–100 score and risk level.
 - **SkillTotal Cloud (paid)** answers **WHY it matters / WHAT HAPPENS WHEN RUN / WHERE TO KEEP
   & WATCH IT** — interpretation and prioritization of findings, dynamic sandbox execution,
   hosting, history, and monitoring.

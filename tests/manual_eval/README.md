@@ -33,9 +33,10 @@ non-existent `.test` domains and payloads are inert; SkillTotal only analyzes st
 | `sh-base64-exec/` | **Shell bootstrap dropper**: an `install.sh` that decodes and executes an obfuscated first stage (`... base64 -d \| bash`) and pipes a remote second stage straight into a shell (`curl ... \| bash`). | `ST-OBF-DECODE-EXEC-SH`, `ST-SHELL-PIPE-EXEC` -> **malicious verdict**, risk medium (40) |
 | `zero-width-injection/` | **ASCII smuggling / zero-width Unicode** (used by TrapDoor to hide prompts): a benign-looking `SKILL.md` whose instructions are encoded in invisible Unicode tag characters + zero-width chars. | `ST-HIDDEN-UNICODE` -> **malicious verdict**, risk low (20). Regenerate with `python tests/manual_eval/gen_zero_width.py`. |
 
-> Note on the risk scale: a single HIGH finding scores 20 → `risk_level` LOW (band is
-> 0–24). CI gating uses `--fail-on-high` (which keys off finding *severity*), so these
-> fixtures still block a build even when the aggregate level reads low.
+> Note on the risk scale: the verdict and the score are separate axes. A single HIGH finding
+> scores 20, which is `risk_level` LOW (band 0–24), yet a malicious verdict is what the plugin
+> and `guard` act on, and `--fail-on` trips on a malicious indicator at any severity, so these
+> fixtures are denied or fail the build whatever the aggregate level reads.
 
 ## Real-world corpus (`corpus/`, git-ignored)
 

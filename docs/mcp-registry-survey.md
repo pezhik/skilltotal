@@ -1,6 +1,6 @@
 # The MCP registry, measured
 
-A deterministic static scan of the public MCP registry as of 2026-08-16: 15,341 of its 17,535 distinct components (87.5%), scanned on 2026-09-19 with SkillTotal 0.49.0 (ruleset 59).
+A deterministic static scan of the public MCP registry as of 2026-08-16: 15,341 of its 17,535 distinct components (87.5%), finished on 2026-09-19 with SkillTotal 0.49.0, rulesets 56–59 (see Method).
 
 ## How to read this
 
@@ -109,7 +109,8 @@ SkillTotal scores risky constructs and malicious indicators; a capability on its
 
 ## Method
 
-- Engine 0.49.0, ruleset 59 — deterministic regex and AST analysis. The component is never executed and no LLM is involved, so the run reproduces.
+- Engine 0.49.0, rulesets 56–59 — deterministic regex and AST analysis. The component is never executed and no LLM is involved, so the same code through the same engine gives the same findings. The survey read each component's latest release or default branch when it ran, so a re-run reads newer code.
+- The rules were tuned on this population: the malicious-indicator hits of earlier runs were read by hand, and the false positives found were fixed (rulesets 50 and 52) before this run. The zero above is measured after that tuning.
 - Scanned components by ruleset: 11,774 with ruleset 56, 9 with ruleset 57, 30 with ruleset 58, 3,528 with ruleset 59. The later ruleset re-scanned only the components whose result its changes could affect, plus those that exceeded a bound on the first pass. Ruleset 59 tied the Node.js shell-execution rule to an actual `child_process` import, after a hand-checked sample showed most of its earlier hits were regular-expression and database `.exec()` calls; every component that carried a shell finding was re-scanned, which is why the shell-execution share fell from 30.3% (ruleset 58) to 21.1%. The other capability figures moved by 1-2% only because 85 components that scanned on the first pass exceeded a bound (mostly the time bound) on the re-scan and left the scanned set.
 - Population: `https://registry.modelcontextprotocol.io/v0/servers` as of 2026-08-16, deduplicated by source.
 - Two bounds, both disclosed above: 50 MB per fetch and 60s of wall clock per component.
