@@ -290,10 +290,15 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
     if depth > _MAX_DEPTH:
         return _net(text)
     text = text.replace("\r\n", "\n")
+    lexer = _Lexer(text, shell)
     try:
-        lexed = _Lexer(text, shell).lex()
+        lexed = lexer.lex()
     except _Unreadable:
-        return _net(text)  # the shell would not run it as written; ask if it names an installer
+        # Bash runs each complete line before one it cannot read (an unclosed quote) and stops
+        # there, so the lines before it are read as usual (PowerShell runs none of them: at worst
+        # one check too many); the rest is asked about when it names an installer.
+        done = _parse(text[:lexer.safe], shell, depth, outer) if lexer.safe else []
+        return list(dict.fromkeys(done + _net(text[lexer.safe:])))
     cwd = outer.cwd
     if cwd and _moves(lexed.pipelines, text):
         cwd = None
@@ -556,6 +561,8 @@ _DOUBLE_SPECIAL = {
 # What a word holds when a `<` or `>` continues it as a redirection (`2>`, `>>`, PowerShell's
 # `*>`) rather than ends it.
 _REDIRECT_START = re.compile(r"(?:[0-9]*|\*)[<>&|]*")
+# A word that `(` turns into an array assignment: `a=(1 2)`, `a+=(x)`, `a[1]=(...)`.
+_ARRAY_TARGET = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
 # What ends a here-document's delimiter word.
 _WORD_END = frozenset(" \t\n;&|()<>")
 _ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
@@ -584,6 +591,7 @@ class _Lexer:
         self.esc = _ESCAPE[shell]
         self.subs: list[str] = []
         self.pipelines: list[list[_Stage]] = []
+        self.safe = 0  # where the last complete top-level line ends
 
     def lex(self) -> _Lexer:
         self._commands(0, None, 0)
@@ -602,25 +610,31 @@ class _Lexer:
         heredocs: list[tuple[str, bool, bool, _Stage]] = []
         word: list[str] = []
         in_word = False
+        quoted = False  # whether the current word holds a quote or an escape
         parens = 0
         last = ""
 
         def put(raw: str, value: str | None = None) -> None:
             """Add to the current word: ``value`` as the shell passes it, ``raw`` as written."""
-            nonlocal last, in_word
+            nonlocal last, in_word, quoted
             if raw:
                 last = raw[-1]
             in_word = True
+            quoted = quoted or value is not None
             if top:
                 stage.text.append(raw)
                 word.append(raw if value is None else value)
 
         def end_word() -> None:
-            nonlocal in_word
+            nonlocal in_word, quoted
             if in_word and top:
                 stage.words.append("".join(word))
             word.clear()
-            in_word = False
+            in_word = quoted = False
+
+        def redirect_start() -> bool:
+            """Whether the word so far can begin a redirection (`2>`, `>>`, `*>`): unquoted."""
+            return not quoted and bool(_REDIRECT_START.fullmatch("".join(word)))
 
         def cut(piped: bool) -> None:
             nonlocal stage, pipeline, last
@@ -653,6 +667,8 @@ class _Lexer:
             if c == "\n":
                 cut(False)
                 i = self._heredoc_bodies(i + 1, heredocs, top)
+                if top:
+                    self.safe = i
                 continue
             if c in " \t" or (sh == "powershell" and c.isspace()):
                 end_word()
@@ -726,13 +742,13 @@ class _Lexer:
                     put(_SUB)
                     continue
                 if s.startswith("<<<", i):  # a here-string: taken whole, so its second `<` does
-                    if in_word and not _REDIRECT_START.fullmatch("".join(word)):  # not start a
+                    if in_word and not redirect_start():  # not start a
                         end_word()  # here-document
                     put("<<<")
                     i += 3
                     continue
                 if c == "<" and nx == "<":
-                    if in_word and not _REDIRECT_START.fullmatch("".join(word)):
+                    if in_word and not redirect_start():
                         end_word()
                     end, delimiter, strip, expand = self._heredoc_operator(i + 2)
                     heredocs.append((delimiter, strip, expand, stage))
@@ -783,6 +799,13 @@ class _Lexer:
                     cut(True)
                     i += 2 if (sh == "bash" and nx == "&") else 1
                 continue
+            if sh == "bash" and c == "(" and in_word and _ARRAY_TARGET.fullmatch("".join(word)):
+                end = self._commands(i + 1, ")", nest + 1)  # `a=(x y)`: an array, not a subshell
+                if top:
+                    self.subs.append(s[i + 1:end])  # its elements may run substitutions
+                put(s[i:end + 1])
+                i = end + 1
+                continue
             if c in "()":
                 if top:
                     cut(False)
@@ -795,7 +818,7 @@ class _Lexer:
                     cut(False)
                 i += 1
                 continue
-            if c in "<>" and in_word and not _REDIRECT_START.fullmatch("".join(word)):
+            if c in "<>" and in_word and not redirect_start():
                 end_word()  # `x>log`: a redirection ends the word it is glued to
             put(c)
             i += 1

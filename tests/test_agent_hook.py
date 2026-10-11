@@ -2194,3 +2194,22 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
 )
 def test_a_line_continuation_inside_an_operator_is_joined_first(command):
     assert "npm:evil-pkg" in install_targets(command)
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # A file-descriptor number is unquoted digits: `""2>&1` is the argument `2`, then `>&1`.
+        ('pnpm add evil-pkg ""2>&1', ["npm:evil-pkg", "npm:2"]),
+        ("yarn add evil-pkg 2''>&1", ["npm:evil-pkg", "npm:2"]),
+        # `a=(1 2)` assigns an array: its parentheses are part of the word, not a subshell.
+        ("a=(1 2)\\; uvx evil-pkg", ["pypi:evil-pkg"]),
+        ("a=(1 2) && npm i evil-pkg", ["npm:evil-pkg"]),
+        ("a=($(npm i evil-pkg))", ["npm:evil-pkg"]),
+        # Bash runs every complete line before one it cannot read.
+        ("npm i evil-pkg\necho 'unterminated", ["npm:evil-pkg"]),
+        ("eval| ':' '\n'\nyarn  ad\"\"d  e\\\nvil&-pkg\n'", ["npm:evil"]),
+    ],
+)
+def test_more_shapes_found_by_fuzzing_against_bash(command, expected):
+    assert install_targets(command) == expected
