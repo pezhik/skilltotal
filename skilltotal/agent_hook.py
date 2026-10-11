@@ -344,7 +344,7 @@ def _expand_aliases(words: list[str], aliases: dict[str, list[str]], shell: str)
         for arg in words[1:]:
             name, eq, value = arg.partition("=")
             if eq and name:
-                aliases[name] = _words(value, "bash") or value.split()
+                aliases[name] = _words(value, "bash", marked=True) or value.split()
     elif shell == "powershell" and head in ("set-alias", "sal", "new-alias", "nal"):
         named, positional = _ps_named(words[1:], ("name", "value"))
         name = named.get("name") or (positional[0] if positional else "")
@@ -508,14 +508,16 @@ def _from_stdin(feed: list[tuple[str, bool]], shell: str, depth: int,
     return list(found)
 
 
-def _words(text: str, shell: str) -> list[str] | None:
+def _words(text: str, shell: str, marked: bool = False) -> list[str] | None:
     """The words of a short command line (a ``Start-Process`` argument list), or None when it
-    does not read."""
+    does not read. A word that only reads like a redirection keeps its mark when ``marked``, for
+    text whose redirections a shell still reads (an alias); otherwise it is taken as it is."""
     try:
         lexed = _Lexer(text.replace("\r\n", "\n"), shell).lex()
     except _Unreadable:
         return None
-    return [word for pipeline in lexed.pipelines for stage in pipeline for word in stage.words]
+    words = [word for pipeline in lexed.pipelines for stage in pipeline for word in stage.words]
+    return words if marked else [_unmarked(word) for word in words]
 
 
 # --- Reading the command line ----------------------------------------------------------------
@@ -558,9 +560,34 @@ _DOUBLE_SPECIAL = {
     "powershell": re.compile(f'[`$"{_PS_DOUBLE[1:]}]'),
     "cmd": re.compile(r'"'),
 }
-# What a word holds when a `<` or `>` continues it as a redirection (`2>`, `>>`, PowerShell's
-# `*>`) rather than ends it.
-_REDIRECT_START = re.compile(r"(?:[0-9]*|\*)[<>&|]*")
+# What a word holds when a `<` or `>` continues it as a redirection rather than ends it: a
+# descriptor number or the operator so far (`2>` before `>`). In bash the number is unquoted and
+# fits in an int (`2147483648>x` passes 2147483648 on), and `*` is a pattern, not a stream;
+# PowerShell has streams 1 to 6 and `*`.
+_REDIRECT_START = {
+    "bash": re.compile(r"[0-9]*[<>&|]*"),
+    "powershell": re.compile(r"[1-6*]?>?"),
+    "cmd": re.compile(r"(?:[0-9]*|\*)[<>&|]*"),
+}
+_MAX_DESCRIPTOR = 2**31 - 1
+_REDIRECT_START_MAX = 16  # characters: a longer word is an argument
+# Marks a word that reads like a redirection but is an argument the shell passes on: quoted
+# (`'7>1.0'`), or a PowerShell word that `>` goes on with (`7>1.0`). `_redirects` keeps it.
+_LITERAL = "\x01"
+
+
+def _ps_string_start(raw: str) -> bool:
+    """Whether a word that starts with ``raw`` starts with a string or a subexpression, which
+    PowerShell reads as a token of its own: a `<` or `>` right after it starts a redirection."""
+    head = raw[1:2] if raw[:1] == "@" else raw[:1]  # `@'...'@`, a here-string
+    return raw == _SUB or (head != "" and head in _PS_SINGLE + _PS_DOUBLE)
+
+
+def _unmarked(word: str) -> str:
+    """``word`` as the shell passes it, without a `_LITERAL` mark."""
+    return word[1:] if word.startswith(_LITERAL) else word
+
+
 # A word that `(` turns into an array assignment: `a=(1 2)`, `a+=(x)`, `a[1]=(...)`.
 _ARRAY_TARGET = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\[[^\]]*\])?\+?=")
 # What ends a here-document's delimiter word.
@@ -611,30 +638,48 @@ class _Lexer:
         word: list[str] = []
         in_word = False
         quoted = False  # whether the current word holds a quote or an escape
+        bare = False  # whether it starts outside quotes: PowerShell reads `<` and `>` in it as text
+        redirecting = False  # whether an unquoted `<` or `>` makes it a redirection
+        size = 0  # its length so far, as the shell passes it
+        cut_at: int | None = None  # where a name in it ends: PowerShell's `x>1.0` names x
         parens = 0
         last = ""
 
         def put(raw: str, value: str | None = None) -> None:
             """Add to the current word: ``value`` as the shell passes it, ``raw`` as written."""
-            nonlocal last, in_word, quoted
+            nonlocal last, in_word, quoted, bare, size
             if raw:
                 last = raw[-1]
+            if not in_word:
+                bare = sh == "powershell" and not _ps_string_start(raw)
             in_word = True
             quoted = quoted or value is not None
             if top:
                 stage.text.append(raw)
-                word.append(raw if value is None else value)
+                piece = raw if value is None else value
+                word.append(piece)
+                size += len(piece)
 
         def end_word() -> None:
-            nonlocal in_word, quoted
+            nonlocal in_word, quoted, redirecting, size, cut_at
             if in_word and top:
-                stage.words.append("".join(word))
+                value = "".join(word)[:cut_at]
+                if value.startswith(_LITERAL) or (not redirecting and _REDIRECT.match(value)):
+                    value = _LITERAL + value  # an argument, though it reads like a redirection
+                stage.words.append(value)
             word.clear()
-            in_word = quoted = False
+            in_word = quoted = redirecting = False
+            size = 0
+            cut_at = None
 
         def redirect_start() -> bool:
-            """Whether the word so far can begin a redirection (`2>`, `>>`, `*>`): unquoted."""
-            return not quoted and bool(_REDIRECT_START.fullmatch("".join(word)))
+            """Whether the word so far begins a redirection (`2>`, `>>`, PowerShell's `*>`): an
+            unquoted descriptor number or operator, short enough to be one."""
+            if quoted or size > _REDIRECT_START_MAX:
+                return False
+            text = "".join(word)
+            return bool(_REDIRECT_START[sh].fullmatch(text)) and (
+                not text.isdigit() or int(text) <= _MAX_DESCRIPTOR)
 
         def cut(piped: bool) -> None:
             nonlocal stage, pipeline, last
@@ -744,12 +789,14 @@ class _Lexer:
                 if s.startswith("<<<", i):  # a here-string: taken whole, so its second `<` does
                     if in_word and not redirect_start():  # not start a
                         end_word()  # here-document
+                    redirecting = True
                     put("<<<")
                     i += 3
                     continue
                 if c == "<" and nx == "<":
                     if in_word and not redirect_start():
                         end_word()
+                    redirecting = True
                     end, delimiter, strip, expand = self._heredoc_operator(i + 2)
                     heredocs.append((delimiter, strip, expand, stage))
                     # A word the redirection reading drops whole: `<<` and the delimiter could
@@ -818,8 +865,17 @@ class _Lexer:
                     cut(False)
                 i += 1
                 continue
-            if c in "<>" and in_word and not redirect_start():
-                end_word()  # `x>log`: a redirection ends the word it is glued to
+            if c in "<>":
+                if not in_word or redirect_start():
+                    redirecting = True  # `> log`, `2>&1`, `>>`
+                elif bare:
+                    # PowerShell 5.1 goes on with a bare word: `7>1.0` is one argument (npm
+                    # rejects it, pip installs 7), read up to the `>`.
+                    if cut_at is None:
+                        cut_at = size
+                else:
+                    end_word()  # `x>log`: a redirection ends the word it is glued to
+                    redirecting = True
             put(c)
             i += 1
         if not top:
@@ -1158,13 +1214,13 @@ def _redirects(words: list[str]) -> tuple[list[str], list[str]]:
     while i < len(words):
         found = _REDIRECT.match(words[i])
         if found is None:
-            kept.append(words[i])
+            kept.append(_unmarked(words[i]))
             i += 1
             continue
         target = words[i][found.end():]
         i += 1
         if not target and i < len(words):
-            target = words[i]
+            target = _unmarked(words[i])
             i += 1
         if found.group(1) == "<<<":
             fed.append(target)

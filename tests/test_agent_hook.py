@@ -1069,6 +1069,10 @@ def test_the_parser_stays_fast_on_adversarial_command_lines():
         "# " + "npm i x " * 30_000,
         "echo " + "${a:-" * 3_000 + "}" * 3_000,
         ";" * 100_000 + "npm i evil-pkg",
+        "npm i evil-pkg\n" + ">" * 100_000,
+        "npm i evil-pkg 2" + ">|" * 50_000,
+        "npm i evil-pkg " + "<<<" * 33_000,
+        "npm i evil-pkg 2" + "<" * 100_000,
     ]
     for line in lines:
         started = clock.monotonic()
@@ -2163,11 +2167,11 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
         (hook._NPM_ENV_PREFIX.search, None), (hook._PY_ENV_PREFIX.search, None),
         (hook._NPM_CONFIG_ENV.search, None), (hook._COMPUTED.search, None),
         (hook._PS_DYNAMIC.search, None), (hook._REDIRECT.match, None),
-        (hook._REDIRECT_START.fullmatch, None), (hook._PS_SPLAT.match, None),
+        *((p.fullmatch, None) for p in hook._REDIRECT_START.values()), (hook._PS_SPLAT.match, None),
         (hook._PS_TARGET.fullmatch, None), (hook._PS_GLUED_ASSIGN.fullmatch, None),
         (hook._BIN_NAME.fullmatch, None), (hook._PY_SPEC_END.split, None),
         (hook._NPM_RELEASE.fullmatch, None), (hook._BACKSLASH_RUN.sub, "x"),
-        (cli._RELEASE_KEY.fullmatch, None),
+        (cli._RELEASE_KEY.fullmatch, None), (hook._ARRAY_TARGET.fullmatch, None),
         *((p.match, None) for p in hook._PLAIN_RUN.values()),
         *((p.search, None) for p in hook._DOUBLE_SPECIAL.values()),
         *((p.search, None) for p in hook._VARIABLE.values()),
@@ -2213,3 +2217,70 @@ def test_a_line_continuation_inside_an_operator_is_joined_first(command):
 )
 def test_more_shapes_found_by_fuzzing_against_bash(command, expected):
     assert install_targets(command) == expected
+
+
+# --- What starts a redirection, shell by shell -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "shell", "expected"),
+    [
+        # Quoted or escaped, `>` is text: pip installs the package `7`, a version above 1.0.
+        ("pip install '7>1.0'", "bash", ["pypi:7"]),
+        ('pip install "7>1.0"', "bash", ["pypi:7"]),
+        ("pip install 7\\>1.0", "bash", ["pypi:7"]),
+        ("alias p=\"pip install '7>1.0'\"; p", "bash", ["pypi:7"]),
+        # A descriptor number is one that fits in an int: a longer one is an argument.
+        ("npm i 2147483648>/dev/null", "bash", ["npm:2147483648"]),
+        ("pip install evil-pkg 99999999999999999999>/dev/null",
+         "bash", ["pypi:evil-pkg", "pypi:99999999999999999999"]),
+        # PowerShell reads `<` and `>` inside a bare word as text: one argument, `7>1.0`. Only a
+        # stream (1 to 6, `*`) or nothing before it starts a redirection.
+        ("pip install 7>1.0", "powershell", ["pypi:7"]),
+        ("pip install 22>1.0", "powershell", ["pypi:22"]),
+        ("pip install x> evil-pkg", "powershell", ["pypi:x", "pypi:evil-pkg"]),
+        ("pip install `x> evil-pkg", "powershell", ["pypi:x", "pypi:evil-pkg"]),
+        ("npm i '7'>$null", "powershell", ["npm:7"]),
+        # Redirections as people write them stay redirections.
+        ("npm i evil-pkg 2147483647>/dev/null", "bash", ["npm:evil-pkg"]),
+        ("npm i evil-pkg 2>/dev/null", "bash", ["npm:evil-pkg"]),
+        ("npm i evil-pkg >/dev/null 2>&1", "bash", ["npm:evil-pkg"]),
+        ("npm i evil-pkg &>/dev/null", "bash", ["npm:evil-pkg"]),
+        ("npm i evil-pkg>>log 2>\"$LOG\"", "bash", ["npm:evil-pkg"]),
+        ("npm i evil-pkg <<< x", "bash", ["npm:evil-pkg"]),
+        ("npm i evil-pkg 2>$null", "powershell", ["npm:evil-pkg"]),
+        ("npm i evil-pkg *>$null", "powershell", ["npm:evil-pkg"]),
+        ("npm i evil-pkg > $null", "powershell", ["npm:evil-pkg"]),
+        ("npm i evil-pkg 2>&1 | Out-Null", "powershell", ["npm:evil-pkg"]),
+        ("npm i evil-pkg \"x\">$null", "powershell", ["npm:evil-pkg", "npm:x"]),
+    ],
+)
+def test_only_an_unquoted_descriptor_or_operator_starts_a_redirection(command, shell, expected):
+    assert install_targets(command, shell) == expected
+
+
+@pytest.mark.parametrize(
+    ("command", "target"),
+    [
+        # A quoted operator is an argument, not a redirection that takes the next word.
+        ("pip install '<<<' evil-pkg", "pypi:evil-pkg"),
+        ("npm i '>' evil-pkg", "npm:evil-pkg"),
+        ("npm i \\> evil-pkg", "npm:evil-pkg"),
+    ],
+)
+def test_a_quoted_redirection_operator_takes_no_target(command, target):
+    assert target in install_targets(command)
+
+
+def test_a_star_before_a_redirection_is_a_pattern_in_bash():
+    """`*>` redirects every stream in PowerShell; in bash `*` is a pattern, replaced with the
+    names of the files in the directory, each one a package to install."""
+    assert "can't check" in _ask_without_scan("npm i *>/dev/null")
+
+
+def test_words_handed_on_without_a_shell_lose_the_redirection_mark():
+    # env -S, xargs and Start-Process take `7>1.0` as text, as the quotes left it.
+    assert install_targets("env -S \"pip install '7>1.0'\"") == ["pypi:7"]
+    assert install_targets("echo \"'7>1.0'\" | xargs pip install") == ["pypi:7"]
+    assert install_targets("Start-Process pip -ArgumentList 'install','\"7>1.0\"'",
+                           "powershell") == ["pypi:7"]
