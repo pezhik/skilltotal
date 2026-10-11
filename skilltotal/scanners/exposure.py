@@ -68,6 +68,13 @@ _TUPLE_AFTER = re.compile(r"\s*,\s*(?:[1-9]\d{0,4}|[A-Za-z_][\w.]*)\s*\)")
 # The address followed by a literal port number in the same argument list is a socket address in
 # any call: web.TCPSite(runner, "0.0.0.0", 8080).
 _PORT_AFTER = re.compile(r"\s*,\s*[1-9]\d{0,4}\b(?!\.)")
+# The literal is the first argument of a string method: "::" and "0.0.0.0" there are text being
+# split, searched or replaced (pytest's `nodeid.split("::", 1)` read as an address and a port, and
+# `host = url.replace("0.0.0.0", ...)` as an assignment to a host), never a bind.
+_STRING_METHOD_BEFORE = re.compile(
+    r"\.(?:r?split|r?partition|join|replace|(?:starts|ends)with|r?find|r?index|count"
+    r"|[lr]?strip|remove(?:prefix|suffix))\s*\(\s*$"
+)
 # CLI launchers: --host 0.0.0.0, --bind=0.0.0.0:8000, -b 0.0.0.0 (flask run -h, gunicorn -b).
 _FLAG_BEFORE = re.compile(
     r"(?:--(?:host|hostname|bind|listen|ip|addr|address)|(?<![\w-])-[hHb])(?:=|\s+)$"
@@ -82,7 +89,9 @@ def _bind_evidence(index: FileIndex) -> list[Evidence]:
         for m in _ANY_ADDR.finditer(text):
             line_start = text.rfind("\n", 0, m.start()) + 1
             before = text[max(line_start, m.start() - _CONTEXT_CHARS) : m.start()]
-            if m.group(0)[0] in "'\"":
+            if m.group(0)[0] in "'\"" and _STRING_METHOD_BEFORE.search(before):
+                bound = None
+            elif m.group(0)[0] in "'\"":
                 bound = (
                     _BIND_BEFORE.search(before)
                     or _PORT_AFTER.match(text, m.end())

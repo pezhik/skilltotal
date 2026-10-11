@@ -63,7 +63,7 @@ _RUN_KEY = re.compile(
 _BLOCK_HEADER = re.compile(r"^[|>][0-9+-]*[ \t]*(?:#.*)?$")
 _TRAILING_COMMENT = re.compile(r"[ \t]#")
 # A following line that opens a nested mapping or list: the key holds a structure, not a command.
-_NESTED_START = re.compile(r"""(?:-(?:[ \t]|$)|["']?[\w.-]+["']?[ \t]*:(?:[ \t]|$))""")
+_NESTED_START = re.compile(r"""(?:-(?:[ \t]|$)|["']?[\w.-]{1,200}["']?[ \t]*:(?:[ \t]|$))""")
 _ALIAS_NAME = re.compile(r"[*&]([\w.-]+)")
 # YAML double-quoted escapes that stand for one character.
 _DQ_ESCAPES = {

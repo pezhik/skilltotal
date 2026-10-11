@@ -32,7 +32,9 @@ def test_a_shipped_key_is_reported_but_not_scored(tmp_path: Path):
     assert "ST-COMBO-EXFIL" not in {f.id for f in report.findings}
     assert report.risk_score == 0 and report.risk_level.value == "low"
     assert report.verdict["exposed_secrets"] == 1
-    assert report.verdict["headline"] == "No malicious indicators - exposed secrets found"
+    # Names what was found without claiming a leak: the scan cannot tell a live key from an
+    # example (ruleset 67; was "exposed secrets found").
+    assert report.verdict["headline"] == "No malicious indicators - secret-like values found"
 
 
 def test_a_shipped_key_still_trips_the_severity_gate(tmp_path: Path):

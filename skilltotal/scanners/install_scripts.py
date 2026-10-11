@@ -64,9 +64,8 @@ class InstallScriptsScanner(PatternScanner):
                 "binding.gyp uses node-gyp command substitution (`<!(…)`) to run a script with "
                 "its output discarded, fetch from the network, pipe into a shell, or decode "
                 "data. node-gyp evaluates it during `npm install` even when package.json "
-                "declares no install script, so install-script checks never see it. The Miasma "
-                "npm worm (June 2026) spread this way: `<!(node index.js > /dev/null 2>&1 && "
-                "echo stub.c)`."
+                "declares no install script, so install-script checks never see it, for example "
+                "`<!(node index.js > /dev/null 2>&1 && echo stub.c)`."
             ),
             recommendation=(
                 "Do not install this version. Honest bindings use substitution only to print "

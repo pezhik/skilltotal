@@ -293,6 +293,10 @@ class McpScanner(Scanner):
             description="An MCP manifest or tool-definition surface was detected.",
             recommendation="Review the declared MCP tools and their permissions.",
             capability=Capability.MCP_TOOLS_DETECTED,
+            # A registration written in a comment or a Python string is documentation of the shape
+            # (this scanner's own comments opened its self-scan with a HIGH finding); manifests
+            # are JSON and keep their evidence.
+            code_context="strings_and_comments",
         ),
         RuleSpec(
             id="ST-MCP-DANGEROUS-TOOL",
@@ -308,6 +312,7 @@ class McpScanner(Scanner):
                 "(shell/filesystem/network) grant an agent significant host access."
             ),
             capability=Capability.MCP_TOOLS_DETECTED,
+            code_context="strings_and_comments",
         ),
         RuleSpec(
             id="ST-MCP-SERVER-EXEC",

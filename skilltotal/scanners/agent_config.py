@@ -211,8 +211,10 @@ _SKILL_NET_SINK = re.compile(
     r"\b(?:curl|wget|nc|ncat|http|https)\b|https?://", re.IGNORECASE
 )
 
-# A path-looking token in a command that may name a script shipped in the component.
-_PATH_TOKEN = re.compile(r"[\w.${}/\\-]+\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
+# A path-looking token in a command that may name a script shipped in the component. Bounded: an
+# unbounded run before the extension backtracked from every start of a long token (40,000
+# characters took 15 s); no real script path is longer.
+_PATH_TOKEN = re.compile(r"[\w.${}/\\-]{1,300}\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
 
 
 class AgentConfigScanner(Scanner):
@@ -236,6 +238,8 @@ class AgentConfigScanner(Scanner):
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
         ),
+        # Seen in the wild: the Miasma npm worm re-infected projects through .claude/, .gemini/
+        # and .vscode/ configuration (June 2026). Rule texts describe behavior, never a campaign.
         RuleSpec(
             id=R_AUTORUN_REMOTE,
             category="agent_config",
@@ -244,8 +248,7 @@ class AgentConfigScanner(Scanner):
             description=(
                 "An automatically executed agent/IDE hook or task, or the script it runs from "
                 "this component, downloads code and pipes it into a shell or decodes and runs "
-                "it. This is how the Miasma npm worm re-infected projects through .claude/, "
-                ".gemini/ and .vscode/ configuration."
+                "it. Opening the project in an agent or editor runs it without a prompt."
             ),
             recommendation=(
                 "Do not open the project in an agent or editor. Remove the configuration and "
@@ -262,8 +265,7 @@ class AgentConfigScanner(Scanner):
             description=(
                 "Code runs a local AI coding agent (claude, gemini, codex, q …) with a flag that "
                 "turns off its approval prompts. The agent then acts with the user's credentials "
-                "and file access and nobody confirms what it does; the s1ngularity and "
-                "Shai-Hulud npm campaigns used exactly this to search disks for secrets."
+                "and file access, and nobody confirms what it does."
             ),
             recommendation=(
                 "Confirm why the component drives an AI agent unattended and what prompt it "
@@ -302,10 +304,9 @@ class AgentConfigScanner(Scanner):
             title="Code writes to another AI client's MCP/agent configuration",
             description=(
                 "The component writes to a config file of a separate AI client (Claude Desktop, "
-                "Cursor, VS Code, Continue, Windsurf). Adding a server there makes that client "
-                "load it on its next session, from a package installed for something else — the "
-                "MCP-config injection the SANDWORM_MODE npm campaign used to register a rogue "
-                "server across clients."
+                "Cursor, VS Code, Continue, Windsurf). A server added there loads in that "
+                "client's next session. That is expected from a command the user runs to register "
+                "a server, and unexpected from code that runs on install or import."
             ),
             recommendation=(
                 "Confirm why the component edits another client's configuration. A tool that "
@@ -322,8 +323,7 @@ class AgentConfigScanner(Scanner):
             description=(
                 "The component runs `git config` to point git's global template directory or "
                 "hooks path at its own files, so a hook runs for every repository the user "
-                "creates or clones afterwards. This is the persistence mechanism of the "
-                "SANDWORM_MODE npm campaign."
+                "creates or clones afterwards."
             ),
             recommendation=(
                 "Do not install the component. A package has no legitimate reason to repoint the "
