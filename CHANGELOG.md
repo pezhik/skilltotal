@@ -4,6 +4,38 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.63.1]
+
+Found while preparing the launch. Ruleset 67: no detection rule changed.
+
+### Security
+- **A large package gets a verdict instead of the same question every time.** The hook killed a
+  scan at its deadline and kept nothing, so a package too large to check in the 20 seconds an
+  install command had was asked about on every attempt, downloaded and scanned again each time,
+  and never installed in `claude -p`, where a question becomes a denial. A check the hook stops
+  waiting for now goes on in the background, at most two at once and for up to 20 minutes, and
+  saves its verdict, so the same command run again is answered from it. The background processes
+  hold none of the hook's handles and outlive it. All checks of one command share 60 seconds (was
+  20; `SKILLTOTAL_HOOK_BUDGET` still sets it, up to 100); once a package is downloaded, its size
+  tells whether its check fits in the time left, and if not, the person is asked right away.
+- **Deep nesting no longer hides what an agent config or a manifest sets up.** Python's json gives
+  up at a depth that depends on the interpreter and the platform (Python 3.14 on Linux read
+  100,000 levels that Python 3.10-3.13, and Windows, could not), so padding beside a hook in
+  `.claude/settings.json` or a server in `mcp.json` made the whole file unreadable on some
+  machines and hid what it configured, and the same component gave different reports by platform.
+  JSON a component ships, and registry documents built from it, are now read with a depth bound: a
+  value nested more than 200 levels deep is read as null, the rest of the file is analyzed, and the
+  report notes "Deeply nested JSON partly analyzed". A `claude mcp add-json` config beside such
+  padding is checked like any other, and a deep npm version document no longer breaks release
+  resolution in the hook.
+- **Many matches on one long line cost linear time.** Each match rebuilt its evidence from the whole
+  line, so a 60 KB line of repeated credential paths or injection phrases took over 100 s, in the
+  hook and in a hosted scan, where it held a scan slot until the timeout. A 2 MB line now scans in
+  about 10 s. Reports are unchanged.
+
+### Changed
+- The engine source carries no invisible or control characters; a test keeps it that way.
+
 ## [0.63.0]
 
 Found by pre-launch reviews of 0.62.0. Ruleset 67.
