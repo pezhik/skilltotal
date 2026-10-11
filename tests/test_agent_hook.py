@@ -2109,7 +2109,6 @@ def test_wildcards_in_versions_and_odd_delimiters_read_as_the_shell_reads_them(c
         # A backslash-newline continues a line outside quotes and inside double quotes, not inside
         # single quotes.
         ('npm i "evil\\\n-pkg"', ["npm:evil-pkg"]),
-        ("npm i 'evil\\\n-pkg' other-pkg", ["npm:other-pkg"]),
         # A comment ends at its line, a backslash at its end included.
         ("# comment \\\nnpm i evil-pkg", ["npm:evil-pkg"]),
         ("npm i lodash # comment \\\nnpm i evil-pkg", ["npm:lodash", "npm:evil-pkg"]),
@@ -2134,6 +2133,12 @@ def test_wildcards_in_versions_and_odd_delimiters_read_as_the_shell_reads_them(c
 )
 def test_quoting_and_escaping_around_continuations_comments_and_keywords(command, expected):
     assert install_targets(command) == expected
+
+
+def test_a_backslash_newline_in_single_quotes_hides_nothing():
+    # Bash keeps it in the word (npm then rejects the name); the reading that joins every
+    # backslash-newline first adds a check of `evil-pkg`, and hides nothing.
+    assert "npm:other-pkg" in install_targets("npm i 'evil\\\n-pkg' other-pkg")
 
 
 def test_every_pattern_that_reads_command_text_runs_in_linear_time():
@@ -2173,3 +2178,19 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
         for text in hostile:
             run(first, text) if first is not None else run(text)
         assert clock.monotonic() - started < 2, run
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Bash removes a backslash-newline before it reads operators, so one can split `$(`,
+        # `((` or `<<` and the shell still sees them whole.
+        'echo "$\\\n(npm i evil-pkg)"',
+        "echo $\\\n(npm i evil-pkg)",
+        "(\\\n( x = 1 << 2 ))\nnpm i evil-pkg",
+        "echo $\\\n((1 << 2))\nnpm i evil-pkg",
+        "cat <\\\n<EOF\nbody\nEOF\nnpm i evil-pkg",
+    ],
+)
+def test_a_line_continuation_inside_an_operator_is_joined_first(command):
+    assert "npm:evil-pkg" in install_targets(command)

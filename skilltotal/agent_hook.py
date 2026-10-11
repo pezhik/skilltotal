@@ -214,26 +214,40 @@ def install_targets(command: str, shell: str = "bash", cwd: str | None = None) -
 
 def parse_installs(command: str, shell: str = "bash", _depth: int = 0,
                    cwd: str | None = None) -> list[Install]:
-    """Everything an install command would bring in, scannable or not.
+    r"""Everything an install command would bring in, scannable or not.
 
     ``shell`` is how the command line is quoted: ``bash`` (POSIX), ``powershell`` or ``cmd``.
     ``cwd`` is where it runs: ``npx tsc`` there runs the project's own ``tsc`` when the project
     has one, and installs nothing.
 
-    Claude Code on Windows hands a Bash command to Git Bash through the Windows command line,
-    whose parser halves every run of backslashes that is not followed by a double quote: there
-    `echo 'a\\b'` prints `a\b`, and `npm i ev\\il` installs `evil`. Both readings are checked.
+    A bash line is read more than once where the shell could take it two ways, and everything any
+    reading finds counts:
+
+    * Claude Code on Windows hands a Bash command to Git Bash through the Windows command line,
+      whose parser halves every run of backslashes not followed by a double quote: there
+      ``echo 'a\\b'`` prints ``a\b``, and ``npm i ev\\il`` installs ``evil``.
+    * Bash removes a backslash-newline before it reads operators, so one can split ``$(``, ``((``
+      or ``<<`` (``"$\`` + newline + ``(npm i x)"``); the lexer joins one only where a word or
+      operator does not continue across it, so a second reading has every one joined first.
     """
-    found = _parse(command, shell, _depth, _Level(_Context(command), cwd))
+    readings = [command]
     if shell == "bash" and "\\\\" in command:
-        halved = _BACKSLASH_RUN.sub(
+        readings.append(_BACKSLASH_RUN.sub(
             lambda m: m.group() if command.startswith('"', m.end())
-            else "\\" * ((len(m.group()) + 1) // 2), command)
-        found = list(dict.fromkeys(
-            found + _parse(halved, shell, _depth, _Level(_Context(halved), cwd))))
-    return found
+            else "\\" * ((len(m.group()) + 1) // 2), command))
+    if shell == "bash":
+        for text in list(readings):
+            joined = _CONTINUATION.sub(r"\1", text.replace("\r\n", "\n"))
+            if joined != text.replace("\r\n", "\n"):
+                readings.append(joined)
+    found: dict[Install, None] = {}
+    for text in readings:
+        found.update(dict.fromkeys(_parse(text, shell, _depth, _Level(_Context(text), cwd))))
+    return list(found)
 
 
+# A backslash-newline the shell removes: the backslash is not itself escaped.
+_CONTINUATION = re.compile(r"(?<!\\)((?:\\\\)*)\\\n")
 _BACKSLASH_RUN = re.compile(r"\\+")
 
 
