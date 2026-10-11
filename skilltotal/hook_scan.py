@@ -9,7 +9,9 @@ which outlive the hook:
   When the hook has stopped waiting, it records the verdict in the hook's cache itself, under the
   same key and with the same trimmed entry the hook would have kept, so the same command run again
   is answered from there. A check that fails, or that the ceiling stops, records nothing;
-* the scan, the supervisor's child, fetches the component and writes its report.
+* the scan, the supervisor's child, fetches the component, says how much text it is about to read
+  as soon as it knows, and writes its report. The hook waits for it while that size says it can
+  finish in the time left, and not a moment longer.
 
 Both run in an empty directory with the check's own temp directory as TMP, never in the agent's
 project, and neither holds the hook's stdin, stdout or stderr: the plugin reads the hook's answer
@@ -18,6 +20,9 @@ only through files in the check's directory:
 
     cwd/          the empty directory both processes run in
     scan.json     what to scan, the hook's process id and the ceiling (written by the hook)
+    size          how much text the scan is about to read, in megabytes (written by the scan as
+                  soon as it knows; the hook stops waiting at once when that says it can't wait
+                  long enough)
     report.json   the report (written by the scan)
     job.json      where and under which key to record the verdict (written by the hook when it
                   stops waiting)
@@ -52,7 +57,10 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from skilltotal.collector import TreeSize
 
 # A check stops after this long, wherever it is, and records nothing.
 CEILING_S = 20 * 60
@@ -60,11 +68,47 @@ CEILING_S = 20 * 60
 MAX_BACKGROUND = 2
 # How often the waiting hook looks at its check.
 _POLL_S = 0.1
-
 # Windows process creation flags (subprocess has them only on Windows).
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
+
+# How long a scan takes once it knows its size: seconds ~ _SCAN_FIXED_S + _SCAN_S_PER_MB * MB, the
+# megabytes of readable text it reports (``tree_size``, whole megabytes). Measured on 2026-10-11 on
+# an Intel i7-3770 (4 cores) with Windows 11 and Python 3.14, twice, while other work kept the CPU
+# busy as it is on an agent's machine: seconds from the size report to the report, and seconds to
+# fetch and extract the package before it.
+#
+#     package                      readable MB   after the size, s   fetch, s
+#     npm express 5.3.0                   0.07        0.6 /   0.6      1 /  1
+#     pypi requests 2.34.2                0.22        1.8 /   2.1      1 /  1
+#     pypi fastapi 0.143.0                0.83        6.8 /   8.3      1 /  1
+#     npm lodash 4.18.1                   1.35       11.5 /  15.3      5 /  6
+#     npm typescript 7.0.2                2.38        9.2 /  10.5      3 /  3
+#     pypi botocore 1.43.111              5.64       39.4 /  45.9     13 / 17
+#     npm zod 4.6.6                       5.86       47.1 /  55.5      5 /  5
+#     npm react-dom 19.3.0                7.69       55.0 /  73.8      2 /  2
+#     pypi openai 3.29.0                  7.95       55.4 /  90.2      8 / 12
+#     npm @anthropic-ai/sdk 0.133.0      12.68       67.8 /  99.7     15 / 25
+#     npm openai 7.32.0                  20.13      102.8 / 154.2     22 / 26
+#     pypi django 6.1.2                  22.57      107.0 / 151.1     17 / 27
+#     pypi sympy 1.14.0                  25.57      240.1              6
+#     pypi transformers 5.19.0           48.10      428.8             15
+#     npm aws-sdk 2.1693.0               69.38      450.8             11
+#     npm next 16.4.0                   135.16      927.5             53
+#
+# Least squares over the 28 runs gives 4.5 + 6.9 * MB, below half of them. A wait cut short by an
+# estimate that is too high only sends a check to the background a little early; one that is too
+# low holds the agent until the deadline for a check that goes there anyway. So the line below
+# lies above every run, with the size in whole megabytes as the hook reads it: 1.04 to 3 times the
+# actual time of the runs that took over 5 s, 1.7 times at the median.
+_SCAN_FIXED_S = 6.0
+_SCAN_S_PER_MB = 11.0
+
+
+def scan_seconds(readable_mb: float) -> float:
+    """About how long a scan still takes once it knows it holds ``readable_mb`` MB of text."""
+    return _SCAN_FIXED_S + _SCAN_S_PER_MB * readable_mb
 
 
 def detached(os_name: str = os.name) -> dict[str, Any]:
@@ -186,14 +230,29 @@ def _read_json(path: Path) -> Any:
         return None
 
 
+def _read_size(path: Path) -> int | None:
+    """The megabytes the scan reported, or None while it has not (or is writing them now)."""
+    try:
+        text = path.read_text(encoding="ascii").strip()
+    except (OSError, ValueError):
+        return None
+    return int(text) if text.isdigit() else None
+
+
 class ScanContinues(TimeoutError):
     """The hook stopped waiting for a check that is still running. The caller decides its fate
-    with ``scan.hand_over``: it goes on and records its verdict, or it is stopped."""
+    with ``scan.hand_over``: it goes on and records its verdict, or it is stopped.
 
-    def __init__(self, scan: RunningScan) -> None:
+    ``large``: the size of what it scans says it takes longer than the wait had left, so the wait
+    stopped as soon as the size was known. ``seconds_left``: how long it should still take, once
+    the size is known.
+    """
+
+    def __init__(self, scan: RunningScan, *, large: bool = False) -> None:
         super().__init__("the check is still running")
         self.scan = scan
-        self.seconds_left: float | None = None
+        self.large = large
+        self.seconds_left = scan.seconds_left()
 
 
 class RunningScan:
@@ -202,10 +261,15 @@ class RunningScan:
     def __init__(self, proc: subprocess.Popen, tmp: str) -> None:
         self.proc = proc
         self.tmp = tmp
+        self._started = time.monotonic()
+        self._ends: float | None = None  # when the report should be in (monotonic), once known
 
     @property
     def pid(self) -> int:
         return self.proc.pid
+
+    def seconds_left(self) -> float | None:
+        return None if self._ends is None else self._ends - time.monotonic()
 
     @classmethod
     def start(cls, source: str) -> RunningScan:
@@ -232,16 +296,30 @@ class RunningScan:
         return cls(proc, tmp)
 
     def wait(self, timeout: float) -> dict:
-        """The report, if the check ends within ``timeout`` seconds; else raises ScanContinues."""
+        """The report, if the check ends within ``timeout`` seconds; else raises ScanContinues.
+
+        The scan says how much text it is about to read as soon as it knows (``size``). When that
+        says it needs longer than the wait has left, the wait stops at once: holding the agent
+        until the deadline would end the same way, later.
+        """
         deadline = time.monotonic() + timeout
         while True:
             try:
                 self.proc.wait(timeout=max(0.0, min(_POLL_S, deadline - time.monotonic())))
             except subprocess.TimeoutExpired:
-                if time.monotonic() >= deadline:
-                    raise ScanContinues(self) from None
-                continue
-            return self._collect()
+                pass
+            else:
+                return self._collect()
+            now = time.monotonic()
+            if self._ends is None:
+                size = _read_size(Path(self.tmp, "size"))
+                if size is not None:
+                    # Never later than the ceiling: by then the check has ended, either way.
+                    self._ends = min(now + scan_seconds(size), self._started + CEILING_S)
+                    if self._ends > deadline:
+                        raise ScanContinues(self, large=True)
+            if now >= deadline:
+                raise ScanContinues(self)
 
     def hand_over(self, job: dict | None) -> dict | None:
         """Leave the check to itself: it records its verdict as ``job`` says, or, with no job, it is
@@ -341,13 +419,54 @@ def _step_out_of(tmp: Path) -> None:
 
 
 def scan_into(tmp: Path) -> int:
-    """The scan: scan what ``scan.json`` names, and write the report beside it."""
-    from skilltotal.engine import analyze
+    """The scan: scan what ``scan.json`` names, say how much text it is about to read as soon as
+    it knows, and write the report beside it.
+
+    The size goes to ``size`` in whole megabytes, as the hosted service's scan runner reports it:
+    for a GitHub repository the collector measures it before cloning; anything else is measured
+    on disk once it is fetched and extracted. That is why this runs the collector and the analysis
+    itself instead of ``engine.analyze``, which adds two notes about the source besides (a link it
+    normalized, archive entries it left out); the hook's verdict uses neither.
+    """
+    from skilltotal.collector import collect
+    from skilltotal.engine import analyze_directory
 
     source = str((_read_json(tmp / "scan.json") or {})["source"])
-    report = analyze(source)
+    size_file = tmp / "size"
+
+    def report_size(size: TreeSize) -> None:
+        try:
+            size_file.write_text(str(round(size.readable / 1024 / 1024)), encoding="ascii")
+        except OSError:
+            pass  # the hook then waits as it would have anyway; the scan goes on
+
+    with collect(source, on_size=report_size) as ctx:
+        if not size_file.exists():
+            report_size(tree_size(ctx.root))
+        report = analyze_directory(ctx.root, ctx.component)
     write_atomic(tmp / "report.json", json.dumps(report.to_dict()))
     return 0
+
+
+# Folders an index never opens, so they are no part of the work ahead.
+_NOT_INDEXED = frozenset({".git", ".hg", ".svn", "node_modules"})
+
+
+def tree_size(root: Path) -> TreeSize:
+    """The bytes under ``root``, and the part an index would read: the same measure the collector
+    takes of a GitHub tree before cloning it, here taken on disk."""
+    from skilltotal.collector import TreeSize, _readable_bytes
+    from skilltotal.file_index import walk_files
+
+    total = readable = 0
+    for path in walk_files(root, skip=lambda name: name in _NOT_INDEXED):
+        try:
+            size = path.stat().st_size
+        except OSError:
+            continue
+        total += size
+        readable += _readable_bytes(path.relative_to(root).as_posix(), size)
+    return TreeSize(total=total, readable=readable)
 
 
 # --- One check per artifact, and at most MAX_BACKGROUND going on without a hook -----------------

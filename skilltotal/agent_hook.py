@@ -47,8 +47,10 @@ from skilltotal.guard import PLAIN_PATH, evaluate, unanalyzed_install_scripts
 # How many packages one command gets checked; the person is asked about the rest.
 MAX_TARGETS = 5
 # How long the agent waits for all checks of one command. A large package can take longer to scan
-# than anyone will wait before every install; past this the person is asked instead.
-DEFAULT_BUDGET_S = 20.0
+# than anyone will wait before every install: past this, or as soon as its size says it will be
+# past this, the person is asked, and its check goes on in the background (skilltotal.hook_scan),
+# so the same command run again is answered from its verdict.
+DEFAULT_BUDGET_S = 60.0
 # The variable that sets that time, and the most it may be: Claude Code lets a command through
 # when its hook outlives the hook's timeout (120 s in the plugin's hooks.json).
 BUDGET_ENV = "SKILLTOTAL_HOOK_BUDGET"
@@ -2352,14 +2354,16 @@ class CheckInBackground(TimeoutError):
     """A check the hook stopped waiting for, which goes on without it and records its verdict: the
     same command run again is answered from that verdict.
 
-    ``seconds_left`` is about how long it still takes, when that is known; ``started_ago`` is set
-    when the check was already running before this command.
+    ``seconds_left`` is about how long it still takes, when that is known; ``large`` says the size
+    of the package is why the hook stopped waiting; ``started_ago`` is set when the check was
+    already running before this command.
     """
 
-    def __init__(self, seconds_left: float | None = None, *,
+    def __init__(self, seconds_left: float | None = None, *, large: bool = False,
                  started_ago: float | None = None) -> None:
         super().__init__("the check continues in the background")
         self.seconds_left = seconds_left
+        self.large = large
         self.started_ago = started_ago
 
 
@@ -2472,15 +2476,19 @@ def hook_response(
 def _background_detail(source: str, check: CheckInBackground, budget_s: float) -> str:
     """Why a package goes to the person while its check goes on: what runs, for how much longer
     when that is known, and when to run the command again."""
+    more = " more"
     if check.started_ago is not None:
         what = (f"{source}: a full check started {_ago(check.started_ago)} is still running in "
                 f"the background")
+    elif check.large:
+        what = f"{source}: a large package; its full check is running in the background"
+        more = ""
     else:
         what = (f"{source}: not checked within SkillTotal's {budget_s:g}-second time limit; the "
                 f"check continues in the background")
     if check.seconds_left is None:
         return f"{what}. Run the same command again in a few minutes."
-    return (f"{what} and takes {_about_minutes(check.seconds_left)} more. Run the same command "
+    return (f"{what} and takes {_about_minutes(check.seconds_left)}{more}. Run the same command "
             f"again after that.")
 
 

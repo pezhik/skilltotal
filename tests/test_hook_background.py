@@ -668,3 +668,120 @@ def test_the_answer_when_the_background_is_full():
         "SkillTotal needs your approval for this install. npm:big: not checked; SkillTotal is "
         "already running 2 checks in the background. Run the same command again in a few "
         "minutes.")
+
+
+# --- How long the hook waits: the size of what is scanned decides ------------------------------
+
+
+def test_a_size_over_the_time_left_stops_the_wait_at_once(cache, fake_supervisor):
+    """A package whose size says its scan outlasts the wait is answered as soon as the size is
+    known, not when the wait runs out: the agent is not held for a check that cannot make it."""
+    fake_supervisor("size=50,wait")
+    started = time.monotonic()
+    out = hook_response(_bash("npm install big@1.0.0"), scan=cli._hook_scan_cached, budget_s=30)
+    assert time.monotonic() - started < 15
+    reason = _reason(out)
+    assert reason.startswith(
+        "SkillTotal needs your approval for this install. npm:big@1.0.0: a large package; its "
+        "full check is running in the background and takes about ")
+    assert reason.endswith(" minutes. Run the same command again after that.")
+    minutes = int(reason.rsplit("takes about ", 1)[1].split()[0])
+    assert minutes == pytest.approx(hook_scan.scan_seconds(50) / 60, abs=1)
+    # The marker says when the check should end, for whoever asks while it runs.
+    [marker] = [json.loads(path.read_text(encoding="utf-8")) for path in _markers(cache)]
+    assert marker["background"] is True
+    assert marker["ends"] - time.time() == pytest.approx(hook_scan.scan_seconds(50), abs=15)
+
+
+def test_no_check_is_promised_past_the_ceiling(cache, fake_supervisor):
+    # A check ends at the ceiling whatever its size says, so that is the latest it is promised.
+    fake_supervisor("size=500,wait")
+    with pytest.raises(CheckInBackground) as late:
+        cli._hook_scan_cached("npm:huge@1.0.0", 30)
+    assert late.value.large
+    assert hook_scan.scan_seconds(500) > hook_scan.CEILING_S
+    assert hook_scan.CEILING_S - 30 < late.value.seconds_left <= hook_scan.CEILING_S
+
+
+def test_a_size_that_fits_keeps_the_wait_going(cache, fake_supervisor):
+    fake_supervisor("size=1,sleep=1.5,report")
+    assert cli._hook_scan_cached("npm:x@1.0.0", 30)["verdict"]["headline"] == "fake"
+    assert list(_cached(cache)) == ["npm:x@1.0.0"]
+
+
+def test_a_check_already_running_says_how_long_it_has_left(cache, monkeypatch):
+    now = time.time()
+    _marker(cache, "npm:big@1.0.0", pid=os.getpid(), started=now - 20, ends=now + 250)
+    monkeypatch.setattr(hook_scan, "_spawn", _must_not_spawn)
+    out = hook_response(_bash("npm install big@1.0.0"), scan=cli._hook_scan_cached)
+    assert ("npm:big@1.0.0: a full check started 20 seconds ago is still running in the "
+            "background and takes about 5 minutes more.") in _reason(out)
+
+
+def test_what_the_scan_is_about_to_read_is_measured_as_an_index_would_read_it(tmp_path):
+    from skilltotal.file_index import MAX_FILE_BYTES
+
+    root = tmp_path / "package"
+    (root / "lib").mkdir(parents=True)
+    (root / "lib" / "index.js").write_bytes(b"x" * 1000)
+    (root / "logo.png").write_bytes(b"\0" * 5000)  # never text
+    (root / "huge.js").write_bytes(b"y" * (MAX_FILE_BYTES + 1))  # past what the index reads
+    for skipped in (".git", "node_modules"):
+        (root / skipped).mkdir()
+        (root / skipped / "a.js").write_bytes(b"z" * 7000)
+    size = hook_scan.tree_size(root)
+    assert size.readable == 1000
+    assert size.total == 1000 + 5000 + MAX_FILE_BYTES + 1
+
+
+def test_the_scan_says_its_size_before_it_starts_reading(tmp_path, monkeypatch):
+    from skilltotal import engine
+
+    component = tmp_path / "component"
+    component.mkdir()
+    (component / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
+    check = tmp_path / "check"
+    check.mkdir()
+    (check / "scan.json").write_text(json.dumps({"source": str(component)}), encoding="utf-8")
+    real = engine.analyze_directory
+
+    def analyze_directory(root, component, **options):
+        assert (check / "size").read_text(encoding="ascii") == "0"  # whole megabytes
+        return real(root, component, **options)
+
+    monkeypatch.setattr(engine, "analyze_directory", analyze_directory)
+    assert hook_scan.scan_into(check) == 0
+    report = json.loads((check / "report.json").read_text(encoding="utf-8"))
+    assert report["risk_level"] == "low"
+
+
+def test_packages_the_old_limit_answered_are_still_waited_for():
+    """Small packages behave as before: checked while the agent waits. On the machine the model
+    was fitted on, what the old 20-second limit could answer held at most 2.4 MB of readable text
+    (lodash: 1.4 MB in 17 s; the typescript 7 package: 2.4 MB in 13 s), fetched in up to 6 s.
+    Such a package is still waited for, even after another one in the same command took the old
+    limit's 20 seconds."""
+    from skilltotal.agent_hook import DEFAULT_BUDGET_S
+
+    assert 20 + 6 + hook_scan.scan_seconds(round(2.4)) < DEFAULT_BUDGET_S
+
+
+@pytest.mark.parametrize(("setting", "budget"), [
+    (None, 60.0), ("30", 30.0), ("0", 1.0), ("300", 100.0), ("soon", 60.0),
+])
+def test_the_hook_waits_sixty_seconds_unless_told_otherwise(monkeypatch, setting, budget):
+    import io
+
+    from skilltotal import agent_hook
+
+    seen = []
+    monkeypatch.setattr(agent_hook, "hook_response",
+                        lambda event, scan, budget_s: seen.append(budget_s))
+    if setting is None:
+        monkeypatch.delenv("SKILLTOTAL_HOOK_BUDGET", raising=False)
+    else:
+        monkeypatch.setenv("SKILLTOTAL_HOOK_BUDGET", setting)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    assert seen == [budget]
+    assert agent_hook.DEFAULT_BUDGET_S == cli.HOOK_BUDGET_S == 60.0

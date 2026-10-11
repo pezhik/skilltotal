@@ -689,10 +689,11 @@ def _hook_answer() -> dict | None:
     return hook_response(event, scan=_hook_scan_cached, budget_s=budget)
 
 
-# How long the agent waits for the checks of one install command, and how long a verdict is reused:
-# a week for an exact npm/PyPI release (its files never change), an hour for anything that can
-# change under the same name (a git repository, or a package whose release could not be resolved).
-HOOK_BUDGET_S = 20.0
+# How long the agent waits for the checks of one install command (a check that needs longer goes
+# on in the background), and how long a verdict is reused: a week for an exact npm/PyPI release
+# (its files never change), an hour for anything that can change under the same name (a git
+# repository, or a package whose release could not be resolved).
+HOOK_BUDGET_S = 60.0
 HOOK_MAX_BUDGET_S = 100.0
 HOOK_RELEASE_TTL_S = 7 * 24 * 3600
 HOOK_MOVING_TTL_S = 3600
@@ -779,7 +780,7 @@ def _hook_hand_over(
                         return report
                     ends = None if late.seconds_left is None else time.time() + late.seconds_left
                     pending.go_background(marker, scan.pid, ends)
-                    raise CheckInBackground(late.seconds_left)
+                    raise CheckInBackground(late.seconds_left, large=late.large)
         except CheckInBackground:
             raise
         except TimeoutError:
