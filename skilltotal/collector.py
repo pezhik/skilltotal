@@ -19,6 +19,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from collections.abc import Callable
@@ -1019,11 +1020,59 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
     return None
 
 
+def _registry_json(url: str) -> dict:
+    """A registry document as a JSON object; anything else is a CollectionError, not a traceback."""
+    data = _http_get(url)
+    try:
+        doc = json.loads(data)
+    except (ValueError, RecursionError) as exc:
+        raise CollectionError(f"unexpected response from {url}") from exc
+    if not isinstance(doc, dict):
+        raise CollectionError(f"unexpected response from {url}")
+    return doc
+
+
+def _npm_release(name: str, pin: str | None) -> tuple[str, str] | None:
+    """``(version, tarball)`` of one version or dist-tag of ``name``, from the registry's
+    per-version document (a few KB) instead of the packument, which lists every version ever
+    published (31 MB for ``next``). The registry resolves a dist-tag there the same way, and
+    answers 404 for anything else (a missing version, a range).
+
+    None when the registry answered without a usable release: the caller then reads the
+    packument, so every outcome, error messages included, stays what it was. A registry that
+    cannot be reached raises: asking it a second time would only double the wait.
+    """
+    url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest', safe='')}"
+    try:
+        data = _http_get(url)
+    except CollectionError as exc:
+        if isinstance(exc.__cause__, urllib.error.HTTPError):
+            return None  # the registry answered: no such version or tag here
+        raise
+    try:
+        manifest = json.loads(data)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    version, dist = manifest.get("version"), manifest.get("dist")
+    tarball = dist.get("tarball") if isinstance(dist, dict) else None
+    if not (isinstance(version, str) and version and isinstance(tarball, str) and tarball):
+        return None
+    if pin and _EXACT_NPM_VERSION_RE.match(pin) and version != pin:
+        return None
+    return version, tarball
+
+
 def _collect_npm(source: str) -> SourceContext:
     name, pin = npm_package_spec(source)
     if not name:
         raise CollectionError(f"invalid npm package name in: {source}")
-    meta = json.loads(_http_get(f"https://registry.npmjs.org/{quote(name, safe='@')}"))
+    release = _npm_release(name, pin)
+    if release is not None:
+        chosen, tarball = release
+        return _collect_archive(source, "npm_package", chosen, tarball, tarball)
+    meta = _registry_json(f"https://registry.npmjs.org/{quote(name, safe='@')}")
     versions = meta.get("versions") or {}
     tags = meta.get("dist-tags") or {}
     if pin:
@@ -1067,10 +1116,10 @@ def _collect_pypi(source: str) -> SourceContext:
         if not _EXACT_PYPI_VERSION_RE.match(pin):
             raise CollectionError(f"invalid PyPI version in: {source}")
         # Per-version metadata endpoint lists that release's distributions directly.
-        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/{quote(pin)}/json"))
+        meta = _registry_json(f"https://pypi.org/pypi/{name}/{quote(pin)}/json")
         version = str((meta.get("info") or {}).get("version") or pin)
     else:
-        meta = json.loads(_http_get(f"https://pypi.org/pypi/{name}/json"))
+        meta = _registry_json(f"https://pypi.org/pypi/{name}/json")
         version = str((meta.get("info") or {}).get("version") or "")
     chosen = _pick_distribution(meta.get("urls") or [])
     if not (version and chosen and chosen.get("url")):
