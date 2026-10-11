@@ -82,6 +82,9 @@ _PY_DECODED_VARIABLE = re.compile(
 )
 _PY_CODE_SINK = re.compile(r"(?<![\w.])(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w{0,60})\b")
 _FLOW_REACH = 4000
+# Every sink above contains one of these.
+_JS_SINK_TOKENS = ("eval", "Function", "setTimeout", "setInterval", "runIn", "Script")
+_PY_SINK_TOKENS = ("exec", "eval", "compile")
 _JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _PY_SUFFIXES = (".py", ".pyw")
 
@@ -93,9 +96,11 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
     evidence: list[Evidence] = []
     for f in index.select(suffixes=_JS_SUFFIXES + _PY_SUFFIXES):
         if f.suffix in _PY_SUFFIXES:
-            source, sink = _PY_DECODED_VARIABLE, _PY_CODE_SINK
+            source, sink, tokens = _PY_DECODED_VARIABLE, _PY_CODE_SINK, _PY_SINK_TOKENS
         else:
-            source, sink = _JS_DECODED_VARIABLE, _JS_CODE_SINK
+            source, sink, tokens = _JS_DECODED_VARIABLE, _JS_CODE_SINK, _JS_SINK_TOKENS
+        if not any(token in f.text for token in tokens):
+            continue  # no sink at all: a substring check skips the file for free
         decoded = list(source.finditer(f.text))
         if not decoded:
             continue

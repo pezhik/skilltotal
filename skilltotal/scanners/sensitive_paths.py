@@ -441,6 +441,8 @@ _JS_STRING = re.compile(
 _JS_PLUS_STRING = re.compile(r"""\s*\+\s*(['"])((?:(?!\1)[^\\\n]|\\.){0,300})\1""")
 _JS_ARGS_LIMIT = 600
 _UNKNOWN_SEGMENT = "\x00"
+# Every home expression above, and a `~` string, contains one of these.
+_JS_HOME_TOKENS = ("homedir", "HOME", "USERPROFILE", "'~", '"~', "`~")
 
 
 def _js_string_end(text: str, i: int, stop: int) -> int | None:
@@ -515,6 +517,9 @@ def joined_js_paths(f: IndexedFile) -> Iterator[tuple[int, int, str]]:
     """``(start, end, path)`` for each path a JS/TS file builds from the home directory or from
     joined string segments. ``start``/``end`` span the expression in the source."""
     text = f.text
+    # Nearly every file names no home directory at all; a substring check skips them for free.
+    if not any(token in text for token in _JS_HOME_TOKENS):
+        return
     names = {m.group(1) for m in _JS_HOME_VAR.finditer(text)}
     home_alts = [_JS_HOME_EXPR] + [rf"(?<![\w$.]){re.escape(n)}(?![\w$])" for n in sorted(names)]
     home = re.compile("|".join(f"(?:{a})" for a in home_alts))
