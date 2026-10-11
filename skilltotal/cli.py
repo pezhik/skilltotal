@@ -464,7 +464,7 @@ def _guard_installed(args: argparse.Namespace) -> int:
     """Guard every installed AI component; block if any of them blocks."""
     from skilltotal.engine import analyze
     from skilltotal.inventory import discover
-    from skilltotal.report import render_inventory_json
+    from skilltotal.report import _terminal_safe, render_inventory_json
 
     components = discover(project=Path(args.project) if args.project else None)
     items: list[dict] = []
@@ -494,17 +494,21 @@ def _guard_installed(args: argparse.Namespace) -> int:
     if args.json:
         print(render_inventory_json(items))
     else:
+        lines: list[str] = []
         for it in items:
             marker = {"allow": "ok", "block": "BLOCK"}.get(it["decision"], it["decision"])
             risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
-            print(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
-            for reason in it.get("reasons", []):
-                print(f"      - {reason}")
-        print()
+            lines.append(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
+            lines.extend(f"      - {reason}" for reason in it.get("reasons", []))
+        lines.append("")
         if blocked:
-            print(f"BLOCK: {len(blocked)} component(s) failed the guard: {', '.join(blocked)}")
+            lines.append(f"BLOCK: {len(blocked)} component(s) failed the guard: "
+                         f"{', '.join(blocked)}")
         else:
-            print(f"ALLOW: all {len(items)} component(s) passed the guard.")
+            lines.append(f"ALLOW: all {len(items)} component(s) passed the guard.")
+        # Names come from config files anyone can write (a repository's `.mcp.json`): their
+        # escape sequences must not reach the terminal, as in every other text report.
+        print(_terminal_safe("\n".join(lines)))
     return EXIT_FAIL_ON_HIGH if blocked else EXIT_OK
 
 

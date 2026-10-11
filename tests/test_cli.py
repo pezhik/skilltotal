@@ -216,3 +216,19 @@ def test_text_reports_never_carry_terminal_escapes():
     from skilltotal.report import _terminal_safe
 
     assert _terminal_safe("ok\x1b[2J\r\x07\tx\n") == "ok\\x1b[2J\\x0d\\x07\tx\n"
+
+
+def test_guard_installed_text_never_carries_terminal_escapes(monkeypatch, capsys):
+    """A server name comes from a config file anyone can write (a repository's `.mcp.json`): its
+    escape sequences must not reach the terminal and rewrite what the person reads."""
+    from skilltotal.inventory import DiscoveredComponent
+
+    esc, bel = chr(27), chr(7)
+    fake = [DiscoveredComponent(host="Claude Code", name=f"srv{esc}[2J{esc}]0;pwned{bel}",
+                                kind="mcp_server", source=None, scannable=False,
+                                note=f"remote{esc}[31m")]
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
+    assert main(["guard", "--installed"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert esc not in out and bel not in out
+    assert "srv\\x1b[2J" in out
