@@ -116,6 +116,9 @@ _PLACEHOLDER = re.compile(
     # `md_0123456789abcdef…` (a repeated `abcdef`). A generated credential spells none of these.
     r"fake|mock|fixture|e2e|super[-_]?secret|change[-_]?(?:me|this)|"
     r"(?-i:abcdef\w*abcdef|0123456789abcdef)|"
+    # The sequences people type into an example key (a payment-API key ending in abc123xyz789); a
+    # random token of this length holds one of them about once in a billion.
+    r"abc123|123456|xyz789|qwerty|"
     r"not[-_]?a[-_]?real|(?:^|[-_])test[-_]"
 )
 
@@ -346,20 +349,22 @@ class SecretsScanner(Scanner):
             severity=Severity.HIGH,
             title="Embedded secret / credential",
             description=(
-                "A hardcoded credential was detected in the component (e.g. a cloud access "
-                "key, provider API token, or private key). Shipping a live secret is a "
-                "supply-chain leak: anyone with the package can use it."
+                "A value shaped like a hardcoded credential was found in the component (e.g. a "
+                "cloud access key, provider API token, or private key). If it is live, anyone "
+                "with the package can use it."
             ),
             recommendation=(
-                "Remove the secret from the code, rotate it immediately, and load credentials "
-                "from the environment or a secrets manager at runtime."
+                "If it is a real credential, remove it from the code, rotate it, and load "
+                "credentials from the environment or a secrets manager at runtime. An example "
+                "value or a key that is public by design needs no action."
             ),
             capability=None,
             threat_class=ThreatClass.EXPOSURE,
-            # A secret inside a comment is commented-out example code, not a live shipped
-            # credential (e.g. ragflow's `#     OAuthConfig(client_secret="…")`). Real embedded
-            # secrets are in code / value-strings, which are NOT demoted, so recall is preserved.
-            code_context="comments",
+            # A secret inside a comment is commented-out example code, and one inside a Python
+            # docstring is an example of a call (`Example: api_key='…'`), not a live shipped
+            # credential. Real embedded secrets are in code / value-strings, which are NOT
+            # demoted, so recall is preserved.
+            code_context="comments_and_docstrings",
         ),
         RuleSpec(
             id="ST-SECRET-ENV",

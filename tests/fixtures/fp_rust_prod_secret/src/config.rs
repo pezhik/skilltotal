@@ -3,6 +3,6 @@
 //! swallow it.
 
 pub fn api_key() -> String {
-    let key = "sk-rustprodleak0123456789ABCDEFGHIJKLMNOPQRSTUV";
+    let key = "sk-rustprodleakQ7rM2xV9kD4tZ8wN3lP6hB1fC5gJ0s";
     key.to_string()
 }

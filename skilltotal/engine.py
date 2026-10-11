@@ -486,8 +486,10 @@ def _verdict(findings: list[Finding], level, unanalyzed: dict[str, int] | None =
         vlevel, headline = "medium", "Some risk - review before installing"
     elif by_class[ThreatClass.EXPOSURE] > 0:
         # A shipped credential does not raise the risk to the user, but the reader must not be
-        # told "nothing here" about a package that carries a live key.
-        vlevel, headline = "low", "No malicious indicators - exposed secrets found"
+        # told "nothing here" about a package that carries a live key. Whether a value is live
+        # the scan cannot tell (examples, defaults and public keys look the same), so the
+        # headline names what was found and does not claim a leak.
+        vlevel, headline = "low", "No malicious indicators - secret-like values found"
     elif by_class[ThreatClass.CAPABILITY] > 0:
         # Clean, but powerful: no malicious indicators and no risky constructs, yet the
         # component has real capabilities (shell/filesystem/network). Acknowledge them instead

@@ -224,3 +224,63 @@ def test_a_long_hook_command_scans_in_linear_time(tmp_path):
     # A 40,000-character command in an agent hook took 15 s in the script-path token regex.
     hooks = {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "a" * 40_000}]}]}}
     assert _scan_seconds(tmp_path, {".claude/settings.json": json.dumps(hooks)}) < 5
+
+
+# --- secrets: say what was found, not that it leaked ---------------------------------------------
+
+_LIVE_LOOKING = "const API_KEY = '6e0ddbe4f1c07a93b2d58e61c4a7f09b3d2e8c15a6f47b90';\n"
+
+
+def test_the_verdict_names_secret_like_values_without_claiming_a_leak(tmp_path):
+    # "exposed secrets found" on the page of a well-known project read as a statement that its
+    # keys had leaked, when most such values are examples, defaults or public keys.
+    report = _report(_write(tmp_path, {"src/client.js": _LIVE_LOOKING}))
+    assert report.verdict["headline"] == "No malicious indicators - secret-like values found"
+    secret = next(f for f in report.findings if f.id == "ST-SECRET-EMBEDDED")
+    assert "If it is a real credential" in secret.recommendation
+    assert "immediately" not in secret.recommendation
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        # A code-review guide's "BAD" example (an AI-instruction file, so not demoted as docs).
+        ("review.instructions.md",
+         "```js\n// BAD: Exposed secret in code\n"
+         "const API_KEY = \"sk_" + "live_abc123xyz789\";\n```\n"),
+        # Built at run time: a contiguous token shape in the repo trips push protection.
+        ("client.js", "const TOKEN = '" + "ghp" + "_123456abcdefghijklmnopqrstuvwxyzAB';\n"),
+        # A docstring example of an API call (a proxy's admin endpoint documentation).
+        ("endpoints.py",
+         'def spend():\n    """Spend per key.\n\n'
+         "    Example: api_key='d5341e92c0f8a7b6e4d3c2b1a0f9e8d7c6b5a4f3'\n"
+         '    """\n    return 1\n'),
+    ],
+)
+def test_an_example_or_placeholder_secret_is_not_reported(tmp_path, name, source):
+    assert "ST-SECRET-EMBEDDED" not in _ids(_write(tmp_path, {name: source}))
+
+
+def test_a_live_looking_secret_in_code_is_still_reported(tmp_path):
+    assert "ST-SECRET-EMBEDDED" in _ids(_write(tmp_path, {"src/client.js": _LIVE_LOOKING}))
+
+
+def _published_npm(root: Path, files: dict[str, str]):
+    files = {"package.json": '{"name": "web-app", "version": "1.0.0"}', **files}
+    _write(root, files)
+    from skilltotal.collector import detect_component
+    return analyze_directory(root, detect_component(root, "npm:web-app"))
+
+
+def test_an_env_file_of_public_build_variables_is_not_a_shipped_secret(tmp_path):
+    # Vite, Next.js and similar inline these into the browser bundle by design.
+    env = "VITE_STRIPE_PUBLISHABLE_KEY=pk_live_51Hx\nVITE_GA_MEASUREMENT_ID=G-ABCDE12345\n"
+    report = _published_npm(tmp_path, {".env.production": env})
+    assert "ST-ENV-SHIPPED" not in {f.id for f in report.findings}
+
+
+def test_an_env_file_with_a_private_variable_is_still_a_shipped_secret(tmp_path):
+    env = "VITE_API_URL=https://api.example.invalid\nDATABASE_URL=postgres://u:p@db.invalid/x\n"
+    report = _published_npm(tmp_path, {".env": env})
+    finding = next(f for f in report.findings if f.id == "ST-ENV-SHIPPED")
+    assert "If its values are real" in finding.recommendation
