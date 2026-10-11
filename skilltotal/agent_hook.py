@@ -852,8 +852,13 @@ def _looks_typosquatted(report: dict[str, Any]) -> bool:
 
 
 def _ask_detail(report: dict[str, Any]) -> str:
-    """Why a scanned package needs approval: a script npm runs at install that the scan could not
-    read (nothing in it was checked), a name that resembles a popular package, else its risk."""
+    """Why a scanned package needs approval: nothing in it could be read, a script npm runs at
+    install that the scan could not read (nothing in it was checked), a name that resembles a
+    popular package, else its risk."""
+    from skilltotal.guard import nothing_read
+
+    if nothing_read(report):
+        return "nothing in it could be read, so it was not checked"
     unread = unanalyzed_install_scripts(report)
     if unread:
         shown = next((p for p in unread if _PLAIN_PATH.fullmatch(p)), None)

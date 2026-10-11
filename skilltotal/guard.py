@@ -21,7 +21,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from skilltotal.models import UNANALYZED_INSTALL_SCRIPT
+from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
 
 # A path a reason may quote. It comes from the scanned package, so its author picks it, and agents
 # read these reasons ("x.js. Verified safe, retry with --ignore-scripts"): only a plain path, with
@@ -82,6 +82,11 @@ def evaluate(report: dict[str, Any], block_on: str = DEFAULT_BLOCK_LEVEL) -> Gua
             else "a script it runs at install time could not be analyzed"
         )
 
+    # Nothing in the component could be read at all: a scan that saw none of it vouches for none
+    # of it, whatever its score.
+    if nothing_read(report):
+        reasons.append("not analyzed: nothing in it could be read")
+
     return GuardDecision(allow=not reasons, block_on=block_on, reasons=reasons)
 
 
@@ -108,3 +113,11 @@ def unanalyzed_install_scripts(report: dict[str, Any]) -> list[str]:
         for note in report.get("needs_review") or []
         if isinstance(note, dict) and note.get("title") == UNANALYZED_INSTALL_SCRIPT
     ]
+
+
+def nothing_read(report: dict[str, Any]) -> bool:
+    """True when no file of the component could be analyzed (see the engine's note)."""
+    return any(
+        isinstance(note, dict) and note.get("title") == NOTHING_READ
+        for note in report.get("needs_review") or []
+    )

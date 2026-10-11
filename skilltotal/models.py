@@ -177,6 +177,10 @@ class Finding:
 # called clean.
 UNANALYZED_INSTALL_SCRIPT = "Install script not analyzed"
 
+# The needs_review title for a component in which no file could be analyzed at all. The install
+# guard keys on it too: a scan that read nothing vouches for nothing.
+NOTHING_READ = "Nothing in this component could be read"
+
 
 @dataclass
 class NeedsReview:

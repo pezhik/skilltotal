@@ -34,6 +34,7 @@ from skilltotal.file_index import (
     skill_dirs,
 )
 from skilltotal.models import (
+    NOTHING_READ,
     UNANALYZED_INSTALL_SCRIPT,
     Component,
     Evidence,
@@ -244,7 +245,7 @@ def analyze_directory(
         risk_score=score,
         risk_level=level,
         summary=_summary(level, score, findings, capabilities, needs_review),
-        verdict=_verdict(findings, level, unanalyzed),
+        verdict=_verdict(findings, level, unanalyzed, nothing_read=not index.files),
         capabilities=capabilities,
         traits=traits,
         findings=_sort_findings(findings),
@@ -431,8 +432,9 @@ def _unanalyzed_note(unanalyzed: dict[str, int]) -> NeedsReview:
 
 
 def _unread_notes(index: FileIndex) -> list[NeedsReview]:
-    """What the walk found but did not read: files it could not open and links it did not
-    follow. A file passed over in silence reads as checked and clean."""
+    """What the walk found but did not read: files it could not open, links it did not follow,
+    and the whole component when nothing in it could be analyzed. A file passed over in silence
+    reads as checked and clean."""
     notes: list[NeedsReview] = []
     if index.unreadable:
         folders = any(p.endswith("/") for p in index.unreadable)
@@ -451,10 +453,35 @@ def _unread_notes(index: FileIndex) -> list[NeedsReview]:
             what="link(s) not followed (symbolic links or junctions)",
             advice="A link can point outside the component, so nothing it points to was read.",
         ))
+    if not index.files:
+        stats = index.stats
+        kinds = [
+            (stats.get("skipped_binary", 0), "binary"),
+            (stats.get("skipped_large", 0), f"larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB"),
+            (stats.get("skipped_minified", 0), "minified"),
+            (stats.get("skipped_source_map", 0), "source maps without code"),
+            (len(index.unreadable), "unreadable"),
+            (len(index.links), "links not followed"),
+        ]
+        found = ", ".join(f"{n} {kind}" for n, kind in kinds if n) or "it contains no files"
+        notes.append(NeedsReview(
+            category="coverage",
+            title=NOTHING_READ,
+            reason=(
+                f"No file in this component could be analyzed ({found}), so this report "
+                f"covers none of its content."
+            ),
+        ))
     return notes
 
 
-def _verdict(findings: list[Finding], level, unanalyzed: dict[str, int] | None = None) -> dict:
+def _verdict(
+    findings: list[Finding],
+    level,
+    unanalyzed: dict[str, int] | None = None,
+    *,
+    nothing_read: bool = False,
+) -> dict:
     """Plain-language top-line answer, mapped to the two real user fears:
 
     1. "Is it malicious?" -> ``has_malicious_indicators`` (deliberate deception/stealth
@@ -498,6 +525,10 @@ def _verdict(findings: list[Finding], level, unanalyzed: dict[str, int] | None =
             f"Partially analyzed - {_language_list(unanalyzed)} code not checked "
             "for shell, network or file access"
         )
+    if nothing_read and vlevel == "low":
+        # Nothing was read, so nothing could be found: the level and score stay as they are, and
+        # the headline does not word an empty scan as a clean one.
+        headline = "Not analyzed - nothing in this component could be read"
 
     verdict = {
         "level": vlevel,
