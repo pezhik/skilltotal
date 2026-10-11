@@ -222,3 +222,39 @@ def test_install_script_evidence_keeps_its_place_among_the_findings_evidence(tmp
     files = [e.file for e in finding.evidence]
     assert set(files) == {"dist/a.js", "lib/b.js"}
     assert files == sorted(files, key=lambda f: ("dist/a.js", "lib/b.js").index(f))
+
+
+def test_a_dependency_bundled_in_the_package_that_an_install_script_loads_is_read(tmp_path):
+    # Found by the pre-launch review: postinstall ran install.js, which did `require("helper")`, and
+    # the dropper sat in the package's own bundled node_modules/helper/ (bundledDependencies ship
+    # inside the tarball). The graph followed relative paths only, so the payload was never read.
+    _package(tmp_path, {"postinstall": "node install.js"})
+    _script_at(tmp_path, "install.js", "require('helper');\nrequire('@acme/tool/run');\n")
+    _script_at(tmp_path, "node_modules/helper/index.js", _DROPPER)
+    _script_at(tmp_path, "node_modules/@acme/tool/run.js", "module.exports = 1;\n")
+    report = _analyze(tmp_path)
+    finding = next(f for f in report.findings if f.id == "ST-OBF-DECODE-EXEC")
+    assert [e.file for e in finding.evidence] == ["node_modules/helper/index.js"]
+    assert not evaluate(report.to_dict()).allow
+
+
+def test_a_bundled_dependency_resolves_through_its_package_main(tmp_path):
+    _package(tmp_path, {"preinstall": "node scripts/pre.js"})
+    _script_at(tmp_path, "scripts/pre.js", "import run from 'helper';\nrun();\n")
+    (tmp_path / "node_modules" / "helper").mkdir(parents=True)
+    (tmp_path / "node_modules" / "helper" / "package.json").write_text(
+        json.dumps({"name": "helper", "main": "lib/main.js"}), encoding="utf-8"
+    )
+    _script_at(tmp_path, "node_modules/helper/lib/main.js", _DROPPER)
+    report = _analyze(tmp_path)
+    assert "ST-OBF-DECODE-EXEC" in {f.id for f in report.findings}
+
+
+def test_a_dependency_that_is_not_bundled_is_not_followed(tmp_path):
+    # A dependency npm installs separately is not this package's code: nothing to read, no error.
+    _package(tmp_path, {"postinstall": "node install.js"})
+    _script_at(tmp_path, "install.js",
+               "require('fs'); require('node:path'); require('left-pad');\n")
+    report = _analyze(tmp_path)
+    assert not [n for n in report.needs_review if n.title == UNANALYZED_INSTALL_SCRIPT]
+    assert evaluate(report.to_dict()).allow

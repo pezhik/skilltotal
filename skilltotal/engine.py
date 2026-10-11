@@ -341,13 +341,39 @@ def _install_script_files(root: Path) -> dict[str, str]:
             loaded = _module_file(base, target.parent, match.group(2))
             if loaded is not None:
                 queue.append((loaded, script))
+        for match in _BARE_MODULE.finditer(text):
+            loaded = _bundled_module_file(base, target.parent, match.group(2))
+            if loaded is not None:
+                queue.append((loaded, script))
     return found
 
 
+def _bundled_module_file(base: Path, start: Path, spec: str) -> Path | None:
+    """The file a bare ``require("x")`` loads when ``x`` ships inside the package itself.
+
+    Node looks for ``node_modules/x`` in the requiring file's folder and each parent. Only the
+    folders inside the component count: a bundled dependency is in the tarball and runs with the
+    install script, while one npm installs separately is not this package's code.
+    """
+    folder = start
+    while True:
+        loaded = _module_file(base, folder / "node_modules", spec)
+        if loaded is not None:
+            return loaded
+        if folder == base or base not in folder.parents:
+            return None
+        folder = folder.parent
+
+
 # A relative module a script loads with a literal specifier: require('./x'), import('./x'),
-# `import x from './x'`, `export * from './x'`. Bare names are dependencies, not the package's code.
+# `import x from './x'`, `export * from './x'`.
 _RELATIVE_MODULE = re.compile(
     r"""(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)(["'])(\.{1,2}(?:/[^"'\n]{0,200})?)\1"""
+)
+# The same shapes with a bare name (`require("helper")`, `import x from "@s/pkg/sub"`): a
+# dependency, read only when the package bundles it in its own node_modules.
+_BARE_MODULE = re.compile(
+    r"""(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)(["'])([A-Za-z0-9@_][^"'\s:]{0,200})\1"""
 )
 _LOADING_SUFFIXES = frozenset({".js", ".cjs", ".mjs", ""})
 _MODULE_SUFFIXES = (".js", ".cjs", ".mjs", ".json")
