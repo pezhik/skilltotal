@@ -1075,3 +1075,46 @@ def test_the_parser_stays_fast_on_adversarial_command_lines():
         parse_installs(line)
         parse_installs(line, shell="powershell")
         assert clock.monotonic() - started < 5, line[:40]
+
+
+# --- Scaffolders: `npm create x` runs the package create-x ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("npm create vite@latest my-app", ["npm:create-vite@latest"]),
+        ("npm create vite@5.0.0 my-app -- --template react", ["npm:create-vite@5.0.0"]),
+        ("npm init evil-starter", ["npm:create-evil-starter"]),
+        ("npm init -y evil-starter", ["npm:create-evil-starter"]),
+        ("npm init --scope @me evil-starter", ["npm:create-evil-starter"]),
+        ("npm innit evil-starter", ["npm:create-evil-starter"]),
+        ("npm --silent create evil-starter", ["npm:create-evil-starter"]),
+        ("npm init @evil", ["npm:@evil/create"]),
+        ("npm init @evil@1.2.3", ["npm:@evil/create@1.2.3"]),
+        ("npm init @evil/app", ["npm:@evil/create-app"]),
+        ("npm init @evil/app@2.0.0", ["npm:@evil/create-app@2.0.0"]),
+        ("npm init someone/starter", ["https://github.com/someone/create-starter"]),
+        ("yarn create evil-app", ["npm:create-evil-app"]),
+        ("yarn create @evil/app", ["npm:@evil/create-app"]),
+        ("pnpm create evil-app", ["npm:create-evil-app"]),
+        ("bun create evil-app my-dir", ["npm:create-evil-app"]),
+    ],
+)
+def test_a_scaffolder_is_checked_as_the_package_it_runs(command, expected):
+    assert install_targets(command) == expected
+    assert install_targets(command, shell="powershell") == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["npm init", "npm init -y", "npm init --yes --scope=@me", "pnpm init", "yarn init -y",
+     "bun init", "npm create"],
+)
+def test_creating_a_bare_package_json_installs_nothing(command):
+    assert install_targets(command) == []
+
+
+def test_a_scaffolder_from_another_registry_asks():
+    reason = _ask_without_scan("npm create vite --registry https://registry.example.invalid")
+    assert "create-vite from https://registry.example.invalid" in reason

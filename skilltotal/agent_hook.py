@@ -1139,11 +1139,56 @@ def _node_manager(head: str, rest: list[str]) -> list[Install]:
         sub, args = _subcommand(args, _NPM_VALUE_FLAGS)
     if sub in ("exec", "x", "dlx") and not (head == "pnpm" and sub == "exec"):
         return _npx(args)
+    if sub in _SCAFFOLDERS[head]:
+        return _scaffold(args, _custom_source(rest, _NPM_SOURCE_FLAGS))
     if head == "yarn" and sub != "add":
         return []  # `yarn install` installs the lockfile only
     if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
         return _npm_packages(args, _custom_source(rest, _NPM_SOURCE_FLAGS))
     return []
+
+
+# Subcommands that run an initializer package from the registry (`npm create vite`). `pnpm init`,
+# `yarn init` and `bun init` only write a package.json.
+_SCAFFOLDERS = {"npm": {"create", "init", "innit"}, "yarn": {"create"}, "pnpm": {"create"},
+                "bun": {"create", "c"}}
+# `npm init` options that take a value, so the value is not taken for the initializer.
+_INIT_VALUE_FLAGS = _NPM_VALUE_FLAGS | {
+    "--scope", "--init-author-name", "--init-author-email", "--init-author-url",
+    "--init-license", "--init-module", "--init-version"}
+
+
+def _scaffold(args: list[str], registry: str | None) -> list[Install]:
+    """``npm init x`` / ``npm create x`` / ``yarn create x`` fetch and run the initializer package
+    ``create-x``; without one, ``npm init`` writes a package.json and installs nothing."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg.startswith("-"):
+            i += 2 if (arg in _INIT_VALUE_FLAGS and "=" not in arg) else 1
+            continue
+        return _npm_spec(_initializer_package(arg), registry)
+    return []
+
+
+def _initializer_package(spec: str) -> str:
+    """npm's own mapping, version or tag kept: ``x`` -> ``create-x``, ``@scope`` ->
+    ``@scope/create``, ``@scope/x`` -> ``@scope/create-x``, ``owner/repo`` (GitHub) ->
+    ``owner/create-repo``. Anything else (a path, a URL) is left for ``_npm_spec`` to judge."""
+    if spec.startswith("@"):
+        scope, slash, rest = spec.partition("/")
+        if not slash:
+            scope, at, version = spec[1:].partition("@")
+            return f"@{scope}/create{at}{version}"
+        name, at, version = rest.partition("@")
+        return f"{scope}/create-{name}{at}{version}"
+    if "://" in spec or spec.startswith((".", "~", "file:", "git+", "git:")):
+        return spec
+    gh = _GH_SHORTHAND.match(spec)
+    if gh:
+        return f"{gh.group(1)}/create-{gh.group(2)}{gh.group('tail') or ''}"
+    name, at, version = spec.partition("@")
+    return f"create-{name}{at}{version}"
 
 
 def _npx(args: list[str]) -> list[Install]:
