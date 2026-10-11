@@ -87,7 +87,7 @@ that produced them.
   rulesets 56 to 59 and finished with engine 0.49.0 on 2026-09-19. Most of the rest were no longer
   reachable or exceeded a time or size bound, and every exclusion is counted. Of the components
   scanned, 88.2% expose tools to an agent, 64.8% can reach the network and 21.1% can execute shell
-  commands, yet 99.2% of them score low risk, because a capability on its own scores zero. The
+  commands, yet all but 116 of them score low risk, because a capability on its own scores zero. The
   rules were tuned on this population: every malicious-indicator hit of an earlier run was read by
   hand, and the false positives were fixed before this one.
   [Aggregates (JSON)](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-registry-survey.json) ·
