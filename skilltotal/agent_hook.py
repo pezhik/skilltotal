@@ -1407,11 +1407,14 @@ def _add_json(args: list[str], shell: str, depth: int, level: _Level) -> list[In
     """
     found: dict[Install, None] = {}
     configs = 0
+    unreadable = [Install(None, "a `claude mcp add-json` server config SkillTotal could not read")]
     for word in args:
         if not word.lstrip().startswith("{"):
             continue
         try:
             config = json.loads(word)
+        except RecursionError:
+            return unreadable  # nested past what this Python reads; `claude` may still read it
         except ValueError:
             continue
         if not isinstance(config, dict):
@@ -1423,9 +1426,7 @@ def _add_json(args: list[str], shell: str, depth: int, level: _Level) -> list[In
         words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
             isinstance(extra, list)) else [command]
         found.update(dict.fromkeys(_launched(["<name>", *words], shell, depth, level)))
-    if not configs:
-        return [Install(None, "a `claude mcp add-json` server config SkillTotal could not read")]
-    return list(found)
+    return list(found) if configs else unreadable
 
 
 def _inner_command(head: str, rest: list[str], shell: str) -> tuple[str, str] | None:

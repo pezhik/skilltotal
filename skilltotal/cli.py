@@ -561,16 +561,39 @@ def _cmd_mcp() -> int:
     return EXIT_OK
 
 
+# The answer when the hook cannot finish its own check. Exiting with an error would let the plugin's
+# wrapper pass the command with only a warning, and denying would block for SkillTotal's own fault:
+# the person decides.
+HOOK_FAILED = {
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": "SkillTotal could not check this command.",
+    }
+}
+
+
 def _cmd_hook() -> int:
+    try:
+        answer = _hook_answer()
+    except Exception:  # noqa: BLE001 - any failure of ours asks; it must not pass silently
+        answer = HOOK_FAILED
+    if answer is not None:
+        print(json.dumps(answer))
+    return EXIT_OK
+
+
+def _hook_answer() -> dict | None:
     from skilltotal.agent_hook import BUDGET_ENV, hook_response
 
     if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
         sys.stdin.reconfigure(encoding="utf-8")
         sys.stdout.reconfigure(encoding="utf-8")
+    raw = sys.stdin.read()
     try:
-        event = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        return EXIT_OK  # not a hook event we can read: stay out of the agent's way
+        event = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return None  # not a hook event at all: stay out of the agent's way
     try:
         budget = float(os.environ.get(BUDGET_ENV, HOOK_BUDGET_S))
     except ValueError:
@@ -578,10 +601,7 @@ def _cmd_hook() -> int:
     # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
     budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
-    answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget)
-    if answer is not None:
-        print(json.dumps(answer))
-    return EXIT_OK
+    return hook_response(event, scan=_hook_scan_cached, budget_s=budget)
 
 
 # How long the agent waits for the checks of one install command, and how long a verdict is reused:
