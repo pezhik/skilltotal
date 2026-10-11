@@ -47,7 +47,7 @@ from skilltotal.models import (
 from skilltotal.owasp import owasp_for
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
-from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING
+from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
 from skilltotal.scoring import compute_score, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import package_name_typosquatting
@@ -130,6 +130,7 @@ def analyze_directory(
                 ),
             )
         )
+    needs_review.extend(_unread_notes(index))
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
@@ -427,6 +428,30 @@ def _unanalyzed_note(unanalyzed: dict[str, int]) -> NeedsReview:
             f"sensitive paths and hidden Unicode did run. A low score does not cover this code."
         ),
     )
+
+
+def _unread_notes(index: FileIndex) -> list[NeedsReview]:
+    """What the walk found but did not read: files it could not open and links it did not
+    follow. A file passed over in silence reads as checked and clean."""
+    notes: list[NeedsReview] = []
+    if index.unreadable:
+        folders = any(p.endswith("/") for p in index.unreadable)
+        notes.append(aggregated_review(
+            category="coverage",
+            title="Files could not be read",
+            places=[(p, None) for p in index.unreadable],
+            what=f"file(s){' and folder(s)' if folders else ''} could not be read",
+            advice="Nothing in them was checked.",
+        ))
+    if index.links:
+        notes.append(aggregated_review(
+            category="coverage",
+            title="Links not followed",
+            places=[(p, None) for p in index.links],
+            what="link(s) not followed (symbolic links or junctions)",
+            advice="A link can point outside the component, so nothing it points to was read.",
+        ))
+    return notes
 
 
 def _verdict(findings: list[Finding], level, unanalyzed: dict[str, int] | None = None) -> dict:

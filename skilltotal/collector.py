@@ -34,7 +34,7 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
-from skilltotal.file_index import neutralize_hidden
+from skilltotal.file_index import is_regular_file, neutralize_hidden, walk_files
 from skilltotal.models import Component
 
 _GIT_URL_RE = re.compile(r"^(?:https?://|git@|ssh://|git://).+", re.IGNORECASE)
@@ -376,14 +376,15 @@ def _dir_size_bytes(root: Path, *, skip_git: bool = False) -> int:
     ``skip_git`` leaves out ``.git/``: the scan reads the working tree, and a shallow clone's
     pack is roughly a compressed second copy of it, so counting both made a 168 MB checkout
     read as 234 MB and fail the 200 MB limit.
+
+    Links are not followed (a junction could lead anywhere), and the walk keeps its own stack: a
+    repository nested deeper than the recursion limit must not kill the watchdog thread.
     """
     total = 0
-    for p in root.rglob("*"):
-        if skip_git and ".git" in p.relative_to(root).parts:
-            continue
+    skip = (lambda name: name == ".git") if skip_git else None
+    for p in walk_files(root, skip=skip):
         try:
-            if p.is_file() and not p.is_symlink():
-                total += p.stat().st_size
+            total += p.stat().st_size
         except OSError:
             continue
     return total
@@ -898,7 +899,10 @@ def _collect_pypi(source: str) -> SourceContext:
 
 
 def detect_component(root: Path, source: str) -> Component:
-    """Derive component name/type/version solely from files inside ``root``."""
+    """Derive component name/type/version solely from files inside ``root``.
+
+    Manifests are read only when they are regular files: one that is a link is not followed.
+    """
     name = root.name
     version = ""
     ctype = "directory"
@@ -907,22 +911,22 @@ def detect_component(root: Path, source: str) -> Component:
     pyproject = root / "pyproject.toml"
     setup_py = root / "setup.py"
 
-    if pkg.exists():
+    if is_regular_file(pkg):
         ctype = "npm_package"
         meta = _read_package_json(pkg)
         name = meta.get("name") or name
         version = meta.get("version") or ""
-    elif pyproject.exists() or setup_py.exists():
+    elif is_regular_file(pyproject) or is_regular_file(setup_py):
         ctype = "python_package"
-        meta = _read_pyproject(pyproject) if pyproject.exists() else {}
+        meta = _read_pyproject(pyproject) if is_regular_file(pyproject) else {}
         name = meta.get("name") or name
         version = meta.get("version") or ""
 
     # Label common non-Python/Node project shapes so an uploaded project reads better than a bare
     # "directory" (detection itself is language-agnostic for the cross-cutting rules).
-    elif (root / "go.mod").exists():
+    elif is_regular_file(root / "go.mod"):
         ctype = "go_project"
-    elif any((root / f).exists() for f in ("pom.xml", "build.gradle", "build.gradle.kts")):
+    elif any(is_regular_file(root / f) for f in ("pom.xml", "build.gradle", "build.gradle.kts")):
         ctype = "java_project"
 
     # MCP / AI-component overrides take precedence when their artifacts are present.
@@ -978,12 +982,12 @@ def _toml_value(text: str, key: str) -> str:
 
 def _has_mcp_manifest(root: Path) -> bool:
     for name in ("mcp.json", ".mcp.json", "mcp.config.json"):
-        if (root / name).exists():
+        if is_regular_file(root / name):
             return True
     # A package.json / manifest that declares mcpServers also counts.
     for candidate in ("package.json", "manifest.json", "server.json"):
         p = root / candidate
-        if p.exists():
+        if is_regular_file(p):
             try:
                 if "mcpServers" in p.read_text(encoding="utf-8", errors="replace"):
                     return True
@@ -993,11 +997,11 @@ def _has_mcp_manifest(root: Path) -> bool:
 
 
 def _has_skill_manifest(root: Path) -> bool:
-    return (root / "SKILL.md").exists() or (root / "skill.md").exists()
+    return is_regular_file(root / "SKILL.md") or is_regular_file(root / "skill.md")
 
 
 def _has_ai_artifacts(root: Path) -> bool:
     for name in ("SKILL.md", "AGENTS.md", "skill.md", "agents.md", "CLAUDE.md"):
-        if (root / name).exists():
+        if is_regular_file(root / name):
             return True
     return False
