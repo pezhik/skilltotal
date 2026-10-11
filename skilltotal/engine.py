@@ -52,7 +52,7 @@ from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
 from skilltotal.scoring import compute_score, risk_level
 from skilltotal.traits import build_trait_profile
-from skilltotal.typosquatting import package_name_typosquatting
+from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID, package_name_typosquatting
 
 # Component types produced by fetching a PUBLISHED artifact from a package registry (collector.
 # _collect_archive). Everything else — a git clone, a local directory, an uploaded project — keeps
@@ -561,6 +561,14 @@ def _verdict(
         vlevel, headline = level.value, "High-risk capabilities - review before installing"
     elif level is RiskLevel.MEDIUM:
         vlevel, headline = "medium", "Some risk - review before installing"
+    elif any(f.id == TYPOSQUAT_FINDING_ID for f in findings):
+        # One mistyped name is how the impostor gets installed; the score of a typosquat says
+        # nothing, since its code is usually a copy of the real package.
+        vlevel, headline = "low", "Name resembles a popular package - check it before installing"
+    elif by_class[ThreatClass.RISKY_CONSTRUCT] > 0:
+        # A single risky construct scores in the low band, and it is still a finding to read:
+        # "No significant risks found" over it said the opposite of the list below it.
+        vlevel, headline = "low", "Low risk - review the findings before installing"
     elif by_class[ThreatClass.EXPOSURE] > 0:
         # A shipped credential does not raise the risk to the user, but the reader must not be
         # told "nothing here" about a package that carries a live key. Whether a value is live

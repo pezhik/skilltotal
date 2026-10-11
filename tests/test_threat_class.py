@@ -56,3 +56,14 @@ def test_every_finding_has_a_threat_class(malicious_npm, malicious_py, mcp_repor
     for report in (malicious_npm, malicious_py, mcp_report):
         for f in report.findings:
             assert isinstance(f.threat_class, ThreatClass)
+
+
+def test_a_single_risky_construct_is_low_risk_but_not_called_clean(tmp_path):
+    # One risky construct scores 20 (low band). The headline said "No significant risks found"
+    # above the finding it had just listed.
+    from skilltotal.engine import analyze
+
+    (tmp_path / "m.py").write_text("import pickle\nobj = pickle.loads(blob)\n", encoding="utf-8")
+    report = analyze(str(tmp_path))
+    assert (report.risk_score, report.risk_level.value) == (20, "low")
+    assert report.verdict["headline"] == "Low risk - review the findings before installing"

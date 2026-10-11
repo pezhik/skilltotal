@@ -98,3 +98,21 @@ def test_authlib_not_flagged(tmp_path):
 def test_near_miss_of_pynacl_flagged(tmp_path):
     # Adding pynacl to the list also protects it: a 1-edit impersonation now fires.
     assert "ST-TYPOSQUAT" in _ids(engine.analyze(str(_pypi_pkg(tmp_path, "pynacll"))))
+
+
+def test_a_typosquat_is_named_in_the_headline_not_called_clean(tmp_path):
+    # `scan npm:expresss` read "No significant risks found" over a HIGH typosquat finding.
+    report = engine.analyze(str(_npm_pkg(tmp_path, "loddash")))
+    assert report.risk_level.value == "low"
+    assert report.verdict["headline"] == (
+        "Name resembles a popular package - check it before installing")
+
+
+def test_the_guard_blocks_a_typosquat_as_the_hook_asks_about_it(tmp_path):
+    from skilltotal.guard import evaluate
+
+    decision = evaluate(engine.analyze(str(_npm_pkg(tmp_path, "loddash"))).to_dict())
+    assert not decision.allow
+    assert any("a letter or two away from a popular package" in r for r in decision.reasons)
+    # The exact name stays allowed.
+    assert evaluate(engine.analyze(str(_npm_pkg(tmp_path, "lodash"))).to_dict()).allow
