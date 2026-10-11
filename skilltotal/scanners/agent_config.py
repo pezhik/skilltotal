@@ -211,8 +211,10 @@ _SKILL_NET_SINK = re.compile(
     r"\b(?:curl|wget|nc|ncat|http|https)\b|https?://", re.IGNORECASE
 )
 
-# A path-looking token in a command that may name a script shipped in the component.
-_PATH_TOKEN = re.compile(r"[\w.${}/\\-]+\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
+# A path-looking token in a command that may name a script shipped in the component. Bounded: an
+# unbounded run before the extension backtracked from every start of a long token (40,000
+# characters took 15 s); no real script path is longer.
+_PATH_TOKEN = re.compile(r"[\w.${}/\\-]{1,300}\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
 
 
 class AgentConfigScanner(Scanner):

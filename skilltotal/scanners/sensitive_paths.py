@@ -153,7 +153,9 @@ _BARE_LIST_ELEMENT = re.compile(
     + r"\s*[\])]?\s*(?:=>\s*\w+\s*)?,?\s*$"
 )
 # A trailing `// ssh private key` or `# comment` after a list element is still just a list element.
-_TRAILING_COMMENT = re.compile(r"\s+(?://|#).*$")
+# Starts only where a run of whitespace starts: from every position inside a long run, `\s+` backed
+# off across the whole run again (20,000 spaces before a credential path took 49 s).
+_TRAILING_COMMENT = re.compile(r"(?<!\s)\s+(?://|#).*$")
 # A bare regex-literal list element: a slash-delimited regex (optional flags) on its own line,
 # e.g. `/id_rsa/,`, `/credentials/i,`, `/\.pem$/,`. A regex literal is a PATTERN that matches
 # against paths, never a path being accessed — so a credential token inside one is a detector's
@@ -241,7 +243,9 @@ def _in_spans(spans: list[tuple[int, int]], offset: int) -> bool:
 
 def _is_guardlist_context(relpath: str, line_text: str, matched: str = "") -> bool:
     """True if a sensitive-path match is a defensive denylist/guardrail mention, not access."""
-    bare = _TRAILING_COMMENT.sub("", line_text)
+    # Leading whitespace goes before the list-element regexes, whose own leading `\s*` runs into a
+    # second `\s*` and splits a long indentation every possible way.
+    bare = _TRAILING_COMMENT.sub("", line_text).lstrip()
     return (
         _guard_segment(relpath)
         or bool(_NAME_COMPARISON.search(bare[: bare.find(matched)] if matched in bare else ""))

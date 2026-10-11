@@ -6,6 +6,8 @@ only: nothing here is executed.
 
 from __future__ import annotations
 
+import json
+import time
 from pathlib import Path
 
 import pytest
@@ -201,3 +203,24 @@ def test_a_credentials_reader_with_a_requests_dict_is_not_exfiltration(tmp_path)
 )
 def test_a_real_network_library_still_fires(tmp_path, source):
     assert "ST-NET-PY" in _ids(_write(tmp_path, {"mod.py": source}))
+
+
+# --- one long line scans in linear time -------------------------------------------------------
+
+def _scan_seconds(root: Path, files: dict[str, str]) -> float:
+    _write(root, files)
+    started = time.perf_counter()
+    _report(root)
+    return time.perf_counter() - started
+
+
+def test_a_long_run_of_spaces_before_a_credential_path_scans_in_linear_time(tmp_path):
+    # 20,000 spaces before `cat ~/.ssh/id_rsa` in one shell line took 49 s: the trailing-comment
+    # and list-element regexes backtracked over the run of spaces from every position.
+    assert _scan_seconds(tmp_path, {"setup.sh": " " * 20_000 + "cat ~/.ssh/id_rsa\n"}) < 5
+
+
+def test_a_long_hook_command_scans_in_linear_time(tmp_path):
+    # A 40,000-character command in an agent hook took 15 s in the script-path token regex.
+    hooks = {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "a" * 40_000}]}]}}
+    assert _scan_seconds(tmp_path, {".claude/settings.json": json.dumps(hooks)}) < 5
