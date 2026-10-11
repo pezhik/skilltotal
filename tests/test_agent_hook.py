@@ -279,13 +279,19 @@ def test_no_scan_starts_once_the_budget_is_spent():
     assert "npm:a, npm:b: not checked within" in reason
 
 
-def test_the_cli_scan_runs_in_a_process_it_can_kill_and_cleans_up(tmp_path, monkeypatch):
-    """The real scanner behind the hook: a report on time, TimeoutError past the deadline, and no
-    temp directory left behind either way (a killed scan cannot clean up after itself)."""
+def test_the_cli_scan_runs_in_processes_of_its_own_and_cleans_up(tmp_path, monkeypatch):
+    """The real scanner behind the hook: a report on time, and no temp directory left behind.
+
+    Past the deadline the scan is no longer killed (it used to be, and a large package then never
+    got a verdict): it goes on, and whoever finishes last removes its directory. Here the hook
+    stops it; test_hook_background covers a scan that goes on and keeps its verdict.
+    """
     import tempfile
+    import time
     from pathlib import Path
 
     from skilltotal.cli import _hook_scan
+    from skilltotal.hook_scan import ScanContinues
 
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     component = tmp_path / "component"
@@ -294,9 +300,16 @@ def test_the_cli_scan_runs_in_a_process_it_can_kill_and_cleans_up(tmp_path, monk
 
     report = _hook_scan(str(component), timeout=120)
     assert report["risk_level"] == "low"
+    assert not list(Path(tmp_path).glob("skilltotal_hook_*"))
 
-    with pytest.raises(TimeoutError):
+    with pytest.raises(TimeoutError) as late:
         _hook_scan(str(component), timeout=0.01)
+    assert isinstance(late.value, ScanContinues)
+    late.value.scan.hand_over(None)
+    late.value.scan.proc.wait(timeout=60)
+    deadline = time.monotonic() + 30
+    while list(Path(tmp_path).glob("skilltotal_hook_*")) and time.monotonic() < deadline:
+        time.sleep(0.1)
     assert not list(Path(tmp_path).glob("skilltotal_hook_*"))
 
 
