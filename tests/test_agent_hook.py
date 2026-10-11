@@ -2131,3 +2131,42 @@ def test_wildcards_in_versions_and_odd_delimiters_read_as_the_shell_reads_them(c
 )
 def test_quoting_and_escaping_around_continuations_comments_and_keywords(command, expected):
     assert install_targets(command) == expected
+
+
+def test_every_pattern_that_reads_command_text_runs_in_linear_time():
+    """Each regular expression that sees text from the command line, run on long inputs built to
+    make a backtracking engine retry: none may take long enough to stall the hook."""
+    import time as clock
+
+    from skilltotal import agent_hook as hook
+    from skilltotal import cli
+
+    n = 100_000
+    hostile = [
+        "a" * n, "$" * n, "[" * n, "{" * n, "@" * n, "?" * n, "=" * n, "\\" * n, "-" * n,
+        "npm " * (n // 4), "npm_config_" * (n // 11), "npm_config_@" + "x" * n,
+        "pip_" * (n // 4), "1" * n + "<", "$" + "a" * n + "?" * n, "[" * n + "$x",
+        "npm" + " " * n + "i", "@" + "a" * n + "@", "pypi:" + "a" * n + "==" + "1" * n,
+        "npm:" + "@a/" * (n // 3), "%" * n, "!" * n, "`" * n, "'" * n, '"' * n,
+    ]
+    patterns = [
+        (hook._INSTALL_WORDS.search, None), (hook._INSTALLER_NAME.search, None),
+        (hook._NPM_REGISTRY_ENV.search, None), (hook._PY_INDEX_ENV.search, None),
+        (hook._NPM_ENV_PREFIX.search, None), (hook._PY_ENV_PREFIX.search, None),
+        (hook._NPM_CONFIG_ENV.search, None), (hook._COMPUTED.search, None),
+        (hook._PS_DYNAMIC.search, None), (hook._REDIRECT.match, None),
+        (hook._REDIRECT_START.fullmatch, None), (hook._PS_SPLAT.match, None),
+        (hook._PS_TARGET.fullmatch, None), (hook._PS_GLUED_ASSIGN.fullmatch, None),
+        (hook._BIN_NAME.fullmatch, None), (hook._PY_SPEC_END.split, None),
+        (hook._NPM_RELEASE.fullmatch, None), (hook._BACKSLASH_RUN.sub, "x"),
+        (cli._RELEASE_KEY.fullmatch, None),
+        *((p.match, None) for p in hook._PLAIN_RUN.values()),
+        *((p.search, None) for p in hook._DOUBLE_SPECIAL.values()),
+        *((p.search, None) for p in hook._VARIABLE.values()),
+        *((p.search, None) for p in hook._COMPUTED_HEAD.values()),
+    ]
+    for run, first in patterns:
+        started = clock.monotonic()
+        for text in hostile:
+            run(first, text) if first is not None else run(text)
+        assert clock.monotonic() - started < 2, run
