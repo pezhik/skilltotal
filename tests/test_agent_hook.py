@@ -2121,6 +2121,9 @@ def test_wildcards_in_versions_and_odd_delimiters_read_as_the_shell_reads_them(c
         # Keywords are keywords only where a command starts; glued to `;` they still are.
         ("if true;then npm i evil-pkg;fi", ["npm:evil-pkg"]),
         ("for x in a;do npm i evil-pkg;done", ["npm:evil-pkg"]),
+        # A function body runs when the function is called.
+        ("function f { npm i evil-pkg; }; f", ["npm:evil-pkg"]),
+        ("function f() { npm i evil-pkg; }; f", ["npm:evil-pkg"]),
         ("npm i then do fi", ["npm:then", "npm:do", "npm:fi"]),
         ("echo if then; npm i evil-pkg", ["npm:evil-pkg"]),
         # Windows line ends.

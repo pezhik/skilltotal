@@ -1171,6 +1171,9 @@ def _unwrap(tokens: list[str]) -> list[str]:
         if _ENV_ASSIGN.match(tokens[0]) or tokens[0].lower() in _KEYWORDS:
             tokens = tokens[1:]
             continue
+        if tokens[0] == "function":  # `function f { npm i x; }`: the body runs when f is called
+            tokens = tokens[2:]
+            continue
         head = _base(tokens[0])
         if head in _PASSTHROUGH:
             tokens = tokens[1:]
