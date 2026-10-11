@@ -1103,6 +1103,8 @@ def test_the_parser_stays_fast_on_adversarial_command_lines():
 )
 def test_a_scaffolder_is_checked_as_the_package_it_runs(command, expected):
     assert install_targets(command) == expected
+    if command.endswith(" @evil"):
+        return  # PowerShell splats a bare `@evil`: the name never reaches npm (asked instead)
     assert install_targets(command, shell="powershell") == expected
 
 
@@ -1375,3 +1377,143 @@ def test_ordinary_indirect_commands_stay_silent(command):
     from skilltotal.agent_hook import parse_installs
 
     assert parse_installs(command) == []
+
+
+# --- Differentials found by running the commands in a real bash -------------------------------
+# A stub `npm` on PATH recorded what bash actually ran; the parser saw nothing for each of these.
+
+
+def test_git_bash_on_windows_halves_backslashes_before_bash_reads_the_line():
+    """Claude Code runs a Bash command through Git Bash on Windows, whose command-line parser
+    halves a run of backslashes not followed by a double quote: `echo 'a\\\\b'` prints `a\\b`
+    there. `ev\\\\il-pkg` reaches bash as `ev\\il-pkg`, which bash reads as `evil-pkg`."""
+    assert "npm:evil-pkg" in install_targets("npm i ev\\\\il-pkg")
+    assert "npm:evil-pkg" in install_targets("n\\\\px evil-pkg")
+    assert "npm:evil-pkg" in install_targets("echo \\\\\\\nnpm i evil-pkg")
+    # A run of backslashes in front of a double quote passes through unchanged.
+    assert install_targets('echo "a\\\\" && npm i evil-pkg') == ["npm:evil-pkg"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "$(echo npm) i evil-pkg",
+        "`echo npm` i evil-pkg",
+        "N=npm; $N i evil-pkg",
+        "N=npm; ${N} i evil-pkg",
+        'N=npm\n"$N" i evil-pkg',
+        "{npm,} i evil-pkg",
+        'set -- npm i evil-pkg; "$@"',
+        "N=npm; sudo $N i evil-pkg",
+    ],
+)
+def test_a_command_name_the_shell_computes_asks_when_the_line_names_an_installer(command):
+    assert "a command SkillTotal could not read" in _ask_without_scan(command)
+
+
+@pytest.mark.parametrize(
+    "command",
+    ['"$(command -v python3)" -m py_compile x.py', "$CC -o app main.c", "${EDITOR:-vi} notes.md"],
+)
+def test_a_computed_command_name_stays_silent_when_nothing_names_an_installer(command):
+    from skilltotal.agent_hook import parse_installs
+
+    assert parse_installs(command) == []
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("bash -c -- 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("bash -c -x 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("bash -co pipefail 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("fish --command='npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("fish --command 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("eval -- 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("trap 'npm i evil-pkg' EXIT", ["npm:evil-pkg"]),
+        ("trap -- 'npm i evil-pkg' EXIT", ["npm:evil-pkg"]),
+        ("bash /dev/stdin <<< 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("sh /dev/fd/0 <<< 'npm i evil-pkg'", ["npm:evil-pkg"]),
+        ("shopt -s expand_aliases\nalias n=npm\nn i evil-pkg", ["npm:evil-pkg"]),
+        ("shopt -s expand_aliases\nalias n='npm i'\nn evil-pkg", ["npm:evil-pkg"]),
+        ("alias n=npm m='n i'\nm evil-pkg", ["npm:evil-pkg"]),
+    ],
+)
+def test_more_ways_bash_runs_a_command_line_are_read(command, expected):
+    assert install_targets(command) == expected
+
+
+@pytest.mark.parametrize(
+    ("shell", "command", "expected"),
+    [
+        ("powershell", "Set-Alias n npm; n i evil-pkg", ["npm:evil-pkg"]),
+        ("powershell", "sal -Name n -Value npm; n i evil-pkg", ["npm:evil-pkg"]),
+        ("powershell", "New-Alias n npx\nn evil-pkg", ["npm:evil-pkg"]),
+    ],
+)
+def test_a_powershell_alias_is_read_as_the_command_it_names(shell, command, expected):
+    assert install_targets(command, shell=shell) == expected
+
+
+@pytest.mark.parametrize(
+    ("shell", "command"),
+    [
+        ("bash", "source <(echo 'npm i evil-pkg')"),
+        ("bash", ". <(echo npm i evil-pkg)"),
+        ("bash", "bash <(echo 'npm i evil-pkg')"),
+        ("bash", "a=npm_config_; export ${a}registry=https://r.example.invalid; npm i evil-pkg"),
+        ("powershell", "function n { npm @args }; n i evil-pkg"),
+        ("powershell", "$n = 'npm'; & $n i evil-pkg"),
+        # A subcommand the shell fills in: `npm $C x` runs `npm install x`.
+        ("bash", "C=install; npm $C evil-pkg"),
+        ("bash", 'set -- i evil-pkg; npm "$@"'),
+        ("bash", "C=install; pip $C evil-pkg"),
+        ("bash", "M=pip; python -m $M install evil-pkg"),
+        ("bash", "C=add; uv $C evil-pkg"),
+        ("bash", "C=install; pipx $C evil-pkg"),
+    ],
+)
+def test_text_run_from_a_file_or_name_the_shell_computes_asks(shell, command):
+    assert "can't check" in _ask_without_scan(command, shell)
+
+
+@pytest.mark.parametrize(
+    ("shell", "command", "expected"),
+    [
+        # `>` and `<` end a word wherever they stand: npm gets `evil-pkg`, the shell the redirect.
+        ("bash", "npm i evil-pkg>/dev/null", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg>log 2>&1", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg</dev/null", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg>>log", ["npm:evil-pkg"]),
+        ("bash", "npm i evil-pkg&>log", ["npm:evil-pkg"]),
+        ("bash", "npm i x2>/dev/null", ["npm:x2"]),
+        # PowerShell 5.1 keeps it in a bare word (npm then rejects the name); taking the name
+        # in front of it costs at most a check.
+        ("powershell", "npm i evil-pkg>$null", ["npm:evil-pkg"]),
+        ("cmd", "npm i evil-pkg>nul 2>&1", ["npm:evil-pkg"]),
+        # A quoted `>` is part of the word.
+        ("bash", "pip install 'evil-pkg>=1.0'", ["pypi:evil-pkg"]),
+    ],
+)
+def test_a_redirection_glued_to_a_package_name_is_not_part_of_it(shell, command, expected):
+    assert install_targets(command, shell=shell) == expected
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Bash reads `{` and `}` as a group only where a command starts; elsewhere they are words.
+        "npm i { evil-pkg",
+        "npm i evil-pkg }",
+    ],
+)
+def test_a_brace_where_no_command_starts_is_an_argument(command):
+    found = parse_installs_for(command)
+    assert "npm:evil-pkg" in {i.source for i in found} or any(i.source is None for i in found)
+    assert any(i.source is None for i in found)  # npm gets a `{` or `}`: asked, not passed
+
+
+def parse_installs_for(command):
+    from skilltotal.agent_hook import parse_installs
+
+    return parse_installs(command)

@@ -73,6 +73,13 @@ _INSTALL_WORDS = re.compile(
 )
 # A word the shell fills in when it runs: a variable, a substitution, a brace expansion.
 _COMPUTED = re.compile(r"[$`{}]")
+_COMPUTED_HEAD = {"bash": _COMPUTED, "powershell": _COMPUTED, "cmd": re.compile(r"[%!]")}
+# An installer named anywhere, verb or not: what a command name the shell computes can turn into.
+_INSTALLER_NAME = re.compile(
+    r"(?<![\w.-])(?:npx|bunx|pnpx|uvx|pipx|npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv"
+    r"|corepack)(?![\w.-])",
+    re.IGNORECASE,
+)
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # A file path a reason may quote: no whitespace or punctuation a sentence needs (see guard).
 _PLAIN_PATH = PLAIN_PATH
@@ -121,6 +128,11 @@ _SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish"}
 # PowerShell: wrappers that take the command line as a string, and the ones that start a program.
 _PS_EVAL = {"iex", "invoke-expression"}
 _PS_START = {"start-process", "saps", "start"}
+# PowerShell takes an en dash, em dash or horizontal bar for the dash of a parameter.
+_PS_DASHES = "-–—―"
+# Names the npm and Python registry variables are built from, for a name the shell computes.
+_NPM_ENV_PREFIX = re.compile(r"npm_config_|yarn_|bun_config_", re.IGNORECASE)
+_PY_ENV_PREFIX = re.compile(r"pip_|uv_|pdm_|pipenv_", re.IGNORECASE)
 # PowerShell that runs a string as code: not read here.
 _PS_DYNAMIC = re.compile(r"\[scriptblock\]\s*::\s*create|\.invokescript\s*\(|\.newscriptblock\s*\(",
                          re.IGNORECASE)
@@ -197,8 +209,21 @@ def parse_installs(command: str, shell: str = "bash", _depth: int = 0) -> list[I
     """Everything an install command would bring in, scannable or not.
 
     ``shell`` is how the command line is quoted: ``bash`` (POSIX), ``powershell`` or ``cmd``.
+
+    Claude Code on Windows hands a Bash command to Git Bash through the Windows command line,
+    whose parser halves every run of backslashes that is not followed by a double quote: there
+    `echo 'a\\b'` prints `a\b`, and `npm i ev\\il` installs `evil`. Both readings are checked.
     """
-    return _parse(command, shell, _depth, _Level(_Context(command)))
+    found = _parse(command, shell, _depth, _Level(_Context(command)))
+    if shell == "bash" and "\\\\" in command:
+        halved = _BACKSLASH_RUN.sub(
+            lambda m: m.group() if command.startswith('"', m.end())
+            else "\\" * ((len(m.group()) + 1) // 2), command)
+        found = list(dict.fromkeys(found + _parse(halved, shell, _depth, _Level(_Context(halved)))))
+    return found
+
+
+_BACKSLASH_RUN = re.compile(r"\\+")
 
 
 @dataclass
@@ -206,13 +231,16 @@ class _Context:
     """The command line the hook was given, shared by every reading of the text inside it."""
 
     root: str
-    _root_installs: bool | None = None
 
+    @functools.cached_property
     def root_installs(self) -> bool:
-        """Whether the whole command line names an installer anywhere (worked out once)."""
-        if self._root_installs is None:
-            self._root_installs = bool(_INSTALL_WORDS.search(self.root))
-        return self._root_installs
+        """Whether the whole command line names an installer and a verb anywhere."""
+        return bool(_INSTALL_WORDS.search(self.root))
+
+    @functools.cached_property
+    def root_names_installer(self) -> bool:
+        """Whether the whole command line names an installer anywhere (`N=npm; $N i x`)."""
+        return bool(_INSTALLER_NAME.search(self.root))
 
 
 @dataclass(frozen=True)
@@ -247,11 +275,19 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
     # A command substitution runs too: `echo $(npm install x)` installs x.
     for sub in lexed.subs:
         found.update(dict.fromkeys(_parse(sub, shell, depth + 1, level)))
+    aliases: dict[str, list[str]] = {}
     for pipeline in lexed.pipelines:
         output: tuple[str, bool] | None = None  # what the previous command writes into this one
         for position, stage in enumerate(pipeline, 1):
             seen.extend(stage.words)
-            words, strings = _redirects(stage.words)
+            words, strings = _redirects(_expand_aliases(stage.words, aliases, shell))
+            if _sets_computed_name(words):
+                # `a=npm_config_; export ${a}registry=...`: a variable name built from parts the
+                # line holds counts as the registry variable those parts could spell.
+                if _NPM_ENV_PREFIX.search(level.ctx.root):
+                    seen.append("npm_config_registry")
+                if _PY_ENV_PREFIX.search(level.ctx.root):
+                    seen.append("pip_index_url")
             feed = [(body, True) for body in (*stage.bodies, *strings)]
             if output is not None:
                 feed.append(output)
@@ -259,6 +295,66 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
             if position < len(pipeline):
                 output = _output_of(words, feed, "".join(stage.text), shell)
     return _registry_from_env(list(found), seen)
+
+
+def _expand_aliases(words: list[str], aliases: dict[str, list[str]], shell: str) -> list[str]:
+    """Record an alias a command defines, and expand one a command starts with: bash's
+    ``alias n='npm i'``, PowerShell's ``Set-Alias n npm``. An alias stands for its text from the
+    command that defines it on, whether or not the shell would already have read the line."""
+    if not words:
+        return words
+    head = words[0].lower() if shell == "powershell" else words[0]
+    if shell == "bash" and head == "alias":
+        for arg in words[1:]:
+            name, eq, value = arg.partition("=")
+            if eq and name:
+                aliases[name] = _words(value, "bash") or value.split()
+    elif shell == "powershell" and head in ("set-alias", "sal", "new-alias", "nal"):
+        named, positional = _ps_named(words[1:], ("name", "value"))
+        name = named.get("name") or (positional[0] if positional else "")
+        value = named.get("value") or (positional[1] if len(positional) > 1 else "")
+        if name and value:
+            aliases[name.lower()] = [value]
+    key = words[0].lower() if shell == "powershell" else words[0]
+    expanded: set[str] = set()
+    while key in aliases and key not in expanded:  # an alias may name another alias
+        expanded.add(key)
+        words = aliases[key] + words[1:]
+        if not words:
+            break
+        key = words[0].lower() if shell == "powershell" else words[0]
+    return words
+
+
+def _ps_named(args: list[str], names: tuple[str, ...]) -> tuple[dict[str, str], list[str]]:
+    """PowerShell parameters given by name (any unambiguous prefix, any dash), and the rest."""
+    named: dict[str, str] = {}
+    positional: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg[:1] in _PS_DASHES and len(arg) > 1:
+            flag = arg[1:].lower()
+            key = next((n for n in names if n.startswith(flag)), None)
+            if key and i + 1 < len(args):
+                named.setdefault(key, args[i + 1])
+                i += 2
+                continue
+            i += 1
+            continue
+        positional.append(arg)
+        i += 1
+    return named, positional
+
+
+# Commands that set variables, and whether one of the names is computed: `export ${a}x=1`.
+_SETTERS = frozenset({"export", "declare", "typeset", "local", "readonly"})
+
+
+def _sets_computed_name(words: list[str]) -> bool:
+    if not words or words[0] not in _SETTERS:
+        return False
+    return any(_COMPUTED.search(arg.partition("=")[0]) for arg in words[1:] if "=" in arg)
 
 
 def _registry_from_env(found: list[Install], words: list[str]) -> list[Install]:
@@ -307,7 +403,7 @@ def _unseen(text: str, shell: str, level: _Level) -> list[Install]:
     the substitution, or the line, names an installer."""
     if _SUB in text and level.subs_install:
         return [_NOT_READ]
-    if _VARIABLE[shell].search(text.replace(_SUB, "")) and level.ctx.root_installs():
+    if _VARIABLE[shell].search(text.replace(_SUB, "")) and level.ctx.root_installs:
         return [_NOT_READ]
     return []
 
@@ -355,6 +451,8 @@ _ESCAPE = {"bash": "\\", "powershell": "`", "cmd": "^"}
 _PS_SINGLE = "'‘’‚‛"
 _PS_DOUBLE = '"“”„'
 _PS_SINGLE_RE = re.compile(f"[{_PS_SINGLE}]")
+# A PowerShell splat: `@name` as a whole word.
+_PS_SPLAT = re.compile(r"@\w+(?=$|[\s;|&(){}])")
 # What a backtick escape stands for inside a PowerShell double-quoted string.
 _PS_ESCAPES = {"0": "\0", "a": "\a", "b": "\b", "e": "\x1b", "f": "\f", "n": "\n", "r": "\r",
                "t": "\t", "v": "\v"}
@@ -370,6 +468,9 @@ _DOUBLE_SPECIAL = {
     "powershell": re.compile(f'[`$"{_PS_DOUBLE[1:]}]'),
     "cmd": re.compile(r'"'),
 }
+# What a word holds when a `<` or `>` continues it as a redirection (`2>`, `>>`, PowerShell's
+# `*>`) rather than ends it.
+_REDIRECT_START = re.compile(r"(?:[0-9]*|\*)[<>&|]*")
 # What ends a here-document's delimiter word.
 _WORD_END = frozenset(" \t\n;&|()<>")
 _ANSI_SIMPLE = {"a": "\a", "b": "\b", "e": "\x1b", "E": "\x1b", "f": "\f", "n": "\n", "r": "\r",
@@ -513,6 +614,11 @@ class _Lexer:
                 i = self._substitution(i + 2, nest, top)
                 put(_SUB)
                 continue
+            splat = _PS_SPLAT.match(s, i) if sh == "powershell" and not in_word else None
+            if splat:  # `npm @args`: a list the shell fills in (`@types/node` is a name)
+                put(splat.group(), "$" + splat.group()[1:])
+                i = splat.end()
+                continue
             if sh == "powershell" and c == "$" and nx == "{":
                 end = s.find("}", i + 2)  # `${env:x}`, a variable with a braced name
                 if end < 0:
@@ -558,6 +664,8 @@ class _Lexer:
                     cut(False)
                     i += 2
                 elif last in ("<", ">") or (sh == "bash" and nx == ">"):
+                    if nx == ">" and in_word:
+                        end_word()  # `x&>log`: the word ends where the redirection starts
                     put(c)  # `2>&1`, `&> log`: a redirection
                     i += 1
                 else:
@@ -582,11 +690,13 @@ class _Lexer:
                     parens += 1 if c == "(" else -1
                 i += 1
                 continue
-            if c in "{}" and not in_word and self._group(i):
+            if c in "{}" and not in_word and self._group(i, not stage.words):
                 if top:
                     cut(False)
                 i += 1
                 continue
+            if c in "<>" and in_word and not _REDIRECT_START.fullmatch("".join(word)):
+                end_word()  # `x>log`: a redirection ends the word it is glued to
             put(c)
             i += 1
         if not top:
@@ -594,12 +704,13 @@ class _Lexer:
         cut(False)
         return n
 
-    def _group(self, i: int) -> bool:
+    def _group(self, i: int, command_start: bool) -> bool:
         """A brace that opens or closes a group of commands (`{ npm i x; }`, a PowerShell script
-        block), as opposed to one inside a word (`{a,b}`, `find -exec ... {}`)."""
+        block), as opposed to an argument (`npm i x }`) or part of a word (`{a,b}`, `{}`). Bash
+        reads one as a group only where a command starts."""
         if self.shell == "powershell":
             return True
-        if self.shell != "bash":
+        if self.shell != "bash" or not command_start:
             return False
         nx = self.s[i + 1:i + 2]
         if self.s[i] == "{":
@@ -1046,10 +1157,18 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return []  # a cmd comment
 
     feed = feed or []
+    if _COMPUTED_HEAD[shell].search(tokens[0]):
+        # `N=npm; $N i x`, `$(echo npm) i x`, `{npm,} i x`: the shell decides what runs.
+        return [_NOT_READ] if level.ctx.root_names_installer else []
     if head in _SHELLS or head in ("cmd", "powershell", "pwsh"):
         return _shell(head, rest, shell, depth, level, feed)
-    if head == "eval" and shell == "bash":
-        return _run(" ".join(rest), "bash", depth, level)
+    if shell == "bash" and head == "eval":
+        return _run(" ".join(rest[1:] if rest[:1] == ["--"] else rest), "bash", depth, level)
+    if shell == "bash" and head == "trap":
+        action = next((a for a in rest if a not in ("--", "-l", "-p")), None)
+        return _run(action, "bash", depth, level) if action else []
+    if shell == "bash" and head in ("source", "."):
+        return _unseen(" ".join(rest), shell, level)  # a file: computed (`<(...)`) or on disk
     if shell == "powershell" and head in _PS_EVAL:
         args = [a for a in rest if a.lower() != "-command"]
         if args:
@@ -1078,6 +1197,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _node_manager(head, rest, shell, depth, level)
     if _PIP_HEAD.fullmatch(head):
         sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
+        if _COMPUTED.search(sub or ""):
+            return [_NOT_READ]  # `pip $C x`: the subcommand is filled in when the line runs
         return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
     if _PYTHON_HEAD.fullmatch(head):
         return _python_module(rest, shell, depth, level, feed)
@@ -1096,8 +1217,9 @@ def _shell(head: str, rest: list[str], shell: str, depth: int, level: _Level,
     inner = _inner_command(head, rest, shell)
     if inner is not None:
         return _run(inner[0], inner[1], depth, level)
-    if not _reads_stdin(head, rest):
-        return []
+    script = _script(head, rest)
+    if script is not None:
+        return _unseen(script, shell, level)  # a file: on disk, or computed (`bash <(...)`)
     flavor = {"cmd": "cmd", "powershell": "powershell", "pwsh": "powershell"}.get(head, "bash")
     return _from_stdin(feed, flavor, depth, level)
 
@@ -1161,27 +1283,29 @@ def _interpreter(head: str, rest: list[str], feed: list[tuple[str, bool]]) -> li
     return _net(*codes, *(text for text, _ in feed))
 
 
-def _reads_stdin(head: str, rest: list[str]) -> bool:
-    """Whether a shell started this way runs the script on its stdin: no script file named, or
-    ``-``, or ``-s``."""
+def _script(head: str, rest: list[str]) -> str | None:
+    """The script file a shell started this way runs, or None when it runs its stdin (no script
+    named, ``-``, ``-s``, ``/dev/stdin``)."""
     if head == "cmd":
-        return not any(a.lower() in ("/c", "/k") for a in rest)
+        return None
     if head in ("powershell", "pwsh"):
-        return "-" in rest
+        if "-" in rest:
+            return None
+        named, _ = _ps_named(rest, ("file",))
+        return named.get("file")
     i = 0
     while i < len(rest):
         arg = rest[i]
-        if arg in ("-", "-s") or (arg.startswith("-") and not arg.startswith("--")
-                                  and "s" in arg[1:]):
-            return True
+        if arg in ("-", "/dev/stdin", "/dev/fd/0") or (
+                arg.startswith("-") and not arg.startswith("--") and "s" in arg[1:]):
+            return None
         if arg in ("-o", "+o", "-O", "+O", "--rcfile", "--init-file"):
             i += 2
         elif arg.startswith(("-", "+")):
             i += 1
         else:
-            return False  # a script file: it runs that, not its stdin
-    return True
-
+            return arg
+    return None
 
 def _launched(args: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     """Everything a command that starts another program could run, read from every place that
@@ -1259,10 +1383,8 @@ def _inner_command(head: str, rest: list[str], shell: str) -> tuple[str, str] | 
     """The command string another shell would run, and how it is quoted: ``bash -lc '...'``,
     ``cmd /c ...``, ``pwsh -c ...``, ``powershell -EncodedCommand ...``."""
     if head in _SHELLS:
-        for i, arg in enumerate(rest):
-            if arg.startswith("-") and not arg.startswith("--") and "c" in arg[1:]:
-                return (rest[i + 1], "bash") if i + 1 < len(rest) else None
-        return None
+        text = _shell_command_string(rest)
+        return (text, "bash") if text is not None else None
     if head == "cmd":
         for i, arg in enumerate(rest):
             if arg.lower() in ("/c", "/k"):
@@ -1279,6 +1401,33 @@ def _inner_command(head: str, rest: list[str], shell: str) -> tuple[str, str] | 
                 return (decoded, "powershell") if decoded else None
         return None
     return None
+
+
+def _shell_command_string(rest: list[str]) -> str | None:
+    """What ``bash -c`` runs: the first argument after all of the shell's options, wherever
+    ``-c`` sits among them (``bash -c -x 'cmd'``, ``bash -c -- 'cmd'``, ``bash -co pipefail
+    'cmd'``); fish's ``--command``."""
+    command = False
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg.startswith("--command"):
+            _, eq, value = arg.partition("=")
+            return value if eq else (rest[i + 1] if i + 1 < len(rest) else None)
+        if arg == "--":
+            i += 1
+            break
+        if arg in ("--rcfile", "--init-file"):
+            i += 2
+        elif arg.startswith("--"):
+            i += 1
+        elif arg[:1] in "-+" and len(arg) > 1:
+            letters = arg[1:]
+            command = command or (arg[0] == "-" and "c" in letters)
+            i += 2 if ("o" in letters or "O" in letters) else 1
+        else:
+            break
+    return rest[i] if command and i < len(rest) else None
 
 
 def _decode_ps(value: str) -> str | None:
@@ -1354,6 +1503,8 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
     sub, args = _subcommand(rest, takes)
     if head == "yarn" and sub == "global":
         sub, args = _subcommand(args, takes)
+    if _COMPUTED.search(sub or ""):
+        return [_NOT_READ]  # `npm $C x`, PowerShell's `npm @args`: filled in when the line runs
     registry = _npm_source(rest, head)
     if head == "pnpm" and sub == "exec":
         return _launched(args, shell, depth, level)  # runs a command; fetches nothing itself
@@ -1705,6 +1856,8 @@ def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
                         i += 1
                         value = rest[i] if i < len(rest) else ""
                     if letter == "m":
+                        if _COMPUTED.search(value):
+                            return [_NOT_READ] if level.ctx.root_names_installer else []
                         return _python_m(_base(value), rest[i + 1:], shell, depth, level)
                     if letter == "c":
                         return _net(value)
@@ -1730,6 +1883,8 @@ def _python_m(module: str, args: list[str], shell: str, depth: int,
 def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     index = _py_source(rest, "uv")
     sub, args = _subcommand(rest, _UV_VALUE_FLAGS)
+    if _COMPUTED.search(sub or ""):
+        return [_NOT_READ]
     if sub == "add":
         return _pip_install(args, "uv", index)
     if sub == "pip":
@@ -1810,6 +1965,8 @@ def _positionals(args: list[str], value_flags: set[str]) -> list[str]:
 def _pipx(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     """``pipx install a b``, ``pipx run [--spec pkg] app args``, ``pipx inject venv a b``."""
     sub, args = _subcommand(rest, _PIPX_VALUE_FLAGS)
+    if _COMPUTED.search(sub or ""):
+        return [_NOT_READ]
     index = _py_source(args, "pip") or _pip_args_source(args)
     spec = _flag_value(args, {"--spec"})
     names = _positionals(args, _PIPX_VALUE_FLAGS)
