@@ -47,7 +47,9 @@ secrets.json
 # SkillTotal output artifacts
 report.json
 *.sarif
-skilltotal.json    # the GitHub Action writes this into the workspace it scans
+# The GitHub Action writes this into the root of the workspace it scans. (A comment on the
+# pattern's own line is part of the pattern in .gitignore: this rule once matched nothing.)
+/skilltotal.json
 
 # Real-world evaluation corpus (cloned third-party repos; reproduce via fetch_corpus.py)
 tests/manual_eval/corpus/

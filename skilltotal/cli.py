@@ -33,7 +33,8 @@ Commands:
 Exit codes:
     0  success
     1  usage / collection error
-    2  a configured gate tripped (scan --fail-on* / diff --fail-on-new)
+    2  a configured gate tripped (scan --fail-on* / diff --fail-on-new), or guard blocked the
+       component
 """
 
 from __future__ import annotations
@@ -112,13 +113,19 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on-high",
         action="store_true",
-        help="Exit with code 2 if any finding is high or critical (alias for --fail-on high).",
+        help=(
+            "Exit with code 2 on a high or critical finding (alias for --fail-on high). "
+            "Malicious indicators trip it at any severity; capabilities never do."
+        ),
     )
     scan.add_argument(
         "--fail-on",
         metavar="LEVEL",
         choices=["low", "medium", "high", "critical"],
-        help="Exit with code 2 if any finding is at or above LEVEL severity.",
+        help=(
+            "Exit with code 2 on a finding at or above LEVEL severity. Malicious indicators "
+            "trip it at any severity; capabilities (what a component can do) never do."
+        ),
     )
     scan.add_argument(
         "--fail-on-score",
@@ -767,23 +774,30 @@ def _fails_gate(
 ) -> bool:
     """True if the report trips the configured CI gate (severity level and/or risk score).
 
+    The severity gate counts what the score counts as risk. A malicious indicator trips any
+    level (a prompt-injection hit is medium severity, and its verdict is still malicious); a
+    risky construct or a shipped secret trips at its severity; a capability, which is what a
+    component can do (run a shell, reach the network), never trips it on its own. Counting
+    capabilities failed CI for most honest tools: a shell call is high severity.
+
     Per-rule policy actions refine the severity gate: a `block` rule trips it whenever it
-    fires (even with no `fail_on` configured); a `warn` rule is exempt from the severity
-    threshold (explicit accept-but-show). The aggregate `fail_on_score` gate is unaffected —
-    warn findings still count toward the risk score.
+    fires (even with no `fail_on` configured, capabilities included: the way to forbid one);
+    a `warn` rule is exempt from the severity threshold (explicit accept-but-show). The
+    aggregate `fail_on_score` gate is unaffected — warn findings still count toward the
+    risk score.
     """
-    from skilltotal.models import Severity
+    from skilltotal.models import Severity, ThreatClass
 
     policy = policy or {}
     if any(policy.get(f.id) == "block" for f in report.findings):
         return True
     if level:
         threshold = Severity[level.upper()].rank
-        if any(
-            f.severity.rank >= threshold and policy.get(f.id) != "warn"
-            for f in report.findings
-        ):
-            return True
+        for f in report.findings:
+            if policy.get(f.id) == "warn" or f.threat_class is ThreatClass.CAPABILITY:
+                continue
+            if f.threat_class is ThreatClass.MALICIOUS_INDICATOR or f.severity.rank >= threshold:
+                return True
     if score is not None and report.risk_score >= score:
         return True
     return False

@@ -14,6 +14,9 @@ from skilltotal.config import load_config
 
 # A single high-severity capability finding (ST-DYN-PY) and nothing else.
 DYN_ONLY = "eval(user_input)\n"
+# A single high-severity risky construct (ST-DESERIALIZE-PY) and nothing else. The severity gate
+# counts risky constructs; a capability on its own never trips it (tests/test_fail_on_gate.py).
+PICKLE_ONLY = "import pickle\nobj = pickle.loads(blob)\n"
 
 
 def _component(tmp_path: Path, code: str = DYN_ONLY) -> Path:
@@ -68,7 +71,7 @@ def test_block_trips_gate_without_fail_on(tmp_path: Path, capsys):
 
 
 def test_warn_exempts_rule_from_severity_gate(tmp_path: Path, capsys):
-    root = _component(tmp_path)
+    root = _component(tmp_path, PICKLE_ONLY)
 
     # Control: the high-severity finding trips --fail-on high.
     code = main(["scan", str(root), "--fail-on", "high"])
@@ -76,11 +79,11 @@ def test_warn_exempts_rule_from_severity_gate(tmp_path: Path, capsys):
     assert code == EXIT_FAIL_ON_HIGH
 
     # With a warn policy the same finding is reported but no longer gates.
-    cfg = _config(tmp_path, '[policy]\n"ST-DYN-PY" = "warn"\n')
+    cfg = _config(tmp_path, '[policy]\n"ST-DESERIALIZE-PY" = "warn"\n')
     code = main(["scan", str(root), "--fail-on", "high", "--config", str(cfg), "--json"])
     out = capsys.readouterr().out
     assert code == EXIT_OK
-    assert "ST-DYN-PY" in {f["id"] for f in json.loads(out)["findings"]}
+    assert "ST-DESERIALIZE-PY" in {f["id"] for f in json.loads(out)["findings"]}
 
 
 def test_warn_does_not_shield_other_rules(tmp_path: Path, capsys):
@@ -90,7 +93,7 @@ def test_warn_does_not_shield_other_rules(tmp_path: Path, capsys):
     cfg = _config(tmp_path, '[policy]\n"ST-DYN-PY" = "warn"\n')
     code = main(["scan", str(root), "--fail-on", "high", "--config", str(cfg)])
     capsys.readouterr()
-    assert code == EXIT_FAIL_ON_HIGH  # ST-SHELL-PY (high) still gates
+    assert code == EXIT_FAIL_ON_HIGH  # ST-CMDI-PY (high, a risky construct) still gates
 
 
 def test_policy_ignore_suppresses_finding(tmp_path: Path, capsys):

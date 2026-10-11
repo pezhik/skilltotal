@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://www.skilltotal.ai/schemas/report-1.7.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.5 (1.4 + traits: a behavioral trait fingerprint with a CSA/MAESTRO/ATLAS crosswalk, descriptive only and never scored). Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.7 (1.6 + verdict.unanalyzed_code); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -51,6 +51,11 @@
         "reasons": { "type": "array", "items": { "type": "string" } },
         "malicious_indicators": { "type": "integer", "minimum": 0 },
         "risky_constructs": { "type": "integer", "minimum": 0 },
+        "exposed_secrets": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Findings of threat class exposure: shipped credentials, reported and never scored (added in 1.6)."
+        },
         "capabilities": { "type": "integer", "minimum": 0 },
         "unanalyzed_code": {
           "type": "object",

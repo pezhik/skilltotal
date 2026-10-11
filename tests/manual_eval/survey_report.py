@@ -186,11 +186,22 @@ def render_markdown(s: dict, meta: dict) -> str:
     # How many were scanned leads, not "every component": an eighth of the population could not
     # be scanned, and the coverage table below says why.
     as_of = f" as of {snapshot}" if rerun else ""
+    # A run that re-scanned part of the population with later rulesets finished on the date
+    # given, under several rulesets: one version in the lead would mislabel most of the rows.
+    used = sorted(int(rs) for rs in s.get("rulesets", {})) or [meta["ruleset"]]
+    if len(used) > 1:
+        when = "finished on"
+        versions = f"rulesets {used[0]}–{used[-1]}"
+        lead_versions = f", {versions} (see Method)"
+    else:
+        when = "scanned on" if rerun else "run on"
+        versions = f"ruleset {meta['ruleset']}"
+        lead_versions = f" ({versions})"
     add(
         f"A deterministic static scan of the public MCP registry{as_of}: "
         f"{s['scanned']:,} of its {s['population']:,} distinct components "
-        f"({pct(s['scanned'], s['population'])}), {'scanned' if rerun else 'run'} on "
-        f"{meta['generated']} with SkillTotal {meta['engine']} (ruleset {meta['ruleset']})."
+        f"({pct(s['scanned'], s['population'])}), {when} "
+        f"{meta['generated']} with SkillTotal {meta['engine']}{lead_versions}."
     )
     add("")
     add("## How to read this")
@@ -337,9 +348,10 @@ def render_markdown(s: dict, meta: dict) -> str:
     add("")
     add("## Method")
     add("")
-    add(f"- Engine {meta['engine']}, ruleset {meta['ruleset']} — deterministic regex and AST "
-        f"analysis. The component is never executed and no LLM is involved, so the run "
-        f"reproduces.")
+    add(f"- Engine {meta['engine']}, {versions} — deterministic regex and AST analysis. The "
+        f"component is never executed and no LLM is involved, so the same code through the "
+        f"same engine gives the same findings. The survey read each component's latest release "
+        f"or default branch when it ran, so a re-run reads newer code.")
     rulesets = s.get("rulesets", {})
     if len(rulesets) > 1:
         # Say which rows came from which ruleset rather than let one version label a mixed run.

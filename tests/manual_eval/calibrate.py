@@ -324,7 +324,7 @@ def main() -> None:
 
     # Compiling the scanned third-party Python emits SyntaxWarnings (invalid escapes in a
     # linter's test files, ...). They say nothing about the calibration and filled the progress
-    # file deploy.ps1 tails: 118 lines in the first half hour of the 0.62.0 run.
+    # file the release script tails: 118 lines in the first half hour of the 0.62.0 run.
     warnings.filterwarnings("ignore", category=SyntaxWarning)
     # Progress goes to stderr, flushed per row: stdout carries the markdown report, and a piped
     # stdout is block-buffered, so progress printed there would arrive in chunks.

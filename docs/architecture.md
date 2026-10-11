@@ -2,8 +2,8 @@
 
 ## Goals
 
-- **CLI-first**, but with a **reusable core engine** so the future web app and enterprise
-  SaaS can import the same analysis logic.
+- **CLI-first**, but with a **reusable core engine**: the website's scanner imports the same
+  analysis logic, and so can any other service.
 - **Component-only analysis**: no user/company/environment/deployment/runtime context.
 - **Evidence-backed**: every confirmed finding has a file/line/snippet anchor.
 - **Zero runtime dependencies** (Python standard library only).
@@ -87,9 +87,10 @@ Add a scanner by creating `skilltotal/scanners/<name>.py` with either a `Pattern
 `skilltotal/scanners/__init__.py`. Declaring each rule's `capability` automatically wires it
 into capability extraction and `rules list`.
 
-## Future web / SaaS reuse
+## Reuse as a library
 
-- Web: a request handler accepts an upload/URL, calls `collect` + `analyze_directory`, and
-  returns `report.to_dict()` as JSON.
-- SaaS gate: reuse `--fail-on-high` semantics (`Severity.rank`) inside an approval workflow.
+- A service accepts an upload or URL, calls `collect` + `analyze_directory`, and returns
+  `report.to_dict()` as JSON. The website's scanner works this way.
+- An approval workflow can reuse the install decision, `skilltotal.guard.evaluate(report,
+  block_on)`: malicious indicators always block, capabilities alone never do.
 - Nothing in the core reads global state, so it is safe to run concurrently per request.

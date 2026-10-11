@@ -11,7 +11,7 @@ engine invariant that every finding carries real file/line/snippet evidence.
 
 This is deterministic and dependency-free (stdlib ``unicodedata`` + a curated confusable table).
 It does NOT attempt semantic understanding, translation, or paraphrase detection — those need an
-LLM and live in the paid Deep Analysis layer, not here.
+LLM and belong to the paid SkillTotal Cloud service, not here.
 """
 
 from __future__ import annotations
