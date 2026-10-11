@@ -780,18 +780,25 @@ def _fails_gate(
     component can do (run a shell, reach the network), never trips it on its own. Counting
     capabilities failed CI for most honest tools: a shell call is high severity.
 
+    What the scan could not read fails the severity gate closed, as it does in `guard`: a script
+    that runs at install time and was not analyzed, or a component nothing of which was read.
+    Counting capabilities used to cover the first by accident (an install hook is a high
+    capability), so a dropper padded past the size limit failed CI; it must still.
+
     Per-rule policy actions refine the severity gate: a `block` rule trips it whenever it
     fires (even with no `fail_on` configured, capabilities included: the way to forbid one);
     a `warn` rule is exempt from the severity threshold (explicit accept-but-show). The
     aggregate `fail_on_score` gate is unaffected — warn findings still count toward the
     risk score.
     """
-    from skilltotal.models import Severity, ThreatClass
+    from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT, Severity, ThreatClass
 
     policy = policy or {}
     if any(policy.get(f.id) == "block" for f in report.findings):
         return True
     if level:
+        if any(n.title in (UNANALYZED_INSTALL_SCRIPT, NOTHING_READ) for n in report.needs_review):
+            return True
         threshold = Severity[level.upper()].rank
         for f in report.findings:
             if policy.get(f.id) == "warn" or f.threat_class is ThreatClass.CAPABILITY:

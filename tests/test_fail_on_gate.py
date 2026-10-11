@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from skilltotal.cli import EXIT_FAIL_ON_HIGH, EXIT_OK, main
+from skilltotal.file_index import MAX_FILE_BYTES
 
 # ST-DYN-PY: high severity, capability.
 CAPABILITY_ONLY = {"m.py": "eval(user_input)\n"}
@@ -67,3 +68,23 @@ def test_a_malicious_indicator_trips_every_level(tmp_path: Path, capsys):
     root = _component(tmp_path, INJECTION)
     for level in ("low", "medium", "high", "critical"):
         assert _scan(root, "--fail-on", level) == EXIT_FAIL_ON_HIGH, level
+
+
+def test_an_install_script_the_scan_could_not_read_fails_the_gate(tmp_path: Path, capsys):
+    # The install hook is a capability, which no longer trips the gate on its own, and its script
+    # was not read, so nothing in it was checked: a dropper padded past the size limit must still
+    # fail CI, as it did when capabilities counted.
+    root = _component(tmp_path, {
+        "package.json": '{"name": "x", "version": "1.0.0", '
+                        '"scripts": {"preinstall": "node install.js"}}',
+        "install.js": "//" + "x" * (MAX_FILE_BYTES + 10),
+    })
+    assert _scan(root, "--fail-on", "critical") == EXIT_FAIL_ON_HIGH
+    assert _scan(root) == EXIT_OK  # no gate configured, nothing fails
+
+
+def test_a_component_nothing_could_be_read_from_fails_the_gate(tmp_path: Path, capsys):
+    root = tmp_path / "component"
+    root.mkdir()
+    (root / "server.exe").write_bytes(b"MZ\x90\x00" + bytes(64))
+    assert _scan(str(root), "--fail-on", "critical") == EXIT_FAIL_ON_HIGH

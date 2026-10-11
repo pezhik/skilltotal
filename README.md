@@ -332,8 +332,10 @@ directory you are scanning: a `json.py` there would run in place of the standard
 > not the aggregate `risk_score`, and count what is risk: a malicious indicator at any severity, a
 > risky construct or a shipped secret at its own. A *capability*, such as shell or network access,
 > is what a component can do: it is reported but never trips the gate on its own (to forbid one,
-> give its rule a `block` policy). A component can therefore report `risk_level: low` and still
-> fail the gate on one high-severity risky construct. To gate on the score instead, use
+> give its rule a `block` policy). What the scan could not read fails it closed: an install script
+> it could not analyze, or a component nothing of which was read. A component can therefore report
+> `risk_level: low` and still fail the gate on one high-severity risky construct. To gate on the
+> score instead, use
 > `--fail-on-score`; to accept known findings, use a baseline, an inline
 > `# skilltotal:ignore[ST-ID]`, or a per-rule `[policy]` action (`block` / `warn` / `ignore`).
 
