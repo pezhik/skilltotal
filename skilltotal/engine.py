@@ -8,14 +8,13 @@ expected to import :func:`analyze_directory` (pure, no process I/O) directly; th
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__
+from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__, bounded_json
 from skilltotal.agent_skill import skill_capability_mismatch
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
@@ -323,8 +322,8 @@ def _install_script_files(root: Path) -> dict[str, str]:
     if not is_regular_file(manifest):
         return {}
     try:
-        data = json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError, RecursionError):
+        data = bounded_json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
         return {}
     scripts = data.get("scripts") if isinstance(data, dict) else None
     if not isinstance(scripts, dict):
@@ -415,9 +414,9 @@ def _module_file(base: Path, start: Path, spec: str) -> Path | None:
     if path.is_dir():
         manifest = path / "package.json"
         try:
-            main = (json.loads(manifest.read_text(encoding="utf-8")).get("main")
+            main = (bounded_json.loads(manifest.read_text(encoding="utf-8")).get("main")
                     if is_regular_file(manifest) else None)
-        except (OSError, ValueError, AttributeError, RecursionError):
+        except (OSError, ValueError, AttributeError):
             main = None
         if isinstance(main, str) and main:
             entry = path / main

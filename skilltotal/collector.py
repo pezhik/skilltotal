@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import io
-import json
 import os
 import re
 import shutil
@@ -28,6 +27,7 @@ from pathlib import Path
 from typing import NamedTuple
 from urllib.parse import quote, urlparse
 
+from skilltotal import bounded_json
 from skilltotal.file_index import MAX_FILE_BYTES
 
 try:  # Python 3.11+
@@ -465,7 +465,7 @@ def _github_api(url: str) -> dict | None:
             headers={"User-Agent": "skilltotal-scanner", "Accept": "application/vnd.github+json"},
         )
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
-            data = json.loads(resp.read(_MAX_ARCHIVE_BYTES + 1))
+            data = bounded_json.loads(resp.read(_MAX_ARCHIVE_BYTES + 1))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) else None
@@ -994,7 +994,8 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
                 return Release(f"npm:{name}@{pin}")
             url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest')}"
             with _open(url, timeout=timeout) as resp:
-                version = str(json.loads(resp.read(8 * 1024 * 1024)).get("version") or "")
+                version = str(bounded_json.loads(resp.read(8 * 1024 * 1024)).get("version")
+                              or "")
             if not _EXACT_NPM_VERSION_RE.match(version):
                 return None
             return Release(f"npm:{name}@{version}")
@@ -1005,7 +1006,7 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
             url = f"https://pypi.org/pypi/{name}/{quote(pin)}/json" if pin else (
                 f"https://pypi.org/pypi/{name}/json")
             with _open(url, timeout=timeout) as resp:
-                meta = json.loads(resp.read(_MAX_ARCHIVE_BYTES))
+                meta = bounded_json.loads(resp.read(_MAX_ARCHIVE_BYTES))
             version = str((meta.get("info") or {}).get("version") or "")
             urls = meta.get("urls") or []
             chosen = _pick_distribution(urls)
@@ -1024,8 +1025,8 @@ def _registry_json(url: str) -> dict:
     """A registry document as a JSON object; anything else is a CollectionError, not a traceback."""
     data = _http_get(url)
     try:
-        doc = json.loads(data)
-    except (ValueError, RecursionError) as exc:
+        doc = bounded_json.loads(data)
+    except ValueError as exc:
         raise CollectionError(f"unexpected response from {url}") from exc
     if not isinstance(doc, dict):
         raise CollectionError(f"unexpected response from {url}")
@@ -1050,8 +1051,8 @@ def _npm_release(name: str, pin: str | None) -> tuple[str, str] | None:
             return None  # the registry answered: no such version or tag here
         raise
     try:
-        manifest = json.loads(data)
-    except (ValueError, RecursionError):
+        manifest = bounded_json.loads(data)
+    except ValueError:
         return None
     if not isinstance(manifest, dict):
         return None
@@ -1180,8 +1181,8 @@ def detect_component(root: Path, source: str, default_name: str | None = None) -
 
 def _read_package_json(path: Path) -> dict[str, str]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError, RecursionError):  # RecursionError: nested deeper than json allows
+        data = bounded_json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
         return {}
     if not isinstance(data, dict):
         return {}

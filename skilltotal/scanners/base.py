@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
+from skilltotal.bounded_json import MAX_DEPTH
 from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.text_normalize import original_span
@@ -154,6 +155,20 @@ def aggregated_review(
         reason=f"{count} {what}: {shown}.{tests} {advice}",
         file=places[0][0],
         line=places[0][1],
+    )
+
+
+def deep_json_review(category: str, file: str) -> NeedsReview:
+    """A note that part of a JSON file, nested past bounded_json.MAX_DEPTH, was not analyzed."""
+    return NeedsReview(
+        category=category,
+        title="Deeply nested JSON partly analyzed",
+        reason=(
+            f"Values nested deeper than {MAX_DEPTH} levels were read as empty and not analyzed; "
+            "the rest of the file was. Nothing an agent or a client configures sits that deep."
+        ),
+        file=file,
+        line=None,
     )
 
 

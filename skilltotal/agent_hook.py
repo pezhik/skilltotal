@@ -30,7 +30,6 @@ from __future__ import annotations
 import base64
 import binascii
 import functools
-import json
 import os
 import re
 import time
@@ -39,6 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from skilltotal import bounded_json
 from skilltotal.guard import PLAIN_PATH, evaluate, unanalyzed_install_scripts
 
 # How many packages one command gets checked; the person is asked about the rest.
@@ -1619,9 +1619,7 @@ def _add_json(args: list[str], shell: str, depth: int, level: _Level) -> list[In
         if not word.lstrip().startswith("{"):
             continue
         try:
-            config = json.loads(word)
-        except RecursionError:
-            return unreadable  # nested past what this Python reads; `claude` may still read it
+            config = bounded_json.loads(word)  # the same on every Python, however deep
         except ValueError:
             continue
         if not isinstance(config, dict):

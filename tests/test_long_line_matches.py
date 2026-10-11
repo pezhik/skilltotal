@@ -39,7 +39,7 @@ def test_many_matches_on_one_long_line_scan_in_linear_time(tmp_path, kind):
 
 def test_a_snippet_from_a_long_line_is_unchanged(tmp_path):
     # Only the shown part of the line is rendered now; what is shown must not change.
-    hidden = "‮"  # a bidi override, rendered as <U+202E>
+    hidden = chr(0x202E)  # a bidi override, rendered as <U+202E>
     line = "a" * 50 + hidden + "b" * (MAX_SNIPPET_CHARS * 3)
     (tmp_path / "x.md").write_text(line + "\n", encoding="utf-8")
     f = FileIndex.build(tmp_path).files[0]

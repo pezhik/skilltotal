@@ -9,9 +9,9 @@ manifest source.
 
 from __future__ import annotations
 
-import json
 import re
 
+from skilltotal import bounded_json
 from skilltotal.file_index import FileIndex, IndexedFile, is_doc_path, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
@@ -20,6 +20,7 @@ from skilltotal.scanners.base import (
     Scanner,
     ScanResult,
     alternation,
+    deep_json_review,
 )
 from skilltotal.text_normalize import normalize_with_map, original_span
 
@@ -460,11 +461,13 @@ class McpScanner(Scanner):
                 is_manifest_name or "mcpServers" in f.text or '"tools"' in f.text
             )
             try:
-                data = json.loads(f.text)
-            except (json.JSONDecodeError, ValueError, RecursionError) as exc:
+                data, cut = bounded_json.loads_cut(f.text)
+            except ValueError as exc:
                 if looks_like_manifest:
                     needs_review.append(_unparseable_manifest(f, exc))
                 continue
+            if cut and looks_like_manifest:
+                needs_review.append(deep_json_review(CATEGORY, f.relpath))
 
             try:
                 self._analyze_json(
@@ -735,8 +738,8 @@ class McpScanner(Scanner):
             if f.relpath.count("/") > 1:
                 continue
             try:
-                data = json.loads(f.text)
-            except (json.JSONDecodeError, ValueError, RecursionError):
+                data = bounded_json.loads(f.text)
+            except ValueError:
                 continue
             if isinstance(data, dict) and isinstance(data.get("mcpName"), str):
                 return NeedsReview(
@@ -825,11 +828,7 @@ class McpScanner(Scanner):
 
 def _unparseable_manifest(f: IndexedFile, exc: Exception) -> NeedsReview:
     """A file that looks like an MCP manifest but could not be analyzed as JSON."""
-    reason = (
-        "File resembles an MCP manifest but is nested too deeply to parse."
-        if isinstance(exc, RecursionError)
-        else "File resembles an MCP manifest but is not valid JSON."
-    )
+    reason = "File resembles an MCP manifest but is not valid JSON."
     return NeedsReview(
         category=CATEGORY,
         title="Unparseable potential MCP manifest",

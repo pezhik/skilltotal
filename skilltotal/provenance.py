@@ -15,11 +15,11 @@ Only registry sources (``npm:`` / ``pypi:``) have provenance; other sources yiel
 
 from __future__ import annotations
 
-import json
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
+from skilltotal import bounded_json
 from skilltotal.collector import npm_package_spec, pypi_package_spec
 from skilltotal.models import NeedsReview
 
@@ -173,7 +173,7 @@ def _fetch(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "skilltotal-scanner"})
     try:
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
-            data = json.loads(resp.read(_MAX_METADATA_BYTES))
+            data = bounded_json.loads(resp.read(_MAX_METADATA_BYTES))
     except (OSError, ValueError) as exc:
         raise ProvenanceError(f"cannot fetch registry metadata from {url}: {exc}") from exc
     if not isinstance(data, dict):

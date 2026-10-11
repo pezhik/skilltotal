@@ -1755,26 +1755,22 @@ def test_an_event_nested_too_deep_to_read_asks_the_person(monkeypatch, capsys):
     _failed_check(_run_hook(monkeypatch, capsys, deep))
 
 
-def test_an_add_json_config_nested_too_deep_to_read_asks():
+def test_an_add_json_config_beside_deep_nesting_is_checked():
     """Seen in review: on Python 3.11 a 3 KB `claude mcp add-json` config nested a few thousand
     levels deep raised RecursionError, the CLI crashed, and the plugin's wrapper let the command
-    through with only a warning."""
-    import json
-
+    through with only a warning. Then it asked, but only where json gave up; Python 3.14 on Linux
+    read the same config and checked the package."""
     from skilltotal.agent_hook import parse_installs
 
     config = '{"command": "npx", "args": ["-y", "evil-pkg"], "x": ' + "[" * 100_000 + (
         "]" * 100_000) + "}"
     command = f"claude mcp add-json srv '{config}'"
+    # The config reads the same on every Python now (the padding is cut off), so the package it
+    # starts is checked like any other, instead of an unreadable config on some machines only.
+    assert [item.source for item in parse_installs(command)] == ["npm:evil-pkg"]
     calls = []
-    out = hook_response(_bash(command), scan=lambda s, t: calls.append(s) or _report())
-    try:
-        json.loads(config)
-    except RecursionError:  # 3.10-3.13, or Windows' smaller stack: unreadable, the person decides
-        assert any(item.source is None for item in parse_installs(command))
-        assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
-    else:  # Python 3.14 on Linux reads it: the package it starts is checked like any other
-        assert calls == ["npm:evil-pkg"]
+    hook_response(_bash(command), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ["npm:evil-pkg"]
 
 
 def test_an_event_that_is_not_json_stays_silent(monkeypatch, capsys):

@@ -13,7 +13,6 @@ import ast
 import bisect
 import fnmatch
 import io
-import json
 import os
 import re
 import stat
@@ -22,6 +21,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from skilltotal import bounded_json
 from skilltotal.concat_normalize import fold_string_concats
 from skilltotal.models import Evidence
 from skilltotal.text_normalize import normalize_with_map
@@ -131,8 +131,10 @@ def _is_codeless_source_map(filename: str, text: str) -> bool:
     if not filename.lower().endswith(".map"):
         return False
     try:
-        data = json.loads(text)
-    except (ValueError, RecursionError):  # nested deeper than json can parse: read it as text
+        data, cut = bounded_json.loads_cut(text)
+    except ValueError:  # not JSON: read it as a file
+        return False
+    if cut:  # nested past what any source map needs: read it as a file
         return False
     if not (isinstance(data, dict) and set(data) <= _SOURCE_MAP_KEYS):
         return False

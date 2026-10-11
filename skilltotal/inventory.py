@@ -14,6 +14,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from skilltotal import bounded_json
+
 # MCP server command launchers -> package ecosystem.
 _NPM_LAUNCHERS = {"npx", "npm", "pnpm", "pnpx", "bunx", "yarn"}
 _PYPI_LAUNCHERS = {"uvx", "uv", "pipx"}
@@ -136,7 +138,7 @@ def _first_local_path(args: list[str], config_dir: Path) -> Path | None:
 
 def _parse_config(host: str, path: Path) -> list[DiscoveredComponent]:
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = bounded_json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return []
     servers = data.get("mcpServers") if isinstance(data, dict) else None

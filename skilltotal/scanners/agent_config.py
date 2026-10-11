@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import re
 
+from skilltotal import bounded_json
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
@@ -39,6 +40,7 @@ from skilltotal.scanners.base import (
     ScanResult,
     _finding_from_rule,
     concat_folded_spans,
+    deep_json_review,
 )
 
 # JS/TS (and Python) files where a client-config path may be split across concatenated literals.
@@ -364,11 +366,13 @@ class AgentConfigScanner(Scanner):
             plugin = any(lowered.endswith(c) for c in _PLUGIN_HOOK_CONFIGS)
             honest: list[str] = []
             if plugin or any(lowered.endswith(c) for c in _HOOK_CONFIGS):
-                commands = self._hook_commands(f)
+                commands, cut = self._hook_commands(f)
             elif lowered.endswith(_TASKS_CONFIG):
-                commands = self._folder_open_tasks(f)
+                commands, cut = self._folder_open_tasks(f)
             else:
                 continue
+            if cut:
+                needs_review.append(deep_json_review("agent_config", f.relpath))
             for command in commands:
                 ev = self._evidence_for(f, command)
                 if _REMOTE_EXEC.search(command):
@@ -545,15 +549,16 @@ class AgentConfigScanner(Scanner):
         return next(r for r in self.rules if r.id == rule_id)
 
     @staticmethod
-    def _load(f: IndexedFile) -> object:
+    def _load(f: IndexedFile) -> tuple[object, bool]:
+        """The file as JSON, and whether values nested past MAX_DEPTH were cut off."""
         text = re.sub(r"^\s*//.*$", "", f.text, flags=re.MULTILINE)  # tasks.json allows comments
         try:
-            return json.loads(text)
-        except (json.JSONDecodeError, ValueError, RecursionError):  # nested deeper than json can
-            return None
+            return bounded_json.loads_cut(text)
+        except ValueError:
+            return None, False
 
-    def _hook_commands(self, f: IndexedFile) -> list[str]:
-        data = self._load(f)
+    def _hook_commands(self, f: IndexedFile) -> tuple[list[str], bool]:
+        data, cut = self._load(f)
         hooks = data.get("hooks") if isinstance(data, dict) else None
         found: list[str] = []
         # Depth-first in document order with an explicit stack: json accepts deeper nesting than
@@ -571,10 +576,10 @@ class AgentConfigScanner(Scanner):
                 stack.append(iter(node.values()))
             elif isinstance(node, list):
                 stack.append(iter(node))
-        return found
+        return found, cut
 
-    def _folder_open_tasks(self, f: IndexedFile) -> list[str]:
-        data = self._load(f)
+    def _folder_open_tasks(self, f: IndexedFile) -> tuple[list[str], bool]:
+        data, cut = self._load(f)
         tasks = data.get("tasks") if isinstance(data, dict) else None
         found = []
         for task in tasks if isinstance(tasks, list) else []:
@@ -585,7 +590,7 @@ class AgentConfigScanner(Scanner):
             if run_on == "folderOpen" and isinstance(command, str):
                 args = task.get("args") or []
                 found.append(" ".join([command, *[a for a in args if isinstance(a, str)]]))
-        return found
+        return found, cut
 
     @staticmethod
     def _evidence_for(f: IndexedFile, command: str) -> Evidence:
