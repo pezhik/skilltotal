@@ -397,3 +397,54 @@ def test_the_decoded_variable_pass_is_linear(tmp_path):
     text = "".join(f"const v{i} = atob(p);\neval(w{i});\n" for i in range(20_000))
     index = _one_file(tmp_path, "a.js", text)
     _timed(lambda: _decoded_then_executed(index))
+
+
+# --- Gap 4: a bind to all interfaces through a variable -------------------------------------
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        # A name that does not say "host": only the call it reaches makes it a bind address.
+        ("a.py", 'ADDR = "0.0.0.0"\napp.run(host=ADDR)\n'),
+        ("b.py", 'import uvicorn\nINTERFACE = "0.0.0.0"\nuvicorn.run(app, host=INTERFACE)\n'),
+        ("c.py", 'import socket\nANY = "::"\nsock = socket.socket()\nsock.bind((ANY, 9000))\n'),
+        ("d.py", 'ADDR: str = "0.0.0.0"\nsrv = HTTPServer((ADDR, PORT), Handler)\n'),
+        ("e.js", "const ip = '0.0.0.0';\nserver.listen(3000, ip);\n"),
+        ("f.ts", 'const addr = "0.0.0.0";\nawait app.listen({ host: addr, port: 8080 });\n'),
+        # The examples the request named: a host-named variable, still caught by its name.
+        ("g.py", 'HOST = "0.0.0.0"\napp.run(host=HOST)\n'),
+        ("h.js", "const host = '0.0.0.0';\nserver.listen(port, host);\n"),
+    ],
+)
+def test_an_all_interfaces_address_bound_through_a_variable_fires(tmp_path, name, source):
+    assert "ST-EXPOSE-BIND" in _ids(_write(tmp_path, {name: source}))
+
+
+@pytest.mark.parametrize(
+    ("name", "source"),
+    [
+        # Assigned but never handed to a bind.
+        ("a.py", 'ADDR = "0.0.0.0"\nprint(ADDR)\n'),
+        ("b.py", 'ANY = "0.0.0.0"\nnet = ipaddress.ip_network(ANY)\n'),
+        ("c.py", 'SEP = "::"\nhead, _, tail = name.partition(SEP)\nparts = name.split(SEP, 1)\n'),
+        ("d.py", 'ANY = "0.0.0.0"\nif peer == ANY:\n    pass\n'),
+        # Port 0 asks for any port: a client's source address, not a service.
+        ("e.py", 'ANY = "0.0.0.0"\nsock.bind((ANY, 0))\n'),
+        ("f.js", "const ip = '0.0.0.0';\nconst allowed = new Set([ip, '127.0.0.1']);\n"),
+        # A loopback bind through a variable is not all interfaces.
+        ("g.py", 'ADDR = "127.0.0.1"\napp.run(host=ADDR)\n'),
+        # In a comment or a docstring it documents the option.
+        ("h.py", '"""Run with ADDR = "0.0.0.0" and app.run(host=ADDR) to expose it."""\n'),
+    ],
+)
+def test_an_address_variable_that_never_reaches_a_bind_stays_clean(tmp_path, name, source):
+    assert "ST-EXPOSE-BIND" not in _ids(_write(tmp_path, {name: source}))
+
+
+def test_the_address_variable_pass_is_linear(tmp_path):
+    from skilltotal.scanners.exposure import _js_address_binds
+
+    text = "".join(f"const ip{i} = '0.0.0.0';\nserver.listen(3000, port{i});\n"
+                   for i in range(15_000))
+    index = _one_file(tmp_path, "b.js", text)
+    _timed(lambda: _js_address_binds(index.files[0]))
