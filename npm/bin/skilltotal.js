@@ -2,8 +2,18 @@
 "use strict";
 
 const { spawn } = require("node:child_process");
-const { choose, isAvailable, helpText } = require("../lib/runner");
+const {
+  choose,
+  isAvailable,
+  helpText,
+  noCurrentDirectoryLookup,
+  resolveCommand,
+} = require("../lib/runner");
 const { version } = require("../package.json");
+
+// Before anything is started: on Windows a program in the current directory (often the repository
+// being scanned) must never stand in for uvx, pipx or Python, here or in what the engine starts.
+noCurrentDirectoryLookup();
 
 const runner = choose(version, isAvailable);
 if (!runner) {
@@ -13,7 +23,8 @@ if (!runner) {
 
 // stdio is inherited untouched, so `npx -y skilltotal mcp` speaks MCP over this process's
 // stdin/stdout and the exit code (e.g. --fail-on-high in CI) passes through.
-const child = spawn(runner.cmd, [...runner.args, ...process.argv.slice(2)], {
+const program = resolveCommand(runner.cmd) || runner.cmd;
+const child = spawn(program, [...runner.args, ...process.argv.slice(2)], {
   stdio: "inherit",
   windowsHide: true,
 });

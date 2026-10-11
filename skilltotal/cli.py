@@ -42,6 +42,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -275,7 +276,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _no_lookup_in_current_directory(environ=os.environ, os_name: str = os.name) -> None:
+    """Windows runs a bare program name from the current directory before PATH, so a scan run
+    inside a cloned repository would start a ``git.exe`` committed to it. This variable turns that
+    lookup off for this process and everything it starts."""
+    if os_name == "nt":
+        environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+
+
 def main(argv: list[str] | None = None) -> int:
+    _no_lookup_in_current_directory()  # before anything can start a program
     # Redirected output on Windows is written in the legacy code page, which cannot encode much of
     # what a scanned package may contain: a `✓` in one snippet crashed `scan --json > r.json` and
     # left the file empty. Reports go out as UTF-8 and never fail on their own content.
@@ -523,7 +533,7 @@ def _guard_installed(args: argparse.Namespace) -> int:
     """Guard every installed AI component; block if any of them blocks."""
     from skilltotal.engine import analyze
     from skilltotal.inventory import discover
-    from skilltotal.report import render_inventory_json
+    from skilltotal.report import _terminal_safe, render_inventory_json
 
     components = discover(project=Path(args.project) if args.project else None)
     items: list[dict] = []
@@ -553,17 +563,21 @@ def _guard_installed(args: argparse.Namespace) -> int:
     if args.json:
         print(render_inventory_json(items))
     else:
+        lines: list[str] = []
         for it in items:
             marker = {"allow": "ok", "block": "BLOCK"}.get(it["decision"], it["decision"])
             risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
-            print(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
-            for reason in it.get("reasons", []):
-                print(f"      - {reason}")
-        print()
+            lines.append(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
+            lines.extend(f"      - {reason}" for reason in it.get("reasons", []))
+        lines.append("")
         if blocked:
-            print(f"BLOCK: {len(blocked)} component(s) failed the guard: {', '.join(blocked)}")
+            lines.append(f"BLOCK: {len(blocked)} component(s) failed the guard: "
+                         f"{', '.join(blocked)}")
         else:
-            print(f"ALLOW: all {len(items)} component(s) passed the guard.")
+            lines.append(f"ALLOW: all {len(items)} component(s) passed the guard.")
+        # Names come from config files anyone can write (a repository's `.mcp.json`): their
+        # escape sequences must not reach the terminal, as in every other text report.
+        print(_terminal_safe("\n".join(lines)))
     return EXIT_FAIL_ON_HIGH if blocked else EXIT_OK
 
 
@@ -621,27 +635,47 @@ def _cmd_mcp() -> int:
     return EXIT_OK
 
 
+# The answer when the hook cannot finish its own check. Exiting with an error would let the plugin's
+# wrapper pass the command with only a warning, and denying would block for SkillTotal's own fault:
+# the person decides.
+HOOK_FAILED = {
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "ask",
+        "permissionDecisionReason": "SkillTotal could not check this command.",
+    }
+}
+
+
 def _cmd_hook() -> int:
-    from skilltotal.agent_hook import hook_response
+    try:
+        answer = _hook_answer()
+    except Exception:  # noqa: BLE001 - any failure of ours asks; it must not pass silently
+        answer = HOOK_FAILED
+    if answer is not None:
+        print(json.dumps(answer))
+    return EXIT_OK
+
+
+def _hook_answer() -> dict | None:
+    from skilltotal.agent_hook import BUDGET_ENV, hook_response
 
     if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
         sys.stdin.reconfigure(encoding="utf-8")
         sys.stdout.reconfigure(encoding="utf-8")
+    raw = sys.stdin.read()
     try:
-        event = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        return EXIT_OK  # not a hook event we can read: stay out of the agent's way
+        event = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return None  # not a hook event at all: stay out of the agent's way
     try:
-        budget = float(os.environ.get("SKILLTOTAL_HOOK_BUDGET", HOOK_BUDGET_S))
+        budget = float(os.environ.get(BUDGET_ENV, HOOK_BUDGET_S))
     except ValueError:
         budget = HOOK_BUDGET_S
     # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
     budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
-    answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget)
-    if answer is not None:
-        print(json.dumps(answer))
-    return EXIT_OK
+    return hook_response(event, scan=_hook_scan_cached, budget_s=budget)
 
 
 # How long the agent waits for the checks of one install command, and how long a verdict is reused:
@@ -677,7 +711,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
     key = release.key if release else source
     target = release.source if release else source
-    ttl = HOOK_RELEASE_TTL_S if release else HOOK_MOVING_TTL_S
+    ttl = _hook_cache_ttl(key)
     path = _hook_cache_path()
     try:
         cache = json.loads(path.read_text(encoding="utf-8"))
@@ -687,8 +721,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         cache = {}
     now = time.time()
     hit = cache.get(key)
-    if (isinstance(hit, dict) and hit.get("engine") == __version__
-            and now - _number(hit.get("at")) < _number(hit.get("ttl", ttl))):
+    if isinstance(hit, dict) and hit.get("engine") == __version__ and _fresh(hit, now, ttl):
         return hit["report"]
     # Raises on failure/timeout: nothing is cached then.
     report = _hook_scan(target, timeout - (time.monotonic() - started))
@@ -735,11 +768,8 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         # for what was scanned, but it is not the artifact the key names, so it is not kept.
         return entry["report"]
     # Keep the file small: drop what has expired, then the oldest past the cap.
-    live = {
-        k: v for k, v in cache.items()
-        if isinstance(v, dict)
-        and now - _number(v.get("at")) < _number(v.get("ttl", HOOK_MOVING_TTL_S))
-    }
+    live = {k: v for k, v in cache.items()
+            if isinstance(v, dict) and _fresh(v, now, _hook_cache_ttl(k))}
     newest = sorted(live, key=lambda k: _number(live[k].get("at")), reverse=True)
     kept = {key: entry, **{k: live[k] for k in newest[: HOOK_CACHE_MAX_ENTRIES - 1] if k != key}}
     try:
@@ -750,6 +780,27 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     except OSError:
         pass  # no cache this time; the verdict itself is still good
     return entry["report"]
+
+
+# A key that names one exact artifact: an npm release, or a PyPI release with the file pip installs
+# (and a digest of every file in the release). Anything else can change under the same name.
+_RELEASE_KEY = re.compile(
+    r"npm:(?:@[^/\s@]+/)?[^/\s@]+@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?"
+    r"|pypi:[^\s=]+==\S+ \S+(?: [0-9a-f]{16})?"
+)
+
+
+def _hook_cache_ttl(key: str) -> float:
+    """How long a verdict kept under ``key`` may be reused: a week for one exact release, an hour
+    for anything else. It is worked out from the key, never taken from the cache file."""
+    return HOOK_RELEASE_TTL_S if _RELEASE_KEY.fullmatch(key) else HOOK_MOVING_TTL_S
+
+
+def _fresh(entry: dict, now: float, ttl: float) -> bool:
+    """Whether a cache entry is still good: younger than its key allows. An entry dated in the
+    future, or claiming a longer life than its key allows, is not."""
+    stored = _number(entry.get("ttl", ttl))
+    return stored <= ttl and 0 <= now - _number(entry.get("at")) < stored
 
 
 def _number(value: object) -> float:
