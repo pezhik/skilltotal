@@ -251,9 +251,66 @@ def _is_guardlist_context(relpath: str, line_text: str, matched: str = "") -> bo
         _guard_segment(relpath)
         or bool(_NAME_COMPARISON.search(bare[: bare.find(matched)] if matched in bare else ""))
         or bool(_GUARD_KEYWORDS.search(line_text))
-        or bool(_BARE_LIST_ELEMENT.match(bare))
+        or (bool(_BARE_LIST_ELEMENT.match(bare)) and not _json_command_line(relpath, bare))
         or bool(_BARE_REGEX_ELEMENT.match(bare))
     )
+
+
+# In a JSON file every string sits on a line of its own shape (`"value",` or `"key": "value"`),
+# which is what a bare list element looks like, so the list-element test demoted the command of
+# every hook and MCP server entry as if it were a denylist entry: a startup command that uploads
+# `~/.ssh/id_rsa` scored nothing. A JSON string that is a command -- a program followed by
+# arguments, a string with shell operators, or a URL handed to a network client -- is not a
+# denylist entry. A bare path or glob (`"~/.ssh/id_rsa"`, `"**/.aws/**"`) still is, and so is a
+# Claude Code permission rule (`"Read(~/.ssh/**)"`, `"Bash(cat ~/.ssh/id_rsa)"`).
+_JSON_SUFFIXES = (".json", ".jsonc", ".json5")
+_JSON_LINE_STRING = re.compile(r'"((?:[^"\\\n]|\\.){0,2000})"')
+_PERMISSION_RULE = re.compile(
+    r"^(?:Bash|Read|Write|Edit|MultiEdit|NotebookEdit|WebFetch|WebSearch|Glob|Grep|Task|"
+    r"mcp__[\w-]+)\("
+)
+_PROGRAM = (
+    r"(?:curl|wget|nc|ncat|netcat|socat|scp|rsync|sftp|ftp|cat|cp|mv|tar|zip|gzip|base64|"
+    r"openssl|gpg|sh|bash|zsh|dash|ksh|pwsh|powershell|cmd|python[0-9.]*|node|deno|bun|npx|bunx|"
+    r"uvx|pipx|npm|pnpm|yarn|perl|ruby|php|osascript|security|docker|aws|gcloud|az|kubectl|ssh|"
+    r"git|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)"
+)
+_COMMAND_START = re.compile(
+    rf"^(?:[A-Za-z_]\w*=\S*\s+)*(?:sudo\s+)?{_PROGRAM}(?:\.exe)?\s+\S", re.IGNORECASE
+)
+_PATH_PROGRAM = re.compile(r"^(?:\.{1,2}/|/|~/|\$\{?\w+\}?/)[\w./-]+\s+\S")
+_SHELL_OPERATOR = re.compile(
+    rf"&&|\|\||\s\|\s*\S|\S\|\s+\S|;\s*(?:sudo\s+)?{_PROGRAM}\b|\$\(", re.IGNORECASE
+)
+_NETWORK_PROGRAM = re.compile(
+    r"\b(?:curl|wget|nc|ncat|Invoke-WebRequest|Invoke-RestMethod|iwr|irm)\b", re.IGNORECASE
+)
+# Keys whose string is shown to a person: a sentence there describes a command, it is not one.
+_JSON_TEXT_KEYS = frozenset(
+    {"description", "title", "summary", "help", "message", "label", "example", "examples",
+     "note", "notes", "detail", "details", "hint", "comment", "displayname", "name"}
+)
+
+
+def _json_command_line(relpath: str, bare: str) -> bool:
+    """True when a JSON line's string value is a command rather than a list entry."""
+    if not relpath.lower().endswith(_JSON_SUFFIXES):
+        return False
+    strings = _JSON_LINE_STRING.findall(bare)
+    if not strings:
+        return False
+    if len(strings) >= 2 and bare.lstrip().startswith('"') and (
+        strings[0].strip().lower() in _JSON_TEXT_KEYS
+    ):
+        return False
+    value = strings[-1].replace('\\"', '"').strip()
+    if _PERMISSION_RULE.match(value) or not re.search(r"\s", value):
+        return False
+    if _COMMAND_START.match(value) or _PATH_PROGRAM.match(value):
+        return True
+    if _SHELL_OPERATOR.search(value):
+        return True
+    return bool(re.search(r"https?://", value) and _NETWORK_PROGRAM.search(value))
 
 
 # A credential location that the line names without reading it. Each shape is a different reason:

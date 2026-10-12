@@ -1,0 +1,4 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+[project]
+name = "venv-module-fixture"
+version = "1.0.0"

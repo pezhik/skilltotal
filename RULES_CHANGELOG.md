@@ -4,6 +4,67 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 69 (unreleased)
+
+Commands an agent host or editor runs on its own are now read from every place they can be
+declared, credentials or the whole environment sent over the network are a malicious indicator,
+and code loaded from a folder the scanner skips is followed instead of ignored. Each change is
+pinned by sanitized samples that ruleset 68 misses and by near-misses that must stay clean
+(`tests/test_autorun_surfaces.py`). Detection-efficacy corpus, now 88 positive / 58 negative:
+88/88 flagged, 0 false positives (ruleset 68 misses all fifteen new positives).
+
+- **One reading of auto-run commands** (new, shared by `ST-AGENT-AUTORUN`,
+  `ST-AGENT-AUTORUN-REMOTE`, `ST-MCP-SERVER-EXEC` and `ST-SECRET-EXFIL`): the launch command,
+  arguments and environment of MCP servers in `mcpServers` (any JSON, including desktop-client and
+  Gemini settings and extension manifests), VS Code `servers` in `mcp.json` and `mcp.servers` in
+  `.vscode/settings.json`, an MCP bundle manifest's `server.mcp_config`, and `[mcp_servers]` in a
+  Codex `config.toml`; Claude Code settings hooks (command and `type: http`), `statusLine`,
+  `subagentStatusLine`, `apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`,
+  `otelHeadersHelper` and `fileSuggestion`; plugin hooks, monitors, LSP servers and MCP servers,
+  inline in `plugin.json` / `marketplace.json` or in the files they point to (`hooks/hooks.json`,
+  `monitors/monitors.json`, `.lsp.json`); hooks and `mcpServers` in skill and subagent
+  frontmatter; VS Code tasks that run on folder open. JSON with comments is read. An MCP server
+  shipped as a bundle or a URL the scanner cannot read is a needs_review note ("MCP server bundle
+  not analyzed").
+- **`ST-SECRET-EXFIL`** (new, malicious indicator, high): one auto-run command reads a credential
+  (a credential path, an environment dump such as bare `env`/`printenv` or `/proc/self/environ`,
+  or a cloud CLI's token command) and sends it with a network client (`curl -d @~/.ssh/id_rsa`,
+  `env | curl --data-binary @-`); a shell script such a command runs is read the same way, line
+  by line. In code, the whole `process.env` or `os.environ` (spread, serialized, copied, or
+  through a name assigned from it) passed into an HTTP request or socket send. A single named
+  variable stays a capability; a credential handed to its own client (`ssh -i`, `--kubeconfig`, a
+  container mount), a provider token sent only to that provider's hosts, the environment passed to
+  a child process, and a send to localhost stay clean.
+- **`ST-AGENT-AUTORUN-REMOTE`** (changed): applies to every surface above, whatever declared it,
+  and reads more fetch-and-run forms: `sh -c "$(curl ...)"`, `eval "$(curl ...)"`, process
+  substitution `<(curl ...)`, `irm ... | iex`, and a download piped into an interpreter's stdin
+  (`python3`, `node`, `perl`, `ruby`).
+- **`ST-AGENT-AUTORUN`** (changed): an http hook that posts to a host other than localhost is
+  evidence. A project's settings are evidence for every command they run on their own, now a
+  status line and the credential and header helpers as well as hooks and folder-open tasks; a
+  plugin's or skill's plain lifecycle hooks are a needs_review note ("Plugin binds lifecycle
+  hooks", "Skill or subagent binds lifecycle hooks"), and plain MCP launch commands, monitors and
+  LSP servers are not findings at all.
+- **`ST-MCP-SERVER-EXEC`** (changed): MCP servers declared outside a top-level `mcpServers` key
+  (VS Code `servers`, Codex TOML, a bundle manifest, frontmatter) are read like the ones inside it.
+- **`ST-SENS-PATH`** (changed): a JSON string that is a shell command (a known program with
+  arguments, a path to a program, a shell operator, or a URL with a network client) is no longer
+  taken for a deny-list element. Before, a credential path in a hook or MCP launch command written
+  as a JSON string was demoted the way a guard list's `"~/.ssh/id_rsa"` is. Permission rules
+  (`Read(...)`, `Bash(...)`), single tokens and description text stay demoted.
+- **Structured-data demotion** (changed): evidence on a line that holds an auto-run command stays
+  in scope; the rest of a JSON/YAML/TOML file is demoted as before.
+- **Skipped folders** (changed): a folder named `env`, `venv` or `.venv` was passed over by its
+  name alone, code in it included; now a folder is skipped as a virtual environment only when it
+  is one (`pyvenv.cfg` or `conda-meta`, or for those names an activate script or a
+  `site-packages` tree), and `site-packages` only inside an install layout. A relative
+  `require`/`import`, a Python import, or a package entry point (`main`, `module`, `bin`, `exports`, console scripts) that
+  loads a file from a folder the walk still skips (`vendor/`, a virtual environment, dependency
+  trees) is followed, transitively, and the file is scanned like any other; build output and VCS
+  folders are not followed. The report names what was not read: "Folders not analyzed" lists the
+  skipped folders and why, and "Code loaded from a skipped folder not analyzed" lists a loaded
+  file the scanner could not read (too large, unreadable, or past the 300-file limit).
+
 ## ruleset 68 (engine 0.64.0)
 
 Five constructs a blind red-team (2026-10-10) used to get past ruleset 67, each now read the way

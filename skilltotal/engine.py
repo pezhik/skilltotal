@@ -16,12 +16,17 @@ from pathlib import Path
 
 from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__, bounded_json
 from skilltotal.agent_skill import skill_capability_mismatch
+from skilltotal.autorun import autorun_commands
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import collect
 from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
     MAX_FILE_BYTES,
+    SKIP_BUILD_OUTPUT,
+    SKIP_DEPENDENCIES,
+    SKIP_VENDORED,
+    SKIP_VIRTUALENV,
     FileIndex,
     IndexedFile,
     is_build_output_path,
@@ -33,9 +38,17 @@ from skilltotal.file_index import (
     is_test_path,
     skill_dirs,
 )
+from skilltotal.loaded_code import BARE_MODULE as _BARE_MODULE
+from skilltotal.loaded_code import LOADING_SUFFIXES as _LOADING_SUFFIXES
+from skilltotal.loaded_code import MAX_LOADED_FILES, follow_skipped_references
+from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
+from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
+from skilltotal.loaded_code import module_file as _module_file
 from skilltotal.models import (
     NOTHING_READ,
+    SKIPPED_FOLDERS,
     UNANALYZED_INSTALL_SCRIPT,
+    UNANALYZED_LOADED_CODE,
     Component,
     Evidence,
     Finding,
@@ -119,6 +132,9 @@ def analyze_directory(
     index = FileIndex.build(
         Path(root), exclude=exclude, skip_build_output=not published, always_index=install_scripts
     )
+    # Code the component loads by a literal path from a folder the walk passed over (its own
+    # `lib/env/`, `src/vendor/`, ...) is read too: it runs whatever folder it is filed under.
+    index, unloaded = follow_skipped_references(index)
 
     findings: list[Finding] = []
     needs_review: list[NeedsReview] = []
@@ -141,6 +157,11 @@ def analyze_directory(
             )
         )
     needs_review.extend(_unread_notes(index))
+    if unloaded:
+        needs_review.append(_unloaded_note(unloaded))
+    skipped_note = _skipped_folders_note(index)
+    if skipped_note is not None:
+        needs_review.append(skipped_note)
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
@@ -178,7 +199,8 @@ def analyze_directory(
     findings, test_review = _hold_out(install_files, _split_test_evidence, findings, index)
     needs_review.extend(test_review)
     findings, doc_review = _hold_out(
-        install_files, _split_doc_evidence, findings, skill_dirs(f.relpath for f in index.files)
+        install_files, _split_doc_evidence, findings, skill_dirs(f.relpath for f in index.files),
+        autorun_commands(index).frontmatter_lines,
     )
     needs_review.extend(doc_review)
     findings, corpus_review = _hold_out(install_files, _split_data_corpus_evidence, findings)
@@ -187,7 +209,9 @@ def analyze_directory(
     needs_review.extend(example_review)
     findings, ci_review = _hold_out(install_files, _split_ci_evidence, findings)
     needs_review.extend(ci_review)
-    findings, structured_data_review = _split_structured_data_evidence(findings)
+    findings, structured_data_review = _split_structured_data_evidence(
+        findings, _command_lines(index)
+    )
     needs_review.extend(structured_data_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
     needs_review.extend(code_ctx_review)
@@ -368,72 +392,8 @@ def _install_script_files(root: Path) -> dict[str, str]:
     return found
 
 
-def _bundled_module_file(base: Path, start: Path, spec: str) -> Path | None:
-    """The file a bare ``require("x")`` loads when ``x`` ships inside the package itself.
-
-    Node looks for ``node_modules/x`` in the requiring file's folder and each parent. Only the
-    folders inside the component count: a bundled dependency is in the tarball and runs with the
-    install script, while one npm installs separately is not this package's code.
-    """
-    folder = start
-    while True:
-        loaded = _module_file(base, folder / "node_modules", spec)
-        if loaded is not None:
-            return loaded
-        if folder == base or base not in folder.parents:
-            return None
-        folder = folder.parent
-
-
-# A relative module a script loads with a literal specifier: require('./x'), import('./x'),
-# `import x from './x'`, `export * from './x'`.
-_RELATIVE_MODULE = re.compile(
-    r"""(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)(["'])(\.{1,2}(?:/[^"'\n]{0,200})?)\1"""
-)
-# The same shapes with a bare name (`require("helper")`, `import x from "@s/pkg/sub"`): a
-# dependency, read only when the package bundles it in its own node_modules.
-_BARE_MODULE = re.compile(
-    r"""(?:\brequire\s*\(\s*|\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)(["'])([A-Za-z0-9@_][^"'\s:]{0,200})\1"""
-)
-_LOADING_SUFFIXES = frozenset({".js", ".cjs", ".mjs", ""})
-_MODULE_SUFFIXES = (".js", ".cjs", ".mjs", ".json")
 # An install-time dropper is a handful of files; this only bounds a pathological require graph.
 _MAX_INSTALL_FILES = 200
-
-
-def _module_file(base: Path, start: Path, spec: str) -> Path | None:
-    """The file ``spec`` names from ``start``, looked up as Node does (the path itself, then with
-    ``.js``/``.cjs``/``.mjs``/``.json``, then a folder's ``package.json`` main or ``index``), and
-    only when it lies inside the component ``base``."""
-    try:
-        path = (start / spec).resolve()
-        # Outside the component (`../x`, or a link out of it) nothing is read, not even the
-        # `package.json` of a linked folder.
-        path.relative_to(base)
-    except (OSError, ValueError):
-        return None
-    candidates = [path, *(path.with_name(path.name + s) for s in _MODULE_SUFFIXES)]
-    if path.is_dir():
-        manifest = path / "package.json"
-        try:
-            main = (bounded_json.loads(manifest.read_text(encoding="utf-8")).get("main")
-                    if is_regular_file(manifest) else None)
-        except (OSError, ValueError, AttributeError):
-            main = None
-        if isinstance(main, str) and main:
-            entry = path / main
-            candidates += [entry, *(entry.with_name(entry.name + s) for s in _MODULE_SUFFIXES)]
-            candidates += [entry / f"index{s}" for s in _MODULE_SUFFIXES]
-        candidates += [path / f"index{s}" for s in _MODULE_SUFFIXES]
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-            resolved.relative_to(base)
-        except (OSError, ValueError):
-            continue  # outside the component, or not a path at all
-        if resolved.is_file():
-            return resolved
-    return None
 
 
 def _unanalyzed_install_script(root: Path, relpath: str, script: str) -> NeedsReview:
@@ -453,6 +413,52 @@ def _unanalyzed_install_script(root: Path, relpath: str, script: str) -> NeedsRe
             f"{why}. Nothing in it was checked, so read it before installing."
         ),
         file=relpath,
+    )
+
+
+# Folders a report names when it did not read them: code someone else wrote (dependencies,
+# vendored trees, virtual environments) or, in a repository, a build of the component's own.
+_SKIPPED_FOLDER_KINDS = {
+    SKIP_DEPENDENCIES: "dependencies",
+    SKIP_VENDORED: "vendored code",
+    SKIP_VIRTUALENV: "Python virtual environment",
+    SKIP_BUILD_OUTPUT: "build output",
+}
+
+
+def _skipped_folders_note(index: FileIndex) -> NeedsReview | None:
+    """Say which folders the walk passed over: a report must not read as covering them."""
+    folders = [(rel, kind) for rel, kind in index.skipped_dirs if kind in _SKIPPED_FOLDER_KINDS]
+    if not folders:
+        return None
+    shown = ", ".join(f"{rel}/ ({_SKIPPED_FOLDER_KINDS[kind]})" for rel, kind in folders[:5])
+    more = f", and {len(folders) - 5} more" if len(folders) > 5 else ""
+    return NeedsReview(
+        category="coverage",
+        title=SKIPPED_FOLDERS,
+        reason=(
+            f"{len(folders)} folder(s) were not read: {shown}{more}. They hold third-party code "
+            "or a build of the component's own. Code the component loads from them by a literal "
+            "path was read and checked; nothing else in them was."
+        ),
+        file=f"{folders[0][0]}/",
+    )
+
+
+def _unloaded_note(unloaded: list[str]) -> NeedsReview:
+    """Code the component loads from a skipped folder that could not be read."""
+    shown = ", ".join(unloaded[:5])
+    more = f", and {len(unloaded) - 5} more" if len(unloaded) > 5 else ""
+    return NeedsReview(
+        category="coverage",
+        title=UNANALYZED_LOADED_CODE,
+        reason=(
+            f"The component loads {len(unloaded)} file(s) from a folder the scan otherwise skips, "
+            f"and they could not be read (larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB, "
+            f"unreadable, or past the {MAX_LOADED_FILES}-file limit): {shown}{more}. That code "
+            "runs and nothing in it was checked."
+        ),
+        file=unloaded[0],
     )
 
 
@@ -810,19 +816,32 @@ def _demoted_review(finding: Finding, demoted: list[Evidence], note: str) -> Nee
 
 
 def _split_doc_evidence(
-    findings: list[Finding], skills: frozenset[str] = frozenset()
+    findings: list[Finding],
+    skills: frozenset[str] = frozenset(),
+    frontmatter: dict[str, int] | None = None,
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Demote evidence found only in human-facing documentation/metadata to needs_review.
 
     READMEs, changelogs, license/notice files, docs/ trees and ignore-files are never executed
     and are not an agent-instruction surface (those — SKILL.md, manifests — are excluded by
     ``is_doc_path``), so a pattern that appears only there is descriptive, not behavior.
+
+    ``frontmatter`` maps markdown files whose frontmatter declares hooks or MCP servers (a
+    subagent in ``agents/x.md``) to the last line of that frontmatter: those lines are commands
+    the agent runs, whatever the file is named, so evidence on them is not documentation.
     """
+    frontmatter = frontmatter or {}
+
+    def is_doc(e: Evidence) -> bool:
+        if e.line_end <= frontmatter.get(e.file, 0):
+            return False
+        return is_doc_path(e.file, skills)
+
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
-        prod = [e for e in finding.evidence if not is_doc_path(e.file, skills)]
-        docs = [e for e in finding.evidence if is_doc_path(e.file, skills)]
+        prod = [e for e in finding.evidence if not is_doc(e)]
+        docs = [e for e in finding.evidence if is_doc(e)]
         if prod:
             kept.append(_finding_with_evidence(finding, prod))
         if docs:
@@ -1002,8 +1021,24 @@ _STRUCTURED_DATA_DEMOTABLE = frozenset(
 )
 
 
+def _command_lines(index: FileIndex) -> frozenset[tuple[str, int]]:
+    """``(file, line)`` of every command string an agent or editor runs on its own (hooks, MCP
+    launch commands, status lines, ...): see ``skilltotal.autorun``."""
+    lines: set[tuple[str, int]] = set()
+    for command in autorun_commands(index).commands:
+        if command.is_http:
+            continue
+        f = command.file
+        for piece in (*command.pieces, *command.env):
+            first = f.line_of_offset(piece.start)
+            last = f.line_of_offset(max(piece.start, piece.end - 1))
+            lines.update((f.relpath, n) for n in range(first, last + 1))
+    return frozenset(lines)
+
+
 def _split_structured_data_evidence(
     findings: list[Finding],
+    command_lines: frozenset[tuple[str, int]] = frozenset(),
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Demote code-pattern / injection evidence found in a structured-data file (JSON/YAML/TOML).
 
@@ -1013,15 +1048,24 @@ def _split_structured_data_evidence(
     injection there still fires. Runs before synthesis, so a demoted match can't feed
     ST-FLOW-TRIFECTA / ST-CONVERGENCE. FPs: tandem (a defensive monitor's scenario JSON), litellm
     (its content-filter guardrail's keyword YAML).
+
+    A value an agent or editor runs as a command (``command_lines``: a hook, an MCP server's
+    launch command, a status line) is not inert data, so evidence on it is kept.
     """
+
+    def is_data(e: Evidence) -> bool:
+        if (e.file, e.line_start) in command_lines:
+            return False
+        return _is_structured_data_file(e.file)
+
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
         if finding.id not in _STRUCTURED_DATA_DEMOTABLE:
             kept.append(finding)
             continue
-        real = [e for e in finding.evidence if not _is_structured_data_file(e.file)]
-        data = [e for e in finding.evidence if _is_structured_data_file(e.file)]
+        real = [e for e in finding.evidence if not is_data(e)]
+        data = [e for e in finding.evidence if is_data(e)]
         if real:
             kept.append(_finding_with_evidence(finding, real))
         if data:

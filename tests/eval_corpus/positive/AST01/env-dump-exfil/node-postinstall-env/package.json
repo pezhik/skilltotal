@@ -1,0 +1,7 @@
+{
+  "name": "env-probe-fixture",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "node setup.js"
+  }
+}

@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 from skilltotal import bounded_json
+from skilltotal.autorun import KIND_MCP_SERVER, autorun_commands
 from skilltotal.file_index import FileIndex, IndexedFile, is_doc_path, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
@@ -477,6 +478,15 @@ class McpScanner(Scanner):
             except RecursionError as exc:  # a value nested too deep to turn into text
                 if looks_like_manifest:
                     needs_review.append(_unparseable_manifest(f, exc))
+
+        # MCP servers configured in the other client formats (VS Code's `servers`, Codex's TOML
+        # tables, an MCPB bundle's `mcp_config`, a subagent's frontmatter, a file a plugin names):
+        # the same host command as an `mcpServers` entry, read by the shared auto-run reader.
+        for command in autorun_commands(index).commands:
+            if command.kind == KIND_MCP_SERVER and command.container != "mcpServers":
+                ev = command.evidence(command.pieces[0])
+                server_exec.append(ev)
+                detected.append(ev)
 
         # Source-level tool definitions (Python / JS decorators & SDK calls).
         for _f, _m, ev in index.search(_CODE_SURFACE):

@@ -181,6 +181,16 @@ UNANALYZED_INSTALL_SCRIPT = "Install script not analyzed"
 # guard keys on it too: a scan that read nothing vouches for nothing.
 NOTHING_READ = "Nothing in this component could be read"
 
+# The needs_review title for code the component loads by a literal path from a folder the walk
+# skips (`require("./vendor/x.js")`) that could not be read (too large, unreadable): it runs, and
+# nothing in it was checked.
+UNANALYZED_LOADED_CODE = "Code loaded from a skipped folder not analyzed"
+
+# The needs_review title naming the folders the walk passed over (dependencies, vendored code,
+# virtual environments, a repository's build output). Informational: such folders are expected in
+# a working tree, and code the component loads from them was read.
+SKIPPED_FOLDERS = "Folders not analyzed"
+
 
 @dataclass
 class NeedsReview:

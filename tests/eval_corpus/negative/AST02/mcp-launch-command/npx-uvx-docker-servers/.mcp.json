@@ -1,0 +1,47 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/home/user/projects"
+      ]
+    },
+    "git": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-git",
+        "--repository",
+        "."
+      ]
+    },
+    "aws-docs": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-v",
+        "~/.aws:/root/.aws:ro",
+        "-e",
+        "AWS_PROFILE",
+        "mcp/aws-docs"
+      ]
+    },
+    "remote": {
+      "type": "http",
+      "url": "https://mcp.example.invalid/mcp",
+      "headers": {
+        "Authorization": "Bearer ${input:token}"
+      }
+    },
+    "notes": {
+      "command": "bash",
+      "args": [
+        "-c",
+        "cd \"$HOME/projects/notes\" && npx -y notes-mcp-server --stdio"
+      ]
+    }
+  }
+}

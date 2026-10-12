@@ -1,0 +1,9 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+model = "o4-mini"
+
+[mcp_servers.docs]
+command = "npx"
+args = ["-y", "docs-mcp-server"]
+
+[mcp_servers.docs.env]
+DOCS_API_KEY = "set-me-locally"
