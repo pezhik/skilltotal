@@ -313,25 +313,40 @@ def fake_scan(tmp_path, monkeypatch):
     return use
 
 
-def _check_dir(tmp_path, *, hook_pid, ceiling=60.0, job=None, handed_over=False, abort=False):
-    """A check's directory as the hook sets it up; ``handed_over``: the hook stopped waiting."""
-    check = tmp_path / "check"
-    (check / "cwd").mkdir(parents=True)
-    (check / "scan.json").write_text(json.dumps(
-        {"source": "npm:x@1.0.0", "hook_pid": hook_pid, "ceiling": ceiling}), encoding="utf-8")
-    if job is not None:
-        (check / "job.json").write_text(json.dumps(job), encoding="utf-8")
-    if abort:
-        (check / "abort").write_text("", encoding="ascii")
-    if handed_over:
-        (check / "done").write_text("", encoding="ascii")
-    return check
+SECRET = "0123456789abcdef0123456789abcdef"
+
+
+@pytest.fixture
+def check_dir(tmp_path, monkeypatch):
+    """Makes a check's directory as the hook sets it up: named skilltotal_hook_*, directly in the
+    temp directory, with the secret this process holds in its environment in its scan.json.
+    ``handed_over``: the hook stopped waiting for it."""
+    temp = tmp_path / "checks"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setenv(hook_scan.SECRET_ENV, SECRET)
+
+    def make(*, hook_pid, ceiling=60.0, job=None, handed_over=False, abort=False):
+        check = Path(tempfile.mkdtemp(prefix="skilltotal_hook_"))
+        (check / "cwd").mkdir()
+        (check / "scan.json").write_text(json.dumps(
+            {"source": "npm:x@1.0.0", "hook_pid": hook_pid, "ceiling": ceiling,
+             "secret": SECRET}), encoding="utf-8")
+        if job is not None:
+            (check / "job.json").write_text(json.dumps(job), encoding="utf-8")
+        if abort:
+            (check / "abort").write_text("", encoding="ascii")
+        if handed_over:
+            (check / "done").write_text("", encoding="ascii")
+        return check
+
+    return make
 
 
 def _job_for(cache, key="npm:x@1.0.0"):
-    """What the hook hands a check over with, and the marker that job names."""
+    """What the hook hands a check over with, and the marker of that check."""
     marker = _marker(cache, key, pid=os.getpid(), started=time.time(), token="mine")
-    return {**_job(cache, key), "marker": str(marker), "token": "mine"}, marker
+    return {**_job(cache, key), "token": "mine"}, marker
 
 
 # --- Starting a check: processes that outlive the hook and hold none of its std handles ---------
@@ -365,16 +380,22 @@ def test_a_check_starts_detached_holding_none_of_the_hooks_std_handles(tmp_path,
         assert seen["argv"] == [python, *safe_path, "-m", "skilltotal", "hook", "claude-code",
                                 "--supervise", check.tmp]
         assert venv.items() <= seen["env"].items()
-        # Today's isolation: an empty directory of its own, never the agent's project, and its
-        # temp files inside the check's own directory.
+        # Today's isolation: an empty directory of its own, never the agent's project. The check's
+        # directory sits directly in the temp directory the supervisor is given.
         cwd = Path(seen["cwd"])
         assert cwd == Path(check.tmp) / "cwd"
         assert not any(cwd.iterdir())
-        assert all(seen["env"][name] == check.tmp for name in ("TMPDIR", "TEMP", "TMP"))
+        assert Path(check.tmp).name.startswith("skilltotal_hook_")
+        assert all(seen["env"][name] == str(tmp_path) for name in ("TMPDIR", "TEMP", "TMP"))
         assert seen["env"]["PYTHONIOENCODING"] == "utf-8"
         spec = json.loads((Path(check.tmp) / "scan.json").read_text(encoding="utf-8"))
+        # A one-time secret ties the check's processes to this check: in scan.json and in their
+        # environment, never on a command line, where any process list shows it.
+        secret = seen["env"][hook_scan.SECRET_ENV]
+        assert len(secret) >= 32
         assert spec == {"source": "npm:x@1.0.0", "hook_pid": os.getpid(),
-                        "ceiling": hook_scan.CEILING_S}
+                        "ceiling": hook_scan.CEILING_S, "secret": secret}
+        assert not any(secret in arg for arg in seen["argv"])
     finally:
         hook_scan.remove_tree(check.tmp)
 
@@ -410,7 +431,7 @@ def test_in_a_windows_venv_the_check_runs_the_base_interpreter_for_that_venv(mon
     assert hook_scan._interpreter("nt") == (sys.executable, {})
 
 
-def test_the_scan_the_supervisor_starts_holds_none_of_its_handles_either(tmp_path, monkeypatch):
+def test_the_scan_the_supervisor_starts_holds_none_of_its_handles_either(check_dir, monkeypatch):
     seen = {}
 
     class Ended:
@@ -424,7 +445,7 @@ def test_the_scan_the_supervisor_starts_holds_none_of_its_handles_either(tmp_pat
         return Ended()
 
     monkeypatch.setattr(hook_scan.subprocess, "Popen", popen)
-    check = _check_dir(tmp_path, hook_pid=_dead_pid())
+    check = check_dir(hook_pid=_dead_pid())
     hook_scan.supervise(check, remember=_must_not_spawn)
     assert seen["stdin"] is subprocess.DEVNULL
     assert seen["stdout"] is subprocess.DEVNULL
@@ -436,6 +457,9 @@ def test_the_scan_the_supervisor_starts_holds_none_of_its_handles_either(tmp_pat
     assert seen["argv"] == [python, *safe_path, "-m", "skilltotal", "hook", "claude-code",
                             "--scan-into", str(check)]
     assert venv.items() <= seen["env"].items()
+    # The scan's temp files go in the check's directory, and it holds the check's secret.
+    assert all(seen["env"][name] == str(check) for name in ("TMPDIR", "TEMP", "TMP"))
+    assert seen["env"][hook_scan.SECRET_ENV] == SECRET
     for name, value in hook_scan._own_group().items():
         assert seen[name] == value
     assert not check.exists()  # the last one out removed the check's directory
@@ -450,19 +474,19 @@ def test_a_process_is_alive_until_it_ends():
 # --- The supervisor: the ceiling, and who records the verdict -----------------------------------
 
 
-def test_a_check_the_hook_left_records_its_verdict_itself(tmp_path, cache, fake_scan):
+def test_a_check_the_hook_left_records_its_verdict_itself(check_dir, cache, fake_scan):
     fake_scan("report")
     job, marker = _job_for(cache)
-    check = _check_dir(tmp_path, hook_pid=os.getpid(), job=job, handed_over=True)
+    check = check_dir(hook_pid=os.getpid(), job=job, handed_over=True)
     assert hook_scan.supervise(check, remember=cli._hook_remember) == 0
     assert list(_cached(cache)) == ["npm:x@1.0.0"]
     assert not marker.exists()
     assert not check.exists()
 
 
-def test_a_check_leaves_its_report_to_a_hook_that_still_waits(tmp_path, fake_scan):
+def test_a_check_leaves_its_report_to_a_hook_that_still_waits(check_dir, fake_scan):
     fake_scan("report")
-    check = _check_dir(tmp_path, hook_pid=os.getpid())
+    check = check_dir(hook_pid=os.getpid())
     hook_scan.supervise(check, remember=_must_not_spawn)
     # Done first: the waiting hook reads the report, keeps the verdict and removes the directory.
     assert (check / "done").exists()
@@ -470,20 +494,21 @@ def test_a_check_leaves_its_report_to_a_hook_that_still_waits(tmp_path, fake_sca
     hook_scan.remove_tree(str(check))
 
 
-def test_a_check_whose_hook_died_while_waiting_finishes_on_its_own(tmp_path, cache, fake_scan):
+def test_a_check_whose_hook_died_while_waiting_finishes_on_its_own(check_dir, cache, fake_scan):
     fake_scan("report")
     job, marker = _job_for(cache)
-    check = _check_dir(tmp_path, hook_pid=_dead_pid(), job=job)
+    check = check_dir(hook_pid=_dead_pid(), job=job)
     hook_scan.supervise(check, remember=cli._hook_remember)
     assert list(_cached(cache)) == ["npm:x@1.0.0"]
     assert not marker.exists()
     assert not check.exists()
 
 
-def test_the_hard_ceiling_stops_a_scan_and_records_nothing(tmp_path, cache, fake_scan):
+def test_the_hard_ceiling_stops_a_scan_and_records_nothing(tmp_path, check_dir, cache,
+                                                           fake_scan):
     fake_scan("pid,sleep=120,report")
     job, marker = _job_for(cache)
-    check = _check_dir(tmp_path, hook_pid=os.getpid(), ceiling=1.0, job=job, handed_over=True)
+    check = check_dir(hook_pid=os.getpid(), ceiling=1.0, job=job, handed_over=True)
     started = time.monotonic()
     hook_scan.supervise(check, remember=cli._hook_remember)
     assert time.monotonic() - started < 30
@@ -494,9 +519,9 @@ def test_the_hard_ceiling_stops_a_scan_and_records_nothing(tmp_path, cache, fake
     assert not check.exists()
 
 
-def test_a_check_the_hook_stopped_records_nothing(tmp_path, cache, fake_scan):
+def test_a_check_the_hook_stopped_records_nothing(check_dir, cache, fake_scan):
     fake_scan("sleep=120,report")
-    check = _check_dir(tmp_path, hook_pid=os.getpid(), abort=True, handed_over=True)
+    check = check_dir(hook_pid=os.getpid(), abort=True, handed_over=True)
     started = time.monotonic()
     hook_scan.supervise(check, remember=cli._hook_remember)
     assert time.monotonic() - started < 30
@@ -504,14 +529,78 @@ def test_a_check_the_hook_stopped_records_nothing(tmp_path, cache, fake_scan):
     assert not check.exists()
 
 
-def test_a_scan_that_fails_in_the_background_records_nothing(tmp_path, cache, fake_scan):
+def test_a_scan_that_fails_in_the_background_records_nothing(check_dir, cache, fake_scan):
     fake_scan("exit=1")
     job, marker = _job_for(cache)
-    check = _check_dir(tmp_path, hook_pid=os.getpid(), job=job, handed_over=True)
+    check = check_dir(hook_pid=os.getpid(), job=job, handed_over=True)
     hook_scan.supervise(check, remember=cli._hook_remember)
     assert _cached(cache) == {}
     assert not marker.exists()
     assert not check.exists()
+
+
+# --- A check's processes touch nothing but a check the hook made --------------------------------
+
+
+def _precious(root):
+    """A directory that is no check: what the check's processes must leave exactly as it is."""
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "file.txt").write_text("keep me", encoding="utf-8")
+    return root
+
+
+def _tree(root):
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
+
+
+@pytest.mark.parametrize("role", ["supervise", "scan-into"])
+@pytest.mark.parametrize("case", ["any folder", "named like a check, elsewhere", "no scan.json",
+                                  "another secret", "no secret in the environment"])
+def test_the_check_processes_refuse_anything_but_a_check_the_hook_made(
+        tmp_path, monkeypatch, role, case):
+    """`skilltotal hook claude-code --supervise DIR` removed DIR, whatever it was: with no scan.json
+    the hook counted as gone, so the supervisor cleaned up after it. The flags are hidden, not
+    secret, and a prompt-injected agent can run them as well as the hook can."""
+    temp = tmp_path / "checks"
+    temp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp))
+    monkeypatch.setenv(hook_scan.SECRET_ENV, SECRET)
+    if case == "any folder":
+        victim = _precious(tmp_path / "precious")
+    else:
+        home = tmp_path / "elsewhere" if case == "named like a check, elsewhere" else temp
+        victim = _precious(home / "skilltotal_hook_planted")
+        if case != "no scan.json":
+            secret = "f" * 32 if case == "another secret" else SECRET
+            (victim / "scan.json").write_text(json.dumps(
+                {"source": "npm:x@1.0.0", "hook_pid": 0, "ceiling": 1.0, "secret": secret}),
+                encoding="utf-8")
+        if case == "no secret in the environment":
+            monkeypatch.delenv(hook_scan.SECRET_ENV)
+    before = _tree(victim)
+    monkeypatch.setattr(hook_scan, "_spawn", _must_not_spawn)
+    assert cli.main(["hook", "claude-code", f"--{role}", str(victim)]) != cli.EXIT_OK
+    assert _tree(victim) == before
+    assert (victim / "sub" / "file.txt").read_text(encoding="utf-8") == "keep me"
+
+
+def test_a_check_writes_only_the_hooks_own_cache_and_marker(tmp_path, check_dir, cache, fake_scan):
+    """Where a check records its verdict and which marker it frees come from the hook's own
+    settings and the cache key, never from a path in a file of the check's directory: a planted
+    job.json cannot aim the write or the removal anywhere else."""
+    fake_scan("report")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    victim = elsewhere / "victim.txt"
+    victim.write_text("keep me", encoding="utf-8")
+    job, marker = _job_for(cache)
+    job.update(cache=str(elsewhere / "planted.json"), marker=str(victim))
+    check = check_dir(hook_pid=os.getpid(), job=job, handed_over=True)
+    hook_scan.supervise(check, remember=cli._hook_remember)
+    assert victim.read_text(encoding="utf-8") == "keep me"
+    assert not (elsewhere / "planted.json").exists()
+    assert list(_cached(cache)) == ["npm:x@1.0.0"]  # the hook's own cache
+    assert not marker.exists()  # the marker the key names, which is the check's own
 
 
 # --- The hook: waiting, handing a check over, one check per artifact, at most two behind ---------
@@ -539,10 +628,13 @@ def test_a_late_check_goes_on_in_the_background_with_what_it_must_record(cache, 
     job = handed["job"]
     assert job["key"] == "npm:big@1.0.0"
     assert job["ttl"] == cli._hook_cache_ttl("npm:big@1.0.0")
-    assert job["cache"] == str(cache / "hook-cache.json")
     assert job["engine"] == cli.__version__
+    # No path: where the verdict goes and which marker is the check's follow from the hook's own
+    # settings and the key, never from a file in the check's directory.
+    assert "cache" not in job and "marker" not in job
     # The marker now names the check's own process: the hook is about to exit.
-    marker = json.loads(Path(job["marker"]).read_text(encoding="utf-8"))
+    path = hook_scan.Pending(cache / "hook-pending").marker_path(job["key"])
+    marker = json.loads(path.read_text(encoding="utf-8"))
     assert marker["background"] is True
     assert marker["token"] == job["token"]
     assert marker["pid"] == fake.started[0].pid
@@ -740,9 +832,14 @@ def test_the_scan_says_its_size_before_it_starts_reading(tmp_path, monkeypatch):
     component = tmp_path / "component"
     component.mkdir()
     (component / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
-    check = tmp_path / "check"
+    check = tmp_path / "skilltotal_hook_scan"
     check.mkdir()
-    (check / "scan.json").write_text(json.dumps({"source": str(component)}), encoding="utf-8")
+    (check / "scan.json").write_text(json.dumps({"source": str(component), "secret": SECRET}),
+                                     encoding="utf-8")
+    # As the supervisor starts it: the check's directory is its temp directory, and it holds the
+    # check's secret.
+    monkeypatch.setattr(tempfile, "tempdir", str(check))
+    monkeypatch.setenv(hook_scan.SECRET_ENV, SECRET)
     real = engine.analyze_directory
 
     def analyze_directory(root, component, **options):

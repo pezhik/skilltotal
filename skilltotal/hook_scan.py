@@ -13,13 +13,20 @@ which outlive the hook:
   as soon as it knows, and writes its report. The hook waits for it while that size says it can
   finish in the time left, and not a moment longer.
 
-Both run in an empty directory with the check's own temp directory as TMP, never in the agent's
-project, and neither holds the hook's stdin, stdout or stderr: the plugin reads the hook's answer
-with ``$(...)``, which waits until every holder of that pipe has closed it. They and the hook talk
-only through files in the check's directory:
+Both run in an empty directory, never in the agent's project (the scan with the check's own
+directory as its TMP), and neither holds the hook's stdin, stdout or stderr: the plugin reads the
+hook's answer with ``$(...)``, which waits until every holder of that pipe has closed it.
+
+Their command-line flags are hidden but not secret: a prompt-injected agent can run them too. So
+each works only on a check directory the hook made (named ``skilltotal_hook_*``, directly in the
+temp directory, a directory of this user's) whose scan.json carries the one-time secret the hook
+handed the process in its environment, and every other path it writes to or removes comes from the
+hook's own settings, never from a file in that directory. They and the hook talk only through
+files in the check's directory:
 
     cwd/          the empty directory both processes run in
-    scan.json     what to scan, the hook's process id and the ceiling (written by the hook)
+    scan.json     what to scan, the hook's process id, the ceiling and the check's secret (written
+                  by the hook)
     size          how much text the scan is about to read, in megabytes (written by the scan as
                   soon as it knows; the hook stops waiting at once when that says the scan cannot
                   finish in the time left)
@@ -43,11 +50,13 @@ in one step, so a reader never sees half of it.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 import secrets
 import shutil
 import signal
+import stat
 import subprocess  # nosec B404 - runs this same CLI with fixed arguments
 import sys
 import tempfile
@@ -64,6 +73,11 @@ if TYPE_CHECKING:
 
 # A check stops after this long, wherever it is, and records nothing.
 CEILING_S = 20 * 60
+# The environment variable through which the hook hands its check's processes the check's
+# one-time secret (an environment, unlike a command line, is not shown in process lists).
+SECRET_ENV = "SKILLTOTAL_HOOK_CHECK"  # nosec B105 - the variable's name, not a secret
+# What the name of a check's directory starts with.
+_CHECK_PREFIX = "skilltotal_hook_"
 # Checks that may go on without a hook at once; past that, a check is stopped instead.
 MAX_BACKGROUND = 2
 # How often the waiting hook looks at its check.
@@ -280,15 +294,18 @@ class RunningScan:
         works in: a ``json.py`` planted in an opened repository must not run inside the scanner,
         and a ``.skilltotal.toml`` there must not tune the scan of someone else's package.
         """
-        tmp = tempfile.mkdtemp(prefix="skilltotal_hook_")
+        root = tempfile.gettempdir()
+        tmp = tempfile.mkdtemp(prefix=_CHECK_PREFIX, dir=root)
         try:
             cwd = os.path.join(tmp, "cwd")
             os.mkdir(cwd)
+            secret = secrets.token_hex(16)
             Path(tmp, "scan.json").write_text(json.dumps(
-                {"source": source, "hook_pid": os.getpid(), "ceiling": CEILING_S}),
-                encoding="utf-8")
-            env = {**os.environ, **_interpreter()[1], "TMPDIR": tmp, "TEMP": tmp, "TMP": tmp,
-                   "PYTHONIOENCODING": "utf-8"}
+                {"source": source, "hook_pid": os.getpid(), "ceiling": CEILING_S,
+                 "secret": secret}), encoding="utf-8")
+            # The supervisor gets this process's temp directory, where it finds the check's.
+            env = {**os.environ, **_interpreter()[1], "TMPDIR": root, "TEMP": root, "TMP": root,
+                   SECRET_ENV: secret, "PYTHONIOENCODING": "utf-8"}
             proc = _spawn(_role_argv("supervise", tmp), cwd=cwd, env=env, **detached())
         except BaseException:
             remove_tree(tmp)
@@ -352,26 +369,71 @@ class RunningScan:
 # --- The check's own processes -------------------------------------------------------------------
 
 
+def cache_file() -> Path:
+    """The hook's verdict cache. Its directory also holds the markers (``hook-pending``)."""
+    base = (os.environ.get("SKILLTOTAL_CACHE_DIR") or os.environ.get("XDG_CACHE_HOME")
+            or os.environ.get("LOCALAPPDATA") or str(Path.home() / ".cache"))
+    root = Path(base) if os.environ.get("SKILLTOTAL_CACHE_DIR") else Path(base) / "skilltotal"
+    return root / "hook-cache.json"
+
+
+def pending() -> Pending:
+    return Pending(cache_file().parent / "hook-pending")
+
+
+def _check_spec(tmp: Path, role: str) -> dict | None:
+    """scan.json of the check in ``tmp``, or None when ``tmp`` is not a check this process may
+    touch: a directory of this user's named ``skilltotal_hook_*``, whose scan.json carries the
+    secret this process got in its environment. For the supervisor it sits directly in the temp
+    directory; for the scan it is the temp directory, as the supervisor started it."""
+    secret = os.environ.get(SECRET_ENV, "")
+    try:
+        real = Path(os.path.realpath(tmp))
+        info = os.lstat(real)
+        temp = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
+    except (OSError, ValueError):
+        return None
+    home = real.parent if role == "supervise" else real
+    if (os.path.normcase(str(home)) != temp or not real.name.startswith(_CHECK_PREFIX)
+            or not stat.S_ISDIR(info.st_mode)):
+        return None
+    if os.name != "nt" and (info.st_uid != os.getuid() or info.st_mode & 0o077):
+        return None
+    spec = _read_json(real / "scan.json")
+    if not (secret and isinstance(spec, dict) and isinstance(spec.get("secret"), str)
+            and hmac.compare_digest(spec["secret"].encode(), secret.encode())
+            and isinstance(spec.get("source"), str)):
+        return None
+    return spec
+
+
 def supervise(tmp: Path, remember: Callable[[dict, dict], object]) -> int:
     """The supervisor: run the scan within the ceiling, then finish the check.
 
     When the hook still waits, it reads the report itself. When the hook has stopped waiting, or
     died while it waited, the check is this process's to finish: it calls ``remember(job, report)``
-    if the scan succeeded and the hook left a job, frees the marker the job names, and removes the
-    check's directory.
+    if the scan succeeded and the hook left a job, frees the check's marker, and removes the
+    check's directory. Returns 1, having touched nothing, when ``tmp`` is no check of a hook's.
     """
-    spec = _read_json(tmp / "scan.json") or {}
+    spec = _check_spec(tmp, "supervise")
+    if spec is None:
+        return 1
+    tmp = Path(os.path.realpath(tmp))
     succeeded = _run_scan(tmp, float(spec.get("ceiling", CEILING_S)))
     if claim(tmp / "done") and pid_alive(int(spec.get("hook_pid", 0))):
         return 0  # the hook still waits: it reads the report and removes the directory
     job = _read_json(tmp / "job.json")
+    if not (isinstance(job, dict) and isinstance(job.get("key"), str)
+            and isinstance(job.get("token"), str)):
+        job = None
     try:
         report = _read_json(tmp / "report.json") if succeeded else None
-        if isinstance(job, dict) and isinstance(report, dict):
+        if job is not None and isinstance(report, dict):
             remember(job, report)
     finally:
-        if isinstance(job, dict):
-            Pending.release(Marker(Path(str(job.get("marker"))), str(job.get("token"))))
+        if job is not None:
+            # Found by the key, so it is always one of the hook's own markers.
+            Pending.release(Marker(pending().marker_path(job["key"]), job["token"]))
         _step_out_of(tmp)
         remove_tree(tmp)
     return 0
@@ -379,9 +441,11 @@ def supervise(tmp: Path, remember: Callable[[dict, dict], object]) -> int:
 
 def _run_scan(tmp: Path, ceiling: float) -> bool:
     """Run the scan until it ends, the hook stops it, or the ceiling; True if it succeeded."""
+    env = {**os.environ, **_interpreter()[1], "TMPDIR": str(tmp), "TEMP": str(tmp),
+           "TMP": str(tmp)}
     try:
-        scan = _spawn(_role_argv("scan-into", str(tmp)), cwd=str(tmp / "cwd"),
-                      env={**os.environ, **_interpreter()[1]}, **_own_group())
+        scan = _spawn(_role_argv("scan-into", str(tmp)), cwd=str(tmp / "cwd"), env=env,
+                      **_own_group())
     except OSError:
         return False
     deadline = time.monotonic() + ceiling
@@ -426,12 +490,17 @@ def scan_into(tmp: Path) -> int:
     for a GitHub repository the collector measures it before cloning; anything else is measured
     on disk once it is fetched and extracted. That is why this runs the collector and the analysis
     itself instead of ``engine.analyze``, which adds two notes about the source besides (a link it
-    normalized, archive entries it left out); the hook's verdict uses neither.
+    normalized, archive entries it left out); the hook's verdict uses neither. Returns 1, having
+    touched nothing, when ``tmp`` is no check of a hook's.
     """
     from skilltotal.collector import collect
     from skilltotal.engine import analyze_directory
 
-    source = str((_read_json(tmp / "scan.json") or {})["source"])
+    spec = _check_spec(tmp, "scan-into")
+    if spec is None:
+        return 1
+    tmp = Path(os.path.realpath(tmp))
+    source = str(spec["source"])
     size_file = tmp / "size"
 
     def report_size(size: TreeSize) -> None:

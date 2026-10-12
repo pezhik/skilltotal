@@ -701,10 +701,9 @@ HOOK_CACHE_MAX_ENTRIES = 500
 
 
 def _hook_cache_path() -> Path:
-    base = (os.environ.get("SKILLTOTAL_CACHE_DIR") or os.environ.get("XDG_CACHE_HOME")
-            or os.environ.get("LOCALAPPDATA") or str(Path.home() / ".cache"))
-    root = Path(base) if os.environ.get("SKILLTOTAL_CACHE_DIR") else Path(base) / "skilltotal"
-    return root / "hook-cache.json"
+    from skilltotal.hook_scan import cache_file
+
+    return cache_file()
 
 
 def _hook_scan_cached(source: str, timeout: float) -> dict:
@@ -736,7 +735,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         return hit["report"]
     # What the verdict is kept under, and for which file: everything that keeps it needs to know.
     job = {"key": key, "ttl": ttl, "artifact": release.artifact if release else "", "at": now,
-           "engine": __version__, "cache": str(path)}
+           "engine": __version__}
     pending = Pending(path.parent / "hook-pending")
     try:
         marker = pending.claim(key, now)
@@ -774,8 +773,7 @@ def _hook_hand_over(
             with pending.lock():  # counting the others and joining them is one step
                 running = pending.background(time.time(), exclude=marker)
                 if running < MAX_BACKGROUND:
-                    report = scan.hand_over({**job, "marker": str(marker.path),
-                                             "token": marker.token})
+                    report = scan.hand_over({**job, "token": marker.token})
                     if report is not None:
                         return report
                     ends = None if late.seconds_left is None else time.time() + late.seconds_left
@@ -854,7 +852,8 @@ def _hook_remember(job: dict, report: dict) -> dict:
         # A file was added to the release between the lookup and the scan: the verdict is good
         # for what was scanned, but it is not the artifact the key names, so it is not kept.
         return entry["report"]
-    _hook_cache_store(Path(job["cache"]), job["key"], entry)
+    # The hook's own cache, wherever the check that found the verdict ran.
+    _hook_cache_store(_hook_cache_path(), job["key"], entry)
     return entry["report"]
 
 
