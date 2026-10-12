@@ -4,9 +4,25 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [0.63.1]
+## [0.64.0]
 
-Found while preparing the launch. Ruleset 67: no detection rule changed.
+Found while preparing the launch. Ruleset 68.
+
+### Detection (ruleset 68)
+Five constructs a blind red-team used to get past ruleset 67, each now read the way its plain form
+already was; details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 73 malicious and 50 benign
+samples, 73/73 flagged, 0 false positives.
+- A credential path joined onto the home directory (`path.join(os.homedir(), '.aws',
+  'credentials')`, `Path.home() / '.aws' / 'credentials'`) is judged like the written path.
+- Agent rule folders (`.clinerules/`, `.cursor/rules/`, `.windsurf/rules/`) are instruction
+  surfaces, and an instruction to send credentials out while keeping it from the user is prompt
+  injection.
+- Hex decoded and executed (`new Function(Buffer.from(h, 'hex').toString())()`, also across two
+  statements) is decode-and-execute, and forms a dropper with an install hook.
+- An all-interfaces address bound through a variable is network exposure.
+- An MCP tool description split across concatenated strings is read whole.
+- A provider SDK reading its own provider's credentials goes to review, and only for a name the
+  registry gives: a repository naming itself after a provider SDK gets no allowance.
 
 ### Security
 - **A large package gets a verdict instead of the same question every time.** The hook killed a

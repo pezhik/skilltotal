@@ -4,7 +4,7 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
-## ruleset 68 (unreleased)
+## ruleset 68 (engine 0.64.0)
 
 Five constructs a blind red-team (2026-10-10) used to get past ruleset 67, each now read the way
 its plain form already was. Every change is pinned by a sanitized sample that fails on ruleset 67
@@ -34,6 +34,9 @@ positives).
   package-registry token into `~/.npmrc` and `~/.pypirc`, and a cloud CLI that keeps its login
   under `~/.azure`. Own-domain reads that listed packages wrote out as literals (an SSH transport
   reading `~/.ssh/config`, a git library reading `~/.git-credentials`) move to needs_review too.
+  The allowance, for this demotion and for the combination, now goes only to a name the registry
+  gives (an `npm:` or `pypi:` source): a git repository, an archive or a folder names itself in its
+  own manifest, so a credential stealer calling itself after a provider SDK borrowed its allowance.
 - **`ST-PROMPT-INJECTION`** (changed): agent rule files are instruction surfaces, not
   documentation: `.clinerules` as a file, and the markdown in a `.clinerules/`, `.cursor/rules/`
   or `.windsurf/rules/` folder, which was documentation unless its name said otherwise (a file
