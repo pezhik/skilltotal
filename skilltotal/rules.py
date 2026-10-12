@@ -43,10 +43,10 @@ _SKILL_MISMATCH_RULE = RuleSpec(
     id=SKILL_MISMATCH_FINDING_ID,
     category="least_privilege",
     severity=Severity.HIGH,
-    title="Skill does more than its declared tools allow",
+    title="Skill does more than its declared tools cover",
     description=(
-        "Raised when an Agent Skill's declared allowed-tools do not cover a dangerous capability "
-        "its bundled code actually exercises (undeclared-capability / least-privilege violation)."
+        "Raised when an Agent Skill's bundled code exercises a dangerous capability that its "
+        "declared allowed-tools do not cover (an undeclared capability)."
     ),
     recommendation="Align allowed-tools with actual behavior, or remove the undeclared capability.",
     capability=None,

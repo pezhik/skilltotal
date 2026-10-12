@@ -219,7 +219,7 @@ def analyze_directory(
             fired.add(combination.id)
 
     # Agent Skill: declared allowed-tools vs. what the bundled code actually does (deterministic
-    # least-privilege / undeclared-capability check). Synthesized here, after capabilities.
+    # undeclared-capability check). Synthesized here, after capabilities.
     mismatch = skill_capability_mismatch(component, index, capabilities)
     if mismatch is not None:
         findings.append(mismatch)

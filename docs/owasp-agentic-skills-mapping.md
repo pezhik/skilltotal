@@ -41,6 +41,6 @@ over-privilege and a falsified declaration).
   no honest single AST category, and capability findings never affect the score.
 
 > A complete agentic-skill posture needs both static (this engine) and runtime/governance
-> verification; SkillTotal's free engine covers the statically-checkable AST risks end-to-end and
-> reports the rest honestly rather than implying coverage it does not have. See also
-> `docs/mcp-owasp-mapping.md` for the OWASP MCP Security Cheat Sheet mapping.
+> verification. SkillTotal's free engine runs the static checks mapped above and names the AST
+> risks it does not cover. See also `docs/mcp-owasp-mapping.md` for the OWASP MCP Security Cheat
+> Sheet mapping.

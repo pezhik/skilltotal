@@ -490,16 +490,20 @@ published npm/PyPI package.
 | Category | MCP | npm | PyPI | AI project |
 |---|---|---|---|---|
 | Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ✅ |
-| Tool poisoning (MCP tool metadata) | ✅ | ❌ | ❌ | ⚠️ |
+| Tool poisoning (MCP tool and parameter descriptions) | ✅ | ❌ | ❌ | ⚠️ |
 | Dangerous capabilities (shell / fs / network) | ✅ | ✅ | ✅ | ⚠️ |
 | Data exfiltration (secret access + egress) | ✅ | ✅ | ✅ | ⚠️ |
 | Secret theft / sensitive-path access | ✅ | ✅ | ✅ | ⚠️ |
 | Dynamic code execution | ✅ | ✅ | ✅ | ⚠️ |
 | Obfuscation (decode-and-execute) | ✅ | ✅ | ✅ | ✅ |
-| Hidden-Unicode smuggling | ✅ | ✅ | ✅ | ✅ |
+| Hidden-Unicode smuggling (tag, bidi control and zero-width characters) | ✅ | ✅ | ✅ | ✅ |
 | Embedded secrets (hardcoded keys/tokens) | ✅ | ✅ | ✅ | ✅ |
 | Install-time / supply-chain hooks | ⚠️ | ✅ | ✅ | ❌ |
-| Overprivileged / auto-approved tools | ✅ | ❌ | ❌ | ⚠️ |
+| Overprivileged tools, auto-approve keys in MCP server entries | ✅ | ❌ | ❌ | ⚠️ |
+
+Each row names what the engine checks today. Not checked yet: nested schema fields, prompts,
+resources and server instructions; Unicode variation selectors and ANSI terminal escape
+sequences; auto-approve settings that agent hosts keep outside MCP server entries.
 
 ### Typical findings
 
@@ -513,8 +517,9 @@ published npm/PyPI package.
 - An MCP server with auto-approved or overprivileged tools
 - Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
   shell: a traced path, not just a dangerous API in isolation
-- An **agent skill** does more than its declared `allowed-tools` allow (undeclared capability /
-  least-privilege violation)
+- An **agent skill** whose bundled code does more than its declared `allowed-tools` cover. The
+  field pre-approves tools and does not limit the skill's code, so a narrow list can make a skill
+  look safer than it is.
 
 ## Out of scope
 
