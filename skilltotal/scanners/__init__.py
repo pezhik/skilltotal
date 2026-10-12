@@ -24,6 +24,7 @@ from skilltotal.scanners.prompt_surface import PromptSurfaceScanner
 from skilltotal.scanners.pth_exec import PthExecScanner
 from skilltotal.scanners.python_ast import PythonAstScanner
 from skilltotal.scanners.scoped_identity import ScopedIdentityScanner
+from skilltotal.scanners.secret_exfil import SecretExfilScanner
 from skilltotal.scanners.secrets import SecretsScanner
 from skilltotal.scanners.sensitive_paths import SensitivePathScanner
 from skilltotal.scanners.shell_evasion import ShellEvasionScanner
@@ -51,6 +52,7 @@ SCANNERS: list[Scanner] = [
     ExposureScanner(),
     EncryptedArchiveScanner(),
     EmailExfilScanner(),
+    SecretExfilScanner(),
     AgentConfigScanner(),
 ]
 

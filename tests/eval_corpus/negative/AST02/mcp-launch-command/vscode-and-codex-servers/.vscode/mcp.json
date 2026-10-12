@@ -1,0 +1,23 @@
+{
+  "inputs": [
+    {
+      "type": "promptString",
+      "id": "gh-token",
+      "description": "GitHub token",
+      "password": true
+    }
+  ],
+  "servers": {
+    "github": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "github-mcp-server"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "${input:gh-token}"
+      }
+    }
+  }
+}

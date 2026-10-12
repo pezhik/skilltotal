@@ -360,6 +360,9 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     "ST-ENCRYPTED-ARCHIVE": (_T.CODE_OBFUSCATION,),
     # Emergent combinations (synthesized risky-construct findings).
     "ST-COMBO-EXFIL": (_T.EXFIL_CORRELATION,),
+    # One command or call that reads a credential (or the whole environment) and sends it:
+    # the read-sensitive-data-then-external-comms correlation in a single construct.
+    "ST-SECRET-EXFIL": (_T.EXFIL_CORRELATION, _T.NETWORK_EGRESS),
     "ST-FLOW-TRIFECTA": (_T.INSTRUCTION_EXFIL_FLOW,),
     "ST-CONVERGENCE": (_T.MALWARE_CONVERGENCE,),
     "ST-INSTALL-DROPPER": (_T.SUPPLY_CHAIN_PROVENANCE, _T.EXECUTION_AUTHORITY),

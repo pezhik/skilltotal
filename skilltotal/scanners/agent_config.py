@@ -12,6 +12,13 @@ Three attack shapes published in 2026 live here.
   new settings file. A hook in a repository can be an honest formatter, so the configuration alone
   is a risky construct. When the command, or the script it runs from the same component, fetches
   code and pipes it into a shell or decodes and executes it, it is a malicious indicator.
+  Hooks are one of many such commands: an MCP server's launch command in any client format, the
+  status line and credential helpers of Claude Code settings, a plugin's monitors and language
+  servers, hooks in a skill's or a subagent's frontmatter. ``skilltotal.autorun`` reads them all
+  in one place, and every one gets the same fetch-or-decode-and-run check here. Where an honest
+  one is expected (an MCP server is started by a command), only that check applies. An ``http``
+  hook posts every event it is bound to, with the tool input and output in it, to its URL: one
+  aimed at a host other than this machine is a risky construct.
 * **A `.git/config` that runs a command on every `git status`/`git diff`.** GitSpawn (Manifold
   Security, Sept 2026) found that several AI coding agents run `git status`/`git diff` at session
   startup, before any trust prompt, and that `core.fsmonitor` in `.git/config` names a command git
@@ -27,10 +34,17 @@ Detection patterns below are string literals; nothing here executes a command.
 
 from __future__ import annotations
 
-import json
 import re
+from urllib.parse import urlsplit
 
-from skilltotal import bounded_json
+from skilltotal.autorun import (
+    KIND_HOOK,
+    ORIGIN_PLUGIN,
+    ORIGIN_PROJECT,
+    ORIGIN_SKILL,
+    AutorunCommand,
+    autorun_commands,
+)
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
@@ -40,7 +54,6 @@ from skilltotal.scanners.base import (
     ScanResult,
     _finding_from_rule,
     concat_folded_spans,
-    deep_json_review,
 )
 
 # JS/TS (and Python) files where a client-config path may be split across concatenated literals.
@@ -54,15 +67,16 @@ R_CONFIG_INJECT = "ST-AGENT-CONFIG-INJECT"
 R_GIT_PERSIST = "ST-GIT-HOOK-PERSIST"
 R_SKILL_EXEC = "ST-SKILL-DYNAMIC-EXEC"
 
-# Configuration an agent or editor executes when a project is opened or a session starts.
-_HOOK_CONFIGS = (".claude/settings.json", ".claude/settings.local.json", ".gemini/settings.json",
-                 ".cursor/hooks.json", ".qwen/settings.json")
-# A Claude Code plugin's own hook manifest (HookPry, 2026). Hooks are what a plugin declares and
-# is installed for, and what HookPry abuses is an *update* adding one, which a single snapshot
-# cannot see. So only a fetch-or-decode-and-run command here is a finding; an honest hook is
-# listed for review and never scored.
-_PLUGIN_HOOK_CONFIGS = ("hooks/hooks.json", ".claude-plugin/plugin.json")
-_TASKS_CONFIG = ".vscode/tasks.json"
+# Where an honest auto-run command is a finding: configuration of the project itself (agent hook
+# files, Claude Code settings commands, VS Code folder-open tasks) runs when someone merely opens
+# the project, and a published package has no reason to ship it. A Claude Code plugin's own hooks
+# (HookPry, 2026) and the hooks of a skill or subagent are what the user installs them for, and what
+# HookPry abuses is an *update* adding one, which a single snapshot cannot see: an honest hook there
+# is listed for review and never scored. An MCP server is started by a command by design, and a
+# plugin's monitors and language servers are what it ships, so nothing is said about honest ones.
+# Every origin gets the fetch-or-decode-and-run check (and, in secret_exfil, the credential check).
+# Host names compared against, never bound to.
+_HTTP_HOOK_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})  # nosec B104
 
 # `.git/config`'s `core.fsmonitor` (GitSpawn, 2026): file_index.py reads this one path despite
 # the general `.git` skip, because its content is itself an auto-exec surface, and hands it only
@@ -74,12 +88,26 @@ _TASKS_CONFIG = ".vscode/tasks.json"
 _FSMONITOR = re.compile(r"^[ \t]*fsmonitor[ \t]*=[ \t]*(.+?)[ \t]*$", re.MULTILINE | re.IGNORECASE)
 _GIT_BOOL_VALUES = frozenset({"true", "false", "yes", "no", "on", "off", "1", "0"})
 
-# Fetch-and-run or decode-and-run, in a shell command or in the source of a script.
+# Fetch-and-run or decode-and-run, in a shell command or in the source of a script: a download
+# piped into a shell (or into an interpreter reading its program from stdin), a download run through
+# `sh -c "$(...)"`, `eval "$(...)"` or a process substitution, PowerShell's download-then-iex in
+# either order, an encoded PowerShell command, and the same in JavaScript or Python.
+# The gaps between the parts are bounded: an unbounded `[^\n]*` after each `curl` of a crafted
+# line rescanned the rest of the line from every one of them (quadratic).
+_FETCH = r"(?:curl|wget)\b"
+_GAP = r"[^\n]{0,1000}?"
 _REMOTE_EXEC = re.compile(
-    r"(?:curl|wget)\b[^\n]*\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b"
-    r"|base64\s+(?:-d|-D|--decode)\b[^\n]*\|\s*(?:ba|z)?sh\b"
-    r"|\b(?:iex|Invoke-Expression)\b[^\n]*\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|DownloadString)\b"
-    r"|\bpowershell(?:\.exe)?\b[^\n]*\s-(?:e|enc|encodedcommand)\s"
+    rf"{_FETCH}{_GAP}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
+    rf"|{_FETCH}[^\n|]{{0,1000}}\|\s*(?:sudo\s+)?(?:python[0-9.]*|node|perl|ruby)(?:\s+-)?\s*"
+    r"(?=$|[;&|)\n\"'])"
+    rf"|base64\s+(?:-d|-D|--decode)\b{_GAP}\|\s*(?:ba|z)?sh\b"
+    rf"|\b(?:ba|z|da|k)?sh\s+-c\s+[\"']?\$\(\s*{_FETCH}"
+    rf"|\beval\s+[\"']?\$\(\s*{_FETCH}"
+    rf"|(?:\bsource|(?<![\w.])\.|\b(?:ba|z|da|k)?sh)\s+<\(\s*{_FETCH}"
+    rf"|\b(?:iex|Invoke-Expression)\b{_GAP}\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|"
+    r"DownloadString)\b"
+    r"|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,1000}\|\s*(?:iex|Invoke-Expression)\b"
+    rf"|\bpowershell(?:\.exe)?\b{_GAP}\s-(?:e|enc|encodedcommand)\s"
     r"|\beval\s*\(\s*(?:await\s+)?\(?\s*(?:await\s+)?fetch\s*\("
     r"|\bexec\s*\(\s*(?:urllib\.request\.)?urlopen\s*\(",
     re.IGNORECASE,
@@ -226,16 +254,19 @@ class AgentConfigScanner(Scanner):
             id=R_AUTORUN,
             category="agent_config",
             severity=Severity.MEDIUM,
-            title="Agent or editor configuration runs a command automatically",
+            title="Agent or editor configuration runs a command or sends data automatically",
             description=(
-                "The component ships agent or IDE configuration that executes a command without "
-                "a separate step: a Claude Code / Gemini CLI / Cursor hook, or a VS Code task "
-                "that runs when the folder opens. Opening the project in that tool runs it with "
-                "the developer's privileges."
+                "The component ships agent or IDE configuration that acts without a separate "
+                "step: a Claude Code / Gemini CLI / Cursor hook, a Claude Code status line or "
+                "credential helper command, or a VS Code task that runs when the folder opens. "
+                "Opening the project in that tool runs it with the developer's privileges. An "
+                "`http` hook (here or in a plugin or skill) posts each event it is bound to, tool "
+                "input and output included, to a server that is not this machine."
             ),
             recommendation=(
-                "Read the command and anything it runs before opening this project in an agent "
-                "or editor. A published package has no reason to ship project auto-run config."
+                "Read the command and anything it runs, or the URL a hook posts to, before "
+                "opening this project in an agent or editor. A published package has no reason "
+                "to ship project auto-run config."
             ),
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
@@ -248,13 +279,16 @@ class AgentConfigScanner(Scanner):
             severity=Severity.HIGH,
             title="Auto-run agent configuration fetches or decodes code and executes it",
             description=(
-                "An automatically executed agent/IDE hook or task, or the script it runs from "
-                "this component, downloads code and pipes it into a shell or decodes and runs "
-                "it. Opening the project in an agent or editor runs it without a prompt."
+                "A command an agent or editor runs on its own -- a hook or task, an MCP server's "
+                "launch command, a status line or credential helper, a plugin's monitor or "
+                "language server, or a hook in a skill's or subagent's frontmatter -- or the "
+                "script it runs from this component, downloads code and pipes it into a shell or "
+                "decodes and runs it. Opening the project, installing the plugin or starting the "
+                "server runs it without a prompt."
             ),
             recommendation=(
-                "Do not open the project in an agent or editor. Remove the configuration and "
-                "treat the machine that already opened it as exposed."
+                "Do not open the project, install the plugin or add the server. Remove the "
+                "configuration and treat a machine that already ran it as exposed."
             ),
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
@@ -359,48 +393,51 @@ class AgentConfigScanner(Scanner):
         by_path = {f.relpath: f for f in index.files}
         autorun: list[Evidence] = []
         remote: list[Evidence] = []
-        needs_review: list[NeedsReview] = []
-        for f in index.files:
-            rel = f.relpath.replace("\\", "/")
-            lowered = rel.lower()
-            plugin = any(lowered.endswith(c) for c in _PLUGIN_HOOK_CONFIGS)
-            honest: list[str] = []
-            if plugin or any(lowered.endswith(c) for c in _HOOK_CONFIGS):
-                commands, cut = self._hook_commands(f)
-            elif lowered.endswith(_TASKS_CONFIG):
-                commands, cut = self._folder_open_tasks(f)
-            else:
+        scan = autorun_commands(index)
+        needs_review: list[NeedsReview] = list(scan.reviews)
+        # Honest hooks of a plugin, a skill or a subagent, per file, for one review note each.
+        honest: dict[tuple[str, str], list[AutorunCommand]] = {}
+        for command in scan.commands:
+            if command.is_http:
+                if _is_remote_url(command.text):
+                    autorun.append(command.evidence())
                 continue
-            if cut:
-                needs_review.append(deep_json_review("agent_config", f.relpath))
-            for command in commands:
-                ev = self._evidence_for(f, command)
-                if _REMOTE_EXEC.search(command):
-                    autorun.append(ev)
-                    remote.append(ev)
-                    continue
-                script = self._referenced_script(command, by_path)
-                m = _REMOTE_EXEC.search(script.text) if script is not None else None
-                if m:
-                    autorun.append(ev)
-                    remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
-                elif plugin:
-                    honest.append(command)
-                else:
-                    autorun.append(ev)
-            if honest:
-                needs_review.append(NeedsReview(
-                    category="agent_config",
-                    title="Plugin binds lifecycle hooks",
-                    reason=(
-                        "This plugin runs these commands on agent lifecycle events: "
-                        + "; ".join(c[:120] for c in honest[:5])
-                        + ". Confirm they do what the plugin says, and re-check after updates: "
-                        "an update can add a hook without the user seeing it (HookPry, 2026)."
-                    ),
-                    file=f.relpath,
-                    line=self._evidence_for(f, honest[0]).line_start,
-                ))
+            text = command.text
+            m = _REMOTE_EXEC.search(text)
+            if m:
+                ev = command.evidence(command.piece_at(m.start()))
+                autorun.append(ev)
+                remote.append(ev)
+                continue
+            script = self._referenced_script(text, by_path, command.file.relpath)
+            m = _REMOTE_EXEC.search(script.text) if script is not None else None
+            if m and script is not None:
+                ev = command.evidence()
+                autorun.append(ev)
+                remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
+            elif command.origin == ORIGIN_PROJECT:
+                autorun.append(command.evidence())
+            elif command.origin in (ORIGIN_PLUGIN, ORIGIN_SKILL) and command.kind == KIND_HOOK:
+                honest.setdefault((command.file.relpath, command.origin), []).append(command)
+        for (relpath, origin), commands in honest.items():
+            texts = "; ".join(c.text[:120] for c in commands[:5])
+            if origin == ORIGIN_PLUGIN:
+                title = "Plugin binds lifecycle hooks"
+                reason = (
+                    f"This plugin runs these commands on agent lifecycle events: {texts}. Confirm "
+                    "they do what the plugin says, and re-check after updates: an update can add "
+                    "a hook without the user seeing it (HookPry, 2026)."
+                )
+            else:
+                title = "Skill or subagent binds lifecycle hooks"
+                reason = (
+                    f"This skill or subagent's frontmatter runs these commands on agent lifecycle "
+                    f"events once it is used: {texts}. Confirm they do what it says."
+                )
+            needs_review.append(NeedsReview(
+                category="agent_config", title=title, reason=reason, file=relpath,
+                line=commands[0].evidence().line_start,
+            ))
 
         bypass: list[Evidence] = []
         bypass_described: list[str] = []
@@ -549,61 +586,40 @@ class AgentConfigScanner(Scanner):
         return next(r for r in self.rules if r.id == rule_id)
 
     @staticmethod
-    def _load(f: IndexedFile) -> tuple[object, bool]:
-        """The file as JSON, and whether values nested past MAX_DEPTH were cut off."""
-        text = re.sub(r"^\s*//.*$", "", f.text, flags=re.MULTILINE)  # tasks.json allows comments
-        try:
-            return bounded_json.loads_cut(text)
-        except ValueError:
-            return None, False
-
-    def _hook_commands(self, f: IndexedFile) -> tuple[list[str], bool]:
-        data, cut = self._load(f)
-        hooks = data.get("hooks") if isinstance(data, dict) else None
-        found: list[str] = []
-        # Depth-first in document order with an explicit stack: json accepts deeper nesting than
-        # a recursive walk survives, and a hook must not hide behind it.
-        end = object()  # marks an exhausted level (None is a JSON value)
-        stack = [iter([hooks])] if hooks is not None else []
-        while stack:
-            node = next(stack[-1], end)
-            if node is end:
-                stack.pop()
-            elif isinstance(node, dict):
-                command = node.get("command")
-                if isinstance(command, str) and command.strip():
-                    found.append(command)
-                stack.append(iter(node.values()))
-            elif isinstance(node, list):
-                stack.append(iter(node))
-        return found, cut
-
-    def _folder_open_tasks(self, f: IndexedFile) -> tuple[list[str], bool]:
-        data, cut = self._load(f)
-        tasks = data.get("tasks") if isinstance(data, dict) else None
-        found = []
-        for task in tasks if isinstance(tasks, list) else []:
-            if not isinstance(task, dict):
-                continue
-            run_on = (task.get("runOptions") or {}).get("runOn")
-            command = task.get("command")
-            if run_on == "folderOpen" and isinstance(command, str):
-                args = task.get("args") or []
-                found.append(" ".join([command, *[a for a in args if isinstance(a, str)]]))
-        return found, cut
-
-    @staticmethod
-    def _evidence_for(f: IndexedFile, command: str) -> Evidence:
-        at = f.text.find(json.dumps(command)[1:-1])
-        if at < 0:
-            at = max(0, f.text.find('"command"'))
-        return f.evidence_for_span(at, at + 1)
-
-    @staticmethod
-    def _referenced_script(command: str, by_path: dict[str, IndexedFile]) -> IndexedFile | None:
+    def _referenced_script(
+        command: str, by_path: dict[str, IndexedFile], near: str = ""
+    ) -> IndexedFile | None:
+        """A script shipped in the component that ``command`` runs (``node hooks/setup.mjs``,
+        ``"${CLAUDE_PLUGIN_ROOT}"/scripts/x.sh``): looked up from the component root, then from
+        each folder above ``near`` (the file that declares the command, e.g. a plugin nested in a
+        marketplace repository, whose paths are relative to the plugin)."""
+        folders = [""]
+        parts = near.replace("\\", "/").split("/")[:-1]
+        while parts:
+            folders.append("/".join(parts))
+            parts.pop()
         for token in _PATH_TOKEN.findall(command):
-            cleaned = re.sub(r"^(?:\$\{?\w+\}?[/\\])+", "", token)
-            cleaned = re.sub(r"^(?:\.[/\\])+", "", cleaned).replace("\\", "/")
-            if cleaned in by_path:
-                return by_path[cleaned]
+            cleaned = re.sub(r"^[\"']?(?:\$\{?\w+\}?[\"']?[/\\])+", "", token)
+            cleaned = re.sub(r"^(?:\.[/\\])+", "", cleaned).replace("\\", "/").lstrip("/")
+            for folder in folders:
+                candidate = f"{folder}/{cleaned}" if folder else cleaned
+                if candidate in by_path:
+                    return by_path[candidate]
         return None
+
+
+def _is_remote_url(url: str) -> bool:
+    """True for an ``http(s)`` URL whose host is written out and is not this machine. A host
+    left to a variable (``${OTEL_ENDPOINT}``) cannot be judged, so it is not called remote."""
+    try:
+        parts = urlsplit(url.strip())
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return False
+    if parts.scheme.lower() not in ("http", "https") or not host or "$" in url[: url.find(host)]:
+        return False
+    if any(ch in host for ch in "${}%"):
+        return False
+    return not (
+        host in _HTTP_HOOK_LOCAL_HOSTS or host.endswith(".localhost") or host.startswith("127.")
+    )

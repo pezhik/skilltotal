@@ -65,6 +65,17 @@ SKIP_DIRS: frozenset[str] = frozenset(
 )
 
 
+# Names the walk passes over whatever they are (a file or a link named so, too), as it always
+# has: version control, caches and generated reports, and dependency trees. `env`, `venv`, `.venv`
+# and `site-packages` are not here: those are judged by what they hold (see skipped_dir_kind).
+_ALWAYS_SKIPPED_NAMES: frozenset[str] = frozenset(
+    {
+        ".git", ".hg", ".svn", "node_modules", "vendor", "__pycache__", ".tox", ".mypy_cache",
+        ".pytest_cache", ".idea", "htmlcov", "coverage_html_report",
+    }
+)
+
+
 # Build-output directories, skipped for a REPOSITORY and scanned for a PUBLISHED PACKAGE.
 #
 # In a repo these hold emitted copies of first-party source that is also checked in, so scanning
@@ -160,19 +171,95 @@ def is_build_output_path(relpath: str) -> bool:
     return any(part in BUILD_OUTPUT_DIRS for part in relpath.replace("\\", "/").split("/"))
 
 
-def _is_skipped_dir(part: str, *, skip_build_output: bool = True) -> bool:
-    """True if a path segment names a directory that never holds first-party source.
+# Why the walk passed over a directory (see skipped_dir_kind). VCS, caches and generated reports
+# hold nothing a component runs; the other kinds hold code someone else wrote or a copy of the
+# component's own, and a report says it did not read them.
+SKIP_VCS = "vcs"
+SKIP_GENERATED = "generated"
+SKIP_DEPENDENCIES = "dependencies"
+SKIP_VENDORED = "vendored"
+SKIP_VIRTUALENV = "virtualenv"
+SKIP_BUILD_OUTPUT = "build_output"
+_VCS_DIRS = frozenset({".git", ".hg", ".svn"})
+_GENERATED_DIRS = frozenset(
+    {"__pycache__", ".mypy_cache", ".pytest_cache", ".idea", "htmlcov", "coverage_html_report"}
+)
+# `env`, `venv` and `.venv` are the conventional names of a Python virtual environment, and a
+# real one is third-party code. Skipped by name alone, they also hid a component's own
+# `lib/env/loader.js` (and `pkg/venv/x.py`): a payload filed there was never read. So a directory
+# is a virtual environment when it looks like one, whatever it is called.
+_VENV_NAMES = frozenset({"env", "venv", ".venv"})
+_INSTALL_LAYOUT = re.compile(r"^python\d+(?:\.\d+)?t?$")
 
-    Besides the exact ``SKIP_DIRS`` names, a ``vendored-*`` prefixed directory is a vendored
-    third-party tree by convention (numpy ships ``vendored-meson/`` — the meson build system,
-    complete with meson's own CI scripts), exactly the class ``vendor/`` already covers.
 
-    ``skip_build_output`` additionally skips ``BUILD_OUTPUT_DIRS``; the caller turns it off for a
-    published package artifact, where the build output IS the shipped code.
+def _is_virtualenv(path: Path, name: str) -> bool:
+    """True for a Python virtual environment (venv, virtualenv, conda) at ``path``.
+
+    ``pyvenv.cfg`` (venv and virtualenv 20+) or ``conda-meta/`` mark one under any name; the
+    conventional names also count with an activation script or a ``site-packages`` tree (older
+    virtualenv). Existence checks only: nothing is read.
     """
-    if skip_build_output and part in BUILD_OUTPUT_DIRS:
-        return True
-    return part in SKIP_DIRS or part.startswith("vendored-")
+    if "env" not in name.lower():
+        return False
+    try:
+        if (path / "pyvenv.cfg").is_file() or (path / "conda-meta").is_dir():
+            return True
+        if name not in _VENV_NAMES:
+            return False
+        if any(path.joinpath(*rel).is_file() for rel in (
+            ("bin", "activate"), ("Scripts", "activate"), ("Scripts", "activate.bat"),
+        )):
+            return True
+        if (path / "Lib" / "site-packages").is_dir():
+            return True
+        lib = path / "lib"
+        return lib.is_dir() and any(
+            _INSTALL_LAYOUT.match(p.name) and (p / "site-packages").is_dir()
+            for p in lib.iterdir()
+        )
+    except OSError:
+        return False
+
+
+def _in_install_layout(path: Path) -> bool:
+    """True for a ``site-packages`` directory where an interpreter installs packages:
+    ``lib/python3.12/site-packages`` or Windows' ``Lib/site-packages``."""
+    parent = path.parent
+    return parent.name == "Lib" or (
+        bool(_INSTALL_LAYOUT.match(parent.name)) and parent.parent.name in ("lib", "lib64")
+    )
+
+
+def skipped_dir_kind(path: Path, name: str, *, skip_build_output: bool = True) -> str | None:
+    """Why the walk does not enter the directory ``path`` (named ``name``), or None to enter it.
+
+    Version control, caches and generated reports are never component content. ``node_modules``
+    and vendored trees (``vendor/``, and ``vendored-*`` by convention: numpy ships
+    ``vendored-meson/``) are dependencies: the component's own behavior is what is analyzed, and a
+    Go project's vendored cloud SDKs once scored it on their credential-path code (wandb).
+    A virtual environment counts only when it is one, and
+    ``site-packages`` only where an interpreter installs into it; anywhere else those names are
+    ordinary folders. Build output is skipped for a repository and read for a published package.
+    Code a component loads from a skipped folder by a literal path is read anyway (see
+    ``skilltotal.loaded_code``).
+    """
+    if name in _VCS_DIRS:
+        return SKIP_VCS
+    if name in _GENERATED_DIRS:
+        return SKIP_GENERATED
+    if name == "node_modules":
+        return SKIP_DEPENDENCIES
+    if name == "vendor" or name.startswith("vendored-"):
+        return SKIP_VENDORED
+    if name == ".tox":
+        return SKIP_VIRTUALENV
+    if name == "site-packages":
+        return SKIP_DEPENDENCIES if _in_install_layout(path) else None
+    if _is_virtualenv(path, name):
+        return SKIP_VIRTUALENV
+    if skip_build_output and name in BUILD_OUTPUT_DIRS:
+        return SKIP_BUILD_OUTPUT
+    return None
 
 
 # A Windows reparse tag with this bit stands for another path: a symbolic link, a junction, a
@@ -228,6 +315,8 @@ def walk_files(
     root: Path,
     *,
     skip: Callable[[str], bool] | None = None,
+    skip_dir: Callable[[tuple[str, ...], Path], bool] | None = None,
+    on_skip: Callable[[tuple[str, ...], os.DirEntry], None] | None = None,
     links: list[str] | None = None,
     unreadable: list[str] | None = None,
 ) -> Iterator[Path]:
@@ -237,9 +326,12 @@ def walk_files(
     the home directory of whoever runs it -- so neither is entered nor read: its relative path
     goes to ``links`` instead. A directory or file whose name ``skip`` rejects is passed over
     without being entered, so a skipped ``node_modules`` (where package managers plant links) is
-    never walked at all. A directory that cannot be listed goes to ``unreadable`` with a trailing
-    ``/``. FIFOs, sockets and devices are not yielded: they hold no content, and opening a FIFO
-    blocks. The walk keeps its own stack, so a deep tree cannot exhaust the recursion limit.
+    never walked at all. ``skip_dir`` judges a real directory by its relative path and location
+    (a virtual environment is one by its contents, not its name). Each entry passed over is
+    reported to ``on_skip``. A directory that cannot be listed goes to ``unreadable`` with a
+    trailing ``/``. FIFOs, sockets and devices are not yielded: they hold no content, and opening
+    a FIFO blocks. The walk keeps its own stack, so a deep tree cannot exhaust the recursion
+    limit.
     """
     pending: list[tuple[str, ...]] = [()]
     while pending:
@@ -252,9 +344,11 @@ def walk_files(
                 unreadable.append("/".join(parts) + "/" if parts else "./")
             continue
         for entry in entries:
-            if skip is not None and skip(entry.name):
-                continue
             rel = (*parts, entry.name)
+            if skip is not None and skip(entry.name):
+                if on_skip is not None:
+                    on_skip(rel, entry)
+                continue
             try:
                 if _entry_is_link(entry):
                     if links is not None:
@@ -267,9 +361,25 @@ def walk_files(
                     unreadable.append("/".join(rel))
                 continue
             if is_dir:
+                if skip_dir is not None and skip_dir(rel, Path(entry.path)):
+                    if on_skip is not None:
+                        on_skip(rel, entry)
+                    continue
                 pending.append(rel)
             elif is_file:
                 yield Path(entry.path)
+
+
+def component_files(root: Path, *, skip_build_output: bool = True) -> Iterator[Path]:
+    """The files the index walk visits under ``root``, for a scanner that walks on its own (an
+    archive is not text, so it is not in the index): the same folders are passed over."""
+    return walk_files(
+        root,
+        skip=lambda name: name in _ALWAYS_SKIPPED_NAMES or name.startswith("vendored-"),
+        skip_dir=lambda rel, path: skipped_dir_kind(
+            path, rel[-1], skip_build_output=skip_build_output
+        ) is not None,
+    )
 
 
 # Directory segments and filename patterns that indicate non-shipped test code.
@@ -1781,6 +1891,8 @@ class FileIndex:
         *,
         links: list[str] | None = None,
         unreadable: list[str] | None = None,
+        skipped_dirs: list[tuple[str, str]] | None = None,
+        skip_build_output: bool = True,
         large: list[str] | None = None,
     ):
         self.root = root
@@ -1796,6 +1908,10 @@ class FileIndex:
         self.links = links or []
         # Relative paths the walk found but could not read; a directory ends with "/".
         self.unreadable = unreadable or []
+        # Directories the walk did not enter, as (relative path, kind); see skipped_dir_kind.
+        self.skipped_dirs = skipped_dirs or []
+        # Whether build output was set aside (a repository) or read (a published package).
+        self.skip_build_output = skip_build_output
         # Relative paths of text files larger than MAX_FILE_BYTES, not read (binaries are not
         # listed: nothing here reads them, whatever their size).
         self.large = large or []
@@ -1832,10 +1948,11 @@ class FileIndex:
         always = frozenset(always_index)
         links: list[str] = []
         unreadable: list[str] = []
+        skipped: list[tuple[str, str]] = []
         large: list[str] = []
 
         for path in cls._walk(root, excludes, skip_build_output=skip_build_output,
-                              links=links, unreadable=unreadable):
+                              links=links, unreadable=unreadable, skipped=skipped):
             stats["total_seen"] += 1
             try:
                 size = path.stat().st_size
@@ -1910,7 +2027,43 @@ class FileIndex:
 
         files.sort(key=lambda f: f.relpath)
         return cls(root, files, stats, sorted(minified), git_config,
-                   links=sorted(links), unreadable=sorted(unreadable), large=sorted(large))
+                   links=sorted(links), unreadable=sorted(unreadable),
+                   skipped_dirs=sorted(skipped), skip_build_output=skip_build_output,
+                   large=sorted(large))
+
+    def with_files(
+        self, extra: list[IndexedFile], minified: list[str] | None = None
+    ) -> FileIndex:
+        """A copy of this index with ``extra`` files added (read outside the walk, e.g. code the
+        component loads from a folder the walk skipped) and ``minified`` bundles noted."""
+        files = sorted([*self.files, *extra], key=lambda f: f.relpath)
+        stats = dict(self.stats)
+        stats["indexed"] = stats.get("indexed", 0) + len(extra)
+        return FileIndex(
+            self.root, files, stats, sorted({*self.minified, *(minified or [])}), self.git_config,
+            links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
+            skip_build_output=self.skip_build_output, large=self.large,
+        )
+
+    @staticmethod
+    def read_file(root: Path, relpath: str) -> tuple[IndexedFile | None, str]:
+        """Read one file under ``root`` the way the walk does: ``(file, "")`` when it is text,
+        else ``(None, why)`` with why in "large", "binary", "minified", "unreadable"."""
+        path = root / relpath
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                return None, "large"
+            raw = path.read_bytes()
+        except OSError:
+            return None, "unreadable"
+        text = _sniffed_text(path.name, raw)
+        if text is None:
+            return None, "binary"
+        text = text.removeprefix("\ufeff")
+        if _is_minified(path.name, text):
+            return None, "minified"
+        return IndexedFile(path=path, relpath=relpath, text=text,
+                           _line_starts=FileIndex._compute_line_starts(text)), ""
 
     @staticmethod
     def _large_text(path: Path) -> bool:
@@ -1930,6 +2083,7 @@ class FileIndex:
         skip_build_output: bool = True,
         links: list[str] | None = None,
         unreadable: list[str] | None = None,
+        skipped: list[tuple[str, str]] | None = None,
     ) -> Iterator[Path]:
         """The files to index: everything ``walk_files`` finds outside skipped directories and
         ``exclude``, plus ``.git/config``. Links and unreadable paths that are not excluded are
@@ -1952,10 +2106,32 @@ class FileIndex:
         elif is_regular_file(dot_git / "config") and not excluded(".git/config"):
             yield dot_git / "config"
 
-        def skipped(name: str) -> bool:
-            return _is_skipped_dir(name, skip_build_output=skip_build_output)
+        # Names skipped whatever the entry is (as before: a link named `node_modules` is not
+        # reported as a link), and directories judged by what they hold (a virtual environment,
+        # an install's `site-packages`, build output).
+        def by_name(name: str) -> bool:
+            return name in _ALWAYS_SKIPPED_NAMES or name.startswith("vendored-")
 
-        for path in walk_files(root, skip=skipped, links=found_links, unreadable=found_unreadable):
+        def by_place(rel: tuple[str, ...], path: Path) -> bool:
+            return skipped_dir_kind(path, rel[-1], skip_build_output=skip_build_output) is not None
+
+        def note(rel: tuple[str, ...], entry: os.DirEntry) -> None:
+            if skipped is None:
+                return
+            try:
+                if not entry.is_dir(follow_symlinks=False):
+                    return
+            except OSError:
+                return
+            relpath = "/".join(rel)
+            if excluded(relpath):
+                return
+            kind = skipped_dir_kind(Path(entry.path), rel[-1], skip_build_output=skip_build_output)
+            if kind is not None:
+                skipped.append((relpath, kind))
+
+        for path in walk_files(root, skip=by_name, skip_dir=by_place, on_skip=note,
+                               links=found_links, unreadable=found_unreadable):
             if not excluded(path.relative_to(root).as_posix()):
                 yield path
         if links is not None:

@@ -86,3 +86,11 @@ docs/superpowers/
 # (the registry one grants republish rights over this server), so they must never be committed
 # here — nor packed into a release artifact, which is a mistake real MCP servers ship on npm.
 .mcpregistry_*
+
+# Eval-corpus samples model what a component ships, ignored folder names included (a stealer filed
+# under lib/env/, a real virtual environment the scan must skip, an editor's MCP config).
+!tests/eval_corpus/**/.venv/
+!tests/eval_corpus/**/venv/
+!tests/eval_corpus/**/env/
+!tests/eval_corpus/**/node_modules/
+!tests/eval_corpus/**/.vscode/

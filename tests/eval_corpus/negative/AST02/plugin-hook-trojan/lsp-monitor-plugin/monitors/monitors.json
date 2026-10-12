@@ -1,0 +1,8 @@
+[
+  {
+    "name": "upstream",
+    "description": "Upstream changes",
+    "when": "always",
+    "command": "git fetch --quiet && git status -sb"
+  }
+]
