@@ -40,6 +40,11 @@ _LEVELS = frozenset({"low", "medium", "high", "critical"})
 _POLICY_ACTIONS = frozenset({"block", "warn", "ignore"})
 
 
+class ConfigError(ValueError):
+    """A config value that would switch a gate off by mistake (``fail_on_unanalyzed = "true"``,
+    a string): reported, never read as off."""
+
+
 @dataclass
 class Config:
     """Resolved project configuration (all fields optional)."""
@@ -71,10 +76,13 @@ def load_config(path: Path) -> Config:
     text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
     data = _parse(text)
     fail_on = _as_level(data.get("fail_on"))
+    unanalyzed = data.get("fail_on_unanalyzed", False)
+    if not isinstance(unanalyzed, bool):
+        raise ConfigError(f"{path}: fail_on_unanalyzed must be true or false, not {unanalyzed!r}")
     return Config(
         fail_on=fail_on,
         fail_on_score=_as_int(data.get("fail_on_score")),
-        fail_on_unanalyzed=data.get("fail_on_unanalyzed") is True,
+        fail_on_unanalyzed=unanalyzed,
         exclude=_as_str_list(data.get("exclude")),
         ignore=_as_str_list(data.get("ignore")),
         baseline=_as_str(data.get("baseline")),
@@ -102,9 +110,10 @@ def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 
     m = re.search(r"^\s*fail_on_score\s*=\s*(\d+)", text, re.MULTILINE)
     if m:
         out["fail_on_score"] = int(m.group(1))
-    m = re.search(r"^\s*fail_on_unanalyzed\s*=\s*(true|false)\b", text, re.MULTILINE)
+    m = re.search(r"^\s*fail_on_unanalyzed\s*=\s*([^#\n]*?)\s*(?:#.*)?$", text, re.MULTILINE)
     if m:
-        out["fail_on_unanalyzed"] = m.group(1) == "true"
+        value = m.group(1)
+        out["fail_on_unanalyzed"] = {"true": True, "false": False}.get(value, value)
     for key in ("exclude", "ignore"):
         m = re.search(rf"^\s*{key}\s*=\s*\[([^\]]*)\]", text, re.MULTILINE)
         if m:

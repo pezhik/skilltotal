@@ -187,6 +187,7 @@ UNANALYZED_TITLES = frozenset({
     UNANALYZED_INSTALL_SCRIPT,
     NOTHING_READ,
     "Files could not be read",
+    "Files too large to analyze",
     "Links not followed",
     "Archive entries not extracted",
     "Minified bundle not analyzed",

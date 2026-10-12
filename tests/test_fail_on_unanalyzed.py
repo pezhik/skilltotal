@@ -11,10 +11,14 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
 import skilltotal
-from skilltotal.cli import EXIT_FAIL_ON_HIGH, EXIT_OK, main
-from skilltotal.config import _fallback_parse, load_config
-from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT, UNANALYZED_TITLES
+from skilltotal.cli import EXIT_ERROR, EXIT_FAIL_ON_HIGH, EXIT_OK, build_parser, main
+from skilltotal.config import ConfigError, _fallback_parse, load_config
+from skilltotal.engine import analyze_directory
+from skilltotal.file_index import MAX_FILE_BYTES
+from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT, UNANALYZED_TITLES, Component
 
 ACTION = Path(__file__).resolve().parent.parent / "action.yml"
 GO = 'package main\nimport ("os/exec")\nfunc main() { exec.Command("id").Run() }\n'
@@ -81,11 +85,28 @@ def test_the_config_key_turns_it_on(tmp_path: Path, capsys):
 def test_the_config_value_must_be_a_boolean(tmp_path: Path):
     for text, expected in (("fail_on_unanalyzed = true\n", True),
                            ("fail_on_unanalyzed = false\n", False),
-                           ('fail_on_unanalyzed = "yes"\n', False),
                            ("fail_on = \"high\"\n", False)):
         path = tmp_path / ".skilltotal.toml"
         path.write_text(text, encoding="utf-8")
         assert load_config(path).fail_on_unanalyzed is expected, text
+
+
+@pytest.mark.parametrize("value", ['"true"', '"yes"', "1", "yes"])
+def test_a_value_that_is_not_a_boolean_is_an_error_not_off(tmp_path: Path, capsys, value):
+    # `"true"` (a string) once read as off: a CI gate switched off by a pair of quotes.
+    cfg = tmp_path / ".skilltotal.toml"
+    cfg.write_text(f"fail_on_unanalyzed = {value}\n", encoding="utf-8")
+    if value != "yes":  # bare `yes` is not TOML at all: the file does not parse
+        with pytest.raises(ConfigError, match="fail_on_unanalyzed must be true or false"):
+            load_config(cfg)
+        root = tmp_path / "c"
+        root.mkdir()
+        (root / "x.py").write_text("x = 1\n", encoding="utf-8")
+        assert main(["scan", str(root), "--json", "--config", str(cfg)]) == EXIT_ERROR
+        assert "fail_on_unanalyzed must be true or false" in capsys.readouterr().err
+    # The Python 3.10 parser keeps what it cannot read as a boolean, so it is refused too.
+    assert _fallback_parse(f"fail_on_unanalyzed = {value}\n")["fail_on_unanalyzed"] not in (
+        True, False)
 
 
 def test_the_python_3_10_parser_reads_the_key():
@@ -130,3 +151,58 @@ def test_the_action_input_is_wired_like_fail_on():
     # The gate goes on the JSON run, whose exit code becomes gate-exit.
     json_run = next(line for line in text.splitlines() if "--json --output skilltotal.json" in line)
     assert '"${GATE[@]}"' in json_run
+
+
+# --- What the walk sets aside by size is said too -------------------------------------------------
+
+BIG = "// padding\n" * (MAX_FILE_BYTES // 11 + 10)
+
+
+def _scan_report(root: Path):
+    return analyze_directory(root, Component(name="x", type="directory", source=str(root)))
+
+
+def test_a_text_file_too_large_to_read_gets_a_note_and_fails_the_gate(tmp_path: Path, capsys):
+    root = _component(tmp_path, {"x.py": "x = 1\n", "big.js": BIG})
+    (note,) = [n for n in _scan_report(Path(root)).needs_review
+               if n.title == "Files too large to analyze"]
+    assert note.category == "coverage"
+    assert "big.js" in note.reason
+    capsys.readouterr()
+    assert _scan(root, "--fail-on-unanalyzed") == EXIT_FAIL_ON_HIGH
+    assert "Files too large to analyze" in capsys.readouterr().err
+
+
+def test_a_large_binary_file_stays_silent(tmp_path: Path):
+    root = tmp_path / "c"
+    root.mkdir()
+    (root / "x.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "model.bin").write_bytes(b"\x00\x01" * (MAX_FILE_BYTES // 2 + 10))
+    titles = [n.title for n in _scan_report(root).needs_review]
+    assert "Files too large to analyze" not in titles
+
+
+def test_a_large_install_script_keeps_its_own_note_only(tmp_path: Path):
+    root = _component(tmp_path, {
+        "package.json": '{"name": "x", "version": "1.0.0", '
+                        '"scripts": {"postinstall": "node i.js"}}',
+        "i.js": BIG,
+    })
+    titles = [n.title for n in _scan_report(Path(root)).needs_review]
+    assert UNANALYZED_INSTALL_SCRIPT in titles
+    assert "Files too large to analyze" not in titles
+
+
+def test_with_sarif_the_log_names_what_was_not_analyzed(tmp_path: Path, capsys):
+    root = _component(tmp_path, {"main.go": GO})
+    capsys.readouterr()
+    assert main(["scan", root, "--sarif", "--fail-on-unanalyzed"]) == EXIT_FAIL_ON_HIGH
+    err = capsys.readouterr().err
+    assert "Code in languages not analyzed for behavior" in err
+    assert "needs_review" not in err  # SARIF carries no needs_review
+
+
+def test_the_help_says_what_does_not_count():
+    scan = next(a for a in build_parser()._subparsers._group_actions[0].choices["scan"]._actions
+                if "--fail-on-unanalyzed" in a.option_strings)
+    assert "binary files and dependency folders are skipped by design" in scan.help

@@ -145,7 +145,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on-unanalyzed",
         action="store_true",
-        help="Exit with code 2 if any file, or any part of one, was not analyzed.",
+        help=(
+            "Exit with code 2 if the report says a file, or part of one, could not be analyzed "
+            "(binary files and dependency folders are skipped by design and do not count)."
+        ),
     )
     scan.add_argument(
         "--exclude",
@@ -381,11 +384,16 @@ class _ProgressLine:
 def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.baseline import build_baseline, load_baseline
     from skilltotal.collector import CollectionError, classify_source
+    from skilltotal.config import ConfigError
     from skilltotal.engine import analyze
     from skilltotal.report import render_json, render_text
     from skilltotal.sarif import render_sarif
 
-    config = _load_config(args)
+    try:
+        config = _load_config(args)
+    except ConfigError as exc:  # a gate that would silently be off
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
 
     baseline_path = args.baseline or config.baseline
     suppress: set[str] = set()
@@ -468,9 +476,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
     gaps = _unanalyzed(report) if args.fail_on_unanalyzed or config.fail_on_unanalyzed else []
     if gaps:
-        # With --json or --sarif the report is all stdout carries: say in the log why it failed.
-        print(f"Not everything was analyzed: {'; '.join(gaps)}. See needs_review in the report.",
-              file=sys.stderr)
+        # With --json or --sarif the report is all stdout carries (SARIF has no needs_review):
+        # say in the log what was not analyzed.
+        print(f"Not everything was analyzed: {'; '.join(gaps)}.", file=sys.stderr)
     if gaps or _fails_gate(report, level, score, config.policy):
         return EXIT_FAIL_ON_HIGH
     return EXIT_OK
@@ -485,11 +493,16 @@ def _unanalyzed(report) -> list[str]:
 
 def _cmd_diff(args: argparse.Namespace) -> int:
     from skilltotal.collector import CollectionError
+    from skilltotal.config import ConfigError
     from skilltotal.diff import diff_reports, max_new_severity
     from skilltotal.models import Severity
     from skilltotal.report import render_diff_json, render_diff_text
 
-    config = _load_config(args)
+    try:
+        config = _load_config(args)
+    except ConfigError as exc:  # a gate that would silently be off
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
     exclude = [*config.exclude, *args.exclude]
 
     try:

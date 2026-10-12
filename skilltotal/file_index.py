@@ -1774,6 +1774,7 @@ class FileIndex:
         *,
         links: list[str] | None = None,
         unreadable: list[str] | None = None,
+        large: list[str] | None = None,
     ):
         self.root = root
         self.files = files
@@ -1788,6 +1789,9 @@ class FileIndex:
         self.links = links or []
         # Relative paths the walk found but could not read; a directory ends with "/".
         self.unreadable = unreadable or []
+        # Relative paths of text files larger than MAX_FILE_BYTES, not read (binaries are not
+        # listed: nothing here reads them, whatever their size).
+        self.large = large or []
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -1821,6 +1825,7 @@ class FileIndex:
         always = frozenset(always_index)
         links: list[str] = []
         unreadable: list[str] = []
+        large: list[str] = []
 
         for path in cls._walk(root, excludes, skip_build_output=skip_build_output,
                               links=links, unreadable=unreadable):
@@ -1832,6 +1837,8 @@ class FileIndex:
                 continue
             if size > MAX_FILE_BYTES:
                 stats["skipped_large"] += 1
+                if cls._large_text(path):
+                    large.append(path.relative_to(root).as_posix())
                 continue
             try:
                 raw = path.read_bytes()
@@ -1896,7 +1903,17 @@ class FileIndex:
 
         files.sort(key=lambda f: f.relpath)
         return cls(root, files, stats, sorted(minified), git_config,
-                   links=sorted(links), unreadable=sorted(unreadable))
+                   links=sorted(links), unreadable=sorted(unreadable), large=sorted(large))
+
+    @staticmethod
+    def _large_text(path: Path) -> bool:
+        """Whether a file too large to read is text: the same sniff, on its first bytes."""
+        try:
+            with path.open("rb") as handle:
+                head = handle.read(_BINARY_SNIFF_BYTES)
+        except OSError:
+            return True  # not even its start could be read: say so rather than nothing
+        return _sniffed_text(path.name, head) is not None
 
     @staticmethod
     def _walk(
