@@ -3,14 +3,16 @@
 Commands:
     skilltotal scan <source> [--json|--sarif] [--output FILE]
                              [--fail-on LEVEL | --fail-on-high] [--fail-on-score N]
+                             [--fail-on-unanalyzed]
                              [--exclude GLOB ...] [--config FILE]
                              [--baseline FILE | --write-baseline FILE]
         <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
         file, a git URL, or an npm:<name> / pypi:<name> package spec.
-        Optional project config: .skilltotal.toml (fail_on, fail_on_score, exclude, ignore,
-        baseline, and a per-rule [policy] table with block/warn/ignore actions). CLI flags
-        override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a finding on its line
-        when the source is a local directory (never in a fetched package or repository).
+        Optional project config: .skilltotal.toml (fail_on, fail_on_score, fail_on_unanalyzed,
+        exclude, ignore, baseline, and a per-rule [policy] table with block/warn/ignore
+        actions). CLI flags override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a
+        finding on its line when the source is a local directory (never in a fetched package
+        or repository).
     skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
@@ -137,6 +139,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         type=int,
         help="Exit with code 2 if the risk score is >= N (0-100).",
+    )
+    scan.add_argument(
+        "--fail-on-unanalyzed",
+        action="store_true",
+        help="Exit with code 2 if any file, or any part of one, was not analyzed.",
     )
     scan.add_argument(
         "--exclude",
@@ -455,9 +462,21 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
     score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
-    if _fails_gate(report, level, score, config.policy):
+    gaps = _unanalyzed(report) if args.fail_on_unanalyzed or config.fail_on_unanalyzed else []
+    if gaps:
+        # With --json or --sarif the report is all stdout carries: say in the log why it failed.
+        print(f"Not everything was analyzed: {'; '.join(gaps)}. See needs_review in the report.",
+              file=sys.stderr)
+    if gaps or _fails_gate(report, level, score, config.policy):
         return EXIT_FAIL_ON_HIGH
     return EXIT_OK
+
+
+def _unanalyzed(report) -> list[str]:
+    """The titles of the needs_review notes that say a file, or a part of one, was not analyzed."""
+    from skilltotal.models import UNANALYZED_TITLES
+
+    return list(dict.fromkeys(n.title for n in report.needs_review if n.title in UNANALYZED_TITLES))
 
 
 def _cmd_diff(args: argparse.Namespace) -> int:

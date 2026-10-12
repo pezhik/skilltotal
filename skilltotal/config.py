@@ -7,6 +7,7 @@ path excludes, and per-rule ignores instead of repeating CLI flags. Stdlib only 
 Recognized top-level keys:
     fail_on        = "low" | "medium" | "high" | "critical"
     fail_on_score  = <int 0-100>
+    fail_on_unanalyzed = true | false  # fail when a file, or part of one, was not analyzed
     exclude        = ["glob/*", ...]   # path globs (posix, relative to the component root)
     ignore         = ["ST-RULE-ID", ...]
     baseline       = "path/to/baseline.json"
@@ -45,6 +46,7 @@ class Config:
 
     fail_on: str | None = None
     fail_on_score: int | None = None
+    fail_on_unanalyzed: bool = False
     exclude: list[str] = field(default_factory=list)
     ignore: list[str] = field(default_factory=list)
     baseline: str | None = None
@@ -72,6 +74,7 @@ def load_config(path: Path) -> Config:
     return Config(
         fail_on=fail_on,
         fail_on_score=_as_int(data.get("fail_on_score")),
+        fail_on_unanalyzed=data.get("fail_on_unanalyzed") is True,
         exclude=_as_str_list(data.get("exclude")),
         ignore=_as_str_list(data.get("ignore")),
         baseline=_as_str(data.get("baseline")),
@@ -99,6 +102,9 @@ def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 
     m = re.search(r"^\s*fail_on_score\s*=\s*(\d+)", text, re.MULTILINE)
     if m:
         out["fail_on_score"] = int(m.group(1))
+    m = re.search(r"^\s*fail_on_unanalyzed\s*=\s*(true|false)\b", text, re.MULTILINE)
+    if m:
+        out["fail_on_unanalyzed"] = m.group(1) == "true"
     for key in ("exclude", "ignore"):
         m = re.search(rf"^\s*{key}\s*=\s*\[([^\]]*)\]", text, re.MULTILINE)
         if m:
