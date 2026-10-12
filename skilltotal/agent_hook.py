@@ -1884,16 +1884,34 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
     if sub in _SCAFFOLDERS[head]:
         return _scaffold(args, registry)
     if head == "yarn" and sub in (None, "install"):
-        return _lockfile("package.json")  # `yarn`, `yarn install`: what package.json lists
+        # `yarn`, `yarn install`: what package.json lists (`yarn -v` prints a version).
+        return [] if _help(rest, _NODE_HELP) else _lockfile("package.json")
     if head == "yarn" and sub != "add":
         return []  # `yarn <script>` runs a script of package.json
     if sub in _NPM_CI:
-        return _lockfile(_LOCKFILES[head])
+        return [] if _help(rest, _NODE_HELP) else _lockfile(_LOCKFILES[head])
     if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
-        if not _npm_positionals(args, head):
-            return _lockfile("package.json")  # no package named: what package.json lists
+        if not _npm_positionals(args, head):  # no package named: what package.json lists
+            return [] if _help(rest, _NODE_HELP) else _lockfile("package.json")
         return _npm_packages(args, registry, head)
     return []
+
+
+# Options with which an installer prints its help or its version and installs nothing. To the npm
+# family `-v` is the version; pip, uv, poetry, pdm and pipenv take it for --verbose (theirs: `-V`).
+_NODE_HELP = frozenset({"--help", "-h", "--version", "-v"})
+_PY_HELP = frozenset({"--help", "-h", "--version", "-V"})
+
+
+def _help(args: list[str], flags: frozenset[str]) -> bool:
+    """Whether the command only prints help or a version (after ``--`` an option is an argument).
+    Asked only where no package is named: a named package is still checked."""
+    for arg in args:
+        if arg == "--":
+            return False
+        if arg in flags:
+            return True
+    return False
 
 
 # npm's clean install and its aliases (with `install-ci-test`): exactly what the lockfile lists.
@@ -2245,7 +2263,8 @@ def _pip_install(args: list[str], tool: str = "pip", index: str | None = None) -
             continue
         listed, takes_next = _requirements(arg, args[i + 1] if i + 1 < len(args) else "")
         if listed is not None:
-            out.extend(_lockfile(listed))  # `-r requirements.txt`: the packages a file lists
+            if not _help(args, _PY_HELP):  # `-r requirements.txt`: the packages a file lists
+                out.extend(_lockfile(listed))
             skip = takes_next
             continue
         if arg.startswith("-"):
@@ -2353,11 +2372,13 @@ def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]
         return [_NOT_READ]
     if sub == "add":
         return _pip_install(args, "uv", index)
-    if sub == "sync":
-        return _lockfile("pyproject.toml")  # what the project (and uv.lock) lists
+    if sub == "sync":  # what the project (and uv.lock) lists
+        return [] if _help(args, _PY_HELP) else _lockfile("pyproject.toml")
     if sub == "pip":
         sub2, args2 = _subcommand(args, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
         if sub2 == "sync":  # `uv pip sync requirements.txt`
+            if _help(args2, _PY_HELP):
+                return []
             files = _positionals(args2, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
             return [item for file in files or [""] for item in _lockfile(file)]
         return _pip_install(args2, "uv", index) if sub2 == "install" else []
@@ -2480,14 +2501,16 @@ def _pyproject(head: str, rest: list[str], shell: str, depth: int,
         start = _command_start(args, _PYPROJECT_VALUE_FLAGS)
         return _installs_in(args[start:], shell, depth + 1, level)
     if head == "pipenv" and sub == "sync":
-        return _lockfile("Pipfile.lock")
+        return [] if _help(args, _PY_HELP) else _lockfile("Pipfile.lock")
     if head != "pipenv" and sub in ("install", "sync"):
-        return _lockfile("pyproject.toml")
+        return [] if _help(args, _PY_HELP) else _lockfile("pyproject.toml")
     if sub != _PYPROJECT_ADD[head]:
         return []
     index = _py_source(args, "pip") or _flag_value(args, {"--source", "--pypi-mirror"})
     specs = _positionals(args, _PYPROJECT_VALUE_FLAGS)
     if head == "pipenv" and not specs:  # `pipenv install [-r requirements.txt]`
+        if _help(args, _PY_HELP):
+            return []
         listed = _flag_value(args, {"-r", "--requirements"})
         return _lockfile(listed if listed is not None else "Pipfile")
     return [item for spec in specs for item in _py_spec(spec, index)]

@@ -187,6 +187,31 @@ def test_commands_that_install_nothing_stay_silent(shell, command):
     assert _no_scan(command, shell) is None
 
 
+@pytest.mark.parametrize("command", [
+    "yarn --version", "yarn -v", "yarn --help", "yarn -h", "npm install --help", "npm ci -h",
+    "pnpm install --help", "bun install --help", "npm install -v",
+    "uv sync --help", "uv sync -h", "uv pip sync --help", "poetry install --help",
+    "poetry sync -h", "pdm install --help", "pipenv install --help", "pipenv sync -h",
+    "pip install -r requirements.txt --help", "pip install -h",
+])
+def test_help_and_version_print_and_install_nothing(command):
+    assert parse_installs(command) == []
+    assert _no_scan(command) is None
+    assert _no_scan(command, strict=True) is None  # nothing to deny in CI either
+
+
+@pytest.mark.parametrize(("command", "what"), [
+    # To pip, uv and poetry `-v` is --verbose: the install goes ahead.
+    ("pip install -v -r requirements.txt", "it installs from requirements.txt"),
+    ("uv sync -v", "it installs from pyproject.toml"),
+    ("poetry install -v", "it installs from pyproject.toml"),
+    ("npm install -- --help", "it installs from package.json"),  # after `--`: an argument
+])
+def test_a_verbose_install_is_still_an_install(command, what):
+    out = _no_scan(command)
+    assert out["systemMessage"] == f"SkillTotal did not check this install: {what}, {NAMES_ONLY}"
+
+
 def test_checked_and_unchecked_parts_share_one_line():
     out = hook_response(_bash("npm ci && npm install express"), scan=lambda s, t: _report())
     assert out["systemMessage"] == (
