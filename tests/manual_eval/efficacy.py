@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -206,6 +207,9 @@ def to_dict(metrics: Metrics) -> dict:
     return {
         "engine_version": ENGINE_VERSION,
         "ruleset_version": RULESET_VERSION,
+        # The AST parser is the one in the Python that runs the corpus: the same engine on another
+        # Python version can read newer syntax differently, so the report names the one it used.
+        "python_version": ".".join(platform.python_version_tuple()[:2]),
         "positives": metrics.positives,
         "negatives": metrics.negatives,
         "recall": round(metrics.recall, 4),
@@ -224,7 +228,8 @@ def to_markdown(metrics: Metrics) -> str:
     lines = [
         "# SkillTotal detection-efficacy report",
         "",
-        f"Engine {d['engine_version']} · ruleset {d['ruleset_version']} · offline corpus.",
+        f"Engine {d['engine_version']} · ruleset {d['ruleset_version']} · "
+        f"Python {d['python_version']} · offline corpus.",
         "",
         f"- **recall: {d['recall'] * 100:.1f}%** ({metrics.true_positives}/{metrics.positives} "
         "malicious samples flagged)",

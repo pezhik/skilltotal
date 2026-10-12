@@ -72,6 +72,9 @@ def test_efficacy_report_is_regenerated_for_this_release():
         f"docs/efficacy-report.json is for ruleset {report['ruleset_version']}, "
         f"not {skilltotal.RULESET_VERSION}; {regenerate}"
     )
+    # The site says the same engine on the same Python version gives the same numbers; the report
+    # has to say which Python that was, or nobody can check it.
+    assert report.get("python_version"), f"docs/efficacy-report.json names no Python; {regenerate}"
     readme = " ".join((ROOT / "README.md").read_text(encoding="utf-8").split())
     counts = f"{report['positives']} malicious and {report['negatives']} benign samples"
     assert counts in readme, f"README must quote the efficacy report's sample counts: {counts!r}"
