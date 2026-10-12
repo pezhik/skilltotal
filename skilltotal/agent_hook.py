@@ -2478,18 +2478,24 @@ def _background_detail(source: str, check: CheckInBackground, budget_s: float) -
     when that is known, and when to run the command again."""
     more = " more"
     if check.started_ago is not None:
-        what = (f"{source}: a full check started {_ago(check.started_ago)} is still running in "
-                f"the background")
+        since = f" started {_ago(check.started_ago)}" if _plain(check.started_ago) else ""
+        what = f"{source}: a full check{since} is still running in the background"
     elif check.large:
         what = f"{source}: a large package; its full check is running in the background"
         more = ""
     else:
         what = (f"{source}: not checked within SkillTotal's {budget_s:g}-second time limit; the "
                 f"check continues in the background")
-    if check.seconds_left is None:
+    if not _plain(check.seconds_left):
         return f"{what}. Run the same command again in a few minutes."
     return (f"{what} and takes {_about_minutes(check.seconds_left)}{more}. Run the same command "
             f"again after that.")
+
+
+def _plain(seconds: object) -> bool:
+    """A number of seconds a sentence can say: not missing, infinite or NaN."""
+    return (isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+            and math.isfinite(seconds))
 
 
 def _about_minutes(seconds: float) -> str:

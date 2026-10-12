@@ -53,6 +53,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import secrets
 import shutil
@@ -799,12 +800,22 @@ def _live(path: Path, now: float) -> dict | None:
         except OSError:
             return None
         return {"started": now} if 0 <= age < 5 else None
-    pid, started = info.get("pid"), info.get("started")
-    if not (isinstance(pid, int) and isinstance(started, (int, float))):
+    # Read from a file, so anything: json.loads takes Infinity and NaN for numbers, and a flag
+    # for an integer. A marker counts only with plain numbers where numbers belong.
+    pid, started, ends = info.get("pid"), info.get("started"), info.get("ends")
+    if type(pid) is not int or pid <= 0 or not _finite(started):
+        return None
+    if ends is not None and not _finite(ends):
         return None
     if not 0 <= now - started < CEILING_S or not pid_alive(pid):
         return None
     return info
+
+
+def _finite(value: object) -> bool:
+    """A plain number: an int or a float, not a flag, not infinite, not NaN."""
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value))
 
 
 def _update(marker: Marker, **fields: Any) -> bool:
@@ -822,7 +833,7 @@ def _raise_if_live(path: Path, now: float) -> None:
     info = _live(path, now)
     if info is not None:
         ends = info.get("ends")
-        left = ends - now if isinstance(ends, (int, float)) else None
+        left = ends - now if _finite(ends) else None
         raise AlreadyRunning(now - float(info.get("started", now)), left)
 
 

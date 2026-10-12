@@ -1248,3 +1248,60 @@ def test_the_longest_wait_ends_before_claude_code_lets_the_command_run():
 
     (hook,) = _bash_hooks()
     assert cli.HOOK_MAX_BUDGET_S + hook_scan.GRACE_S + 10 <= hook["timeout"]
+
+
+# --- A marker is data from a file: only plain numbers count -------------------------------------
+
+
+@pytest.mark.parametrize("fields", [
+    {"ends": float("inf")}, {"ends": float("nan")}, {"ends": "soon"}, {"ends": True},
+    {"started": float("inf")}, {"started": "now"}, {"pid": True}, {"pid": "4242"}, {"pid": -1},
+])
+def test_a_marker_with_values_that_are_no_plain_numbers_is_stale(cache, monkeypatch, fields):
+    """json.loads reads Infinity and NaN, so a damaged marker can hold them; a marker counts as a
+    running check only when its process, its start and its end are plain numbers."""
+    record = {"pid": os.getpid(), "started": time.time() - 5, "token": "another",
+              "background": True, "ends": time.time() + 60, **fields}
+    path = hook_scan.Pending(cache / "hook-pending").marker_path("npm:big@1.0.0")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps(record), encoding="utf-8")  # writes Infinity / NaN as JSON does
+    calls = []
+    monkeypatch.setattr(cli, "_hook_scan",
+                        lambda source, timeout, job=None: calls.append(source) or _report())
+    assert cli._hook_scan_cached("npm:big@1.0.0", 30)["risk_level"] == "low"
+    assert calls == ["npm:big@1.0.0"]
+
+
+def test_a_damaged_marker_does_not_turn_a_deny_into_a_question(cache, monkeypatch, capsys):
+    """The reviewer's case: a marker ending at Infinity made the answer about one package raise,
+    and the whole command got "could not check", turning the deny for another package into an
+    ask."""
+    import io
+
+    path = hook_scan.Pending(cache / "hook-pending").marker_path("npm:big@1.0.0")
+    path.parent.mkdir(parents=True)
+    path.write_text(f'{{"pid": {os.getpid()}, "started": {time.time()}, "token": "t", '
+                    f'"background": true, "ends": Infinity}}', encoding="utf-8")
+    bad = {**_report(), "risk_level": "critical", "risk_score": 100,
+           "verdict": {"has_malicious_indicators": True, "headline": "Malicious indicators"}}
+    monkeypatch.setattr(cli, "_hook_scan",
+                        lambda source, timeout, job=None: bad if "other" in source else _report())
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(_bash(
+        "npm install big@1.0.0 other@1.0.0"))))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "npm:other@1.0.0" in _reason(answer)
+
+
+@pytest.mark.parametrize("check", [
+    CheckInBackground(float("inf")), CheckInBackground(float("nan")),
+    CheckInBackground(30.0, started_ago=float("inf")), CheckInBackground(started_ago=float("nan")),
+])
+def test_an_answer_about_a_background_check_never_breaks_on_its_numbers(check):
+    def running(source, timeout):
+        raise check
+
+    out = hook_response(_bash("npm install big"), scan=running, budget_s=60)
+    assert "npm:big: " in _reason(out)
+    assert "Run the same command again" in _reason(out)
