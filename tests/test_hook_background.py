@@ -1177,7 +1177,7 @@ def test_the_marker_is_in_the_background_before_the_check_is_handed_over(cache, 
     fake_supervisor("wait")
     seen = []
 
-    def hand_over(self):
+    def hand_over(self, deadline=None):
         path = hook_scan.Pending(cache / "hook-pending").marker_path("npm:big@1.0.0")
         seen.append(json.loads(path.read_text(encoding="utf-8"))["background"])
         self.stop()  # lets the stand-in go
@@ -1189,3 +1189,62 @@ def test_the_marker_is_in_the_background_before_the_check_is_handed_over(cache, 
     assert seen == [True]
     assert report["verdict"]["headline"] == "done first"
     assert _markers(cache) == []
+
+
+# --- The hook answers within its budget, whatever it waits for -----------------------------------
+
+
+def test_a_hook_that_hands_a_check_over_answers_within_its_budget(cache, fake_supervisor,
+                                                                  monkeypatch):
+    """Claude Code lets the command run when the hook outlives its timeout, so every wait after
+    the budget (the markers' lock, the check's directory) ends by the budget plus a short grace:
+    here the markers' lock stays held throughout."""
+    fake_supervisor("wait")
+    monkeypatch.setattr(hook_scan, "GRACE_S", 0.5)
+    (cache / "hook-pending").mkdir(parents=True)
+    with _held(cache / "hook-pending" / "pending.lock"):
+        started = time.monotonic()
+        out = hook_response(_bash("npm install big@1.0.0"), scan=cli._hook_scan_cached,
+                            budget_s=1.0)
+        took = time.monotonic() - started
+    assert took < 1.0 + 0.5 + 1.5
+    assert "npm:big@1.0.0: not checked" in _reason(out)
+
+
+def test_a_hook_keeping_a_verdict_answers_within_its_budget(cache, fake_supervisor, monkeypatch):
+    # The cache's lock stays held: the verdict is answered all the same, just not kept this time.
+    fake_supervisor("report")
+    monkeypatch.setattr(hook_scan, "GRACE_S", 0.5)
+    cache.mkdir(parents=True, exist_ok=True)
+    with _held(cache / "hook-cache.json.lock"):
+        started = time.monotonic()
+        report = cli._hook_scan_cached("npm:x@1.0.0", 3.0)
+        took = time.monotonic() - started
+    assert report["verdict"]["headline"] == "fake"
+    assert took < 3.0 + 0.5 + 1.5
+    assert _cached(cache) == {}
+
+
+def test_a_slow_registry_does_not_hold_the_hook(cache, fake_supervisor, monkeypatch):
+    """The lookup of the release a name resolves to gets a bounded share of the budget; one that
+    does not answer in time counts as a registry that did not answer."""
+    from skilltotal import collector
+
+    fake_supervisor("report")
+
+    def hang(source, timeout=0):
+        time.sleep(30)
+
+    monkeypatch.setattr(collector, "resolve_release", hang)
+    started = time.monotonic()
+    report = cli._hook_scan_cached("npm:x", 4.0)
+    assert time.monotonic() - started < 4.0
+    assert report["verdict"]["headline"] == "fake"
+    assert list(_cached(cache)) == ["npm:x"]  # kept under the name, as for a registry that is down
+
+
+def test_the_longest_wait_ends_before_claude_code_lets_the_command_run():
+    from tests.test_plugin_package import _bash_hooks
+
+    (hook,) = _bash_hooks()
+    assert cli.HOOK_MAX_BUDGET_S + hook_scan.GRACE_S + 10 <= hook["timeout"]

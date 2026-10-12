@@ -83,6 +83,10 @@ _CHECK_PREFIX = "skilltotal_hook_"
 MAX_BACKGROUND = 2
 # How often the waiting hook looks at its check.
 _POLL_S = 0.1
+# How long the hook may still spend on a check once its wait is over: handing it over or stopping
+# it, reading its report, keeping its verdict. Claude Code lets the command run when the hook
+# outlives the hook's timeout, so every wait on that path ends by the budget plus this.
+GRACE_S = 5.0
 # Windows process creation flags (subprocess has them only on Windows).
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -292,12 +296,19 @@ def claim(path: Path) -> bool:
     return True
 
 
-def remove_tree(path: str | Path) -> None:
+def _left(deadline: float | None, default: float) -> float:
+    """Seconds to ``deadline`` (a ``time.monotonic()``), never below 0; ``default`` with none."""
+    return default if deadline is None else max(0.0, deadline - time.monotonic())
+
+
+def remove_tree(path: str | Path, deadline: float | None = None) -> None:
     """Remove a check's directory. On Windows a scan stopped a moment ago may still hold a file
-    open while it goes, so a removal that left something behind is tried again briefly."""
-    for _ in range(25):
+    open while it goes, so a removal that left something behind is tried again, for 5 seconds or
+    until ``deadline``."""
+    end = time.monotonic() + _left(deadline, 5.0)
+    while True:
         shutil.rmtree(path, ignore_errors=True)
-        if not os.path.exists(path):
+        if not os.path.exists(path) or time.monotonic() >= end:
             return
         time.sleep(0.2)
 
@@ -343,6 +354,8 @@ class RunningScan:
         self._started = time.monotonic()
         self._ends: float | None = None  # when the report should be in (monotonic), once known
         self._settled = False  # this hook has handed the check over, or stopped it
+        # Once the wait is over, nothing this hook does with the check waits past this.
+        self.deadline: float | None = None
 
     @property
     def pid(self) -> int:
@@ -352,7 +365,8 @@ class RunningScan:
         return None if self._ends is None else self._ends - time.monotonic()
 
     @classmethod
-    def start(cls, source: str, job: dict | None = None) -> RunningScan:
+    def start(cls, source: str, job: dict | None = None,
+              deadline: float | None = None) -> RunningScan:
         """Start checking ``source`` in a supervisor that outlives this process.
 
         The check gets a temp directory of its own, removed by whoever finishes last (see the
@@ -385,7 +399,7 @@ class RunningScan:
             raise
         if job is not None:
             pending().name_process(Marker(pending().marker_path(job["key"]), job["token"]),
-                                   proc.pid)
+                                   proc.pid, wait_s=min(2.0, _left(deadline, 2.0)))
         return cls(proc, tmp)
 
     def wait(self, timeout: float) -> dict:
@@ -396,13 +410,14 @@ class RunningScan:
         until the deadline would end the same way, later.
         """
         deadline = time.monotonic() + timeout
+        self.deadline = deadline + GRACE_S
         while True:
             try:
                 self.proc.wait(timeout=max(0.0, min(_POLL_S, deadline - time.monotonic())))
             except subprocess.TimeoutExpired:
                 pass
             else:
-                return self._collect()
+                return self._collect(self.deadline)
             now = time.monotonic()
             if self._ends is None:
                 size = _read_size(Path(self.tmp, "size"))
@@ -414,13 +429,13 @@ class RunningScan:
             if now >= deadline:
                 raise ScanContinues(self)
 
-    def hand_over(self) -> dict | None:
+    def hand_over(self, deadline: float | None = None) -> dict | None:
         """Leave the check to itself: it records its verdict as scan.json says. Returns the report
         instead when the check was done first: it is then the answer, and the caller keeps it as
         if it had come in time."""
-        return self._settle()
+        return self._settle(deadline)
 
-    def stop(self) -> dict | None:
+    def stop(self, deadline: float | None = None) -> dict | None:
         """Stop the check, which then records nothing. Returns the report instead when the check
         was done first. Does nothing once this hook has handed the check over or stopped it."""
         if self._settled:
@@ -429,28 +444,29 @@ class RunningScan:
             Path(self.tmp, "abort").write_text("", encoding="ascii")
         except OSError:
             pass  # gone with its directory: the check is over anyway
-        return self._settle()
+        return self._settle(deadline)
 
-    def _settle(self, wait_s: float = 10.0) -> dict | None:
+    def _settle(self, deadline: float | None) -> dict | None:
         if self._settled:
             return None
         self._settled = True
+        deadline = self.deadline if deadline is None else deadline
         if claim(Path(self.tmp, "done")):
             return None
         # The supervisor claimed the check first: it is done and exiting now, or it took the check
         # over, believing this hook gone, and goes on with it.
         try:
-            self.proc.wait(timeout=max(0.0, wait_s))
+            self.proc.wait(timeout=_left(deadline, 10.0))
         except subprocess.TimeoutExpired:
             return None
-        return self._collect()
+        return self._collect(deadline)
 
-    def _collect(self) -> dict:
+    def _collect(self, deadline: float | None = None) -> dict:
         """The report of a check that ended while the hook was there to read it."""
         try:
             report = _read_json(Path(self.tmp, "report.json"))
         finally:
-            remove_tree(self.tmp)
+            remove_tree(self.tmp, deadline)
         if not isinstance(report, dict):
             raise RuntimeError("the scan failed")
         return report
@@ -731,11 +747,11 @@ class Pending:
                 _raise_if_live(path, now)  # a hook that found no marker got there first
         return Marker(path, token, now) if made else None
 
-    def name_process(self, marker: Marker, pid: int) -> bool:
+    def name_process(self, marker: Marker, pid: int, wait_s: float = 2.0) -> bool:
         """The check's marker names process ``pid`` from now on: its supervisor, which the
         marker must name, not the hook, for the check to count as running if the hook goes."""
         try:
-            with self.lock(2.0):
+            with self.lock(wait_s):
                 return _update(marker, pid=pid)
         except (TimeoutError, OSError):
             return False
@@ -906,21 +922,22 @@ def _unlock(fd: int) -> None:
         fcntl.flock(fd, fcntl.LOCK_UN)
 
 
-def write_atomic(path: Path, text: str) -> None:
+def write_atomic(path: Path, text: str, deadline: float | None = None) -> None:
     """Replace ``path`` with ``text`` in one step: a reader sees the old file or the new one.
 
     Windows refuses to replace a file another process has open, and readers keep the cache open for
-    a moment, so the replace is retried briefly before it gives up.
+    a moment, so the replace is retried for a second at most (and not past ``deadline``).
     """
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    end = time.monotonic() + min(1.0, _left(deadline, 1.0))
     try:
         tmp.write_text(text, encoding="utf-8")
-        for attempt in range(20):
+        while True:
             try:
                 os.replace(tmp, path)
                 return
             except PermissionError:
-                if attempt == 19:
+                if time.monotonic() >= end:
                     raise
                 time.sleep(0.05)
     finally:
