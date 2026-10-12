@@ -68,6 +68,9 @@ SHELL_CALLS = (
 SHELL_MODULES = frozenset({"sh", "plumbum", "pexpect", "invoke", "fabric", "git"})
 # True arbitrary-code execution: a confirmed finding.
 DYNAMIC_CALLS = frozenset({"eval", "exec", "compile"})
+# The same primitives reached through the builtins module (`builtins.exec`, or `b.exec` for a
+# module bound by name): `builtins.exec` IS exec, so it is dynamic execution like the bare name.
+_BUILTINS_DYNAMIC = frozenset(f"builtins.{name}" for name in DYNAMIC_CALLS)
 # Dynamic *module import* by name. Extremely common in legitimate code (optional
 # dependencies, plugin loaders) and a much weaker signal than eval/exec, so it is routed to
 # needs_review rather than a high-severity finding.
@@ -598,11 +601,23 @@ class _CallVisitor(ast.NodeVisitor):
         for sub in ast.walk(node):
             if isinstance(sub, ast.Import):
                 for alias in sub.names:
-                    self._module_aliases[alias.asname or alias.name.split(".")[0]] = alias.name
+                    local = alias.asname or alias.name.split(".")[0]
+                    self._module_aliases[local] = alias.name
+                    # Hoist imports into the resolution maps up front, so a name bound to a
+                    # getattr/__import__ result (see _value_bindings) can resolve the module even
+                    # when the binding is read before the visitor reaches the import statement.
+                    self.aliases.setdefault(local, alias.name)
             elif isinstance(sub, ast.ImportFrom) and sub.level == 0 and sub.module:
                 for alias in sub.names:
-                    self._module_from[alias.asname or alias.name] = f"{sub.module}.{alias.name}"
+                    local = alias.asname or alias.name
+                    self._module_from[local] = f"{sub.module}.{alias.name}"
+                    self.from_imports.setdefault(local, f"{sub.module}.{alias.name}")
         self._home_names = self._home_variables(node)
+        # Module-scope bindings apply everywhere (module globals are visible in functions), so they
+        # are merged in without being popped.
+        self.aliases, self.from_imports = _with_bindings(
+            node.body, self.aliases, self.from_imports
+        )
         self.generic_visit(node)
 
     # -- credential paths built from segments -------------------------------
@@ -808,7 +823,7 @@ class _CallVisitor(ast.NodeVisitor):
                 self._add(R_DESERIAL, node)
         elif name in ("yaml.load", "yaml.load_all") and _yaml_load_is_unsafe(node):
             self._add(R_DESERIAL, node)
-        elif name in DYNAMIC_CALLS:
+        elif name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC:
             self._add(R_DYN, node)
             inner = self._decode_exec_inner_call(node)
             if inner is not None:
@@ -866,12 +881,31 @@ class _CallVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._functions[node.name] = node
         self._check_reduce_gadget(node)
-        self.generic_visit(node)
+        saved = self._enter_scope(node.body)
+        try:
+            self.generic_visit(node)
+        finally:
+            self._restore_scope(saved)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._functions[node.name] = node
         self._check_reduce_gadget(node)
-        self.generic_visit(node)
+        saved = self._enter_scope(node.body)
+        try:
+            self.generic_visit(node)
+        finally:
+            self._restore_scope(saved)
+
+    # -- names bound to a module / dangerous callable (resolved within one scope) ----------
+    def _enter_scope(self, body: list[ast.stmt]) -> tuple[dict[str, str], dict[str, str]]:
+        """Merge this scope's value bindings over the current view and return the previous view,
+        so a name bound to a lookup result inside one function does not leak into another."""
+        saved = (self.aliases, self.from_imports)
+        self.aliases, self.from_imports = _with_bindings(body, self.aliases, self.from_imports)
+        return saved
+
+    def _restore_scope(self, saved: tuple[dict[str, str], dict[str, str]]) -> None:
+        self.aliases, self.from_imports = saved
 
     def visit_Assign(self, node: ast.Assign) -> None:
         # `__reduce__ = lambda self: (os.system, (...,))` in a class body: the same gadget.
@@ -1046,6 +1080,95 @@ def _const_str(node: ast.expr) -> str | None:
     return None
 
 
+def _with_bindings(
+    body: list[ast.stmt], aliases: dict[str, str], from_imports: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """``aliases`` / ``from_imports`` extended with the value bindings of one scope (new dicts
+    only when there are bindings, so the caller can keep the old ones to restore)."""
+    module_binds, call_binds = _value_bindings(body, aliases, from_imports)
+    if module_binds:
+        aliases = {**aliases, **module_binds}
+    if call_binds:
+        from_imports = {**from_imports, **call_binds}
+    return aliases, from_imports
+
+
+def _value_bindings(
+    body: list[ast.stmt], aliases: dict[str, str], from_imports: dict[str, str]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Plain ``name = <call>`` bindings in a scope that make ``name`` an alias for a module
+    (``__import__("os")`` / ``importlib.import_module("os")``) or for a dangerous dotted callable
+    (``getattr(<module>, <literal>)``). A name assigned more than once in the scope is ambiguous
+    and is not bound (``f = getattr(os, "system"); f = print`` stays unresolved). Module bindings
+    are resolved first so a later ``getattr(m, ...)`` in the same scope sees them."""
+    assigns: dict[str, list[ast.expr]] = {}
+    for value, names in _scope_assignments(body):
+        for name in names:
+            assigns.setdefault(name, []).append(value)
+    module_binds: dict[str, str] = {}
+    for name, values in assigns.items():
+        if len(values) == 1:
+            module = _bound_module(values[0], aliases, from_imports)
+            if module is not None:
+                module_binds[name] = module
+    view = {**aliases, **module_binds} if module_binds else aliases
+    call_binds: dict[str, str] = {}
+    for name, values in assigns.items():
+        if len(values) == 1 and name not in module_binds:
+            dotted = _bound_callable(values[0], view, from_imports)
+            if dotted is not None:
+                call_binds[name] = dotted
+    return module_binds, call_binds
+
+
+def _bound_module(
+    value: ast.expr, aliases: dict[str, str], from_imports: dict[str, str]
+) -> str | None:
+    """The module a ``__import__`` / ``importlib.import_module`` call imports, when it is spelled
+    out as a constant (so a dynamic ``__import__(pkg)`` does not bind)."""
+    if not isinstance(value, ast.Call):
+        return None
+    name = _resolve_dotted(value.func, aliases, from_imports)
+    if name in _IMPORT_BY_NAME and value.args:
+        return _const_str(value.args[0])
+    return None
+
+
+def _bound_callable(
+    value: ast.expr, view: dict[str, str], from_imports: dict[str, str]
+) -> str | None:
+    """The dotted callable a ``getattr(<module>, <literal>)`` resolves to, or None."""
+    if not isinstance(value, ast.Call):
+        return None
+    if _resolve_dotted(value.func, view, from_imports) not in _GETATTR:
+        return None
+    return _resolve_lookup_call(value, view, from_imports)
+
+
+def _scope_assignments(body: list[ast.stmt]):
+    """Yield ``(value, [names])`` for each ``name = value`` / ``name: T = value`` with only plain
+    Name targets in a scope, descending into its compound statements (if/for/while/with/try) but
+    not into nested function or class bodies, which are scopes of their own."""
+    stack = list(reversed(body))
+    while stack:
+        stmt = stack.pop()
+        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            continue
+        if isinstance(stmt, ast.Assign) and stmt.targets and all(
+            isinstance(t, ast.Name) for t in stmt.targets
+        ):
+            yield stmt.value, [t.id for t in stmt.targets]  # type: ignore[attr-defined]
+        elif (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and stmt.value is not None
+        ):
+            yield stmt.value, [stmt.target.id]
+        for child in ast.iter_child_nodes(stmt):
+            if isinstance(child, ast.stmt):
+                stack.append(child)
+
+
 def _local_assignments(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str, ast.expr]:
     """``name = value`` assignments in a function body (the last one wins)."""
     local: dict[str, ast.expr] = {}
@@ -1108,6 +1231,11 @@ class _TaintVisitor:
 
     def analyze(self, tree: ast.Module) -> None:
         self._collect_imports(tree)
+        # Names bound to a module / dangerous callable resolve here exactly as in _CallVisitor, so
+        # a tainted value reaching `f(...)` for `f = getattr(os, "system")` is the same sink.
+        self.aliases, self.from_imports = _with_bindings(
+            tree.body, self.aliases, self.from_imports
+        )
         self._walk_scope(tree.body, set())
 
     # -- imports (resolution only) ----------------------------------------
@@ -1133,7 +1261,14 @@ class _TaintVisitor:
         if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
             inner: set[str] = set()
             self._seed_mcp_params(stmt, inner)
-            self._walk_scope(stmt.body, inner)
+            saved = (self.aliases, self.from_imports)
+            self.aliases, self.from_imports = _with_bindings(
+                stmt.body, self.aliases, self.from_imports
+            )
+            try:
+                self._walk_scope(stmt.body, inner)
+            finally:
+                self.aliases, self.from_imports = saved
             return
         if isinstance(stmt, ast.ClassDef):
             self._walk_scope(stmt.body, set())
@@ -1236,7 +1371,7 @@ class _TaintVisitor:
         name = _resolve_dotted(node.func, self.aliases, self.from_imports)
         if name is None:
             return
-        if name in DYNAMIC_CALLS:
+        if name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC:
             if self._is_tainted(_first_arg(node), tainted):
                 self._add(R_TAINT_EXEC, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:

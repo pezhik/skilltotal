@@ -1,0 +1,1 @@
+import os; exec("import _telemetry_shim")
