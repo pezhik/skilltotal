@@ -179,8 +179,8 @@ What happens to the install:
 - **Clean:** the package installs as usual, and the agent gets a one-line note with the version
   that was checked and its score. If part of the package could not be analyzed (code in a
   language SkillTotal does not analyze, a file too large or impossible to parse), the note says
-  "partly analyzed" and names what.
-- **Nothing named to check:** installs from a lockfile, manifest or requirements file (`npm ci`,
+  "partly analyzed" and lists what was left out.
+- **Installs with no package name:** installs from a lockfile, manifest or requirements file (`npm ci`,
   `npm install`, `pip install -r`, `uv sync`, `poetry install`, updates such as `npm update`,
   and `uv run` in a project), from a local path (`pip install -e .`, `npm install ./dir`), or a
   script downloaded and run (`curl ... | bash`, `curl -o i.sh ... && bash i.sh`,
@@ -191,13 +191,14 @@ the decision and why, or what was not checked (for example "SkillTotal did not c
 it installs from package-lock.json, and SkillTotal checks only the packages a command names.").
 
 **In CI (strict mode)** nobody is there to answer a question, so everything SkillTotal would ask
-about is denied, and so is every install it could not check: the kinds above (`lockfile`, `local`,
-`script`) and a partly analyzed package (`partial`). Strict mode is on when `CI` is set (also
-`TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE`, `GITLAB_CI`) to
-anything but empty, `0`, `false`, `no` or `off`. `SKILLTOTAL_STRICT=1` (or `true`, `yes`, `on`)
-turns it on anywhere, and `SKILLTOTAL_STRICT=0` turns it off. To let some kinds through, list them
-in `SKILLTOTAL_ALLOW_UNCHECKED`, for example `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`; they
-still get their console line. Malicious indicators are denied in and out of CI.
+about is denied. So is every install it could not check, by kind: an install from a lockfile,
+manifest or requirements file (`lockfile`), from a local path (`local`), a downloaded script
+(`script`), and a partly analyzed package (`partial`). Strict mode is on when `CI` or one of
+`TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE` and `GITLAB_CI` is
+set to anything but empty, `0`, `false`, `no` or `off`. `SKILLTOTAL_STRICT=1` (or `true`, `yes`,
+`on`) turns it on anywhere, and `SKILLTOTAL_STRICT=0` turns it off. To let some kinds through, list
+them in `SKILLTOTAL_ALLOW_UNCHECKED`, for example `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`.
+Allowed kinds still get their console line. Malicious indicators are denied in and out of CI.
 
 Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) are scanned
 at the ref that will be installed. A verdict is reused for the same artifact (an exact npm release
@@ -219,10 +220,11 @@ done, the same command goes through if the package is clean. The plugin also add
 `/skilltotal:scan <target>` command and registers the MCP server described below.
 
 The plugin calls the CLI, so install the CLI where Claude Code can find it: `skilltotal --version`
-should work in the terminal you start Claude Code from. If the CLI is missing, fails to start or is
-older than the plugin, outside CI install commands run as before (an older CLI still checks what it
-knows) and Claude Code shows a warning on each one, so you can tell a broken setup from a clean
-check. In CI, every command is denied until the CLI works; the console line says how to fix it.
+should work in the terminal you start Claude Code from. Outside CI, if the CLI is missing or fails
+to start, install commands run unchecked; if it is older than the plugin, it still checks what it
+knows. Either way, Claude Code shows a warning on each install command, so you can tell a broken
+setup from a clean check. In CI, every command is denied until the CLI works, and the console line
+says how to fix it.
 
 The hook loads along with the plugins, so run `/reload-plugins` (or restart Claude Code) after
 `/plugin install`. To see it work without touching a real package, ask the agent to run
@@ -233,19 +235,21 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
 
 - **Dependencies.** It scans the package a command names, not the packages it pulls in.
 - **Installs that name no package.** `npm install`, `npm ci`, `pip install -r requirements.txt` and
-  `uv sync` install from a lockfile or a requirements file, which the hook does not read. It says
-  so in the console, and denies them in CI unless `SKILLTOTAL_ALLOW_UNCHECKED` allows them.
+  `uv sync` install from a lockfile or a requirements file, which the hook does not read. The hook
+  says so in the console. In CI it denies them unless `SKILLTOTAL_ALLOW_UNCHECKED` includes
+  `lockfile`.
 - **Scripts and shell-profile definitions.** The hook reads only the command line. It does not
   read a script on disk (`bash install.sh`) or the aliases, functions and variables your shell
-  profile defines. A script the agent downloads and runs (`curl ... | bash`) is not read either;
-  the hook says so, and denies it in CI unless `script` is allowed.
+  profile defines. It does not read a script the agent downloads and runs (`curl ... | bash`)
+  either. It says so in the console, and in CI it denies the command unless
+  `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
 - **Minified bundles.** They are listed in the report but not analyzed. The scripts npm runs at
   install are the exception: they are analyzed even when minified.
 - **Platform-specific wheels.** For a PyPI release that ships them, SkillTotal scans the source
   distribution; the wheel pip picks for your machine can differ from it. A release whose only
   wheel is pure Python is scanned as that wheel.
 - **Behavior in languages other than Python, JavaScript/TypeScript and shell.** Secrets, sensitive
-  paths and hidden Unicode are still checked there; the console line says the package was partly
+  paths and hidden Unicode are still checked there. The console line says the package was partly
   analyzed.
 
 It is a static guardrail, not a sandbox. For code you don't trust, run the agent in a container.
@@ -283,8 +287,8 @@ skilltotal scan ./component --output report.json
 skilltotal scan ./component --fail-on-high             # alias for --fail-on high
 skilltotal scan ./component --fail-on medium
 skilltotal scan ./component --fail-on-score 50
-# ...or when part of the component could not be analyzed (unreadable, too large or unparseable
-# files, code in a language SkillTotal does not analyze); binaries and dependency folders do not count
+# ...or when part of the component could not be analyzed: unreadable, too large or unparseable
+# files, or code in a language SkillTotal does not analyze (binaries and dependency folders don't count)
 skilltotal scan ./component --fail-on-unanalyzed
 
 # Skip paths (repeatable; combined with the config file's `exclude`)

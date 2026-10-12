@@ -9,14 +9,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ### Breaking for CI
 - **In CI the Claude Code hook denies what it could not check.** Strict mode is on when `CI` (or
   `TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE`, `GITLAB_CI`) is
-  set; `SKILLTOTAL_STRICT=0` turns it off, `SKILLTOTAL_STRICT=1` turns it on anywhere. Everything
-  the hook would ask about is denied. So are installs that name no package: `npm ci`,
-  `npm install`, `pip install -r`, `uv sync`, `poetry install`, updates and `uv run` in a project
-  (kind `lockfile`); `pip install -e .` and other local paths (`local`); a downloaded script that
-  is run (`script`); and a package only partly analyzed (`partial`). Set
-  `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local` (any of `lockfile`, `local`, `script`, `partial`)
-  to let those kinds through. Without a working CLI, or with one older than the plugin, every
-  command is denied in CI.
+  set. `SKILLTOTAL_STRICT=0` turns it off, and `SKILLTOTAL_STRICT=1` turns it on anywhere. In
+  strict mode the hook denies:
+  - everything it would otherwise ask about;
+  - installs that name no package (kind `lockfile`): `npm ci`, `npm install`, `pip install -r`,
+    `uv sync`, `poetry install`, updates, and `uv run` in a project;
+  - `pip install -e .` and other local paths (`local`);
+  - a downloaded script that is run (`script`);
+  - a package only partly analyzed (`partial`).
+
+  To let some of these kinds through, list them in `SKILLTOTAL_ALLOW_UNCHECKED` (any of
+  `lockfile`, `local`, `script`, `partial`), for example
+  `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`. Without a working CLI, or with one older than the
+  plugin, every command is denied in CI.
 
 ### Added
 - Every install command gets one line in the Claude Code console: what was checked and its score,
@@ -24,9 +29,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - `skilltotal scan --fail-on-unanalyzed`, `fail_on_unanalyzed = true` in `.skilltotal.toml` and the
   Action input `fail-on-unanalyzed`: exit 2 when part of the component could not be analyzed.
 - A text file too large to analyze (over 2 MiB) gets a `needs_review` note.
-- Code in C/C++, C#, Swift, Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy, Haskell, Clojure,
-  Erlang, R and Zig is named as not analyzed for behavior, as Go, Rust, Java, Ruby and PHP were.
-  Scores do not change; a low verdict reads "Partially analyzed".
+- The report names code in C/C++, C#, Swift, Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy,
+  Haskell, Clojure, Erlang, R and Zig as not analyzed for behavior, as it already did for Go,
+  Rust, Java, Ruby and PHP. Scores do not change. A low verdict reads "Partially analyzed".
 
 ## [0.64.0]
 
