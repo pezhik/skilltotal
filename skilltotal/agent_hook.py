@@ -20,10 +20,13 @@ packages an install command would bring in (``npx``, ``npm install``, ``pip inst
   script downloaded and piped to a shell): no decision.
 
 Every command that installs something also gets one line in the person's console: what was
-checked and its risk, the decision, and what was not checked. The hook never denies for its own
-failure: the person decides, and the install goes ahead if they approve. The parser errs toward
-finding installs: a shell that would install a package must not
-slip past it through a global flag, a full path, a wrapper (``bash -c``, ``sudo``, ``env``,
+checked and its risk, the decision, and what was not checked. Outside CI the hook never denies for
+its own failure: the person decides, and the install goes ahead if they approve. In CI strict mode
+nobody is there to answer, so everything it would ask about is denied, and so is an unchecked
+install unless SKILLTOTAL_ALLOW_UNCHECKED names its kind.
+
+The parser errs toward finding installs: a shell that would install a package must not slip past
+it through a global flag, a full path, a wrapper (``bash -c``, ``sudo``, ``env``,
 ``timeout``...), a command substitution or an alias of the subcommand. It reads the command line
 the way the shell does (quotes, escapes, line continuations, comments, here-documents), and a
 command it cannot read that names an installer is asked about rather than let through. It is still
@@ -83,7 +86,8 @@ class Install:
 _NOT_READ = Install(None, "a command SkillTotal could not read")
 
 # What installs with no package name the hook could check: the packages a lockfile or manifest
-# lists, the person's own code on disk, a script downloaded and run. Said in the console.
+# lists, the person's own code on disk, a script downloaded and run. Said in the console; in CI
+# strict mode denied unless SKILLTOTAL_ALLOW_UNCHECKED names the kind.
 LOCKFILE, LOCAL, SCRIPT = "lockfile", "local", "script"
 UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT)
 # A URL a line may quote: no whitespace, quotes or anything a shell fills in.
@@ -2546,7 +2550,8 @@ class BackgroundFull(TimeoutError):
 
 
 def hook_response(
-    event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S
+    event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
+    strict: bool = False, allow_unchecked: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -2558,7 +2563,9 @@ def hook_response(
 
     Every command that installs something gets one line in the person's console
     (``systemMessage``): what was checked and its risk, the decision and why, and what installs
-    unchecked (a lockfile, a local path, a downloaded script).
+    unchecked (a lockfile, a local path, a downloaded script). ``strict`` is CI, where nobody is
+    there to answer: what would be asked about is denied, and so is an unchecked install whose
+    kind ``allow_unchecked`` does not name.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -2642,12 +2649,34 @@ def hook_response(
         asked.append(f"{_names(skipped)}: not checked; SkillTotal checks only the first "
                      f"{MAX_TARGETS} packages in a command.")
 
+    # In CI an unchecked install is denied unless its kind is allowed; elsewhere it is said only.
+    blocked = [i for i in unchecked if i.unchecked not in allow_unchecked] if strict else []
+    passed = [i for i in unchecked if i not in blocked]
+
     if denied:
         reason = "SkillTotal blocked this install: it found malicious indicators. " + " ".join(
             denied)
         reason = f"{reason} {_details(scanned)}"
         return _answer(permission="deny", reason=reason,
                        message=_line(reason, _not_checked(unchecked, rest=True)))
+    if strict and (asked or blocked):
+        why: list[str] = []
+        if asked:
+            why.append("SkillTotal blocked this install; outside CI it would ask for approval. "
+                       + " ".join(asked))
+        if blocked:
+            lead = "It also" if asked else "SkillTotal blocked this install: it"
+            why.append(f"{lead} {_does(blocked)}, and SkillTotal checks only the packages a "
+                       f"command names.")
+        if scanned:
+            why.append(_details(scanned))
+        reason = _STRICT + " ".join(why)
+        allow = ""
+        if blocked:
+            kinds = ",".join(k for k in UNCHECKED_KINDS if any(i.unchecked == k for i in blocked))
+            allow = f"To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kinds}."
+        return _answer(permission="deny", reason=reason,
+                       message=_line(reason, allow, _not_checked(passed, rest=True)))
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
         # The hint only helps for what the scanner read; a custom index or archive it can't.
@@ -2658,6 +2687,12 @@ def hook_response(
                if clean else None)
     return _answer(context=context,
                    message=_line(_checked(clean), _not_checked(unchecked, rest=bool(clean))))
+
+
+# CI strict mode: what the hook would otherwise ask about is denied, and the reason says why.
+_STRICT = "(CI rule) "
+# The kinds of unchecked install (UNCHECKED_KINDS, comma-separated) that strict mode lets through.
+ALLOW_UNCHECKED_ENV = "SKILLTOTAL_ALLOW_UNCHECKED"
 
 
 def _line(*parts: str) -> str:

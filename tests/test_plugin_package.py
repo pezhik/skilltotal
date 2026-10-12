@@ -25,6 +25,7 @@ from tests.test_agent_hook import (
     INSTALL_COMMANDS,
     UNVERIFIABLE_COMMANDS,
 )
+from tests.test_hook_visibility import STRICT_ENVS
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_ROOT = ROOT / "plugin"
@@ -115,7 +116,7 @@ def test_a_budget_past_the_hook_timeout_is_capped(monkeypatch):
 
     seen = []
     monkeypatch.setattr("skilltotal.agent_hook.hook_response",
-                        lambda event, scan, budget_s: seen.append(budget_s))
+                        lambda event, scan, budget_s, **_: seen.append(budget_s))
     monkeypatch.setenv("SKILLTOTAL_HOOK_BUDGET", "300")
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
     assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
@@ -148,9 +149,10 @@ exit "${ST_STUB_RC:-0}"
 
 def _run_wrapper(
     tmp_path: Path, command: str, *, with_cli: bool = True, cli_rc: int = 0,
-    cli_out: str = '{"answer": "from the cli"}',
+    cli_out: str = '{"answer": "from the cli"}', extra_env: dict[str, str] | None = None,
 ):
-    """Run hooks/pretooluse.sh the way Claude Code does, with a stand-in `skilltotal` on PATH."""
+    """Run hooks/pretooluse.sh the way Claude Code does, with a stand-in `skilltotal` on PATH.
+    ``extra_env`` adds variables (CI, SKILLTOTAL_STRICT) to its otherwise bare environment."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     if with_cli:
@@ -170,6 +172,7 @@ def _run_wrapper(
     }
     if "SYSTEMROOT" in os.environ:  # Windows processes need it to start
         env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+    env.update(extra_env or {})
     event = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
     done = subprocess.run(  # noqa: S603 - fixed argv: the shell and our own script
         [SH, str(WRAPPER)],
@@ -239,3 +242,59 @@ def test_without_the_cli_other_commands_stay_quiet(tmp_path):
     done, _ = _run_wrapper(tmp_path, "ls -la", with_cli=False)
     assert done.returncode == 0
     assert done.stdout == b""
+
+
+# In CI nobody reads a warning, and an agent there often runs with its permission prompts off: an
+# install that cannot be checked is denied (strict mode, read as the CLI reads it).
+
+FIX = "To fix it, run pipx install skilltotal, or pipx upgrade skilltotal for an existing install."
+
+
+def _denial(done) -> tuple[str, str]:
+    assert done.returncode == 0
+    answer = json.loads(done.stdout.decode())
+    spec = answer["hookSpecificOutput"]
+    assert spec["hookEventName"] == "PreToolUse"
+    assert spec["permissionDecision"] == "deny"
+    return spec["permissionDecisionReason"], answer["systemMessage"]
+
+
+@needs_sh
+@pytest.mark.parametrize("command", ["npm install lodash", "NPX evil", "p\"i\"p install x"])
+def test_in_ci_an_install_without_the_cli_is_denied(tmp_path, command):
+    done, _ = _run_wrapper(tmp_path, command, with_cli=False, extra_env={"CI": "true"})
+    reason, message = _denial(done)
+    assert reason == ("(CI rule) SkillTotal blocked this command: the skilltotal CLI is not on "
+                      "PATH, so it could not be checked.")
+    assert message == f"{reason} {FIX}"
+
+
+@needs_sh
+def test_in_ci_a_broken_cli_denies_the_install(tmp_path):
+    done, _ = _run_wrapper(tmp_path, "npm install lodash", cli_rc=3,
+                           extra_env={"SKILLTOTAL_STRICT": "1"})
+    reason, _ = _denial(done)
+    assert "the skilltotal CLI failed to run" in reason
+
+
+@needs_sh
+def test_in_ci_other_commands_stay_quiet_without_the_cli(tmp_path):
+    done, _ = _run_wrapper(tmp_path, "ls -la", with_cli=False, extra_env={"CI": "true"})
+    assert done.returncode == 0
+    assert done.stdout == b""
+
+
+@needs_sh
+def test_in_ci_the_cli_answer_passes_through_unchanged(tmp_path):
+    done, _ = _run_wrapper(tmp_path, "npm install lodash", extra_env={"CI": "true"})
+    assert done.stdout.decode().strip() == '{"answer": "from the cli"}'
+
+
+@needs_sh
+@pytest.mark.parametrize(("env", "strict"), STRICT_ENVS)
+def test_the_wrapper_reads_strict_mode_as_the_cli_does(tmp_path, env, strict):
+    done, _ = _run_wrapper(tmp_path, "npm install lodash", with_cli=False, extra_env=env)
+    if strict:
+        _denial(done)
+    else:
+        _warning(done)

@@ -30,8 +30,10 @@ Commands:
     skilltotal hook claude-code
         Claude Code PreToolUse hook (used by the SkillTotal plugin): reads the hook event on
         stdin, scans any package the Bash command would install, and prints the decision.
-        Always exits 0; a failed scan never blocks the install. A scan that outlasts the wait
-        goes on in the background and keeps its verdict for the next run of the command.
+        Always exits 0; a failed scan asks the person and never blocks the install, except in
+        CI strict mode (CI or SKILLTOTAL_STRICT set), where what would be asked is denied. A
+        scan that outlasts the wait goes on in the background and keeps its verdict for the
+        next run of the command.
 
 Exit codes:
     0  success
@@ -663,7 +665,7 @@ def _cmd_mcp() -> int:
 
 # The answer when the hook cannot finish its own check. Exiting with an error would let the plugin's
 # wrapper pass the command with only a warning, and denying would block for SkillTotal's own fault:
-# the person decides.
+# the person decides. In CI strict mode nobody is there to decide, so the command is denied.
 HOOK_FAILED = {
     "systemMessage": "SkillTotal could not check this command.",
     "hookSpecificOutput": {
@@ -672,6 +674,36 @@ HOOK_FAILED = {
         "permissionDecisionReason": "SkillTotal could not check this command.",
     },
 }
+HOOK_FAILED_STRICT = {
+    "systemMessage": "(CI rule) SkillTotal blocked this command: it could not check it.",
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": "(CI rule) SkillTotal blocked this command: it could not "
+                                    "check it.",
+    },
+}
+# CI strict mode for the hook. SKILLTOTAL_STRICT=1/true turns it on and 0/false off; otherwise it is
+# on exactly when CI is set to anything but empty, 0 or false. The plugin's wrapper reads the same.
+HOOK_STRICT_ENV = "SKILLTOTAL_STRICT"
+
+
+def _hook_strict(environ) -> bool:
+    """Whether the hook runs in CI strict mode, where what it would ask about is denied."""
+    value = environ.get(HOOK_STRICT_ENV, "").strip().lower()
+    if value in ("1", "true"):
+        return True
+    if value in ("0", "false"):
+        return False
+    return environ.get("CI", "").strip().lower() not in ("", "0", "false")
+
+
+def _hook_allowed_unchecked(environ) -> frozenset[str]:
+    """The kinds of unchecked install strict mode lets through (SKILLTOTAL_ALLOW_UNCHECKED)."""
+    from skilltotal.agent_hook import ALLOW_UNCHECKED_ENV, UNCHECKED_KINDS
+
+    named = {part.strip().lower() for part in environ.get(ALLOW_UNCHECKED_ENV, "").split(",")}
+    return frozenset(named & set(UNCHECKED_KINDS))
 
 
 def _cmd_hook(args: argparse.Namespace) -> int:
@@ -683,8 +715,8 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
     try:
         answer = _hook_answer()
-    except Exception:  # noqa: BLE001 - any failure of ours asks; it must not pass silently
-        answer = HOOK_FAILED
+    except Exception:  # noqa: BLE001 - a failure of ours asks (in CI denies), never passes silently
+        answer = HOOK_FAILED_STRICT if _hook_strict(os.environ) else HOOK_FAILED
     if answer is not None:
         print(json.dumps(answer))
     return EXIT_OK
@@ -708,7 +740,9 @@ def _hook_answer() -> dict | None:
     # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
     budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
-    return hook_response(event, scan=_hook_scan_cached, budget_s=budget)
+    return hook_response(event, scan=_hook_scan_cached, budget_s=budget,
+                         strict=_hook_strict(os.environ),
+                         allow_unchecked=_hook_allowed_unchecked(os.environ))
 
 
 # How long the agent waits for the checks of one install command (a check that needs longer goes
