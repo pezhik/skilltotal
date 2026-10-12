@@ -996,8 +996,8 @@ def test_the_scan_says_its_size_before_it_starts_reading(tmp_path, monkeypatch):
     component = tmp_path / "component"
     component.mkdir()
     (component / "index.js").write_text("module.exports = 1;\n", encoding="utf-8")
-    check = tmp_path / "skilltotal_hook_scan"
-    check.mkdir()
+    # Made as the hook makes a check's directory: private to this user.
+    check = Path(tempfile.mkdtemp(prefix="skilltotal_hook_", dir=tmp_path))
     (check / "scan.json").write_text(json.dumps({"source": str(component), "secret": SECRET}),
                                      encoding="utf-8")
     # As the supervisor starts it: the check's directory is its temp directory, and it holds the
