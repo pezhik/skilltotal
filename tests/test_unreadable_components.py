@@ -92,7 +92,8 @@ def test_a_cached_verdict_still_says_nothing_was_read(tmp_path, monkeypatch):
     (tmp_path / "pkg").mkdir()
     report = _package(_binary_only(tmp_path / "pkg")).to_dict()
     scans = []
-    monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout: scans.append(source) or report)
+    monkeypatch.setattr(cli, "_hook_scan",
+                        lambda source, timeout, job=None: scans.append(source) or report)
     event = {"hook_event_name": "PreToolUse", "tool_name": "Bash",
              "tool_input": {"command": "npm install x"}}
     for _ in range(2):

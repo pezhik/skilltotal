@@ -41,6 +41,7 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -741,11 +742,24 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         marker = pending.claim(key, now)
     except AlreadyRunning as running:
         raise CheckInBackground(running.seconds_left, started_ago=running.age) from None
+    # The check takes what its verdict is recorded under along, in case this hook goes away; with
+    # no marker to track it by, it never runs on alone.
+    check = {**job, "token": marker.token} if marker is not None else None
     try:
-        report = _hook_scan(target, timeout - (time.monotonic() - started))
+        report = _hook_scan(target, timeout - (time.monotonic() - started), check)
     except ScanContinues as late:
-        # Raises unless the check ended in the meantime; the marker is then the check's own.
-        report = _hook_hand_over(late, pending, marker, job)
+        try:
+            # Raises unless the check ended in the meantime.
+            report = _hook_hand_over(late, pending, marker, job)
+        except CheckInBackground:
+            raise  # handed over: the marker is the check's now
+        except BaseException:
+            # Whatever went wrong, the check is not left half handed over. A failure to stop it
+            # is not reported: the error being raised is the one that matters.
+            with contextlib.suppress(Exception):
+                late.scan.stop()
+            pending.release(marker)
+            raise
     except BaseException:
         pending.release(marker)
         raise  # a failed or late scan: nothing is cached
@@ -772,18 +786,22 @@ def _hook_hand_over(
         try:
             with pending.lock():  # counting the others and joining them is one step
                 running = pending.background(time.time(), exclude=marker)
-                if running < MAX_BACKGROUND:
-                    report = scan.hand_over({**job, "token": marker.token})
+                ends = None if late.seconds_left is None else time.time() + late.seconds_left
+                # The marker goes to the background before the check is handed over: a check that
+                # ends right after frees a marker already in its final state (written after, it
+                # would come back for a check that is over).
+                if running < MAX_BACKGROUND and pending.go_background(marker, ends):
+                    report = scan.hand_over()
                     if report is not None:
                         return report
-                    ends = None if late.seconds_left is None else time.time() + late.seconds_left
-                    pending.go_background(marker, scan.pid, ends)
                     raise CheckInBackground(late.seconds_left, large=late.large)
+                if running < MAX_BACKGROUND:
+                    running = None  # its marker is gone: it cannot be tracked
         except CheckInBackground:
             raise
-        except TimeoutError:
-            running = None  # the markers cannot be read safely: start nothing more
-    report = scan.hand_over(None)  # stop it
+        except (TimeoutError, OSError):
+            running = None  # the markers cannot be kept safely: start nothing more
+    report = scan.stop()
     if report is not None:
         return report
     pending.release(marker)
@@ -907,16 +925,18 @@ def _number(value: object) -> float:
         return 0.0
 
 
-def _hook_scan(source: str, timeout: float) -> dict:
+def _hook_scan(source: str, timeout: float, job: dict | None = None) -> dict:
     """Scan ``source`` in processes of its own and wait up to ``timeout`` seconds for the report.
 
     The scan outlives the wait: past it, this raises ``ScanContinues`` (a TimeoutError) with the
-    running check, and the caller hands it over or stops it. The check runs in an empty directory
-    with a temp directory of its own, never in the agent's project (see ``RunningScan.start``).
+    running check, and the caller hands it over or stops it. ``job`` (what the verdict is recorded
+    under, and the check's marker token) lets the check keep its verdict even if this hook goes
+    away. The check runs in an empty directory with a temp directory of its own, never in the
+    agent's project (see ``RunningScan.start``).
     """
     from skilltotal.hook_scan import RunningScan
 
-    return RunningScan.start(source).wait(timeout)
+    return RunningScan.start(source, job).wait(timeout)
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:

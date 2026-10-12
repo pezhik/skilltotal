@@ -24,8 +24,9 @@ from skilltotal.agent_hook import BackgroundFull, CheckInBackground, hook_respon
 
 # Stands in for the supervisor the hook starts. Steps, comma-separated: `size=N` writes the size
 # file, `sleep=S` waits, `report` writes a report and ends first (the hook collects it), `fail` ends
-# first without one, `wait` runs until the hook hands the check over or stops it, then notes what it
-# was given in $FAKE_LOG and, being the last one out, removes the check's directory.
+# first without one, `wait` runs until the hook hands the check over or stops it, then notes what
+# scan.json says to record the verdict under in $FAKE_LOG and, being the last one out, removes the
+# check's directory.
 FAKE_SUPERVISOR = r'''
 import json, os, shutil, sys, time
 
@@ -65,10 +66,8 @@ for step in steps.split(","):
         while time.time() < deadline and not os.path.exists(at("done")):
             time.sleep(0.05)
         last = not claim()
-        job = None
-        if os.path.exists(at("job.json")):
-            with open(at("job.json"), encoding="utf-8") as fh:
-                job = json.load(fh)
+        with open(at("scan.json"), encoding="utf-8") as fh:
+            job = json.load(fh).get("job")
         with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"last": last, "job": job, "abort": os.path.exists(at("abort")),
                                  "pid": os.getpid()}) + "\n")
@@ -416,11 +415,11 @@ def check_dir(tmp_path, monkeypatch):
     def make(*, hook_pid, ceiling=60.0, job=None, handed_over=False, abort=False):
         check = Path(tempfile.mkdtemp(prefix="skilltotal_hook_"))
         (check / "cwd").mkdir()
-        (check / "scan.json").write_text(json.dumps(
-            {"source": "npm:x@1.0.0", "hook_pid": hook_pid, "ceiling": ceiling,
-             "secret": SECRET}), encoding="utf-8")
+        spec = {"source": "npm:x@1.0.0", "hook_pid": hook_pid, "ceiling": ceiling,
+                "secret": SECRET}
         if job is not None:
-            (check / "job.json").write_text(json.dumps(job), encoding="utf-8")
+            spec["job"] = job
+        (check / "scan.json").write_text(json.dumps(spec), encoding="utf-8")
         if abort:
             (check / "abort").write_text("", encoding="ascii")
         if handed_over:
@@ -431,9 +430,20 @@ def check_dir(tmp_path, monkeypatch):
 
 
 def _job_for(cache, key="npm:x@1.0.0"):
-    """What the hook hands a check over with, and the marker of that check."""
-    marker = _marker(cache, key, pid=os.getpid(), started=time.time(), token="mine")
+    """What the hook starts a check with, and the marker of that check."""
+    marker = _marker(cache, key, pid=os.getpid(), started=time.time(), background=False,
+                     token="mine")
     return {**_job(cache, key), "token": "mine"}, marker
+
+
+def _hook(monkeypatch, *states):
+    """The supervisor's view of its hook: alive or gone at each look, then as at the last."""
+    looks = list(states)
+
+    def gone():
+        return looks.pop(0) if len(looks) > 1 else looks[0]
+
+    monkeypatch.setattr(hook_scan, "_watch_hook", lambda pid: SimpleNamespace(gone=gone))
 
 
 # --- Starting a check: processes that outlive the hook and hold none of its std handles ---------
@@ -571,8 +581,9 @@ def test_a_check_the_hook_left_records_its_verdict_itself(check_dir, cache, fake
     assert not check.exists()
 
 
-def test_a_check_leaves_its_report_to_a_hook_that_still_waits(check_dir, fake_scan):
+def test_a_check_leaves_its_report_to_a_hook_that_still_waits(check_dir, fake_scan, monkeypatch):
     fake_scan("report")
+    _hook(monkeypatch, False)
     check = check_dir(hook_pid=os.getpid())
     hook_scan.supervise(check, remember=_must_not_spawn)
     # Done first: the waiting hook reads the report, keeps the verdict and removes the directory.
@@ -806,8 +817,7 @@ def test_no_more_than_two_checks_run_in_the_background(cache, fake_supervisor):
     assert full.value.running == 2
     assert _eventually(lambda: _seen(fake.log))
     [stopped] = _seen(fake.log)
-    assert stopped["abort"]
-    assert stopped["job"] is None  # nothing to record
+    assert stopped["abort"]  # stopped: it records nothing (see the supervisor's tests)
     assert len(_markers(cache)) == 2  # its own marker is gone
 
 
@@ -1003,3 +1013,179 @@ def test_the_hook_waits_sixty_seconds_unless_told_otherwise(monkeypatch, setting
     assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
     assert seen == [budget]
     assert agent_hook.DEFAULT_BUDGET_S == cli.HOOK_BUDGET_S == 60.0
+
+
+# --- A hook that goes away, and a hand-over that goes wrong --------------------------------------
+
+# Watches the hook whose process id it is given: notes what it sees first, then waits for it to go.
+WATCH = r'''
+import sys, time
+from pathlib import Path
+from skilltotal import hook_scan
+
+watch = hook_scan._watch_hook(int(sys.argv[1]))
+Path(sys.argv[2]).write_text("gone" if watch.gone() else "alive", encoding="ascii")
+deadline = time.monotonic() + 30
+while not watch.gone() and time.monotonic() < deadline:
+    time.sleep(0.1)
+Path(sys.argv[3]).write_text("gone" if watch.gone() else "still there", encoding="ascii")
+'''
+
+# Plays the hook: starts WATCH the way a hook starts its supervisor, waits until it has looked,
+# and goes.
+HOOK = r'''
+import os, subprocess, sys, time
+from pathlib import Path
+from skilltotal import hook_scan
+
+python, venv = hook_scan._interpreter()
+subprocess.Popen([python, sys.argv[1], str(os.getpid()), sys.argv[2], sys.argv[3]],
+                 env={**os.environ, **venv})
+deadline = time.monotonic() + 30
+while not Path(sys.argv[2]).exists() and time.monotonic() < deadline:
+    time.sleep(0.05)
+'''
+
+
+def test_the_marker_names_the_checks_supervisor_from_the_start(tmp_path, cache, monkeypatch):
+    """A marker naming the hook went stale as soon as the hook went (Esc, Claude Code's timeout):
+    its check no longer counted as running, so the same command run again started another check
+    of the same artifact, and the cap on background checks did not see it."""
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    marker = hook_scan.Pending(cache / "hook-pending").claim("npm:x@1.0.0", time.time())
+
+    class Started:
+        pid = 4242
+
+    monkeypatch.setattr(hook_scan.subprocess, "Popen", lambda argv, **kwargs: Started())
+    job = {**_job(cache, "npm:x@1.0.0"), "token": marker.token}
+    check = hook_scan.RunningScan.start("npm:x@1.0.0", job)
+    try:
+        record = json.loads(marker.path.read_text(encoding="utf-8"))
+        assert record["pid"] == 4242
+        assert record["background"] is False
+        # What the verdict is recorded under goes along before the check starts, in case the
+        # hook goes away while it waits.
+        spec = json.loads((Path(check.tmp) / "scan.json").read_text(encoding="utf-8"))
+        assert spec["job"] == job
+    finally:
+        hook_scan.remove_tree(check.tmp)
+
+
+def test_a_check_whose_hook_went_away_is_kept_as_a_background_check(check_dir, cache, fake_scan,
+                                                                     monkeypatch):
+    fake_scan("sleep=2,report")
+    _hook(monkeypatch, False, True)  # there at first, then gone without a word
+    adopted = []
+    real = hook_scan.Pending.go_background
+
+    def spy(self, marker, ends, pid=None):
+        adopted.append(pid)
+        return real(self, marker, ends, pid=pid)
+
+    monkeypatch.setattr(hook_scan.Pending, "go_background", spy)
+    job, marker = _job_for(cache)
+    check = check_dir(hook_pid=os.getpid(), job=job)
+    assert hook_scan.supervise(check, remember=cli._hook_remember) == 0
+    assert adopted == [os.getpid()]  # a background check now, under this supervisor
+    assert list(_cached(cache)) == ["npm:x@1.0.0"]  # its verdict is kept, not thrown away
+    assert not marker.exists()
+    assert not check.exists()
+
+
+def test_a_check_whose_hook_went_away_is_stopped_when_the_background_is_full(
+        check_dir, cache, fake_scan, monkeypatch):
+    fake_scan("sleep=120,report")
+    _hook(monkeypatch, True)
+    for other in ("npm:a@1.0.0", "npm:b@1.0.0"):
+        _marker(cache, other, pid=os.getpid(), started=time.time() - 10)
+    job, marker = _job_for(cache)
+    check = check_dir(hook_pid=os.getpid(), job=job)
+    started = time.monotonic()
+    hook_scan.supervise(check, remember=cli._hook_remember)
+    assert time.monotonic() - started < 30
+    assert _cached(cache) == {}
+    assert not marker.exists()
+    assert len(_markers(cache)) == 2
+    assert not check.exists()
+
+
+def test_a_process_younger_than_the_check_cannot_be_its_hook():
+    """A process id is reused once its process ends. A process that reused the hook's id started
+    after the check did, so the check never takes it for its hook."""
+    younger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        assert hook_scan._watch_hook(younger.pid).gone()
+    finally:
+        younger.kill()
+        younger.wait(30)
+
+
+def test_a_supervisor_sees_its_hook_go(tmp_path):
+    watch, hook = tmp_path / "watch.py", tmp_path / "hook.py"
+    watch.write_text(WATCH, encoding="utf-8")
+    hook.write_text(HOOK, encoding="utf-8")
+    first, last = tmp_path / "first", tmp_path / "last"
+    subprocess.run([sys.executable, str(hook), str(watch), str(first), str(last)], timeout=60,
+                   check=True)
+    assert first.read_text(encoding="ascii") == "alive"
+    assert _eventually(last.exists, 30)
+    assert last.read_text(encoding="ascii") == "gone"
+
+
+def test_an_error_while_handing_over_stops_the_check_and_frees_its_marker(
+        cache, fake_supervisor, monkeypatch):
+    """The reviewer's case: the pending lock refuses (as Windows does for a lock file that is being
+    deleted). The error escaped the hand-over, so the check was neither handed over nor stopped,
+    and its marker and its directory stayed behind."""
+    fake = fake_supervisor("wait")
+
+    def refuse(self, wait_s=5.0):
+        raise PermissionError(13, "simulated: the pending directory refuses the lock file")
+
+    monkeypatch.setattr(hook_scan.Pending, "lock", refuse)
+    out = hook_response(_bash("npm install big@1.0.0"), scan=cli._hook_scan_cached, budget_s=0.5)
+    assert ("npm:big@1.0.0: not checked within SkillTotal's 0.5-second time limit."
+            in _reason(out))
+    assert _eventually(lambda: _seen(fake.log))
+    [stopped] = _seen(fake.log)
+    assert stopped["abort"]
+    assert _markers(cache) == []
+
+
+def test_an_unexpected_error_while_handing_over_still_stops_the_check(cache, fake_supervisor,
+                                                                      monkeypatch):
+    fake = fake_supervisor("wait")
+
+    def broken(self, marker, ends, pid=None):
+        raise RuntimeError("simulated: a bug while handing the check over")
+
+    monkeypatch.setattr(hook_scan.Pending, "go_background", broken)
+    with pytest.raises(RuntimeError):
+        cli._hook_scan_cached("npm:big@1.0.0", 0.5)
+    assert _eventually(lambda: _seen(fake.log))
+    [stopped] = _seen(fake.log)
+    assert stopped["abort"]
+    assert _markers(cache) == []
+
+
+def test_the_marker_is_in_the_background_before_the_check_is_handed_over(cache, fake_supervisor,
+                                                                         monkeypatch):
+    """A check that ends right after the hand-over frees its marker. Written after the hand-over,
+    the background marker came back for a check that was over, and the same command run again was
+    told a check of it was still running."""
+    fake_supervisor("wait")
+    seen = []
+
+    def hand_over(self):
+        path = hook_scan.Pending(cache / "hook-pending").marker_path("npm:big@1.0.0")
+        seen.append(json.loads(path.read_text(encoding="utf-8"))["background"])
+        self.stop()  # lets the stand-in go
+        return {**_report(), "verdict": {"has_malicious_indicators": False,
+                                         "headline": "done first"}}
+
+    monkeypatch.setattr(hook_scan.RunningScan, "hand_over", hand_over)
+    report = cli._hook_scan_cached("npm:big@1.0.0", 0.5)
+    assert seen == [True]
+    assert report["verdict"]["headline"] == "done first"
+    assert _markers(cache) == []

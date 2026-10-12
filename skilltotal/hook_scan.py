@@ -8,7 +8,10 @@ which outlive the hook:
 * the supervisor, which the hook starts detached, runs the scan for at most ``CEILING_S`` seconds.
   When the hook has stopped waiting, it records the verdict in the hook's cache itself, under the
   same key and with the same trimmed entry the hook would have kept, so the same command run again
-  is answered from there. A check that fails, or that the ceiling stops, records nothing;
+  is answered from there. A check that fails, or that the ceiling stops, records nothing. It also
+  watches the hook: one that went away without a word (the person pressed Esc, Claude Code's
+  timeout killed it) leaves its check to the supervisor, which keeps it going as one of the
+  background checks, or stops it when there are as many of those as allowed;
 * the scan, the supervisor's child, fetches the component, says how much text it is about to read
   as soon as it knows, and writes its report. The hook waits for it while that size says it can
   finish in the time left, and not a moment longer.
@@ -25,21 +28,19 @@ hook's own settings, never from a file in that directory. They and the hook talk
 files in the check's directory:
 
     cwd/          the empty directory both processes run in
-    scan.json     what to scan, the hook's process id, the ceiling and the check's secret (written
-                  by the hook)
+    scan.json     what to scan, the hook's process id, the ceiling, the check's secret, and what
+                  to record the verdict under (written by the hook before it starts the check)
     size          how much text the scan is about to read, in megabytes (written by the scan as
                   soon as it knows; the hook stops waiting at once when that says the scan cannot
                   finish in the time left)
     report.json   the report (written by the scan)
-    job.json      where and under which key to record the verdict (written by the hook when it
-                  stops waiting)
     abort         asks the supervisor to stop the scan and record nothing
     done          created exclusively by whichever of the hook and the supervisor is done with the
                   check first; the other one is the last, and removes the directory
 
-A marker per cache key under the cache directory says a check of that artifact is running, so one
-artifact is never checked twice at once and no more than ``MAX_BACKGROUND`` checks go on without a
-hook (see :class:`Pending`).
+A marker per cache key under the cache directory names the supervisor of the check of that
+artifact from the moment it starts, so one artifact is never checked twice at once and no more than
+``MAX_BACKGROUND`` checks go on without a hook (see :class:`Pending`).
 
 More than one process writes the verdict cache: hooks for commands the agent runs in parallel, and
 checks that finish after their hook. Each write reads the file, adds an entry and writes the file
@@ -197,25 +198,89 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
-def _windows_pid_alive(pid: int) -> bool:
+_SYNCHRONIZE = 0x00100000
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_ACCESS_DENIED = 5
+_WAIT_TIMEOUT = 0x102
+
+
+def _kernel32() -> Any:
     import ctypes
     from ctypes import wintypes
 
-    synchronize, access_denied, wait_timeout = 0x00100000, 5, 0x102
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
     kernel32.WaitForSingleObject.restype = wintypes.DWORD
     kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    handle = kernel32.OpenProcess(synchronize, False, pid)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    times = ctypes.POINTER(wintypes.FILETIME)
+    kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, times, times, times, times)
+    kernel32.GetProcessTimes.restype = wintypes.BOOL
+    return kernel32
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    import ctypes
+
+    kernel32 = _kernel32()
+    handle = kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
     if not handle:
         # No such process, unless it exists and is not this user's to open.
-        return ctypes.get_last_error() == access_denied  # type: ignore[attr-defined]
+        return ctypes.get_last_error() == _ERROR_ACCESS_DENIED  # type: ignore[attr-defined]
     try:
-        return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+        return kernel32.WaitForSingleObject(handle, 0) == _WAIT_TIMEOUT
     finally:
         kernel32.CloseHandle(handle)
+
+
+def _created(kernel32: Any, handle: Any) -> int | None:
+    """When the process behind ``handle`` started, in 100-ns ticks; None when Windows won't say."""
+    import ctypes
+    from ctypes import wintypes
+
+    created, ended, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not kernel32.GetProcessTimes(handle, ctypes.byref(created), ctypes.byref(ended),
+                                    ctypes.byref(kernel), ctypes.byref(user)):
+        return None
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
+
+
+class _HookWatch:
+    """The hook that started this check, watched in a way a reused process id cannot fool.
+
+    On POSIX this process is the hook's child: the hook is gone once this process's parent is no
+    longer the hook. On Windows a handle opened on the hook keeps the hook's id from being reused
+    while it is open, and a process that started after this one cannot be the hook that started
+    it, so a handle on a process that already reused the id is not kept.
+    """
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self._handle = None
+        if os.name == "nt" and pid > 0:
+            kernel32 = _kernel32()
+            handle = kernel32.OpenProcess(_SYNCHRONIZE | _PROCESS_QUERY_LIMITED_INFORMATION,
+                                          False, pid)
+            if handle:
+                hook, me = _created(kernel32, handle), _created(kernel32,
+                                                                kernel32.GetCurrentProcess())
+                if hook is not None and me is not None and hook < me:
+                    self._handle = handle
+                else:
+                    kernel32.CloseHandle(handle)
+
+    def gone(self) -> bool:
+        if os.name != "nt":
+            return os.getppid() != self.pid
+        if self._handle is None:
+            return True
+        return _kernel32().WaitForSingleObject(self._handle, 0) != _WAIT_TIMEOUT
+
+
+def _watch_hook(pid: int) -> _HookWatch:
+    return _HookWatch(pid)
 
 
 def claim(path: Path) -> bool:
@@ -277,6 +342,7 @@ class RunningScan:
         self.tmp = tmp
         self._started = time.monotonic()
         self._ends: float | None = None  # when the report should be in (monotonic), once known
+        self._settled = False  # this hook has handed the check over, or stopped it
 
     @property
     def pid(self) -> int:
@@ -286,13 +352,18 @@ class RunningScan:
         return None if self._ends is None else self._ends - time.monotonic()
 
     @classmethod
-    def start(cls, source: str) -> RunningScan:
+    def start(cls, source: str, job: dict | None = None) -> RunningScan:
         """Start checking ``source`` in a supervisor that outlives this process.
 
         The check gets a temp directory of its own, removed by whoever finishes last (see the
         module docstring), and runs in an empty directory inside it, never in the project the agent
         works in: a ``json.py`` planted in an opened repository must not run inside the scanner,
         and a ``.skilltotal.toml`` there must not tune the scan of someone else's package.
+
+        ``job`` is what the verdict is recorded under (the cache key, its time to live, the file the
+        key names, when the check started, the engine, and the token of the check's marker). It
+        goes to scan.json before the check starts, so a check whose hook goes away keeps its
+        verdict all the same; and from now on the marker names the supervisor, not this process.
         """
         root = tempfile.gettempdir()
         tmp = tempfile.mkdtemp(prefix=_CHECK_PREFIX, dir=root)
@@ -300,9 +371,11 @@ class RunningScan:
             cwd = os.path.join(tmp, "cwd")
             os.mkdir(cwd)
             secret = secrets.token_hex(16)
-            Path(tmp, "scan.json").write_text(json.dumps(
-                {"source": source, "hook_pid": os.getpid(), "ceiling": CEILING_S,
-                 "secret": secret}), encoding="utf-8")
+            spec = {"source": source, "hook_pid": os.getpid(), "ceiling": CEILING_S,
+                    "secret": secret}
+            if job is not None:
+                spec["job"] = job
+            Path(tmp, "scan.json").write_text(json.dumps(spec), encoding="utf-8")
             # The supervisor gets this process's temp directory, where it finds the check's.
             env = {**os.environ, **_interpreter()[1], "TMPDIR": root, "TEMP": root, "TMP": root,
                    SECRET_ENV: secret, "PYTHONIOENCODING": "utf-8"}
@@ -310,6 +383,9 @@ class RunningScan:
         except BaseException:
             remove_tree(tmp)
             raise
+        if job is not None:
+            pending().name_process(Marker(pending().marker_path(job["key"]), job["token"]),
+                                   proc.pid)
         return cls(proc, tmp)
 
     def wait(self, timeout: float) -> dict:
@@ -338,21 +414,35 @@ class RunningScan:
             if now >= deadline:
                 raise ScanContinues(self)
 
-    def hand_over(self, job: dict | None) -> dict | None:
-        """Leave the check to itself: it records its verdict as ``job`` says, or, with no job, it is
-        stopped and records nothing. Returns the report instead when the check was done first: it
-        is then the answer, and the caller keeps it as if it had come in time."""
-        if job is None:
-            Path(self.tmp, "abort").write_text("", encoding="ascii")
-        else:
-            # Written before the claim: once the supervisor sees the claim, it reads the job.
-            Path(self.tmp, "job.json").write_text(json.dumps(job), encoding="utf-8")
-        if claim(Path(self.tmp, "done")):
+    def hand_over(self) -> dict | None:
+        """Leave the check to itself: it records its verdict as scan.json says. Returns the report
+        instead when the check was done first: it is then the answer, and the caller keeps it as
+        if it had come in time."""
+        return self._settle()
+
+    def stop(self) -> dict | None:
+        """Stop the check, which then records nothing. Returns the report instead when the check
+        was done first. Does nothing once this hook has handed the check over or stopped it."""
+        if self._settled:
             return None
         try:
-            self.proc.wait(timeout=30)  # done first, it is exiting now
+            Path(self.tmp, "abort").write_text("", encoding="ascii")
+        except OSError:
+            pass  # gone with its directory: the check is over anyway
+        return self._settle()
+
+    def _settle(self, wait_s: float = 10.0) -> dict | None:
+        if self._settled:
+            return None
+        self._settled = True
+        if claim(Path(self.tmp, "done")):
+            return None
+        # The supervisor claimed the check first: it is done and exiting now, or it took the check
+        # over, believing this hook gone, and goes on with it.
+        try:
+            self.proc.wait(timeout=max(0.0, wait_s))
         except subprocess.TimeoutExpired:
-            pass
+            return None
         return self._collect()
 
     def _collect(self) -> dict:
@@ -407,55 +497,92 @@ def _check_spec(tmp: Path, role: str) -> dict | None:
     return spec
 
 
+def _job_of(spec: dict) -> dict | None:
+    """What the check records its verdict under, as the hook wrote it to scan.json; None when the
+    hook gave none (or gave something that is not one)."""
+    job = spec.get("job")
+    if not (isinstance(job, dict) and isinstance(job.get("key"), str)
+            and isinstance(job.get("token"), str)):
+        return None
+    return job
+
+
 def supervise(tmp: Path, remember: Callable[[dict, dict], object]) -> int:
     """The supervisor: run the scan within the ceiling, then finish the check.
 
-    When the hook still waits, it reads the report itself. When the hook has stopped waiting, or
-    died while it waited, the check is this process's to finish: it calls ``remember(job, report)``
-    if the scan succeeded and the hook left a job, frees the check's marker, and removes the
-    check's directory. Returns 1, having touched nothing, when ``tmp`` is no check of a hook's.
+    When the hook still waits, it reads the report itself. When the hook has handed the check over,
+    or went away without a word, the check is this process's to finish: it calls
+    ``remember(job, report)`` if the scan succeeded and nobody stopped it, frees the check's marker,
+    and removes the check's directory. Returns 1, having touched nothing, when ``tmp`` is no check
+    of a hook's.
     """
     spec = _check_spec(tmp, "supervise")
     if spec is None:
         return 1
     tmp = Path(os.path.realpath(tmp))
-    succeeded = _run_scan(tmp, float(spec.get("ceiling", CEILING_S)))
-    if claim(tmp / "done") and pid_alive(int(spec.get("hook_pid", 0))):
+    job = _job_of(spec)
+    # Found by the key, so it is always one of the hook's own markers.
+    marker = Marker(pending().marker_path(job["key"]), job["token"]) if job else None
+    hook = _watch_hook(int(spec.get("hook_pid", 0)))
+    succeeded, ours = _run_scan(tmp, float(spec.get("ceiling", CEILING_S)), hook, marker)
+    if not ours and claim(tmp / "done") and not hook.gone():
         return 0  # the hook still waits: it reads the report and removes the directory
-    job = _read_json(tmp / "job.json")
-    if not (isinstance(job, dict) and isinstance(job.get("key"), str)
-            and isinstance(job.get("token"), str)):
-        job = None
     try:
         report = _read_json(tmp / "report.json") if succeeded else None
-        if job is not None and isinstance(report, dict):
+        if job is not None and isinstance(report, dict) and not (tmp / "abort").exists():
             remember(job, report)
     finally:
-        if job is not None:
-            # Found by the key, so it is always one of the hook's own markers.
-            Pending.release(Marker(pending().marker_path(job["key"]), job["token"]))
+        Pending.release(marker)
         _step_out_of(tmp)
         remove_tree(tmp)
     return 0
 
 
-def _run_scan(tmp: Path, ceiling: float) -> bool:
-    """Run the scan until it ends, the hook stops it, or the ceiling; True if it succeeded."""
+def _run_scan(
+    tmp: Path, ceiling: float, hook: _HookWatch, marker: Marker | None
+) -> tuple[bool, bool]:
+    """Run the scan until it ends, the hook stops it, or the ceiling. Returns whether it succeeded,
+    and whether the check became this process's along the way: when the hook went away without a
+    word, the check is kept as a background check, or stopped when it cannot be one."""
     env = {**os.environ, **_interpreter()[1], "TMPDIR": str(tmp), "TEMP": str(tmp),
            "TMP": str(tmp)}
     try:
         scan = _spawn(_role_argv("scan-into", str(tmp)), cwd=str(tmp / "cwd"), env=env,
                       **_own_group())
     except OSError:
-        return False
+        return False, False
     deadline = time.monotonic() + ceiling
+    ours = False
     while True:
         try:
-            return scan.wait(timeout=0.5) == 0
+            return scan.wait(timeout=0.5) == 0, ours
         except subprocess.TimeoutExpired:
-            if (tmp / "abort").exists() or time.monotonic() >= deadline:
+            pass
+        if (tmp / "abort").exists() or time.monotonic() >= deadline:
+            _stop(scan)
+            return False, ours
+        if not ours and hook.gone():
+            ours = True
+            # Claimed here: the hook went without handing the check over (a hook that did claimed
+            # it before it went).
+            if claim(tmp / "done") and not _adopt(marker):
                 _stop(scan)
+                return False, ours
+
+
+def _adopt(marker: Marker | None) -> bool:
+    """Keep a check whose hook went away as one of the background checks, if one more may run:
+    its marker becomes a background one, counted against MAX_BACKGROUND under the lock."""
+    if marker is None:
+        return False  # nothing to record its verdict under
+    store = pending()
+    try:
+        with store.lock(10.0):
+            if store.background(time.time(), exclude=marker) >= MAX_BACKGROUND:
                 return False
+            return store.go_background(marker, None, pid=os.getpid())
+    except (TimeoutError, OSError):
+        return False
 
 
 def _stop(proc: subprocess.Popen) -> None:
@@ -604,11 +731,19 @@ class Pending:
                 _raise_if_live(path, now)  # a hook that found no marker got there first
         return Marker(path, token, now) if made else None
 
-    def go_background(self, marker: Marker, pid: int, ends: float | None) -> None:
-        """The check goes on without the hook: the marker now names its own process."""
-        write_atomic(marker.path, json.dumps({"pid": pid, "started": marker.started,
-                                              "token": marker.token, "background": True,
-                                              "ends": ends}))
+    def name_process(self, marker: Marker, pid: int) -> bool:
+        """The check's marker names process ``pid`` from now on: its supervisor, which the
+        marker must name, not the hook, for the check to count as running if the hook goes."""
+        try:
+            with self.lock(2.0):
+                return _update(marker, pid=pid)
+        except (TimeoutError, OSError):
+            return False
+
+    def go_background(self, marker: Marker, ends: float | None, pid: int | None = None) -> bool:
+        """The check goes on without a hook (and, with ``pid``, under that process). The caller
+        holds the lock. False when the marker is no longer this check's."""
+        return _update(marker, background=True, ends=ends, **({} if pid is None else {"pid": pid}))
 
     def background(self, now: float, exclude: Marker) -> int:
         """How many other checks go on without a hook now. Stale markers are removed on the way."""
@@ -654,6 +789,17 @@ def _live(path: Path, now: float) -> dict | None:
     if not 0 <= now - started < CEILING_S or not pid_alive(pid):
         return None
     return info
+
+
+def _update(marker: Marker, **fields: Any) -> bool:
+    info = _read_json(marker.path)
+    if not (isinstance(info, dict) and info.get("token") == marker.token):
+        return False
+    try:
+        write_atomic(marker.path, json.dumps({**info, **fields}))
+    except OSError:
+        return False
+    return True
 
 
 def _raise_if_live(path: Path, now: float) -> None:
