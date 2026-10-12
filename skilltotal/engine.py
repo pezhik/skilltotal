@@ -294,13 +294,36 @@ def _assign_owasp(findings: list[Finding]) -> None:
 # Source languages whose behavior (shell, network, file access, dynamic code) no scanner reads yet.
 # Secrets, sensitive paths, hidden Unicode and manifest checks still run on these files; the gap is
 # behavior. Without saying so, a Go server that shells out and posts a credential file scored "low"
-# with nothing to tell the reader why.
+# with nothing to tell the reader why. Only suffixes that name one language are listed: `.m`
+# (Objective-C or MATLAB), `.jl` (Julia or JSON Lines) and `.fs` (F# or a shader) are left out, and
+# shell, PowerShell and batch files are read by the shell scanners.
 _UNANALYZED_LANGUAGES = {
     ".go": "Go",
     ".rs": "Rust",
     ".java": "Java",
     ".rb": "Ruby",
     ".php": "PHP",
+    **dict.fromkeys((".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"), "C/C++"),
+    ".cs": "C#",
+    ".swift": "Swift",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
+    ".scala": "Scala",
+    ".dart": "Dart",
+    ".lua": "Lua",
+    ".pl": "Perl",
+    ".pm": "Perl",
+    ".ex": "Elixir",
+    ".exs": "Elixir",
+    ".groovy": "Groovy",
+    ".hs": "Haskell",
+    ".clj": "Clojure",
+    ".cljs": "Clojure",
+    ".cljc": "Clojure",
+    ".erl": "Erlang",
+    ".hrl": "Erlang",
+    ".r": "R",
+    ".zig": "Zig",
 }
 
 
