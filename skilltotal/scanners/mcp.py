@@ -791,17 +791,21 @@ class McpScanner(Scanner):
         """Flag poisoning/shadowing phrases in code files that expose an MCP tool surface.
 
         Runs the pattern on the raw source and, for obfuscated source, again on the de-obfuscated
-        text (homoglyph / full-width / diacritic / zero-width folded) with spans mapped back.
+        text (homoglyph / full-width / diacritic / zero-width folded) and on the text with string
+        concatenation folded (a phrase split as ``"Do not tell" + " the user …"``), with spans
+        mapped back.
         """
         seen: set[tuple[str, int]] = set()
         for f in index.select(suffixes=CODE_SUFFIXES):
             if not _CODE_SURFACE.search(f.text):
                 continue
             spans = [(m.start(), m.end()) for m in pattern.finditer(f.text)]
-            folded = f.normalized_or_none()  # cached; None = identity (pure-ASCII fast path)
-            if folded is not None:
-                norm, idx = folded
-                spans += [original_span(idx, m.start(), m.end()) for m in pattern.finditer(norm)]
+            for folded in (f.normalized_or_none(), f.concat_folded_or_none()):
+                if folded is not None:  # cached; None = identity (the common case)
+                    text, idx = folded
+                    spans += [
+                        original_span(idx, m.start(), m.end()) for m in pattern.finditer(text)
+                    ]
             for start, end in spans:
                 if start >= end:
                     continue

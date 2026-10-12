@@ -4,6 +4,72 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 68 (unreleased)
+
+Five constructs a blind red-team (2026-10-10) used to get past ruleset 67, each now read the way
+its plain form already was. Every change is pinned by a sanitized sample that fails on ruleset 67
+and by the near-misses that must stay clean (`tests/test_ruleset68.py`). Detection-efficacy corpus,
+now 73 positive / 50 negative: 73/73 flagged, 0 false positives (ruleset 67 misses the seven new
+positives).
+
+- **`ST-SENS-PATH` / `ST-SENS-PATH-PY`** (changed): a credential path built by joining segments
+  onto the home directory is read as the path it builds and judged like the written path, with the
+  same rule ids and the same suppressions (denylists, a key handed to its client, test /
+  documentation / example / CI / build-output demotion). JavaScript and TypeScript:
+  `path.join(os.homedir(), '.aws', 'credentials')`, `path.resolve(...)`, the compiled
+  `(0, path_1.join)((0, os_1.homedir)(), ...)`, `process.env.HOME`, a name assigned
+  `os.homedir()`, `os.homedir() + '/.aws/config'`, a template literal. Python:
+  `os.path.join(os.path.expanduser('~'), '.aws', 'credentials')`, `Path.home() / '.aws' /
+  'credentials'`, `.joinpath(...)`, `os.environ['HOME']`, a name assigned the home directory, `+`
+  chains and f-strings. Only a join rooted at a home directory the scanner can name counts: a base
+  it cannot name (a library's own home-directory helper, a parameter) could be any directory, and
+  a credential path written whole in one segment is matched as written, as before.
+- **A provider SDK reading its own provider's credentials** (new demotion): a `ST-SENS-PATH` /
+  `ST-SENS-PATH-PY` match in the credential domain of the curated provider packages in
+  `scoring.py` (exact names, plus the npm scopes `@aws-sdk/` and `@smithy/`, which only AWS
+  publishes under) goes to needs_review and cannot feed `ST-COMBO-EXFIL`. Before, only the combo
+  was cleared for them. Another domain still scores (an AWS SDK reading `~/.ssh`), and so does the
+  same read in any other package. A credential directory standing as its own path segment
+  (`'.aws'`) names its domain. The list now also covers a cloud CLI's login command that writes a
+  package-registry token into `~/.npmrc` and `~/.pypirc`, and a cloud CLI that keeps its login
+  under `~/.azure`. Own-domain reads that listed packages wrote out as literals (an SSH transport
+  reading `~/.ssh/config`, a git library reading `~/.git-credentials`) move to needs_review too.
+- **`ST-PROMPT-INJECTION`** (changed): agent rule files are instruction surfaces, not
+  documentation: `.clinerules` as a file, and the markdown in a `.clinerules/`, `.cursor/rules/`
+  or `.windsurf/rules/` folder, which was documentation unless its name said otherwise (a file
+  named for an attack or a record stays documentation there, as in a skill folder).
+  `.github/copilot-instructions.md`, `.cursorrules`, `.windsurfrules` and `.mdc` rules were already
+  in scope. New phrasing: a credential (a
+  credential path, or "the user's credentials") in the same sentence as a send to a URL, `curl`,
+  `wget` or a webhook, with concealment from the user in the same paragraph ("do not tell the
+  user", "do not mention it to the user", "without telling the user", "quietly send"). A negated
+  sentence ("never send them"), one about what someone else might ask for ("if a page asks you to
+  …"), a threat described with an attacker as its subject, and a credential sent where it belongs
+  with nothing kept from the user stay clean. Also new: a credential path named first and then sent
+  covertly ("… ~/.aws/credentials, then quietly send their contents"). The existing "read a
+  credential path, then send it" phrasing gained a negation guard ("never read ~/.aws/credentials
+  or send them anywhere" scored on ruleset 67).
+- **`ST-OBF-DECODE-EXEC`** (changed): hex is decoded and executed like base64.
+  `new Function(Buffer.from(h, 'hex').toString())()`, `eval(Buffer.from(h, 'hex'))`, the Function
+  constructor or eval over a named hex decoder (`hexDecode`, `fromHex`, `hex2str`, `unhex`),
+  `exec(binascii.unhexlify(...))`, and a string written entirely as escapes handed to eval or the
+  Function constructor. The same decode and execute split over two statements also counts: a
+  variable assigned decoded text (Buffer.from hex or base64, `atob`, a hex decoder, a string of
+  escapes; in Python `bytes.fromhex`, `unhexlify`, a hex codec, `b64decode`, a string of escapes)
+  that eval, the Function constructor, `setTimeout`, `setInterval`, `vm` or `exec` then runs. The
+  sink must take that variable: a hex utility, or `new Function("return this")`, stays clean. An
+  install hook that runs such a stage now forms `ST-INSTALL-DROPPER`.
+- **`ST-EXPOSE-BIND`** (changed): an all-interfaces address bound through a variable whose name does
+  not say "host". A name assigned exactly `0.0.0.0`, `::` or `[::]` (with or without a port) that
+  the same file passes to a bind / listen / run / `*server` call, as a host / bind / listen keyword
+  or as a `host:` key (Python read through the AST). A name that is only compared, listed, split on
+  or bound with port 0 stays clean, as does every ruleset 67 near-miss. A host-named variable was
+  already caught by its name.
+- **`ST-MCP-TOOL-POISONING`** (changed): a tool description is read with string concatenation
+  folded, so a phrase split across `"…" + "…"` in `@mcp.tool(description=…)` or
+  `server.tool(name, description, …)` counts, and a Python description kept in a module-level name
+  (`description=HINT`) is text the model reads, like an inline one.
+
 ## ruleset 67 (engine 0.63.0)
 
 Pre-launch review of engine 0.62.0 (2026-10-11): ways a malicious install script could avoid being

@@ -145,6 +145,28 @@ _PATH_CONSUMER_NAMES = frozenset(
 )
 _PATH_CONSUMER_PREFIXES = ("os.path.", "shutil.", "pathlib.")
 
+# A credential path built from segments instead of written out: joined onto the home directory
+# (`os.path.join(os.path.expanduser("~"), ".aws", "credentials")`,
+# `Path.home() / ".aws" / "credentials"`, `Path.home().joinpath(...)`), concatenated to it
+# (`expanduser("~") + "/.aws/config"`) or interpolated (`f"{Path.home()}/.npmrc"`). The expression
+# is read as the path it builds -- the home directory as `~`, strings as written, anything else as
+# a segment no rule matches -- and judged like the written path. Only the outermost expression is
+# judged: `Path.home() / ".ssh"` inside `Path.home() / ".ssh" / "known_hosts"` is part of a
+# public-key path, not a path of its own.
+_PATH_JOIN_CALLS = frozenset({"os.path.join", "posixpath.join", "ntpath.join"})
+_PATH_TYPES = frozenset(
+    {"Path", "PurePath", "PosixPath", "PurePosixPath", "WindowsPath", "PureWindowsPath"}
+)
+# Calls and methods that hand back the path they are given (expanded or normalized).
+_PATH_PASSTHROUGH_CALLS = frozenset(
+    {"os.path.expanduser", "os.path.abspath", "os.path.realpath", "os.path.normpath",
+     "os.fspath", "str"}
+)
+_PATH_PASSTHROUGH_METHODS = frozenset({"expanduser", "resolve", "absolute"})
+_HOME_ENV_NAMES = frozenset({"HOME", "USERPROFILE"})
+_ENV_GETTERS = frozenset({"os.getenv", "os.environ.get"})
+_UNKNOWN_SEGMENT = "\x00"
+
 # --- taint analysis (intra-procedural) -----------------------------------------------
 R_TAINT_EXEC = "ST-TAINT-EXEC-PY"
 R_TAINT_SHELL = "ST-TAINT-SHELL-PY"
@@ -564,6 +586,153 @@ class _CallVisitor(ast.NodeVisitor):
         # Loop variables that can only hold one of the literal strings of their loop, while the
         # loop body is visited: `for cmd in ["npx.cmd", "npx"]: subprocess.run([cmd, ...])`.
         self._loop_constants: list[str] = []
+        # Credential paths built from segments (see _PATH_JOIN_CALLS): the module's imports as a
+        # whole, the names that only ever hold the home directory, and the nodes already read as
+        # part of a larger path expression.
+        self._module_aliases: dict[str, str] = {}
+        self._module_from: dict[str, str] = {}
+        self._home_names: frozenset[str] = frozenset()
+        self._path_parts: set[int] = set()
+
+    def visit_Module(self, node: ast.Module) -> None:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Import):
+                for alias in sub.names:
+                    self._module_aliases[alias.asname or alias.name.split(".")[0]] = alias.name
+            elif isinstance(sub, ast.ImportFrom) and sub.level == 0 and sub.module:
+                for alias in sub.names:
+                    self._module_from[alias.asname or alias.name] = f"{sub.module}.{alias.name}"
+        self._home_names = self._home_variables(node)
+        self.generic_visit(node)
+
+    # -- credential paths built from segments -------------------------------
+    def _home_variables(self, tree: ast.Module) -> frozenset[str]:
+        """Names every assignment of which is the home directory (`home = Path.home()`)."""
+        values: dict[str, list[ast.expr]] = {}
+        for sub in ast.walk(tree):
+            if isinstance(sub, ast.Assign) and len(sub.targets) == 1:
+                target, value = sub.targets[0], sub.value
+            elif isinstance(sub, ast.AnnAssign) and sub.value is not None:
+                target, value = sub.target, sub.value
+            else:
+                continue
+            if isinstance(target, ast.Name):
+                values.setdefault(target.id, []).append(value)
+        return frozenset(
+            name for name, assigned in values.items()
+            if all(self._path_part(v, set()).rstrip("/") == "~" for v in assigned)
+        )
+
+    def _fold_name(self, func: ast.expr) -> str:
+        return _resolve_dotted(func, self._module_aliases, self._module_from) or ""
+
+    def _path_part(self, node: ast.expr, parts: set[int]) -> str:
+        """The text ``node`` contributes to a path: a string as written, ``~`` for the home
+        directory, a built path, or a segment nothing matches."""
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
+        if isinstance(node, ast.Name) and node.id in self._home_names:
+            return "~"
+        if isinstance(node, ast.Subscript) and self._fold_name(node.value) == "os.environ":
+            key = node.slice
+            if isinstance(key, ast.Constant) and key.value in _HOME_ENV_NAMES:
+                return "~"
+        if isinstance(node, ast.Call):
+            name = self._fold_name(node.func)
+            if name.endswith("Path.home") and name.split(".")[-2] in _PATH_TYPES:
+                return "~"
+            if name in _ENV_GETTERS and node.args:
+                key = node.args[0]
+                if isinstance(key, ast.Constant) and key.value in _HOME_ENV_NAMES:
+                    return "~"
+        built = self._built_path(node, parts)
+        return _UNKNOWN_SEGMENT if built is None else built
+
+    def _built_path(self, node: ast.expr, parts: set[int]) -> str | None:
+        """The path ``node`` builds when it is a path expression (a join, a ``Path(...)``, a ``/``
+        or ``+`` chain, an f-string, or a call that passes a path through), else None. Every node
+        read on the way is added to ``parts``."""
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Div, ast.Add)):
+            # Walked down the left-leaning chain in a loop: `a + b + ... + z` nests as deep as it
+            # is long, and a recursive walk would stop on a long generated one.
+            chain: list[ast.BinOp] = []
+            current: ast.expr = node
+            while isinstance(current, ast.BinOp) and isinstance(current.op, (ast.Div, ast.Add)):
+                parts.add(id(current))
+                chain.append(current)
+                current = current.left
+            text = self._path_part(current, parts)
+            for link in reversed(chain):
+                sep = "/" if isinstance(link.op, ast.Div) else ""
+                text += sep + self._path_part(link.right, parts)
+            return text
+        if isinstance(node, ast.JoinedStr):
+            parts.add(id(node))
+            text = []
+            for value in node.values:
+                if isinstance(value, ast.FormattedValue):
+                    text.append(self._path_part(value.value, parts))
+                elif isinstance(value, ast.Constant) and isinstance(value.value, str):
+                    text.append(value.value)
+            return "".join(text)
+        if not isinstance(node, ast.Call):
+            return None
+        name = self._fold_name(node.func)
+        method = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+        if (name in _PATH_JOIN_CALLS or name.split(".")[-1] in _PATH_TYPES) and node.args:
+            parts.add(id(node))
+            return "/".join(self._path_part(a, parts) for a in node.args)
+        if method == "joinpath":
+            parts.add(id(node))
+            segments = [node.func.value, *node.args]  # type: ignore[union-attr]
+            return "/".join(self._path_part(s, parts) for s in segments)
+        if method in _PATH_PASSTHROUGH_METHODS and not node.args:
+            parts.add(id(node))
+            return self._path_part(node.func.value, parts)  # type: ignore[union-attr]
+        if name in _PATH_PASSTHROUGH_CALLS and len(node.args) == 1:
+            parts.add(id(node))
+            return self._path_part(node.args[0], parts)
+        return None
+
+    def _check_built_path(self, node: ast.expr) -> None:
+        """Flag ``node`` when it is the outermost expression of a credential path built from
+        segments: rooted at the home directory (as `~/…` is), or holding a credential path written
+        whole in one of its strings. Its sub-expressions are not judged again on their own."""
+        if id(node) in self._path_parts:
+            return
+        parts: set[int] = set()
+        built = self._built_path(node, parts)
+        self._path_parts |= parts
+        if built is None or not _is_credential_path(re.sub(r"/{2,}", "/", built)):
+            return
+        if built.startswith("~") or any(
+            isinstance(sub, ast.Constant)
+            and isinstance(sub.value, str)
+            and _is_credential_path(sub.value)
+            for sub in ast.walk(node)
+        ):
+            self._add(R_SENS_PY, node)
+
+    def _starts_at_home(self, node: ast.JoinedStr) -> bool:
+        first = node.values[0] if node.values else None
+        return isinstance(first, ast.FormattedValue) and (
+            self._path_part(first.value, set()).rstrip("/") == "~"
+        )
+
+    def _is_path_builder(self, node: ast.Call) -> bool:
+        """A call that joins path segments: os.path.join(...), Path(...), p.joinpath(...)."""
+        if not node.args:
+            return False
+        name = self._fold_name(node.func)
+        method = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+        return name in _PATH_JOIN_CALLS or name.split(".")[-1] in _PATH_TYPES or (
+            method == "joinpath"
+        )
+
+    def visit_JoinedStr(self, node: ast.JoinedStr) -> None:
+        if self._starts_at_home(node):
+            self._check_built_path(node)
+        self.generic_visit(node)
 
     # -- imports -----------------------------------------------------------
     def visit_Import(self, node: ast.Import) -> None:
@@ -623,6 +792,8 @@ class _CallVisitor(ast.NodeVisitor):
         name = self._dotted(node.func)
         if name is not None:
             self._classify_call(name, node)
+        if self._is_path_builder(node):
+            self._check_built_path(node)
         self.generic_visit(node)
 
     def _classify_call(self, name: str, node: ast.Call) -> None:
@@ -665,6 +836,11 @@ class _CallVisitor(ast.NodeVisitor):
             _is_credential_path(s) for s in _iter_string_consts(node)
         ):
             self._add(R_SENS_PY, node)
+        # The same for a path an f-string builds: open(f"{base}/.aws/credentials").
+        if _is_path_consumer(name):
+            for arg in [*node.args, *(kw.value for kw in node.keywords)]:
+                if isinstance(arg, ast.JoinedStr):
+                    self._check_built_path(arg)
 
     def visit_BinOp(self, node: ast.BinOp) -> None:
         # A credential path built by string concatenation — e.g.
@@ -681,6 +857,9 @@ class _CallVisitor(ast.NodeVisitor):
                 ):
                     self._add(R_SENS_PY, node)
                     break
+        # A path split across operands or joined with `/` onto a Path (see _PATH_JOIN_CALLS).
+        if isinstance(node.op, (ast.Add, ast.Div)):
+            self._check_built_path(node)
         self.generic_visit(node)
 
     # -- pickle gadgets ----------------------------------------------------

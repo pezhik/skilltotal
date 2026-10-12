@@ -62,7 +62,9 @@ not pushed into the red by what it *can* do; the score and verdict reflect actua
 ## Combination rule (sensitive data + network ⇒ critical)
 
 If a component **both** reads a credential location (`ST-SENS-PATH`, `ST-SENS-PATH-PY`: `~/.ssh`,
-`~/.aws/credentials`, an AI assistant's login file) **and** has `network_egress`,
+`~/.aws/credentials`, an AI assistant's login file, written out or built by joining segments onto
+the home directory, as in `path.join(os.homedir(), ".aws", "credentials")` or
+`Path.home() / ".aws" / "credentials"`) **and** has `network_egress`,
 the engine adds one synthesized **critical** `risky_construct` finding, `ST-COMBO-EXFIL`
 ("Sensitive-data access combined with network egress"). Its evidence is drawn (de-duplicated)
 from the contributing finding/capabilities, so the evidence invariant still holds. This makes
@@ -109,8 +111,10 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   `integration-tests/`), … (not run by consumers).
 - **Documentation / prose** — `README`, `CHANGELOG`, `LICENSE`, `docs/`, `*.egg-info/PKG-INFO`,
   RSS/Atom release feeds (`feed.xml`, `*.rss`, `*.atom`), ignore-files. AI-instruction surfaces
-  (`SKILL.md`, `AGENTS.md`, MCP manifests, `.cursorrules`) are **kept in scope** — a real injection
-  lives there.
+  (`SKILL.md`, `AGENTS.md`, MCP manifests, `.cursorrules`, `.windsurfrules`, `.clinerules`,
+  `.github/copilot-instructions.md`, `.mdc` rules, and the markdown in a skill folder or in a
+  `.clinerules/`, `.cursor/rules/` or `.windsurf/rules/` folder unless it is named for an attack or
+  a record) are **kept in scope** — a real injection lives there.
 - **Data / eval / benchmark corpora** — inert reference *data* files under `eval_datasets/`,
   `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … (`is_data_corpus_path`). A
   prompt-injection string in an eval dataset is a detector test vector, not behavior. Restricted to
@@ -124,6 +128,12 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   positives are code and value-strings, so a JSDoc `* fs.writeFileSync(...)` example is not a write;
   `comments_and_docstrings` for the network-exposure rules and the AI-CLI permission-bypass rule,
   where a Python docstring that shows `host="0.0.0.0"` is an example, not a bind).
+- **A provider SDK reading its own provider's credentials** — botocore, boto3, awscli and the
+  AWS JavaScript SDK (`@aws-sdk/*`, `@smithy/*`) reading `~/.aws`, the Kubernetes client reading
+  `~/.kube/config`, and the other curated, exactly named packages in `scoring.py`: a
+  `ST-SENS-PATH`/`ST-SENS-PATH-PY` match in the package's own credential domain is what the package
+  is for, so it goes to `needs_review` and cannot feed `ST-COMBO-EXFIL`. Another domain (an AWS SDK
+  reading `~/.ssh`), and the same read in any other package, still score.
 - **Denylist / guardrail credential paths and public DocSearch keys** — demoted at the scanner level
   (`sensitive_paths.py`, `secrets.py`): a policy that *protects* `~/.ssh`/`id_rsa` is not access to
   it — including a macOS sandbox profile's `(deny file-read* …)` rule that keeps an agent CLI's

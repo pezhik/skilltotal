@@ -5,6 +5,7 @@ with missing auth), e.g. an MCP/agent server bound to 0.0.0.0 or a Flask app wit
 
 from __future__ import annotations
 
+import ast
 import re
 
 from skilltotal.file_index import FileIndex
@@ -81,12 +82,119 @@ _FLAG_BEFORE = re.compile(
 )
 _CONTEXT_CHARS = 160
 
+# The address reaching a bind through a name that does not say "host": `ADDR = "0.0.0.0"` then
+# `app.run(host=ADDR)`, `ANY = "::"` then `sock.bind((ANY, 9000))`, `const ip = '0.0.0.0';` then
+# `server.listen(3000, ip)`. A name assigned exactly the address literal, then passed in the same
+# file to a bind / listen / run / *server call (or as a host / bind / listen keyword or key). The
+# name alone is not a bind: a constant compared, listed or split on stays clean.
+_ADDR_VALUE = re.compile(r"(?:0\.0\.0\.0|::|\[::\])(?::\d{1,5})?")
+_BIND_CALLS = frozenset(
+    {"listen", "bind", "serve", "run", "run_app", "run_simple", "start_server", "TCPSite"}
+)
+_BIND_KEYWORD = re.compile(r"(?i)\w*(?:host|hostname|bind|listen)\w*")
+_JS_ADDR_NAME = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*(['\"])"
+    r"(?:0\.0\.0\.0|::|\[::\])(?::\d{1,5})?\2"
+)
+_JS_BIND_CALL = re.compile(r"\b(?:listen|bind|serve|run|run_app|start_server|\w*[Ss]erver)\s*\(")
+_JS_HOST_KEY = re.compile(r"\b(?:host|hostname|bind|listen)\s*:\s*([A-Za-z_$][\w$]{0,60})\b")
+# A bare name passed as an argument: not a call, a member, a property or part of a string.
+_JS_PLAIN_NAME = re.compile(r"(?<![\w$.'\"`])([A-Za-z_$][\w$]{0,60})(?![\w$(.'\"`])")
+_JS_ARGS_WINDOW = 200
+
+
+def _is_bind_call(func: ast.expr) -> bool:
+    leaf = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    return leaf in _BIND_CALLS or leaf.lower().endswith("server")
+
+
+def _is_service_port(node: ast.expr) -> bool:
+    """A real port, as in `_TUPLE_AFTER`: a nonzero number or a name; port 0 is a client's."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, int) and 0 < node.value <= 65535
+    return isinstance(node, (ast.Name, ast.Attribute))
+
+
+def _python_address_binds(f) -> list[Evidence]:
+    """Evidence for an any-address literal assigned to a name a bind call then receives."""
+    try:
+        tree = ast.parse(f.text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    assigned: dict[str, list[ast.Constant]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target, value = node.targets[0], node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            target, value = node.target, node.value
+        else:
+            continue
+        if (
+            isinstance(target, ast.Name)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+            and _ADDR_VALUE.fullmatch(value.value)
+        ):
+            assigned.setdefault(target.id, []).append(value)
+    if not assigned:
+        return []
+    bound: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        for kw in node.keywords:
+            if (
+                kw.arg
+                and _BIND_KEYWORD.fullmatch(kw.arg)
+                and isinstance(kw.value, ast.Name)
+                and kw.value.id in assigned
+            ):
+                bound.add(kw.value.id)
+        if not _is_bind_call(node.func):
+            continue
+        for arg in node.args:
+            if isinstance(arg, ast.Name) and arg.id in assigned:
+                bound.add(arg.id)
+            elif (
+                isinstance(arg, ast.Tuple)
+                and len(arg.elts) >= 2
+                and isinstance(arg.elts[0], ast.Name)
+                and arg.elts[0].id in assigned
+                and _is_service_port(arg.elts[1])
+            ):
+                bound.add(arg.elts[0].id)
+    return [
+        f.evidence_for_lines(literal.lineno, literal.lineno)
+        for name in sorted(bound)
+        for literal in assigned[name]
+    ]
+
+
+def _js_address_binds(f) -> list[Evidence]:
+    """The same for JS/TS: names bound to the address literal, then found among the arguments of
+    a bind call or as the value of a `host:` key. One pass over the file for each."""
+    text = f.text
+    assigned: dict[str, list[re.Match[str]]] = {}
+    for m in _JS_ADDR_NAME.finditer(text):
+        assigned.setdefault(m.group(1), []).append(m)
+    if not assigned:
+        return []
+    bound = {m.group(1) for m in _JS_HOST_KEY.finditer(text) if m.group(1) in assigned}
+    for call in _JS_BIND_CALL.finditer(text):
+        args = text[call.end() : call.end() + _JS_ARGS_WINDOW].split(")", 1)[0]
+        bound.update(n.group(1) for n in _JS_PLAIN_NAME.finditer(args) if n.group(1) in assigned)
+    return [
+        f.evidence_for_span(m.start(2), m.end()) for name in sorted(bound) for m in assigned[name]
+    ]
+
 
 def _bind_evidence(index: FileIndex) -> list[Evidence]:
     evidence: list[Evidence] = []
     for f in index.select(suffixes=CODE_SUFFIXES):
         text = f.text
+        found = False
         for m in _ANY_ADDR.finditer(text):
+            found = True
             line_start = text.rfind("\n", 0, m.start()) + 1
             before = text[max(line_start, m.start() - _CONTEXT_CHARS) : m.start()]
             if m.group(0)[0] in "'\"" and _STRING_METHOD_BEFORE.search(before):
@@ -103,6 +211,15 @@ def _bind_evidence(index: FileIndex) -> list[Evidence]:
                 evidence.append(f.evidence_for_span(m.start(), m.end()))
                 if len(evidence) >= MAX_EVIDENCE_SCANNED:
                     return evidence
+        if not found:
+            continue
+        python = f.suffix in (".py", ".pyw")
+        lines = {(e.file, e.line_start) for e in evidence}
+        for ev in _python_address_binds(f) if python else _js_address_binds(f):
+            if (ev.file, ev.line_start) not in lines:
+                evidence.append(ev)
+        if len(evidence) >= MAX_EVIDENCE_SCANNED:
+            return evidence[:MAX_EVIDENCE_SCANNED]
     return evidence
 
 

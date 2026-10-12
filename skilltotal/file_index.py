@@ -484,10 +484,25 @@ _FEED_SUFFIXES: tuple[str, ...] = (".rss", ".atom")
 _INSTRUCTION_NAMES: frozenset[str] = frozenset(
     {
         "claude.md", "agents.md", "agent.md", "gemini.md", "skill.md", "cursor.md",
-        ".cursorrules", ".windsurfrules", "system_prompt.md", "system-prompt.md",
+        ".cursorrules", ".windsurfrules", ".clinerules", "copilot-instructions.md",
+        "system_prompt.md", "system-prompt.md",
     }
 )
 _INSTRUCTION_SUFFIXES: tuple[str, ...] = (".mdc",)
+# Folders whose files an agent loads as its rules: Cline's `.clinerules/`, Cursor's
+# `.cursor/rules/`, Windsurf's `.windsurf/rules/`. A `coding-style.md` there is read by the agent,
+# not by a person (see is_doc_path for the names that stay documentation, as in a skill).
+_INSTRUCTION_DIRS: tuple[tuple[str, ...], ...] = (
+    (".clinerules",), (".cursor", "rules"), (".windsurf", "rules"),
+)
+
+
+def _in_instruction_dir(dirs: list[str]) -> bool:
+    return any(
+        tuple(dirs[i : i + len(seq)]) == seq
+        for seq in _INSTRUCTION_DIRS
+        for i in range(len(dirs) - len(seq) + 1)
+    )
 
 
 def skill_dirs(relpaths: Iterable[str]) -> frozenset[str]:
@@ -548,7 +563,14 @@ def is_doc_path(relpath: str, skills: frozenset[str] = frozenset()) -> bool:
     # `deployprompt.md` or `agentrules.md` stays in scope, which is the recall-safe direction.
     # `.txt` and suffix-less files are excluded from this default: `prompt.txt` is a real
     # instruction surface with no naming convention to rely on.
-    if suffix in _DOC_BY_DEFAULT_SUFFIXES and not _under_skill(relpath.lower(), skills):
+    # A rule folder (`.clinerules/`, `.cursor/rules/`, `.windsurf/rules/`) is read by the agent
+    # the way a skill's folder is, so its markdown is not documentation by default either; a file
+    # named for an attack or for a record still is, as it is in a skill.
+    if (
+        suffix in _DOC_BY_DEFAULT_SUFFIXES
+        and not _under_skill(relpath.lower(), skills)
+        and not _in_instruction_dir(parts[:-1])
+    ):
         words = re.split(r"[._-]", stem)
         # A file whose name ENDS in a release/legal record word is that record, whatever it is a
         # record of: the ruleset's own `RULES_CHANGELOG.md` quotes the attacks its rules detect,
@@ -787,6 +809,15 @@ def _python_agent_facing_spans(
             return target.attr
         return target.id if isinstance(target, ast.Name) else ""
 
+    # A description kept in a module-level name (`HINT = "..." + "..."`, then
+    # `@mcp.tool(description=HINT)`) is the same text the model reads.
+    module_values = {
+        stmt.targets[0].id: stmt.value
+        for stmt in tree.body
+        if isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+    }
     spans: list[tuple[int, int]] = []
     regions: list[tuple[int, int]] = []
     for node in ast.walk(tree):
@@ -803,6 +834,8 @@ def _python_agent_facing_spans(
                     for kw in dec.keywords:
                         if kw.arg in ("description", "title"):
                             spans.append(span(kw.value))
+                            if isinstance(kw.value, ast.Name) and kw.value.id in module_values:
+                                spans.append(span(module_values[kw.value.id]))
             # The tool's return value is exactly what an MCP client hands back to the model as
             # the call result -- a poisoning phrase built there at runtime (not just in the
             # static description) still reaches the agent (Deadbugz, August 2026: a server stays
