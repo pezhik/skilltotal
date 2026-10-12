@@ -1,0 +1,18 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# Benign look-alike: a composite action that uses the CI token the way it is meant to be used --
+# it calls the GitHub API with the token and downloads a release asset from GitHub. The token
+# never leaves GitHub, so this must not be flagged as exfiltration.
+name: 'Release Notes'
+description: 'Posts a release note and fetches the release tool.'
+runs:
+  using: 'composite'
+  steps:
+    - name: comment
+      shell: bash
+      run: |
+        curl -sS -H "Authorization: Bearer ${{ github.token }}" \
+          -d '{"body":"build ok"}' \
+          "https://api.github.com/repos/${{ github.repository }}/issues/1/comments"
+    - name: fetch tool
+      shell: bash
+      run: curl -fsSL -o tool "https://github.com/example-org/tool/releases/download/v1/tool-linux"

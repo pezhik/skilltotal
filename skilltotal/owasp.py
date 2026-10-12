@@ -50,6 +50,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-COMBO-EXFIL": ("AST01",),
     "ST-CONVERGENCE": ("AST01",),
     "ST-EMAIL-BCC-EXFIL": ("AST01",),
+    "ST-ACTION-SECRET-EXFIL": ("AST01",),
     "ST-ENCRYPTED-ARCHIVE": ("AST01",),
     "ST-FLOW-TRIFECTA": ("AST01",),
     "ST-OBF-DECODE-EXEC": ("AST01",),
