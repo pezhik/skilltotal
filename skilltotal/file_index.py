@@ -1507,6 +1507,13 @@ class IndexedFile:
                 return bool(sink.search(self.text, max(0, start - 60), start))
         return False
 
+    def c_string_spans(self) -> list[tuple[int, int]]:
+        """Char-spans of the C-family string literals (``'…'`` / ``"…"`` / a `` `…` `` template,
+        delimiters included) in file order, from the file's one lexing pass: a quote or backtick
+        inside a comment or a regex literal never starts one. Empty for other files."""
+        self._ensure_c_code_spans()
+        return self._c_string_spans_cache or []
+
     def string_span_at(self, offset: int) -> tuple[int, int] | None:
         """The char-span of the Python or C-family string literal holding ``offset``, if any."""
         if self.suffix in (".py", ".pyw"):

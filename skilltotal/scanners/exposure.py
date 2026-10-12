@@ -6,6 +6,7 @@ with missing auth), e.g. an MCP/agent server bound to 0.0.0.0 or a Flask app wit
 from __future__ import annotations
 
 import ast
+import bisect
 import re
 
 from skilltotal.file_index import FileIndex
@@ -103,6 +104,68 @@ _JS_PLAIN_NAME = re.compile(r"(?<![\w$.'\"`])([A-Za-z_$][\w$]{0,60})(?![\w$(.'\"
 _JS_ARGS_WINDOW = 200
 
 
+# An all-interfaces address literal that sits inside a format/template string whose own literal
+# text carries whitespace is prose, not a bind: a warning or log line such as
+# ``f"WARNING: binding {host or '0.0.0.0'} with no api-key..."``. A real bind string is a bare
+# address or a ``host:port`` and never contains a space, so a bind f-string like
+# ``f"{host or '0.0.0.0'}:{port}"`` (constant text ``":"``) keeps flagging.
+_ADDR_CONST = re.compile(r"""(?:0\.0\.0\.0|::|\[::\])(?::\d{1,5})?""")
+_WHITESPACE = re.compile(r"\s")
+_JS_INTERPOLATION = re.compile(r"\$\{[^{}]*\}")
+
+
+def _python_prose_fstring_lines(tree: ast.Module) -> set[int]:
+    """Lines spanned by an f-string that is prose (a constant text segment has whitespace) and
+    contains an all-interfaces address literal. Matches on those lines are suppressed. Keyed on
+    the f-string node's own line span, which is reliable on every supported Python."""
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.JoinedStr):
+            continue
+        prose = any(
+            isinstance(v, ast.Constant)
+            and isinstance(v.value, str)
+            and _WHITESPACE.search(v.value)
+            for v in node.values
+        )
+        if not prose:
+            continue
+        if any(
+            isinstance(s, ast.Constant)
+            and isinstance(s.value, str)
+            and _ADDR_CONST.fullmatch(s.value)
+            for s in ast.walk(node)
+        ):
+            lines.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+    return lines
+
+
+def _js_prose_template_spans(f) -> list[tuple[int, int]]:
+    """Character spans (in file order) of JS/TS template literals that are prose -- their literal
+    text, outside the ``${...}`` fields, has whitespace -- and hold an address literal: the
+    template-literal analog of a warning/log f-string. The templates come from the file's lexer,
+    so a backtick inside a comment (a markdown code fence in a JSDoc block) or inside another
+    string never starts or ends one and cannot stretch a "template" over real code. A bind
+    template (``\\`${host || '0.0.0.0'}:${port}\\``) has no whitespace in its literal text, so it
+    is not suppressed."""
+    text = f.text
+    spans: list[tuple[int, int]] = []
+    for start, end in f.c_string_spans():
+        if text[start] != "`" or end - start < 2:
+            continue
+        body = text[start + 1 : end - 1]
+        if _ADDR_CONST.search(body) and _WHITESPACE.search(_JS_INTERPOLATION.sub("", body)):
+            spans.append((start, end))
+    return spans
+
+
+def _in_spans(spans: list[tuple[int, int]], starts: list[int], offset: int) -> bool:
+    """Whether ``offset`` falls in one of ``spans`` (sorted, non-overlapping; ``starts`` holds
+    their start offsets), by bisection."""
+    k = bisect.bisect_right(starts, offset) - 1
+    return k >= 0 and offset < spans[k][1]
+
+
 def _is_bind_call(func: ast.expr) -> bool:
     leaf = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
     return leaf in _BIND_CALLS or leaf.lower().endswith("server")
@@ -115,12 +178,8 @@ def _is_service_port(node: ast.expr) -> bool:
     return isinstance(node, (ast.Name, ast.Attribute))
 
 
-def _python_address_binds(f) -> list[Evidence]:
+def _python_address_binds(f, tree: ast.Module) -> list[Evidence]:
     """Evidence for an any-address literal assigned to a name a bind call then receives."""
-    try:
-        tree = ast.parse(f.text)
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
-        return []
     assigned: dict[str, list[ast.Constant]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
@@ -192,12 +251,29 @@ def _bind_evidence(index: FileIndex) -> list[Evidence]:
     evidence: list[Evidence] = []
     for f in index.select(suffixes=CODE_SUFFIXES):
         text = f.text
-        found = False
+        if not _ANY_ADDR.search(text):
+            continue  # nothing to do; avoid parsing files with no address literal at all
+        python = f.suffix in (".py", ".pyw")
+        tree: ast.Module | None = None
+        if python:
+            try:
+                tree = ast.parse(text)
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
+                tree = None
+        # An address literal inside a prose format/template string (whitespace in its constant
+        # text) is a warning/log message, not a bind: suppress those matches up front.
+        prose_lines = _python_prose_fstring_lines(tree) if tree is not None else set()
+        prose_spans = [] if python else _js_prose_template_spans(f)
+        prose_starts = [s for s, _ in prose_spans]
         for m in _ANY_ADDR.finditer(text):
-            found = True
             line_start = text.rfind("\n", 0, m.start()) + 1
             before = text[max(line_start, m.start() - _CONTEXT_CHARS) : m.start()]
-            if m.group(0)[0] in "'\"" and _STRING_METHOD_BEFORE.search(before):
+            if m.group(0)[0] in "'\"" and (
+                f.line_of_offset(m.start()) in prose_lines
+                or _in_spans(prose_spans, prose_starts, m.start())
+            ):
+                bound = None
+            elif m.group(0)[0] in "'\"" and _STRING_METHOD_BEFORE.search(before):
                 bound = None
             elif m.group(0)[0] in "'\"":
                 bound = (
@@ -211,11 +287,11 @@ def _bind_evidence(index: FileIndex) -> list[Evidence]:
                 evidence.append(f.evidence_for_span(m.start(), m.end()))
                 if len(evidence) >= MAX_EVIDENCE_SCANNED:
                     return evidence
-        if not found:
-            continue
-        python = f.suffix in (".py", ".pyw")
         lines = {(e.file, e.line_start) for e in evidence}
-        for ev in _python_address_binds(f) if python else _js_address_binds(f):
+        name_binds = _python_address_binds(f, tree) if tree is not None else (
+            [] if python else _js_address_binds(f)
+        )
+        for ev in name_binds:
             if (ev.file, ev.line_start) not in lines:
                 evidence.append(ev)
         if len(evidence) >= MAX_EVIDENCE_SCANNED:
