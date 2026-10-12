@@ -43,8 +43,8 @@ hook (see :class:`Pending`).
 
 More than one process writes the verdict cache: hooks for commands the agent runs in parallel, and
 checks that finish after their hook. Each write reads the file, adds an entry and writes the file
-back, so every write holds a lock file for that time (:func:`file_lock`), and the file is replaced
-in one step, so a reader never sees half of it.
+back, so every write holds the operating system's lock on a lock file for that time
+(:func:`file_lock`), and the file is replaced in one step, so a reader never sees half of it.
 """
 
 from __future__ import annotations
@@ -574,36 +574,35 @@ class Pending:
     def marker_path(self, key: str) -> Path:
         return self.dir / (hashlib.sha256(key.encode("utf-8")).hexdigest()[:40] + ".json")
 
-    def claim(self, key: str, now: float) -> Marker | None:
+    def claim(self, key: str, now: float, wait_s: float = 2.0) -> Marker | None:
         """Mark ``key`` as being checked by this process.
 
-        Raises AlreadyRunning while a live check holds the marker. Returns None when no marker can
-        be written at all: the check then runs only while the hook waits for it.
+        Raises AlreadyRunning while a live check holds the marker. A stale marker is replaced under
+        the lock: two hooks that both found it stale must not both replace it, the second removing
+        the first one's fresh marker. Returns None when no marker can be written at all: the check
+        then runs only while the hook waits for it.
         """
         path = self.marker_path(key)
         token = secrets.token_hex(8)
         record = json.dumps({"pid": os.getpid(), "started": now, "token": token,
                              "background": False, "ends": None})
-        for _ in range(3):
+        try:
+            self.dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        made = _create(path, record)
+        if made is None:
+            _raise_if_live(path, now)
             try:
-                self.dir.mkdir(parents=True, exist_ok=True)
-                fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                pass
-            except OSError:
-                if not path.exists():
-                    return None
-            else:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    fh.write(record)
-                return Marker(path, token, now)
-            info = _live(path, now)
-            if info is not None:
-                ends = info.get("ends")
-                left = ends - now if isinstance(ends, (int, float)) else None
-                raise AlreadyRunning(now - float(info.get("started", now)), left)
-            _unlink(path)  # stale: its check is over
-        return None
+                with self.lock(wait_s):
+                    _raise_if_live(path, now)  # someone may have replaced it a moment ago
+                    _unlink(path)
+                    made = _create(path, record)
+            except (TimeoutError, OSError):
+                return None
+            if made is None:
+                _raise_if_live(path, now)  # a hook that found no marker got there first
+        return Marker(path, token, now) if made else None
 
     def go_background(self, marker: Marker, pid: int, ends: float | None) -> None:
         """The check goes on without the hook: the marker now names its own process."""
@@ -624,8 +623,10 @@ class Pending:
                 running += 1
         return running
 
-    def lock(self) -> Any:
-        return file_lock(self.dir / "pending.lock", wait_s=5.0)
+    def lock(self, wait_s: float = 5.0) -> Any:
+        """The lock under which markers are replaced, counted, and joined to the background."""
+        self.dir.mkdir(parents=True, exist_ok=True)
+        return file_lock(self.dir / "pending.lock", wait_s=wait_s)
 
     @staticmethod
     def release(marker: Marker | None) -> None:
@@ -655,51 +656,108 @@ def _live(path: Path, now: float) -> dict | None:
     return info
 
 
+def _raise_if_live(path: Path, now: float) -> None:
+    info = _live(path, now)
+    if info is not None:
+        ends = info.get("ends")
+        left = ends - now if isinstance(ends, (int, float)) else None
+        raise AlreadyRunning(now - float(info.get("started", now)), left)
+
+
+def _create(path: Path, record: str) -> bool | None:
+    """Create the marker ``path`` holding ``record``: True; None when one is there already; False
+    when none can be written. Windows refuses for a moment a file another process is deleting."""
+    for _ in range(20):
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            return None
+        except PermissionError:
+            time.sleep(0.025)
+            continue
+        except OSError:
+            return False
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(record)
+        return True
+    return None if path.exists() else False
+
+
 def _unlink(path: Path) -> None:
-    try:
-        path.unlink()
-    except OSError:
-        pass
+    """Remove ``path``. Windows refuses for as long as another process has the file open, which a
+    hook reading a marker does for a moment, so a refusal is retried briefly."""
+    for _ in range(20):
+        try:
+            path.unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            time.sleep(0.05)
+        except OSError:
+            return
 
 
 # --- The verdict cache: one writer at a time -----------------------------------------------------
 
 
 @contextmanager
-def file_lock(path: Path, *, wait_s: float = 15.0, stale_s: float = 10.0) -> Iterator[None]:
-    """Hold ``path`` as a lock: created exclusively on the way in, removed on the way out.
+def file_lock(path: Path, *, wait_s: float = 15.0) -> Iterator[None]:
+    """Hold an exclusive lock on ``path`` while the block runs (for a read-modify-write).
 
-    A lock file older than ``stale_s`` belongs to a writer that died (a write takes milliseconds),
-    so it is taken over. Raises TimeoutError when the lock is still held after ``wait_s``.
+    The lock is the operating system's (``fcntl.flock``, ``msvcrt.locking``) on a lock file that
+    stays in place: it ends with the process that holds it, however that process ends. So no lock
+    is ever left behind, and no waiter has to judge whether a lock file is stale, which two waiters
+    could judge at once and both take it. Whatever is in the way (the lock is held; on Windows, the
+    file is being opened elsewhere) is waited out; past ``wait_s``, TimeoutError.
     """
-    deadline = time.monotonic() + wait_s
+    deadline = time.monotonic() + max(0.0, wait_s)
+    fd: int | None = None
     while True:
         try:
-            os.close(os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600))
+            if fd is None:
+                fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+            _lock(fd)
             break
-        except FileExistsError:
-            pass
-        except PermissionError:
-            # Windows answers "access denied" for a lock file that is being deleted. Anywhere,
-            # when there is no lock file at all, the directory itself refuses: waiting won't help.
-            if not path.exists():
-                raise
-        try:
-            if time.time() - path.stat().st_mtime > stale_s:
-                path.unlink()
-                continue
         except OSError:
-            continue  # released (or taken over) just now: try again at once
-        if time.monotonic() >= deadline:
-            raise TimeoutError(f"{path.name} is still held")
-        time.sleep(0.02)
+            if time.monotonic() >= deadline:
+                if fd is not None:
+                    os.close(fd)
+                raise TimeoutError(f"{path.name} is still held") from None
+            time.sleep(0.02)
     try:
         yield
     finally:
         try:
-            path.unlink()
+            _unlock(fd)
         except OSError:
             pass
+        os.close(fd)
+
+
+def _lock(fd: int) -> None:
+    """Lock the file without waiting; OSError when someone else holds it."""
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)  # type: ignore[attr-defined]
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(fd: int) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+    else:
+        import fcntl
+
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def write_atomic(path: Path, text: str) -> None:

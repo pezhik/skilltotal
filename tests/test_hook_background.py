@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -158,7 +159,8 @@ def test_checks_that_finish_at_once_all_keep_their_verdicts(cache, monkeypatch):
     for thread in threads:
         thread.join(30)
     assert sorted(_cached(cache)) == sorted(keys)
-    assert not (cache / "hook-cache.json.lock").exists()
+    with hook_scan.file_lock(cache / "hook-cache.json.lock", wait_s=0):  # and nobody holds it
+        pass
 
 
 def test_the_shared_function_keeps_only_the_file_the_key_names(cache):
@@ -173,43 +175,128 @@ def test_the_shared_function_keeps_only_the_file_the_key_names(cache):
     assert list(_cached(cache)) == [key]
 
 
+@contextmanager
+def _held(lock):
+    """Another writer holding ``lock`` for as long as the block runs."""
+    holding, done = threading.Event(), threading.Event()
+
+    def hold():
+        with hook_scan.file_lock(lock, wait_s=10):
+            holding.set()
+            done.wait(30)
+
+    thread = threading.Thread(target=hold)
+    thread.start()
+    assert holding.wait(10)
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join(10)
+
+
+# Takes the lock in a process of its own, says so, and keeps it until it is killed.
+HOLD_LOCK = r'''
+import sys, time
+from pathlib import Path
+from skilltotal import hook_scan
+
+with hook_scan.file_lock(Path(sys.argv[1]), wait_s=10):
+    Path(sys.argv[2]).write_text("held", encoding="ascii")
+    time.sleep(120)
+'''
+
+
 def test_a_writer_waits_for_a_held_lock(tmp_path):
     lock = tmp_path / "hook-cache.json.lock"
-    lock.write_text("", encoding="ascii")  # another writer holds it
     entered = threading.Event()
 
     def write():
         with hook_scan.file_lock(lock, wait_s=10):
             entered.set()
 
-    thread = threading.Thread(target=write)
-    thread.start()
-    time.sleep(0.3)
-    assert not entered.is_set()
-    lock.unlink()
+    with _held(lock):
+        thread = threading.Thread(target=write)
+        thread.start()
+        time.sleep(0.3)
+        assert not entered.is_set()
     thread.join(10)
     assert entered.is_set()
-    assert not lock.exists()
 
 
-def test_a_lock_left_by_a_writer_that_died_is_free(tmp_path):
+def test_a_lock_whose_holder_died_is_free_at_once(tmp_path):
+    """The lock is the operating system's, on a file that stays in place: it ends with the process
+    that held it, however that process ended. Nobody has to judge whether a lock file is stale,
+    which two waiters could judge at once and both take the lock."""
     lock = tmp_path / "hook-cache.json.lock"
-    lock.write_text("", encoding="ascii")
-    old = time.time() - 600
-    os.utime(lock, (old, old))
+    holding = tmp_path / "holding"
+    holder = subprocess.Popen([sys.executable, "-c", HOLD_LOCK, str(lock), str(holding)])
+    try:
+        assert _eventually(holding.exists, 30)
+        with pytest.raises(TimeoutError):
+            with hook_scan.file_lock(lock, wait_s=0.3):
+                pass
+    finally:
+        holder.kill()
+        holder.wait(30)
     started = time.monotonic()
-    with hook_scan.file_lock(lock, wait_s=5):
+    with hook_scan.file_lock(lock, wait_s=10):
         pass
-    assert time.monotonic() - started < 2
+    assert time.monotonic() - started < 5
 
 
 def test_a_lock_that_stays_held_is_given_up_and_left_alone(tmp_path):
     lock = tmp_path / "hook-cache.json.lock"
-    lock.write_text("", encoding="ascii")
-    with pytest.raises(TimeoutError):
-        with hook_scan.file_lock(lock, wait_s=0.3):
-            pass
-    assert lock.exists()
+    with _held(lock):
+        with pytest.raises(TimeoutError):
+            with hook_scan.file_lock(lock, wait_s=0.3):
+                pass
+        with pytest.raises(TimeoutError):  # giving up took nothing from the holder
+            with hook_scan.file_lock(lock, wait_s=0.1):
+                pass
+
+
+def test_writers_take_turns(tmp_path):
+    lock = tmp_path / "hook-cache.json.lock"
+    inside, most = [0], [0]
+    count = threading.Lock()
+
+    def write():
+        for _ in range(40):
+            with hook_scan.file_lock(lock, wait_s=60):
+                with count:
+                    inside[0] += 1
+                    most[0] = max(most[0], inside[0])
+                time.sleep(0.001)
+                with count:
+                    inside[0] -= 1
+
+    threads = [threading.Thread(target=write) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(120)
+    assert most[0] == 1
+
+
+def test_a_lock_file_busy_for_a_moment_is_waited_for(tmp_path, monkeypatch):
+    """Windows answers "access denied" for a file that another process is opening or deleting at
+    that moment. That is a busy lock, not a failure: raised, it escaped from the hand-over and left
+    a check half handed over (134 times in 15,000 takes under contention)."""
+    lock = tmp_path / "hook-cache.json.lock"
+    real_open = os.open
+    refusals = [3]
+
+    def busy_open(path, flags, *args, **kwargs):
+        if os.fspath(path) == str(lock) and refusals[0]:
+            refusals[0] -= 1
+            raise PermissionError(13, "simulated: the file is busy")
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(hook_scan.os, "open", busy_open)
+    with hook_scan.file_lock(lock, wait_s=5):
+        pass
+    assert refusals[0] == 0
 
 
 # --- Helpers for checks that run in processes of their own --------------------------------------
@@ -674,6 +761,40 @@ def test_a_stale_marker_does_not_hold_a_check_back(cache, fake_supervisor, stale
         _marker(cache, "npm:x@1.0.0", pid=os.getpid(), started=now - hook_scan.CEILING_S - 5)
     assert cli._hook_scan_cached("npm:x@1.0.0", 30)["verdict"]["headline"] == "fake"
     assert _markers(cache) == []
+
+
+def test_a_stale_marker_is_replaced_only_under_the_lock(cache):
+    """Two hooks that both find a stale marker must not both replace it: the second would remove
+    the first one's fresh marker and start a second check of the same artifact."""
+    pending = hook_scan.Pending(cache / "hook-pending")
+    stale = _marker(cache, "npm:x@1.0.0", pid=_dead_pid(), started=time.time() - 5)
+    claimed = []
+    with _held(pending.dir / "pending.lock"):
+        thread = threading.Thread(
+            target=lambda: claimed.append(pending.claim("npm:x@1.0.0", time.time())))
+        thread.start()
+        time.sleep(0.3)
+        assert json.loads(stale.read_text(encoding="utf-8"))["token"] == "another"
+    thread.join(10)
+    assert claimed and claimed[0] is not None
+    assert json.loads(stale.read_text(encoding="utf-8"))["token"] == claimed[0].token
+
+
+def test_a_marker_being_read_elsewhere_is_still_removed(cache, monkeypatch):
+    # Windows refuses to remove a file another process has open, for as long as it has it open.
+    marker = _marker(cache, "npm:x@1.0.0", pid=os.getpid(), started=time.time(), token="mine")
+    real_unlink = Path.unlink
+    refusals = [3]
+
+    def busy_unlink(self, *args, **kwargs):
+        if self == marker and refusals[0]:
+            refusals[0] -= 1
+            raise PermissionError(13, "simulated: someone is reading it")
+        return real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", busy_unlink)
+    hook_scan.Pending.release(hook_scan.Marker(marker, "mine"))
+    assert not marker.exists()
 
 
 def test_no_more_than_two_checks_run_in_the_background(cache, fake_supervisor):
