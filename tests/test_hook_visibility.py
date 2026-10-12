@@ -32,6 +32,8 @@ from skilltotal.agent_hook import (
     install_targets,
     parse_installs,
 )
+from skilltotal.engine import analyze_directory
+from skilltotal.models import Component
 
 NAMES_ONLY = "and SkillTotal checks only the packages a command names."
 URL = "https://get.example.invalid/install.sh"
@@ -342,6 +344,82 @@ def test_an_unchecked_install_does_not_take_a_checked_packages_place():
     assert "permissionDecision" not in out["hookSpecificOutput"]
 
 
+# --- A partly analyzed package: checked, but not all of it ---------------------------------------
+
+GAP = "Code in languages not analyzed for behavior"
+
+
+def _partial(*titles):
+    report = _report()
+    report["needs_review"] = [{"category": "coverage", "title": title} for title in titles]
+    return report
+
+
+def test_a_partly_analyzed_package_says_what_was_not_analyzed():
+    out = hook_response(_bash("npm install addon"), scan=lambda s, t: _partial(GAP))
+    assert out["systemMessage"] == (f"SkillTotal checked npm:addon: risk 0/100 (low), partly "
+                                    f"analyzed ({GAP}). Its dependencies were not checked.")
+    spec = out["hookSpecificOutput"]
+    assert "permissionDecision" not in spec
+    assert f"partly analyzed ({GAP}), no malicious indicators." in spec["additionalContext"]
+
+
+def test_a_note_that_is_not_a_gap_leaves_the_line_as_it_was():
+    out = hook_response(_bash("npm install x"), scan=lambda s, t: _partial("Dynamic module import"))
+    assert out["systemMessage"] == ("SkillTotal checked npm:x: risk 0/100 (low). Its dependencies "
+                                    "were not checked.")
+
+
+def test_a_real_scan_of_a_native_addon_reads_as_partly_analyzed(tmp_path):
+    (tmp_path / "index.js").write_text("module.exports = require('./build/addon.node');\n",
+                                       encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "addon.cc").write_text("int run() { return 0; }\n", encoding="utf-8")
+    report = analyze_directory(
+        tmp_path, Component(name="addon", type="npm", source=str(tmp_path))).to_dict()
+    out = hook_response(_bash("npm install addon"), scan=lambda s, t: report)
+    assert f"partly analyzed ({GAP})" in out["systemMessage"]
+
+
+def test_in_ci_a_partly_analyzed_package_is_denied_unless_partial_is_allowed():
+    scan = lambda s, t: _partial(GAP, "Unparseable Python file")  # noqa: E731
+    out = hook_response(_bash("npm install addon"), scan=scan, strict=True)
+    reason = ("(CI rule) SkillTotal blocked this install: npm:addon was only partly analyzed "
+              f"({GAP}; Unparseable Python file).")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert out["hookSpecificOutput"]["permissionDecisionReason"] == reason
+    assert out["systemMessage"] == (
+        f"{reason} To allow it in CI, set {ALLOW_UNCHECKED_ENV}=partial. {STRICT_ON}")
+    allowed = hook_response(_bash("npm install addon"), scan=scan, strict=True,
+                            allow_unchecked=frozenset({"partial"}))
+    assert "permissionDecision" not in allowed["hookSpecificOutput"]
+    assert f"partly analyzed ({GAP}; Unparseable Python file)" in allowed["systemMessage"]
+
+
+def test_in_ci_partial_is_named_with_the_other_kinds():
+    out = hook_response(_bash("npm ci && npm install addon"), scan=lambda s, t: _partial(GAP),
+                        strict=True)
+    assert out["hookSpecificOutput"]["permissionDecisionReason"] == (
+        f"(CI rule) SkillTotal blocked this install: it installs from package-lock.json, "
+        f"{NAMES_ONLY} npm:addon was only partly analyzed ({GAP}).")
+    assert f"set {ALLOW_UNCHECKED_ENV}=lockfile,partial." in out["systemMessage"]
+
+
+def test_a_cached_answer_still_says_what_was_not_analyzed(tmp_path, monkeypatch):
+    from skilltotal import collector
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(collector, "resolve_release", lambda source, timeout=0: None)
+    scans = []
+    monkeypatch.setattr(cli, "_hook_scan",
+                        lambda source, timeout, job=None: scans.append(source) or _partial(GAP))
+    lines = [hook_response(_bash("npm install addon"), scan=cli._hook_scan_cached)["systemMessage"]
+             for _ in range(2)]
+    assert lines[0] == lines[1]
+    assert f"partly analyzed ({GAP})" in lines[1]
+    assert scans == ["npm:addon"]  # the second answer came from the cache
+
+
 # --- B. CI strict mode ---------------------------------------------------------------------------
 
 # (environment, the variable that turns strict mode on or "" for off): shared with the plugin
@@ -399,8 +477,8 @@ def test_strict_mode_says_in_the_console_what_turned_it_on():
 
 
 def test_the_allowance_names_kinds_separated_by_commas():
-    env = {ALLOW_UNCHECKED_ENV: " Lockfile, script ,bogus,"}
-    assert cli._hook_allowed_unchecked(env) == frozenset({"lockfile", "script"})
+    env = {ALLOW_UNCHECKED_ENV: " Lockfile, script ,bogus,Partial"}
+    assert cli._hook_allowed_unchecked(env) == frozenset({"lockfile", "script", "partial"})
     assert cli._hook_allowed_unchecked({}) == frozenset()
 
 

@@ -942,7 +942,7 @@ def _hook_remember(job: dict, report: dict, deadline: float | None = None) -> di
     The one way a verdict is kept, whoever keeps it: the hook, for a scan that finished while it
     waited, or the check itself, for one that finished after the hook had stopped waiting.
     """
-    from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
+    from skilltotal.models import UNANALYZED_TITLES
 
     verdict = report.get("verdict") or {}
     entry = {
@@ -974,11 +974,12 @@ def _hook_remember(job: dict, report: dict, deadline: float | None = None) -> di
                 if f.get("threat_class") in ("malicious_indicator", "risky_construct")
             ],
             # What the scan could not read decides the answer as much as a finding: an install
-            # script it could not analyze, or a component nothing of which was read.
+            # script it could not analyze, a component nothing of which was read, or any other
+            # part of it left unanalyzed (said in the console, denied in CI).
             "needs_review": [
                 {"category": n.get("category"), "title": n.get("title"), "file": n.get("file")}
                 for n in report.get("needs_review") or []
-                if n.get("title") in (UNANALYZED_INSTALL_SCRIPT, NOTHING_READ)
+                if n.get("title") in UNANALYZED_TITLES
             ],
         },
     }

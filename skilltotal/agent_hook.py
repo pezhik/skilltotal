@@ -50,6 +50,7 @@ from typing import Any
 
 from skilltotal import bounded_json
 from skilltotal.guard import PLAIN_PATH, evaluate, unanalyzed_install_scripts
+from skilltotal.models import UNANALYZED_TITLES
 
 # How many packages one command gets checked; the person is asked about the rest.
 MAX_TARGETS = 5
@@ -89,7 +90,10 @@ _NOT_READ = Install(None, "a command SkillTotal could not read")
 # lists, the person's own code on disk, a script downloaded and run. Said in the console; in CI
 # strict mode denied unless SKILLTOTAL_ALLOW_UNCHECKED names the kind.
 LOCKFILE, LOCAL, SCRIPT = "lockfile", "local", "script"
-UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT)
+# A package that was checked, but not all of it: code in a language not analyzed, a file it could
+# not read or parse. Allowed in strict mode under this name too.
+PARTIAL = "partial"
+UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL)
 # A URL a line may quote: no whitespace, quotes or anything a shell fills in.
 _PLAIN_URL = re.compile(r"https?://[A-Za-z0-9._~/:@%+=?&#-]{1,200}")
 
@@ -2791,6 +2795,7 @@ def hook_response(
     late: list[str] = []
     skipped: list[str] = []
     unchecked: list[Install] = []
+    partial: list[str] = []  # clean packages the scan could not read all of
     deadline = time.monotonic() + budget_s
     checked = 0
     for item in installs:
@@ -2840,8 +2845,13 @@ def hook_response(
             asked.append(_sentence(f"{label}: {_ask_detail(report)}"))
             scanned.append(label)
         else:
-            clean.append(f"{label}: risk {report.get('risk_score', 0)}/100 "
-                         f"({report.get('risk_level', 'unknown')})")
+            entry = (f"{label}: risk {report.get('risk_score', 0)}/100 "
+                     f"({report.get('risk_level', 'unknown')})")
+            gaps = _gaps(report)
+            if gaps:  # a low score says nothing about what was not read
+                entry += f", partly analyzed ({'; '.join(gaps)})"
+                partial.append(f"{label} was only partly analyzed ({'; '.join(gaps)})")
+            clean.append(entry)
 
     # What was not checked is the person's call, never a silent pass: otherwise a package padded
     # until its scan times out, or named sixth, would walk past the guard.
@@ -2859,6 +2869,7 @@ def hook_response(
     # In CI an unchecked install is denied unless its kind is allowed; elsewhere it is said only.
     blocked = [i for i in unchecked if i.unchecked not in allow_unchecked] if strict else []
     passed = [i for i in unchecked if i not in blocked]
+    held = partial if strict and PARTIAL not in allow_unchecked else []
 
     if denied:
         reason = "SkillTotal blocked this install: it found malicious indicators. " + " ".join(
@@ -2866,7 +2877,7 @@ def hook_response(
         reason = f"{reason} {_details(scanned)}"
         return _answer(permission="deny", reason=reason,
                        message=_line(reason, _not_checked(unchecked, rest=True)))
-    if strict and (asked or blocked):
+    if strict and (asked or blocked or held):
         why: list[str] = []
         if asked:
             why.append("SkillTotal blocked this install; outside CI it would ask for approval. "
@@ -2875,13 +2886,18 @@ def hook_response(
             lead = "It also" if asked else "SkillTotal blocked this install: it"
             why.append(f"{lead} {_does(blocked)}, and SkillTotal checks only the packages a "
                        f"command names.")
+        if held:
+            sentence = _sentence("; ".join(held))
+            why.append(sentence if why else f"SkillTotal blocked this install: {sentence}")
         if scanned:
             why.append(_details(scanned))
         reason = _STRICT + " ".join(why)
         allow = ""
-        if blocked:
+        if blocked or held:
             # The whole value to set: the kinds already allowed stay allowed.
-            wanted = allow_unchecked | {i.unchecked for i in blocked}
+            wanted = {*allow_unchecked, *(i.unchecked for i in blocked)}
+            if held:
+                wanted.add(PARTIAL)
             kinds = ",".join(k for k in UNCHECKED_KINDS if k in wanted)
             allow = f"To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kinds}."
         return _answer(permission="deny", reason=reason,
@@ -3048,6 +3064,13 @@ def _malicious_detail(report: dict[str, Any]) -> str:
     if len(hits) > 1:
         detail += f" (and {len(hits) - 1} more)"
     return detail
+
+
+def _gaps(report: dict[str, Any]) -> list[str]:
+    """What the scan says it could not analyze (the titles of UNANALYZED_TITLES notes): code in
+    a language not analyzed, a file it could not read or parse. The titles are the engine's own."""
+    titles = (n.get("title") for n in report.get("needs_review") or [] if isinstance(n, dict))
+    return list(dict.fromkeys(t for t in titles if t in UNANALYZED_TITLES))
 
 
 def _looks_typosquatted(report: dict[str, Any]) -> bool:
