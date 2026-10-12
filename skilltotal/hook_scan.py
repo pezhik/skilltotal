@@ -223,6 +223,15 @@ def _kernel32() -> Any:
     times = ctypes.POINTER(wintypes.FILETIME)
     kernel32.GetProcessTimes.argtypes = (wintypes.HANDLE, times, times, times, times)
     kernel32.GetProcessTimes.restype = wintypes.BOOL
+    kernel32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID,
+                                                 wintypes.DWORD)
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.TerminateJobObject.restype = wintypes.BOOL
     return kernel32
 
 
@@ -305,13 +314,38 @@ def _left(deadline: float | None, default: float) -> float:
 def remove_tree(path: str | Path, deadline: float | None = None) -> None:
     """Remove a check's directory. On Windows a scan stopped a moment ago may still hold a file
     open while it goes, so a removal that left something behind is tried again, for 5 seconds or
-    until ``deadline``."""
+    until ``deadline``. Read-only entries go too (see ``_writable``)."""
     end = time.monotonic() + _left(deadline, 5.0)
+    root = os.path.abspath(path)
+
+    def retry(func: Callable[[str], object], entry: str, _error: object) -> None:
+        _writable(root, entry, func)
+
     while True:
-        shutil.rmtree(path, ignore_errors=True)
+        if sys.version_info >= (3, 12):
+            shutil.rmtree(path, onexc=retry)
+        else:
+            shutil.rmtree(path, onerror=retry)
         if not os.path.exists(path) or time.monotonic() >= end:
             return
         time.sleep(0.2)
+
+
+def _writable(root: str, entry: str, remove: Callable[[str], object]) -> None:
+    """rmtree's error handler: make ``entry`` and its folder writable and remove it once more.
+    git keeps its pack files read-only, which Windows refuses to remove; an archive can carry a
+    read-only folder, whose files POSIX refuses to remove. Nothing outside the check's tree is
+    touched, and no link (changing one would change what it points to). What still fails stays
+    for the next round."""
+    try:
+        folder = os.path.dirname(entry)
+        if os.path.commonpath([root, folder]) == root and not os.path.islink(folder):
+            os.chmod(folder, stat.S_IRWXU)
+        if not os.path.islink(entry):
+            os.chmod(entry, stat.S_IRWXU)
+        remove(entry)
+    except (OSError, ValueError):
+        pass
 
 
 def _read_json(path: Path) -> Any:
@@ -568,23 +602,27 @@ def _run_scan(
                       **_own_group())
     except OSError:
         return False, False
-    deadline = time.monotonic() + ceiling
-    ours = False
-    while True:
-        try:
-            return scan.wait(timeout=0.5) == 0, ours
-        except subprocess.TimeoutExpired:
-            pass
-        if (tmp / "abort").exists() or time.monotonic() >= deadline:
-            _stop(scan)
-            return False, ours
-        if not ours and hook.gone():
-            ours = True
-            # Claimed here: the hook went without handing the check over (a hook that did claimed
-            # it before it went).
-            if claim(tmp / "done") and not _adopt(marker):
-                _stop(scan)
+    job = _contain(scan)
+    try:
+        deadline = time.monotonic() + ceiling
+        ours = False
+        while True:
+            try:
+                return scan.wait(timeout=0.5) == 0, ours
+            except subprocess.TimeoutExpired:
+                pass
+            if (tmp / "abort").exists() or time.monotonic() >= deadline:
+                _stop(scan, job)
                 return False, ours
+            if not ours and hook.gone():
+                ours = True
+                # Claimed here: the hook went without handing the check over (a hook that did
+                # claimed it before it went).
+                if claim(tmp / "done") and not _adopt(marker):
+                    _stop(scan, job)
+                    return False, ours
+    finally:
+        _close_job(job)  # whatever the scan left running ends with the job
 
 
 def _adopt(marker: Marker | None) -> bool:
@@ -602,18 +640,99 @@ def _adopt(marker: Marker | None) -> bool:
         return False
 
 
-def _stop(proc: subprocess.Popen) -> None:
+def _stop(proc: subprocess.Popen, job: Any = None) -> None:
+    """Stop the scan and everything it started (a git clone, and git's own helpers)."""
     try:
         if hasattr(os, "killpg"):
-            os.killpg(proc.pid, signal.SIGKILL)  # its group: the scan and what it started
+            os.killpg(proc.pid, signal.SIGKILL)  # its process group
+        elif job is not None:
+            _kernel32().TerminateJobObject(job, 1)
         else:
-            proc.kill()
+            taskkill = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32",
+                                    "taskkill.exe")
+            subprocess.run(  # nosec B603 - the system's taskkill, on a process id
+                [taskkill, "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
     except OSError:
         pass
     try:
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:
         pass
+
+
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+_PROCESS_SET_QUOTA = 0x0100
+_PROCESS_TERMINATE = 0x0001
+
+
+def _contain(proc: subprocess.Popen) -> Any:
+    """On Windows, a job object holding the scan, and so everything the scan starts from now on,
+    which ends them all when it is terminated or closed. Windows has no process group to kill
+    the way POSIX does, and a git clone left running would outlive the stopped scan. None
+    elsewhere, and when Windows refuses (``_stop`` then ends the tree with taskkill)."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    kernel32 = _kernel32()
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+    limits = _job_limits()()
+    limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    handle = None
+    try:
+        if not kernel32.SetInformationJobObject(job, _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+                                                ctypes.byref(limits), ctypes.sizeof(limits)):
+            raise OSError("no job limits")
+        handle = kernel32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, proc.pid)
+        if not handle or not kernel32.AssignProcessToJobObject(job, handle):
+            raise OSError("not in the job")
+    except OSError:
+        kernel32.CloseHandle(job)
+        return None
+    finally:
+        if handle:
+            kernel32.CloseHandle(handle)
+    return job
+
+
+def _close_job(job: Any) -> None:
+    if job is not None:
+        _kernel32().CloseHandle(job)
+
+
+def _job_limits() -> Any:
+    """JOBOBJECT_EXTENDED_LIMIT_INFORMATION, as ctypes lays it out."""
+    import ctypes
+    from ctypes import wintypes
+
+    class Basic(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64), ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD), ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+    class Io(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+    class Extended(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", Basic), ("IoInfo", Io),
+                    ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    return Extended
 
 
 def _step_out_of(tmp: Path) -> None:

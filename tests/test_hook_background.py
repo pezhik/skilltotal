@@ -78,9 +78,11 @@ for step in steps.split(","):
 '''
 
 # Stands in for the scan the real supervisor starts: `pid` notes its process id in $FAKE_PID,
-# `sleep=S` waits, `report` writes a report, `exit=N` ends with that code.
+# `child=S` starts a process that sleeps S seconds with its working directory in the check's (as a
+# git clone the scan started would) and notes its id in $FAKE_CHILD_PID, `sleep=S` waits, `report`
+# writes a report, `exit=N` ends with that code.
 FAKE_SCAN = r'''
-import json, os, sys, time
+import json, os, subprocess, sys, time
 
 steps, tmp = sys.argv[1], sys.argv[2]
 for step in steps.split(","):
@@ -88,6 +90,13 @@ for step in steps.split(","):
     if name == "pid":
         with open(os.environ["FAKE_PID"], "w", encoding="ascii") as fh:
             fh.write(str(os.getpid()))
+    elif name == "child":
+        work = os.path.join(tmp, "work")
+        os.makedirs(work, exist_ok=True)
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(%s)" % value],
+                                 cwd=work)
+        with open(os.environ["FAKE_CHILD_PID"], "w", encoding="ascii") as fh:
+            fh.write(str(child.pid))
     elif name == "sleep":
         time.sleep(float(value))
     elif name == "report":
@@ -388,12 +397,14 @@ def fake_scan(tmp_path, monkeypatch):
     script = tmp_path / "fake_scan.py"
     script.write_text(FAKE_SCAN, encoding="utf-8")
     monkeypatch.setenv("FAKE_PID", str(tmp_path / "scan.pid"))
+    monkeypatch.setenv("FAKE_CHILD_PID", str(tmp_path / "child.pid"))
     real_argv = hook_scan._role_argv
+    python = hook_scan._interpreter()[0]  # as the real scan is started: no launcher in between
 
     def use(steps):
         monkeypatch.setattr(
             hook_scan, "_role_argv",
-            lambda role, tmp: ([sys.executable, str(script), steps, tmp] if role == "scan-into"
+            lambda role, tmp: ([python, str(script), steps, tmp] if role == "scan-into"
                                else real_argv(role, tmp)))
 
     return use
@@ -1305,3 +1316,40 @@ def test_an_answer_about_a_background_check_never_breaks_on_its_numbers(check):
     out = hook_response(_bash("npm install big"), scan=running, budget_s=60)
     assert "npm:big: " in _reason(out)
     assert "Run the same command again" in _reason(out)
+
+
+# --- Stopping a scan stops all of it, and nothing of a check is left behind ---------------------
+
+
+def test_stopping_a_scan_stops_what_it_started(tmp_path, check_dir, cache, fake_scan):
+    """Stopped at the ceiling, a scan used to end alone on Windows: the git clone it had started
+    went on, with neither the clone's timeout nor its size guard left over it, and kept the check's
+    directory from being removed."""
+    fake_scan("child=120,sleep=120,report")
+    job, marker = _job_for(cache)
+    check = check_dir(hook_pid=os.getpid(), ceiling=3.0, job=job, handed_over=True)
+    started = time.monotonic()
+    hook_scan.supervise(check, remember=cli._hook_remember)
+    assert time.monotonic() - started < 40
+    child = int((tmp_path / "child.pid").read_text(encoding="ascii"))
+    assert _eventually(lambda: not hook_scan.pid_alive(child), 15)
+    assert _cached(cache) == {}
+    assert not check.exists()
+
+
+def test_a_checks_directory_goes_even_with_read_only_entries(tmp_path):
+    """git keeps its pack files read-only, and Windows does not remove a read-only file; an archive
+    can carry a read-only folder, whose files POSIX does not remove."""
+    import stat
+
+    check = tmp_path / "skilltotal_hook_readonly"
+    pack = check / "repo" / ".git" / "objects" / "pack"
+    pack.mkdir(parents=True)
+    (pack / "pack-1.pack").write_bytes(b"PACK")
+    os.chmod(pack / "pack-1.pack", stat.S_IREAD)
+    folder = check / "x" / "locked"
+    folder.mkdir(parents=True)
+    (folder / "a.js").write_text("module.exports = 1;\n", encoding="utf-8")
+    os.chmod(folder, stat.S_IREAD | stat.S_IEXEC)
+    hook_scan.remove_tree(check)
+    assert not check.exists()
