@@ -288,6 +288,8 @@ def build_parser() -> argparse.ArgumentParser:
     # The two processes a check runs in, started by the hook itself (see skilltotal.hook_scan).
     hook.add_argument("--supervise", metavar="DIR", help=argparse.SUPPRESS)
     hook.add_argument("--scan-into", metavar="DIR", help=argparse.SUPPRESS)
+    # The hook protocol the plugin's wrapper needs (HOOK_PROTOCOL).
+    hook.add_argument("--protocol", metavar="N", type=int, default=0, help=argparse.SUPPRESS)
 
     return parser
 
@@ -674,6 +676,12 @@ HOOK_FAILED = {
         "permissionDecisionReason": "SkillTotal could not check this command.",
     },
 }
+# The hook protocol this CLI speaks, which the plugin's wrapper asks for with --protocol: 2 is the
+# console line for every install and CI strict mode. A CLI that speaks an older one, or knows no
+# --protocol at all, fails on it, and the wrapper says the CLI is older than the plugin (in CI it
+# denies). Raise it, with the wrapper's PROTOCOL (a test keeps them equal), when the wrapper comes
+# to rely on something an older CLI does not do.
+HOOK_PROTOCOL = 2
 # CI strict mode for the hook: SKILLTOTAL_STRICT=1/true/yes/on turns it on and 0/false/no/off off;
 # otherwise it is on when CI, or the marker of a CI service that does not always set CI, is set to
 # anything but empty or a false value. The plugin's wrapper reads them the same way (a shared test
@@ -734,6 +742,10 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         if args.scan_into:
             return hook_scan.scan_into(Path(args.scan_into))
         return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
+    if args.protocol > HOOK_PROTOCOL:
+        print(f"error: this skilltotal speaks hook protocol {HOOK_PROTOCOL}, the plugin needs "
+              f"{args.protocol}; run pipx upgrade skilltotal", file=sys.stderr)
+        return EXIT_ERROR
     strict_by = _hook_strict(os.environ)
     try:
         answer = _hook_answer(strict_by)
