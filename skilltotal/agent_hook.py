@@ -2365,6 +2365,17 @@ class CheckInBackground(TimeoutError):
         self.started_ago = started_ago
 
 
+class TooLargeToCheck(TimeoutError):
+    """A package whose check, by the size of what it would read, cannot end before checks are
+    stopped for good (``ceiling_s``). It is not started in the background, where it would only end
+    without a verdict, again on every run of the command; ``target`` is what to scan instead."""
+
+    def __init__(self, target: str, ceiling_s: float) -> None:
+        super().__init__("too large to check here")
+        self.target = target
+        self.ceiling_s = ceiling_s
+
+
 class BackgroundFull(TimeoutError):
     """A check that would have had to go on in the background while ``running`` checks already do
     there: it was stopped instead, so nothing was checked."""
@@ -2421,6 +2432,11 @@ def hook_response(
         except CheckInBackground as check:
             asked.append(_background_detail(source, check, budget_s))
             continue
+        except TooLargeToCheck as big:
+            asked.append(f"{source}: too large for SkillTotal to check here: its full check would "
+                         f"take more than {big.ceiling_s / 60:g} minutes. Run `skilltotal scan "
+                         f"{big.target}` to check it.")
+            continue
         except BackgroundFull as full:
             asked.append(f"{source}: not checked; SkillTotal is already running {full.running} "
                          f"checks in the background. Run the same command again in a few minutes.")
@@ -2476,18 +2492,24 @@ def _background_detail(source: str, check: CheckInBackground, budget_s: float) -
     when that is known, and when to run the command again."""
     more = " more"
     if check.started_ago is not None:
-        what = (f"{source}: a full check started {_ago(check.started_ago)} is still running in "
-                f"the background")
+        since = f" started {_ago(check.started_ago)}" if _plain(check.started_ago) else ""
+        what = f"{source}: a full check{since} is still running in the background"
     elif check.large:
         what = f"{source}: a large package; its full check is running in the background"
         more = ""
     else:
         what = (f"{source}: not checked within SkillTotal's {budget_s:g}-second time limit; the "
                 f"check continues in the background")
-    if check.seconds_left is None:
+    if not _plain(check.seconds_left):
         return f"{what}. Run the same command again in a few minutes."
     return (f"{what} and takes {_about_minutes(check.seconds_left)}{more}. Run the same command "
             f"again after that.")
+
+
+def _plain(seconds: object) -> bool:
+    """A number of seconds a sentence can say: not missing, infinite or NaN."""
+    return (isinstance(seconds, (int, float)) and not isinstance(seconds, bool)
+            and math.isfinite(seconds))
 
 
 def _about_minutes(seconds: float) -> str:

@@ -105,7 +105,7 @@ def test_a_cached_verdict_keeps_the_unread_install_script(tmp_path, monkeypatch)
              "reason": "...", "line": None},
         ],
     }
-    monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout: full)
+    monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout, job=None: full)
     cli._hook_scan_cached("npm:some-pkg", 20)
     cached = cli._hook_scan_cached("npm:some-pkg", 20)
     assert [n["title"] for n in cached["needs_review"]] == [UNANALYZED_INSTALL_SCRIPT]

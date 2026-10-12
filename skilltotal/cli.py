@@ -41,10 +41,12 @@ Exit codes:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import re
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -701,10 +703,9 @@ HOOK_CACHE_MAX_ENTRIES = 500
 
 
 def _hook_cache_path() -> Path:
-    base = (os.environ.get("SKILLTOTAL_CACHE_DIR") or os.environ.get("XDG_CACHE_HOME")
-            or os.environ.get("LOCALAPPDATA") or str(Path.home() / ".cache"))
-    root = Path(base) if os.environ.get("SKILLTOTAL_CACHE_DIR") else Path(base) / "skilltotal"
-    return root / "hook-cache.json"
+    from skilltotal.hook_scan import cache_file
+
+    return cache_file()
 
 
 def _hook_scan_cached(source: str, timeout: float) -> dict:
@@ -721,11 +722,13 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     verdict itself (``_hook_hand_over``), and the same command run again is answered from it.
     """
     from skilltotal.agent_hook import CheckInBackground
-    from skilltotal.collector import resolve_release
-    from skilltotal.hook_scan import AlreadyRunning, Pending, ScanContinues
+    from skilltotal.hook_scan import GRACE_S, AlreadyRunning, Pending, ScanContinues
 
     started = time.monotonic()
-    release = resolve_release(source, timeout=max(1.0, min(5.0, timeout / 2)))
+    # Claude Code lets the command run when the hook outlives its timeout: nothing on this path
+    # waits past the budget and a short grace.
+    hard = started + timeout + GRACE_S
+    release = _hook_lookup(source, max(1.0, min(5.0, timeout / 2)))
     key = release.key if release else source
     target = release.source if release else source
     ttl = _hook_cache_ttl(key)
@@ -736,56 +739,96 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
         return hit["report"]
     # What the verdict is kept under, and for which file: everything that keeps it needs to know.
     job = {"key": key, "ttl": ttl, "artifact": release.artifact if release else "", "at": now,
-           "engine": __version__, "cache": str(path)}
+           "engine": __version__}
     pending = Pending(path.parent / "hook-pending")
     try:
-        marker = pending.claim(key, now)
+        marker = pending.claim(key, now, wait_s=min(2.0, max(0.0, hard - time.monotonic())))
     except AlreadyRunning as running:
         raise CheckInBackground(running.seconds_left, started_ago=running.age) from None
+    # The check takes what its verdict is recorded under along, in case this hook goes away; with
+    # no marker to track it by, it never runs on alone.
+    check = {**job, "token": marker.token} if marker is not None else None
     try:
-        report = _hook_scan(target, timeout - (time.monotonic() - started))
+        report = _hook_scan(target, timeout - (time.monotonic() - started), check)
     except ScanContinues as late:
-        # Raises unless the check ended in the meantime; the marker is then the check's own.
-        report = _hook_hand_over(late, pending, marker, job)
+        try:
+            # Raises unless the check ended in the meantime.
+            report = _hook_hand_over(late, pending, marker, job, hard, target)
+        except CheckInBackground:
+            raise  # handed over: the marker is the check's now
+        except BaseException:
+            # Whatever went wrong, the check is not left half handed over. A failure to stop it
+            # is not reported: the error being raised is the one that matters.
+            with contextlib.suppress(Exception):
+                late.scan.stop()
+            pending.release(marker)
+            raise
     except BaseException:
         pending.release(marker)
         raise  # a failed or late scan: nothing is cached
     pending.release(marker)
-    return _hook_remember(job, report)
+    return _hook_remember(job, report, deadline=hard)
+
+
+def _hook_lookup(source: str, timeout: float):
+    """The release ``source`` resolves to, or None when the registry has not answered within
+    ``timeout`` seconds, as for a registry that did not answer. A lookup's own timeout covers each
+    network step, not a slow name lookup or a trickle of data, so it runs in a thread that this
+    process does not wait for past ``timeout``."""
+    from skilltotal.collector import resolve_release
+
+    found: list = []
+    lookup = threading.Thread(
+        target=lambda: found.append(resolve_release(source, timeout=timeout)), daemon=True)
+    lookup.start()
+    lookup.join(timeout)
+    return found[0] if found else None
 
 
 def _hook_hand_over(
-    late: ScanContinues, pending: Pending, marker: Marker | None, job: dict
+    late: ScanContinues, pending: Pending, marker: Marker | None, job: dict, deadline: float,
+    target: str,
 ) -> dict:
     """Decide the fate of a check the hook stops waiting for.
 
-    It goes on in the background and keeps its verdict itself, unless it could not be tracked (no
-    marker could be written) or ``MAX_BACKGROUND`` checks already go on without a hook: then it is
-    stopped, and records nothing. Raises what the answer then says; returns the report instead when
-    the check ended in the meantime.
+    It goes on in the background and keeps its verdict itself, unless its size says it cannot end
+    before the ceiling, it could not be tracked (no marker could be written), or
+    ``MAX_BACKGROUND`` checks already go on without a hook: then it is stopped, and records nothing.
+    Raises what the answer then says; returns the report instead when the check ended in the
+    meantime.
     """
-    from skilltotal.agent_hook import BackgroundFull, CheckInBackground
-    from skilltotal.hook_scan import MAX_BACKGROUND
+    from skilltotal.agent_hook import BackgroundFull, CheckInBackground, TooLargeToCheck
+    from skilltotal.hook_scan import CEILING_S, MAX_BACKGROUND
 
     scan = late.scan
+    if late.too_large:
+        report = scan.stop(deadline)
+        if report is not None:
+            return report
+        pending.release(marker)
+        raise TooLargeToCheck(target, CEILING_S)
     running: int | None = None
     if marker is not None:
         try:
-            with pending.lock():  # counting the others and joining them is one step
+            # Counting the others and joining them is one step.
+            with pending.lock(max(0.0, min(5.0, deadline - time.monotonic()))):
                 running = pending.background(time.time(), exclude=marker)
-                if running < MAX_BACKGROUND:
-                    report = scan.hand_over({**job, "marker": str(marker.path),
-                                             "token": marker.token})
+                ends = None if late.seconds_left is None else time.time() + late.seconds_left
+                # The marker goes to the background before the check is handed over: a check that
+                # ends right after frees a marker already in its final state (written after, it
+                # would come back for a check that is over).
+                if running < MAX_BACKGROUND and pending.go_background(marker, ends):
+                    report = scan.hand_over(deadline)
                     if report is not None:
                         return report
-                    ends = None if late.seconds_left is None else time.time() + late.seconds_left
-                    pending.go_background(marker, scan.pid, ends)
                     raise CheckInBackground(late.seconds_left, large=late.large)
+                if running < MAX_BACKGROUND:
+                    running = None  # its marker is gone: it cannot be tracked
         except CheckInBackground:
             raise
-        except TimeoutError:
-            running = None  # the markers cannot be read safely: start nothing more
-    report = scan.hand_over(None)  # stop it
+        except (TimeoutError, OSError):
+            running = None  # the markers cannot be kept safely: start nothing more
+    report = scan.stop(deadline)
     if report is not None:
         return report
     pending.release(marker)
@@ -803,7 +846,7 @@ def _hook_cache_read(path: Path) -> dict:
     return cache if isinstance(cache, dict) else {}
 
 
-def _hook_remember(job: dict, report: dict) -> dict:
+def _hook_remember(job: dict, report: dict, deadline: float | None = None) -> dict:
     """The verdict of a scan as the cache keeps it, kept under ``job["key"]``; returns it.
 
     The one way a verdict is kept, whoever keeps it: the hook, for a scan that finished while it
@@ -854,18 +897,21 @@ def _hook_remember(job: dict, report: dict) -> dict:
         # A file was added to the release between the lookup and the scan: the verdict is good
         # for what was scanned, but it is not the artifact the key names, so it is not kept.
         return entry["report"]
-    _hook_cache_store(Path(job["cache"]), job["key"], entry)
+    # The hook's own cache, wherever the check that found the verdict ran.
+    _hook_cache_store(_hook_cache_path(), job["key"], entry, deadline)
     return entry["report"]
 
 
-def _hook_cache_store(path: Path, key: str, entry: dict) -> None:
+def _hook_cache_store(path: Path, key: str, entry: dict, deadline: float | None = None) -> None:
     """Add ``entry`` to the cache file. Every writer holds the cache's lock from reading the file to
-    writing it back: two checks that finish at once must both be kept."""
+    writing it back: two checks that finish at once must both be kept. A hook waits for the lock
+    until ``deadline`` at most (a check in the background, up to 15 seconds)."""
     from skilltotal.hook_scan import file_lock, write_atomic
 
+    wait_s = 15.0 if deadline is None else max(0.0, deadline - time.monotonic())
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with file_lock(path.with_name(path.name + ".lock")):
+        with file_lock(path.with_name(path.name + ".lock"), wait_s=wait_s):
             now = time.time()
             cache = _hook_cache_read(path)
             # Keep the file small: drop what has expired, then the oldest past the cap.
@@ -874,7 +920,7 @@ def _hook_cache_store(path: Path, key: str, entry: dict) -> None:
             newest = sorted(live, key=lambda k: _number(live[k].get("at")), reverse=True)
             kept = {key: entry,
                     **{k: live[k] for k in newest[: HOOK_CACHE_MAX_ENTRIES - 1] if k != key}}
-            write_atomic(path, json.dumps(kept))
+            write_atomic(path, json.dumps(kept), deadline)
     except (OSError, TimeoutError):
         pass  # no cache this time; the verdict itself is still good
 
@@ -908,16 +954,19 @@ def _number(value: object) -> float:
         return 0.0
 
 
-def _hook_scan(source: str, timeout: float) -> dict:
+def _hook_scan(source: str, timeout: float, job: dict | None = None) -> dict:
     """Scan ``source`` in processes of its own and wait up to ``timeout`` seconds for the report.
 
     The scan outlives the wait: past it, this raises ``ScanContinues`` (a TimeoutError) with the
-    running check, and the caller hands it over or stops it. The check runs in an empty directory
-    with a temp directory of its own, never in the agent's project (see ``RunningScan.start``).
+    running check, and the caller hands it over or stops it. ``job`` (what the verdict is recorded
+    under, and the check's marker token) lets the check keep its verdict even if this hook goes
+    away. The check runs in an empty directory with a temp directory of its own, never in the
+    agent's project (see ``RunningScan.start``).
     """
-    from skilltotal.hook_scan import RunningScan
+    from skilltotal.hook_scan import GRACE_S, RunningScan
 
-    return RunningScan.start(source).wait(timeout)
+    deadline = time.monotonic() + timeout + GRACE_S
+    return RunningScan.start(source, job, deadline).wait(timeout)
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:

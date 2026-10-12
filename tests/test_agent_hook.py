@@ -305,7 +305,7 @@ def test_the_cli_scan_runs_in_processes_of_its_own_and_cleans_up(tmp_path, monke
     with pytest.raises(TimeoutError) as late:
         _hook_scan(str(component), timeout=0.01)
     assert isinstance(late.value, ScanContinues)
-    late.value.scan.hand_over(None)
+    late.value.scan.stop()
     late.value.scan.proc.wait(timeout=60)
     deadline = time.monotonic() + 30
     while list(Path(tmp_path).glob("skilltotal_hook_*")) and time.monotonic() < deadline:
@@ -352,7 +352,7 @@ def test_a_checked_release_is_not_scanned_again(tmp_path, monkeypatch):
                         lambda source, timeout=0: collector.Release(release[0]))
     calls = []
 
-    def fake(source, timeout):
+    def fake(source, timeout, job=None):
         calls.append(source)
         return _report("low", 0)
 
@@ -381,7 +381,7 @@ def test_a_source_whose_release_is_unknown_is_reused_for_an_hour(tmp_path, monke
     monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
     calls = []
     monkeypatch.setattr(cli, "_hook_scan",
-                        lambda source, timeout: calls.append(source) or _report())
+                        lambda source, timeout, job=None: calls.append(source) or _report())
     clock = [1_000_000.0]
     monkeypatch.setattr(cli.time, "time", lambda: clock[0])
 
@@ -406,7 +406,7 @@ def test_a_pypi_verdict_belongs_to_the_file_that_was_scanned(tmp_path, monkeypat
                         lambda source, timeout=0: collector.Release("pypi:x==1.0", artifact[0]))
     calls = []
 
-    def fake(source, timeout):
+    def fake(source, timeout, job=None):
         calls.append(source)
         report = _report()
         report["component"] = {"download_url": f"https://files.pythonhosted.org/p/{artifact[0]}"}
@@ -433,7 +433,7 @@ def test_a_verdict_for_another_file_than_the_key_is_not_kept(tmp_path, monkeypat
                         lambda source, timeout=0: collector.Release("pypi:x==1.0", "x-1.0.tar.gz"))
     calls = []
 
-    def fake(source, timeout):
+    def fake(source, timeout, job=None):
         calls.append(source)
         report = _report()
         report["component"] = {"download_url": "https://files.pythonhosted.org/p/x-1.0-py3-none-any.whl"}
@@ -459,7 +459,8 @@ def test_a_cached_ask_still_names_the_top_finding(tmp_path, monkeypatch):
          "severity": "high"},
     ]
     scans = []
-    monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout: scans.append(source) or full)
+    monkeypatch.setattr(cli, "_hook_scan",
+                        lambda source, timeout, job=None: scans.append(source) or full)
     for _ in range(2):
         out = hook_response(_bash("pip install risky"), scan=cli._hook_scan_cached)
         reason = out["hookSpecificOutput"]["permissionDecisionReason"]
@@ -491,7 +492,7 @@ def test_a_failed_or_late_scan_is_not_cached(tmp_path, monkeypatch):
     monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
     calls = []
 
-    def late(source, timeout):
+    def late(source, timeout, job=None):
         calls.append(source)
         raise TimeoutError
 
@@ -507,7 +508,7 @@ def test_a_corrupt_cache_file_is_ignored(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
     (tmp_path / "hook-cache.json").write_text("{not json", encoding="utf-8")
-    monkeypatch.setattr(cli, "_hook_scan", lambda s, t: _report())
+    monkeypatch.setattr(cli, "_hook_scan", lambda s, t, job=None: _report())
     assert cli._hook_scan_cached("npm:x", 20)["risk_level"] == "low"
 
 
@@ -826,7 +827,8 @@ def test_a_cached_verdict_still_names_what_was_found(tmp_path, monkeypatch):
                  "malicious_indicator", "scripts/setup.js", 4),
     ]
     scans = []
-    monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout: scans.append(source) or full)
+    monkeypatch.setattr(cli, "_hook_scan",
+                        lambda source, timeout, job=None: scans.append(source) or full)
     for _ in range(2):
         out = hook_response(_bash("npm install evil-pkg"), scan=cli._hook_scan_cached)
         reason = out["hookSpecificOutput"]["permissionDecisionReason"]
@@ -1716,7 +1718,7 @@ def test_the_resolved_release_is_named_through_the_cache(tmp_path, monkeypatch):
                         lambda source, timeout=0: collector.Release("npm:@playwright/mcp@0.0.41"))
     scanned = []
 
-    def fake(source, timeout):
+    def fake(source, timeout, job=None):
         scanned.append(source)
         report = _report("low", 0)
         report["component"] = {"version": "0.0.41"}
@@ -1835,7 +1837,7 @@ def test_a_cache_entry_cannot_extend_its_own_life(tmp_path, monkeypatch, key, ag
     monkeypatch.setattr(cli.time, "time", lambda: now)
     _cache_entry(tmp_path, key, at=now - age, ttl=ttl)
     calls = []
-    monkeypatch.setattr(cli, "_hook_scan", lambda s, t: calls.append(s) or _report())
+    monkeypatch.setattr(cli, "_hook_scan", lambda s, t, job=None: calls.append(s) or _report())
     cli._hook_scan_cached(key, 20)
     assert calls == ([key] if rescanned else [])
 
@@ -1848,7 +1850,7 @@ def test_a_cache_entry_dated_in_the_future_is_not_used(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.time, "time", lambda: now)
     _cache_entry(tmp_path, "npm:tsc@5.0.0", at=now + 10 ** 9, ttl=7 * 24 * 3600)
     calls = []
-    monkeypatch.setattr(cli, "_hook_scan", lambda s, t: calls.append(s) or _report())
+    monkeypatch.setattr(cli, "_hook_scan", lambda s, t, job=None: calls.append(s) or _report())
     cli._hook_scan_cached("npm:tsc@5.0.0", 20)
     assert calls == ["npm:tsc@5.0.0"]
 
@@ -1864,7 +1866,7 @@ def test_a_resolved_pypi_release_is_kept_for_a_week(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.time, "time", lambda: clock[0])
     calls = []
 
-    def fake(source, timeout):
+    def fake(source, timeout, job=None):
         calls.append(source)
         report = _report()
         report["component"] = {"download_url": "https://files.example/x-1.0-py3-none-any.whl"}
