@@ -18,7 +18,13 @@ from skilltotal.cli import EXIT_ERROR, EXIT_FAIL_ON_HIGH, EXIT_OK, build_parser,
 from skilltotal.config import ConfigError, _fallback_parse, load_config
 from skilltotal.engine import analyze_directory
 from skilltotal.file_index import MAX_FILE_BYTES
-from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT, UNANALYZED_TITLES, Component
+from skilltotal.models import (
+    NOTHING_READ,
+    UNANALYZED_INSTALL_SCRIPT,
+    UNANALYZED_LOADED_CODE,
+    UNANALYZED_TITLES,
+    Component,
+)
 
 ACTION = Path(__file__).resolve().parent.parent / "action.yml"
 GO = 'package main\nimport ("os/exec")\nfunc main() { exec.Command("id").Run() }\n'
@@ -135,8 +141,12 @@ def test_every_title_in_the_set_is_one_the_engine_writes():
     for path in package.rglob("*.py"):
         if path.name != "models.py":
             written |= _string_literals(path)
-    for title in UNANALYZED_TITLES - {UNANALYZED_INSTALL_SCRIPT, NOTHING_READ}:
+    # Titles defined as constants in models.py are written through the constant's name.
+    constants = {UNANALYZED_INSTALL_SCRIPT, NOTHING_READ, UNANALYZED_LOADED_CODE}
+    for title in UNANALYZED_TITLES - constants:
         assert title in written, title
+    users = [p for p in package.rglob("*.py") if p.name != "models.py"]
+    assert any("UNANALYZED_LOADED_CODE" in p.read_text(encoding="utf-8") for p in users)
 
 
 def test_the_action_input_is_wired_like_fail_on():

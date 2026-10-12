@@ -205,6 +205,8 @@ UNANALYZED_TITLES = frozenset({
     "Unparseable Python file",
     "Unparseable potential MCP manifest",
     "Deeply nested JSON partly analyzed",
+    UNANALYZED_LOADED_CODE,
+    "MCP server bundle not analyzed",
 })
 
 
