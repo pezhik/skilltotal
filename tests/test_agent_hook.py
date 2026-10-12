@@ -1036,7 +1036,6 @@ NORMAL_COMMANDS = [
     "npm ls",
     "pip list",
     "pip show requests",
-    "uv run x.py",
     "echo hello",
     "cat package.json",
     'python -c "print(1)"',
@@ -1051,8 +1050,8 @@ NORMAL_COMMANDS = [
     "echo $((1 << 4))",
     "",
 ]
-# `npm i # ...` and `cd web && npm ci` install what the lockfile lists: no decision, but a line in
-# the console (tests/test_hook_visibility.py).
+# `npm i # ...` and `cd web && npm ci` install what the lockfile lists, and `uv run x.py` in a
+# project syncs it first: no decision, but a line in the console (tests/test_hook_visibility.py).
 
 
 @pytest.mark.parametrize("command", NORMAL_COMMANDS)

@@ -101,6 +101,11 @@ def _lockfile(file: str) -> list[Install]:
     return [Install(None, unchecked=LOCKFILE, does=does)]
 
 
+def _updates(file: str) -> list[Install]:
+    """An update of everything ``file`` lists to newer releases, none of them named."""
+    return [Install(None, unchecked=LOCKFILE, does=f"updates the packages listed in {file}")]
+
+
 def _local(spec: str) -> list[Install]:
     """An install of the person's own code on disk: ``.``, ``./dir``, ``file:../lib``, a wheel."""
     path = re.sub(r"\[[^\]]*\]$", "", spec)  # `.[dev]`: the extras are not part of the path
@@ -324,6 +329,7 @@ class _Context:
 
     root: str
     local_bins: dict[tuple[str, str], bool] = field(default_factory=dict)
+    projects: dict[tuple[str, str], bool] = field(default_factory=dict)
 
     @functools.cached_property
     def root_installs(self) -> bool:
@@ -382,6 +388,7 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
         found.update(dict.fromkeys(_net(text)))  # `[scriptblock]::Create('npm i x')`
     if shell == "powershell":
         found.update(dict.fromkeys(_ps_runs_download(lexed.pipelines, text)))
+    found.update(dict.fromkeys(_download_then_run(lexed.pipelines, shell)))
     seen: list[str] = [text]
     # A command substitution runs too: `echo $(npm install x)` installs x.
     for sub in subs:
@@ -638,6 +645,129 @@ def _ps_runs_download(pipelines: list[list[_Stage]], text: str) -> list[Install]
     url = next((w for words in stages for w in words
                 if w.lower().startswith(("https://", "http://"))), None)
     return _downloaded_script(url)
+
+
+def _download_then_run(pipelines: list[list[_Stage]], shell: str) -> list[Install]:
+    """A script one command saves and a later one runs: ``curl -o i.sh URL && bash i.sh``,
+    ``wget URL && sh i.sh``, ``curl URL > i.sh; ./i.sh``, ``iwr URL -OutFile x.ps1; .\\x.ps1``.
+    The file run must be the one saved (by name), so ``curl -o data.json URL && python x.py``
+    is not one."""
+    saved: dict[str, str | None] = {}  # file name -> the URL it came from
+    found: list[Install] = []
+    for pipeline in pipelines:
+        for stage in pipeline:
+            words = _unwrap(_redirects(stage.words)[0])
+            if shell == "powershell":
+                words = _ps_statement(words)
+                while words and words[0] in ("&", "."):  # the call and dot-source operators
+                    words = words[1:]
+            if not words:
+                continue
+            for name, url in _saves(words, stage.words):
+                saved[name] = url
+            ran = _runs_file(words, shell)
+            if ran is not None and ran in saved:
+                found.extend(_downloaded_script(saved[ran]))
+    return found
+
+
+# curl's short options that take a value: in `-sSLo f` the `o` is the last, its value the next word.
+_CURL_VALUE = frozenset("AbcCdDeEFHKmorTuUwxXyYz")
+
+
+def _saves(words: list[str], raw: list[str]) -> list[tuple[str, str | None]]:
+    """The files a download command writes (``-o``, ``-O``, wget's default name, ``-OutFile``,
+    or its output redirected to a file), each with the URL it fetches."""
+    head = _base(words[0])
+    if head not in _DOWNLOADERS:
+        return []
+    args = words[1:]
+    url = next((a for a in args if a.lower().startswith(("https://", "http://"))), None)
+    names = _stdout_files(raw)
+    if head == "curl":
+        for i, arg in enumerate(args):
+            following = args[i + 1] if i + 1 < len(args) else ""
+            if arg in ("-o", "--output"):
+                names.append(following)
+            elif arg.startswith("--output="):
+                names.append(arg.split("=", 1)[1])
+            elif arg in ("-O", "--remote-name"):
+                names.append(_url_file(url))
+            elif arg.startswith("-") and not arg.startswith("--"):
+                for k, letter in enumerate(arg[1:], 1):
+                    if letter == "O":
+                        names.append(_url_file(url))
+                    elif letter == "o":
+                        names.append(arg[k + 1:] or following)
+                        break
+                    elif letter in _CURL_VALUE:
+                        break
+    elif head == "wget":
+        named = None
+        for i, arg in enumerate(args):
+            following = args[i + 1] if i + 1 < len(args) else ""
+            if arg in ("-O", "--output-document"):
+                named = following
+            elif arg.startswith("--output-document="):
+                named = arg.split("=", 1)[1]
+            elif arg.startswith("-") and not arg.startswith("--") and "O" in arg:
+                named = arg[arg.index("O") + 1:] or following  # `-qO-`, `-qO i.sh`
+        if named != "-":
+            names.append(named if named is not None else _url_file(url))
+    else:  # PowerShell's downloaders: `-OutFile x.ps1` (any unambiguous prefix, `-OutFile:x`)
+        for i, arg in enumerate(args):
+            name, colon, value = arg.lstrip(_PS_DASHES).partition(":")
+            if (arg[:1] in _PS_DASHES and len(name) >= 4
+                    and "outfile".startswith(name.lower())):
+                names.append(value if colon else (args[i + 1] if i + 1 < len(args) else ""))
+    return [(_file_name(n), url) for n in names if n and n != "-"]
+
+
+def _stdout_files(raw: list[str]) -> list[str]:
+    """Where a command's standard output is redirected to a file (``> f``, ``>> f``, ``&> f``)."""
+    files: list[str] = []
+    for i, word in enumerate(raw):
+        found = _REDIRECT.match(word)
+        if found is None or found.group(1) not in (">", ">>", ">|"):
+            continue
+        if word[:found.start(1)] not in ("", "1", "&"):  # `2> log`: not the output
+            continue
+        target = word[found.end():] or (raw[i + 1] if i + 1 < len(raw) else "")
+        files.append(_unmarked(target))
+    return files
+
+
+def _url_file(url: str | None) -> str:
+    """The name ``curl -O`` and ``wget`` give the file a URL downloads to."""
+    path = (url or "").split("?", 1)[0].split("#", 1)[0]
+    return path.rstrip("/").rsplit("/", 1)[-1] if "/" in path.split("://", 1)[-1] else ""
+
+
+def _file_name(path: str) -> str:
+    return path.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].lower()
+
+
+def _runs_file(words: list[str], shell: str) -> str | None:
+    """The name of the file a command runs as a script: ``bash i.sh``, ``. i.sh``,
+    ``python3 i.py``, ``pwsh -File x.ps1``, ``./i.sh``, ``.\\x.ps1``."""
+    command, args = words[0], words[1:]
+    head = _base(command)
+    script: str | None = None
+    if head in _SHELLS or (shell == "bash" and head in ("source", ".")):
+        if any(a.startswith("-") and not a.startswith("--") and "c" in a for a in args):
+            return None  # `bash -c '...'` runs a command line, read elsewhere
+        script = next((a for a in args if not a.startswith("-")), None)
+    elif _PYTHON_HEAD.fullmatch(head) or head in ("node", "nodejs", "perl", "ruby", "php"):
+        script = next((a for a in args if not a.startswith("-")), None)
+    elif head in ("powershell", "pwsh"):
+        flags = [a.lstrip("-/").lower() for a in args]
+        at = next((i for i, flag in enumerate(flags) if flag in ("file", "f")), None)
+        script = args[at + 1] if at is not None and at + 1 < len(args) else next(
+            (a for a in args if a.lower().endswith(".ps1")), None)
+    elif "/" in command or "\\" in command or command.lower().endswith(
+            (".sh", ".bash", ".ps1", ".py", ".cmd", ".bat")):
+        script = command  # the file itself: `./i.sh`, `.\x.ps1`, `/tmp/i.sh`
+    return _file_name(script) if script else None
 
 
 def _words(text: str, shell: str, marked: bool = False) -> list[str] | None:
@@ -1396,6 +1526,8 @@ def _output_of(words: list[str], feed: list[tuple[str, bool]], line: str,
         return args[0], True
     if head == "cat" and not args and feed:
         return "\n".join(text for text, _ in feed), all(readable for _, readable in feed)
+    if head == "tee" and feed:
+        return feed[-1]  # `curl ... | tee i.sh | sh`: what it reads goes on down the pipeline
     if shell == "powershell" and len(words) == 1:
         return words[0], True  # a bare string is written down the pipeline
     return line, False
@@ -1525,7 +1657,7 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head == "find":
         return _find_exec(rest, shell, depth, level)
     if head in _CODE_OPTIONS and (head != "bun" or _code_args(rest[:1], *_CODE_OPTIONS["bun"])):
-        return _interpreter(head, rest, feed, shell)
+        return _interpreter(head, rest, feed, shell, level)
     if shell == "powershell" and head in _PS_START:
         started = _start_process(rest)
         if started is None:
@@ -1639,14 +1771,15 @@ def _code_args(rest: list[str], short: str, long: tuple[str, ...]) -> list[str]:
 
 
 def _interpreter(head: str, rest: list[str], feed: list[tuple[str, bool]],
-                 shell: str) -> list[Install]:
+                 shell: str, level: _Level) -> list[Install]:
     """Code in another language (``node -e``, ``perl -e``, ``deno eval``, a script piped into
     ``node``) is not read here: the person is asked when it names an installer, and told when it
-    is a download (``curl ... | node``)."""
+    is a download (``curl ... | node``, ``node <(curl ...)``, ``node -e "$(curl ...)"``)."""
     codes = _code_args(rest, *_CODE_OPTIONS[head])
     if head == "deno" and "eval" in rest:
         codes.append(" ".join(rest[rest.index("eval") + 1:]))
-    return _net(*codes, *(text for text, _ in feed)) + _stdin_downloads(feed, shell)
+    computed = [item for arg in rest if _SUB in arg for item in _unseen(arg, shell, level)]
+    return _net(*codes, *(text for text, _ in feed)) + _stdin_downloads(feed, shell) + computed
 
 
 def _script(head: str, rest: list[str]) -> str | None:
@@ -1843,6 +1976,14 @@ def _start_process(rest: list[str]) -> list[str] | None:
     arguments = named.get("args") or (positional[0] if positional else "")
     if not program:
         return []
+    if _base(program) in ("powershell", "pwsh"):
+        # Its command line is the arguments joined by spaces, and what follows -Command is code:
+        # split into words, `-c iex (irm ...)` would lose its grouping.
+        line = " ".join(arguments.split(","))
+        for found in re.finditer(r"\S+", line):
+            if found.group().lower().lstrip(_PS_DASHES + "/") in ("command", "c"):
+                head = _words(line[:found.end()], "powershell")
+                return None if head is None else [program, *head, line[found.end():].strip()]
     words = [_words(part, "powershell") for part in arguments.split(",")]
     if any(w is None for w in words):
         return None
@@ -1883,6 +2024,12 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
         return _npx(args, shell, depth, level, registry, fetches=sub == "dlx", quiet=quiet)
     if sub in _SCAFFOLDERS[head]:
         return _scaffold(args, registry)
+    if sub in _NPM_UPDATE or (head == "yarn" and sub == "upgrade-interactive"):
+        # `npm up lodash` updates lodash to its latest release: that one is checked. With no
+        # package named, everything package.json lists is updated.
+        if not _npm_positionals(args, head):
+            return [] if _help(rest, _NODE_HELP) else _updates("package.json")
+        return _npm_packages(args, registry, head)
     if head == "yarn" and sub in (None, "install"):
         # `yarn`, `yarn install`: what package.json lists (`yarn -v` prints a version).
         return [] if _help(rest, _NODE_HELP) else _lockfile("package.json")
@@ -1917,6 +2064,8 @@ def _help(args: list[str], flags: frozenset[str]) -> bool:
 # npm's clean install and its aliases (with `install-ci-test`): exactly what the lockfile lists.
 _NPM_CI = {"ci", "clean-install", "ic", "install-clean", "isntall-clean", "cit",
            "clean-install-test", "install-ci-test", "sit"}
+# Subcommands that update installed packages to newer releases (npm's aliases, pnpm, yarn, bun).
+_NPM_UPDATE = {"update", "up", "upgrade", "udpate"}
 _LOCKFILES = {"npm": "package-lock.json", "pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock",
               "bun": "bun.lock"}
 
@@ -2350,7 +2499,8 @@ def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
         i += 1
     if i >= len(rest) or rest[i] == "-":  # the script comes from stdin
         return _net(*(text for text, _ in feed)) + _stdin_downloads(feed, shell)
-    return []  # `python script.py`
+    # `python script.py`; `python3 <(curl ...)` runs what a substitution prints.
+    return _unseen(rest[i], shell, level) if _SUB in rest[i] else []
 
 
 def _python_m(module: str, args: list[str], shell: str, depth: int,
@@ -2390,10 +2540,32 @@ def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]
             return _uvx(args2, shell, depth, level, index)
         return []
     if sub == "run":
-        # `uv run --with pkg script.py` installs pkg, and the command it runs can install too.
+        # `uv run --with pkg script.py` installs pkg, and the command it runs can install too. In
+        # a project, uv first installs what the project lists (unless told not to sync).
         start = _command_start(args, _UV_VALUE_FLAGS)
-        return _with_values(args, index) + _installs_in(args[start:], shell, depth + 1, level)
+        found = _with_values(args, index) + _installs_in(args[start:], shell, depth + 1, level)
+        options = args[:start]
+        if (not _help(options, _PY_HELP) and "--no-sync" not in options
+                and "--no-project" not in options and _in_project(level, "pyproject.toml")):
+            found = _lockfile("pyproject.toml") + found
+        return found
     return []
+
+
+def _in_project(level: _Level, marker: str) -> bool:
+    """Whether the command runs in a project: ``marker`` in its directory or a parent. When that
+    directory is not known (none given, or the line moves), it counts as a project."""
+    if not level.cwd:
+        return True
+    key = (marker, level.cwd)
+    if key not in level.ctx.projects:
+        try:
+            start = Path(level.cwd)
+            level.ctx.projects[key] = not start.is_absolute() or any(
+                (folder / marker).is_file() for folder in (start, *start.parents))
+        except (OSError, ValueError):
+            level.ctx.projects[key] = True
+    return level.ctx.projects[key]
 
 
 def _uvx(args: list[str], shell: str, depth: int, level: _Level,
@@ -2482,6 +2654,8 @@ def _pipx(rest: list[str], shell: str, depth: int, level: _Level) -> list[Instal
 # poetry, pdm and pipenv: the subcommand that adds packages from PyPI, and their options that take
 # a value.
 _PYPROJECT_ADD = {"poetry": "add", "pdm": "add", "pipenv": "install"}
+# Options with which their `update` changes the lockfile at most, or only lists what is outdated.
+_UPDATE_NOTHING = frozenset({"--dry-run", "--lock", "--no-sync", "--outdated"})
 _PYPROJECT_VALUE_FLAGS = {"--group", "-G", "--source", "--extras", "-E", "--python",
                           "--platform", "--markers", "--directory", "-C", "--project", "-P",
                           "-p", "--lockfile", "-L", "--venv", "--categories", "--index", "-i",
@@ -2504,10 +2678,19 @@ def _pyproject(head: str, rest: list[str], shell: str, depth: int,
         return [] if _help(args, _PY_HELP) else _lockfile("Pipfile.lock")
     if head != "pipenv" and sub in ("install", "sync"):
         return [] if _help(args, _PY_HELP) else _lockfile("pyproject.toml")
-    if sub != _PYPROJECT_ADD[head]:
-        return []
     index = _py_source(args, "pip") or _flag_value(args, {"--source", "--pypi-mirror"})
     specs = _positionals(args, _PYPROJECT_VALUE_FLAGS)
+    if sub == "update":
+        # `poetry update requests` updates requests to its latest release: that one is checked.
+        # With none named, everything the project lists; `--dry-run`, `--lock` (poetry),
+        # `--no-sync` (pdm) and `--outdated` (pipenv) install nothing.
+        if specs:
+            return [item for spec in specs for item in _py_spec(spec, index)]
+        if _help(args, _PY_HELP) or any(a in _UPDATE_NOTHING for a in args):
+            return []
+        return _updates("Pipfile" if head == "pipenv" else "pyproject.toml")
+    if sub != _PYPROJECT_ADD[head]:
+        return []
     if head == "pipenv" and not specs:  # `pipenv install [-r requirements.txt]`
         if _help(args, _PY_HELP):
             return []
