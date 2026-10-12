@@ -208,8 +208,14 @@ def _package_provider_domains(
 
     ``owned_names_only`` leaves out the ``azure-`` name prefix: anyone can publish a PyPI name
     that starts with it, while an exact curated name and an npm scope each have one owner.
+
+    Only a name the registry gives counts (an ``npm:`` or ``pypi:`` source). A git repository, an
+    archive or a folder names itself in its own manifest, which its author writes: a credential
+    stealer could call itself botocore there and borrow botocore's allowance.
     """
     if component is None:
+        return frozenset()
+    if not (component.source or "").strip().lower().startswith(("pypi:", "npm:")):
         return frozenset()
     name = _package_base_name(component)
     if name in _SDK_PROVIDER_DOMAINS:

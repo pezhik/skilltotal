@@ -202,6 +202,26 @@ def test_a_join_onto_an_unidentified_base_is_not_a_home_path(tmp_path, source):
     assert "ST-SENS-PATH" not in _ids(_write(tmp_path, {"index.js": source + _NET_JS}))
 
 
+@pytest.mark.parametrize(
+    ("name", "files", "path_id"),
+    [
+        ("botocore", {"botocore/utils.py": _SDK_PY}, "ST-SENS-PATH-PY"),
+        ("@smithy/core", {"dist-cjs/index.js": _SDK_JS}, "ST-SENS-PATH"),
+    ],
+)
+@pytest.mark.parametrize("where", ["folder", "git"])
+def test_a_repository_named_after_a_provider_sdk_gets_no_allowance(
+    tmp_path, name, files, path_id, where
+):
+    # A git repository, an archive or a folder names itself in its own manifest, which its author
+    # writes: a credential stealer calling itself botocore must not borrow botocore's allowance.
+    # Only a registry name has one owner.
+    _write(tmp_path, files)
+    source = str(tmp_path) if where == "folder" else "https://github.com/someone/sdk"
+    package = Component(name=name, type="python_package", source=source)
+    assert {path_id, "ST-COMBO-EXFIL"} <= _ids(tmp_path, package)
+
+
 def test_a_provider_sdk_reading_another_providers_credentials_still_fires(tmp_path):
     _write(tmp_path, {"dist-cjs/index.js": (
         "const k = fs.readFileSync(path.join(os.homedir(), '.ssh', 'id_rsa'));\n" + _NET_JS
