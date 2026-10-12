@@ -2367,6 +2367,17 @@ class CheckInBackground(TimeoutError):
         self.started_ago = started_ago
 
 
+class TooLargeToCheck(TimeoutError):
+    """A package whose check, by the size of what it would read, cannot end before checks are
+    stopped for good (``ceiling_s``). It is not started in the background, where it would only end
+    without a verdict, again on every run of the command; ``target`` is what to scan instead."""
+
+    def __init__(self, target: str, ceiling_s: float) -> None:
+        super().__init__("too large to check here")
+        self.target = target
+        self.ceiling_s = ceiling_s
+
+
 class BackgroundFull(TimeoutError):
     """A check that would have had to go on in the background while ``running`` checks already do
     there: it was stopped instead, so nothing was checked."""
@@ -2422,6 +2433,11 @@ def hook_response(
             report = scan(source, remaining)
         except CheckInBackground as check:
             asked.append(_background_detail(source, check, budget_s))
+            continue
+        except TooLargeToCheck as big:
+            asked.append(f"{source}: too large for SkillTotal to check here: its full check would "
+                         f"take more than {big.ceiling_s / 60:g} minutes. Run `skilltotal scan "
+                         f"{big.target}` to check it.")
             continue
         except BackgroundFull as full:
             asked.append(f"{source}: not checked; SkillTotal is already running {full.running} "

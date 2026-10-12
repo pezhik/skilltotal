@@ -369,14 +369,16 @@ class ScanContinues(TimeoutError):
     with ``scan.hand_over``: it goes on and records its verdict, or it is stopped.
 
     ``large``: the size of what it scans says it takes longer than the wait had left, so the wait
-    stopped as soon as the size was known. ``seconds_left``: how long it should still take, once
-    the size is known.
+    stopped as soon as the size was known. ``too_large``: it says the check cannot even end
+    before the ceiling. ``seconds_left``: how long it should still take, once the size is known.
     """
 
-    def __init__(self, scan: RunningScan, *, large: bool = False) -> None:
+    def __init__(self, scan: RunningScan, *, large: bool = False,
+                 too_large: bool = False) -> None:
         super().__init__("the check is still running")
         self.scan = scan
         self.large = large
+        self.too_large = too_large
         self.seconds_left = scan.seconds_left()
 
 
@@ -457,8 +459,10 @@ class RunningScan:
             if self._ends is None:
                 size = _read_size(Path(self.tmp, "size"))
                 if size is not None:
-                    # Never later than the ceiling: by then the check has ended, either way.
-                    self._ends = min(now + scan_seconds(size), self._started + CEILING_S)
+                    estimate = scan_seconds(size)
+                    if now - self._started + estimate > CEILING_S:
+                        raise ScanContinues(self, too_large=True)
+                    self._ends = now + estimate
                     if self._ends > deadline:
                         raise ScanContinues(self, large=True)
             if now >= deadline:

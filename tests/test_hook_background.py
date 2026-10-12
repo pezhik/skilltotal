@@ -20,7 +20,12 @@ from types import SimpleNamespace
 import pytest
 
 from skilltotal import cli, hook_scan
-from skilltotal.agent_hook import BackgroundFull, CheckInBackground, hook_response
+from skilltotal.agent_hook import (
+    BackgroundFull,
+    CheckInBackground,
+    TooLargeToCheck,
+    hook_response,
+)
 
 # Stands in for the supervisor the hook starts. Steps, comma-separated: `size=N` writes the size
 # file, `sleep=S` waits, `report` writes a report and ends first (the hook collects it), `fail` ends
@@ -928,13 +933,30 @@ def test_a_size_over_the_time_left_stops_the_wait_at_once(cache, fake_supervisor
 
 
 def test_no_check_is_promised_past_the_ceiling(cache, fake_supervisor):
-    # A check ends at the ceiling whatever its size says, so that is the latest it is promised.
-    fake_supervisor("size=500,wait")
-    with pytest.raises(CheckInBackground) as late:
-        cli._hook_scan_cached("npm:huge@1.0.0", 30)
-    assert late.value.large
+    """A check whose size says it cannot end before the ceiling would be stopped there with
+    nothing recorded, and every run of the command would start it again. It used to go to the
+    background all the same, promised for the ceiling; now it is stopped at once, and the answer
+    says to scan the package outside the hook."""
+    fake = fake_supervisor("size=500,wait")
     assert hook_scan.scan_seconds(500) > hook_scan.CEILING_S
-    assert hook_scan.CEILING_S - 30 < late.value.seconds_left <= hook_scan.CEILING_S
+    started = time.monotonic()
+    with pytest.raises(TooLargeToCheck) as big:
+        cli._hook_scan_cached("npm:huge@1.0.0", 30)
+    assert time.monotonic() - started < 15
+    assert big.value.target == "npm:huge@1.0.0"
+    assert _eventually(lambda: _seen(fake.log))
+    [stopped] = _seen(fake.log)
+    assert stopped["abort"]
+    assert _markers(cache) == []
+
+
+def test_the_answer_for_a_package_too_large_to_check_here(cache, fake_supervisor):
+    fake_supervisor("size=500,wait")
+    out = hook_response(_bash("npm install huge@1.0.0"), scan=cli._hook_scan_cached, budget_s=30)
+    assert _reason(out) == (
+        "SkillTotal needs your approval for this install. npm:huge@1.0.0: too large for "
+        "SkillTotal to check here: its full check would take more than 20 minutes. Run "
+        "`skilltotal scan npm:huge@1.0.0` to check it.")
 
 
 def test_a_size_that_fits_keeps_the_wait_going(cache, fake_supervisor):

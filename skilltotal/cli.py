@@ -753,7 +753,7 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     except ScanContinues as late:
         try:
             # Raises unless the check ended in the meantime.
-            report = _hook_hand_over(late, pending, marker, job, hard)
+            report = _hook_hand_over(late, pending, marker, job, hard, target)
         except CheckInBackground:
             raise  # handed over: the marker is the check's now
         except BaseException:
@@ -786,19 +786,27 @@ def _hook_lookup(source: str, timeout: float):
 
 
 def _hook_hand_over(
-    late: ScanContinues, pending: Pending, marker: Marker | None, job: dict, deadline: float
+    late: ScanContinues, pending: Pending, marker: Marker | None, job: dict, deadline: float,
+    target: str,
 ) -> dict:
     """Decide the fate of a check the hook stops waiting for.
 
-    It goes on in the background and keeps its verdict itself, unless it could not be tracked (no
-    marker could be written) or ``MAX_BACKGROUND`` checks already go on without a hook: then it is
-    stopped, and records nothing. Raises what the answer then says; returns the report instead when
-    the check ended in the meantime.
+    It goes on in the background and keeps its verdict itself, unless its size says it cannot end
+    before the ceiling, it could not be tracked (no marker could be written), or
+    ``MAX_BACKGROUND`` checks already go on without a hook: then it is stopped, and records nothing.
+    Raises what the answer then says; returns the report instead when the check ended in the
+    meantime.
     """
-    from skilltotal.agent_hook import BackgroundFull, CheckInBackground
-    from skilltotal.hook_scan import MAX_BACKGROUND
+    from skilltotal.agent_hook import BackgroundFull, CheckInBackground, TooLargeToCheck
+    from skilltotal.hook_scan import CEILING_S, MAX_BACKGROUND
 
     scan = late.scan
+    if late.too_large:
+        report = scan.stop(deadline)
+        if report is not None:
+            return report
+        pending.release(marker)
+        raise TooLargeToCheck(target, CEILING_S)
     running: int | None = None
     if marker is not None:
         try:
