@@ -15,9 +15,14 @@ Found while preparing the launch. Ruleset 67: no detection rule changed.
   and never installed in `claude -p`, where a question becomes a denial. A check the hook stops
   waiting for now goes on in the background, at most two at once and for up to 20 minutes, and
   saves its verdict, so the same command run again is answered from it. The background processes
-  hold none of the hook's handles and outlive it. All checks of one command share 60 seconds (was
-  20; `SKILLTOTAL_HOOK_BUDGET` still sets it, up to 100); once a package is downloaded, its size
-  tells whether its check fits in the time left, and if not, the person is asked right away.
+  hold none of the hook's handles and outlive it; a check whose hook is gone (Esc, a timeout) is
+  adopted within the same two-at-once limit or stopped. All checks of one command share 60 seconds
+  (was 20; `SKILLTOTAL_HOOK_BUDGET` still sets it, up to 100); once a package is downloaded, its
+  size tells whether its check fits in the time left, and if not, the person is asked right away.
+  A package whose check would take more than 20 minutes is not started: the person is told to run
+  `skilltotal scan`. Every wait after the budget is bounded, so the hook answers within its budget
+  plus 5 seconds. The processes that finish a check act only on a check directory the hook created,
+  proved by a one-time secret passed in the environment.
 - **Deep nesting no longer hides what an agent config or a manifest sets up.** Python's json gives
   up at a depth that depends on the interpreter and the platform (Python 3.14 on Linux read
   100,000 levels that Python 3.10-3.13, and Windows, could not), so padding beside a hook in
