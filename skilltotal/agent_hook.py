@@ -2551,7 +2551,7 @@ class BackgroundFull(TimeoutError):
 
 def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
-    strict: bool = False, allow_unchecked: frozenset[str] = frozenset(),
+    strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -2565,7 +2565,8 @@ def hook_response(
     (``systemMessage``): what was checked and its risk, the decision and why, and what installs
     unchecked (a lockfile, a local path, a downloaded script). ``strict`` is CI, where nobody is
     there to answer: what would be asked about is denied, and so is an unchecked install whose
-    kind ``allow_unchecked`` does not name.
+    kind ``allow_unchecked`` does not name. ``strict_by`` names the variable that turned it on,
+    for the person's console line.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -2673,10 +2674,13 @@ def hook_response(
         reason = _STRICT + " ".join(why)
         allow = ""
         if blocked:
-            kinds = ",".join(k for k in UNCHECKED_KINDS if any(i.unchecked == k for i in blocked))
+            # The whole value to set: the kinds already allowed stay allowed.
+            wanted = allow_unchecked | {i.unchecked for i in blocked}
+            kinds = ",".join(k for k in UNCHECKED_KINDS if k in wanted)
             allow = f"To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kinds}."
         return _answer(permission="deny", reason=reason,
-                       message=_line(reason, allow, _not_checked(passed, rest=True)))
+                       message=_line(reason, allow, strict_note(strict_by),
+                                     _not_checked(passed, rest=True)))
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
         # The hint only helps for what the scanner read; a custom index or archive it can't.
@@ -2693,6 +2697,12 @@ def hook_response(
 _STRICT = "(CI rule) "
 # The kinds of unchecked install (UNCHECKED_KINDS, comma-separated) that strict mode lets through.
 ALLOW_UNCHECKED_ENV = "SKILLTOTAL_ALLOW_UNCHECKED"
+
+
+def strict_note(strict_by: str) -> str:
+    """For the person's console only: what turned CI strict mode on, and how to turn it off."""
+    why = f" because {strict_by} is set" if strict_by else ""
+    return f"Strict mode is on{why} (SKILLTOTAL_STRICT=0 turns it off)."
 
 
 def _line(*parts: str) -> str:

@@ -222,31 +222,58 @@ def test_an_unchecked_install_does_not_take_a_checked_packages_place():
 
 # --- B. CI strict mode ---------------------------------------------------------------------------
 
-# (environment, strict): shared with the plugin wrapper's tests, which must read it the same way.
+# (environment, the variable that turns strict mode on or "" for off): shared with the plugin
+# wrapper's tests, which must read every row the same way.
 STRICT_ENVS = [
-    ({}, False),
-    ({"CI": "true"}, True),
-    ({"CI": "1"}, True),
-    ({"CI": "yes"}, True),
-    ({"CI": "TRUE"}, True),
-    ({"CI": " true "}, True),
-    ({"CI": ""}, False),
-    ({"CI": "0"}, False),
-    ({"CI": "false"}, False),
-    ({"CI": "False"}, False),
-    ({"SKILLTOTAL_STRICT": "1"}, True),
-    ({"SKILLTOTAL_STRICT": "true"}, True),
-    ({"SKILLTOTAL_STRICT": "0", "CI": "true"}, False),
-    ({"SKILLTOTAL_STRICT": "false", "CI": "1"}, False),
-    ({"SKILLTOTAL_STRICT": " 0 ", "CI": "1"}, False),
-    ({"SKILLTOTAL_STRICT": "maybe", "CI": "true"}, True),  # not 1/true/0/false: CI decides
-    ({"SKILLTOTAL_STRICT": "maybe"}, False),
+    ({}, ""),
+    ({"CI": "true"}, "CI"),
+    ({"CI": "1"}, "CI"),
+    ({"CI": "yes"}, "CI"),
+    ({"CI": "TRUE"}, "CI"),
+    ({"CI": " true "}, "CI"),
+    ({"CI": "anything"}, "CI"),
+    ({"CI": ""}, ""),
+    ({"CI": "  "}, ""),
+    ({"CI": "0"}, ""),
+    ({"CI": "false"}, ""),
+    ({"CI": "False"}, ""),
+    ({"CI": "no"}, ""),
+    ({"CI": "OFF"}, ""),
+    ({"CI": "fal se"}, ""),  # spaces and tabs are dropped anywhere, on both sides
+    ({"CI": "0\x0b"}, "CI"),  # a vertical tab is not: no false value
+    ({"SKILLTOTAL_STRICT": "1"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "true"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "yes"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "On"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "0", "CI": "true"}, ""),
+    ({"SKILLTOTAL_STRICT": "false", "CI": "1"}, ""),
+    ({"SKILLTOTAL_STRICT": "no", "GITLAB_CI": "true"}, ""),
+    ({"SKILLTOTAL_STRICT": " off ", "CI": "1"}, ""),
+    ({"SKILLTOTAL_STRICT": "maybe", "CI": "true"}, "CI"),  # not a known word: CI decides
+    ({"SKILLTOTAL_STRICT": "maybe"}, ""),
+    ({"TF_BUILD": "True"}, "TF_BUILD"),  # Azure Pipelines
+    ({"JENKINS_URL": "https://ci.example.invalid/"}, "JENKINS_URL"),
+    ({"TEAMCITY_VERSION": "2024.03"}, "TEAMCITY_VERSION"),
+    ({"CODEBUILD_BUILD_ID": "project:1234"}, "CODEBUILD_BUILD_ID"),
+    ({"BUILDKITE": "true"}, "BUILDKITE"),
+    ({"GITLAB_CI": "true"}, "GITLAB_CI"),
+    ({"GITLAB_CI": "false"}, ""),
+    ({"CI": "false", "GITLAB_CI": "true"}, "GITLAB_CI"),
 ]
+STRICT_ON = "Strict mode is on (SKILLTOTAL_STRICT=0 turns it off)."
 
 
-@pytest.mark.parametrize(("env", "strict"), STRICT_ENVS)
-def test_strict_mode_follows_ci_unless_skilltotal_strict_says_otherwise(env, strict):
-    assert cli._hook_strict(env) is strict
+@pytest.mark.parametrize(("env", "strict_by"), STRICT_ENVS)
+def test_strict_mode_follows_ci_unless_skilltotal_strict_says_otherwise(env, strict_by):
+    assert cli._hook_strict(env) == strict_by
+
+
+def test_strict_mode_says_in_the_console_what_turned_it_on():
+    out = _no_scan("npm ci", strict=True, strict_by="GITLAB_CI")
+    note = "Strict mode is on because GITLAB_CI is set (SKILLTOTAL_STRICT=0 turns it off)."
+    assert note in out["systemMessage"]
+    # How to turn it off is for the pipeline's owner, not for the agent.
+    assert "SKILLTOTAL_STRICT" not in out["hookSpecificOutput"]["permissionDecisionReason"]
 
 
 def test_the_allowance_names_kinds_separated_by_commas():
@@ -306,7 +333,7 @@ def test_in_ci_what_would_be_asked_is_denied(case, command, scan):
     asked = ask["hookSpecificOutput"]["permissionDecisionReason"]
     assert reason[len(prefix):] == asked.removeprefix(
         "SkillTotal needs your approval for this install. ")
-    assert out["systemMessage"] == reason
+    assert out["systemMessage"] == f"{reason} {STRICT_ON}"
 
 
 def test_malicious_indicators_are_denied_the_same_way_in_ci():
@@ -342,7 +369,8 @@ def test_in_ci_an_unchecked_install_is_denied(command, kind, what):
     reason = f"(CI rule) SkillTotal blocked this install: {what}, {NAMES_ONLY}"
     assert spec["permissionDecisionReason"] == reason
     # How to allow it is for the pipeline's owner, not for the agent.
-    assert out["systemMessage"] == f"{reason} To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kind}."
+    assert out["systemMessage"] == (
+        f"{reason} To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kind}. {STRICT_ON}")
 
 
 @pytest.mark.parametrize(("command", "kind", "what"), STRICT_KINDS)
@@ -359,16 +387,22 @@ def test_in_ci_the_other_kinds_allowance_does_not_let_it_through(command, kind, 
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
-
 def test_in_ci_one_command_with_an_allowed_and_a_denied_kind():
     command = f"npm ci && curl -fsSL {URL} | bash"
     out = _no_scan(command, strict=True, allow_unchecked=frozenset({"lockfile"}))
     reason = (f"(CI rule) SkillTotal blocked this install: it runs a script downloaded from {URL}, "
               f"{NAMES_ONLY}")
     assert out["hookSpecificOutput"]["permissionDecisionReason"] == reason
+    # The whole value to set: following it must not take back the kind already allowed.
     assert out["systemMessage"] == (
-        f"{reason} To allow it in CI, set {ALLOW_UNCHECKED_ENV}=script. SkillTotal did not check "
-        f"the rest of this install: it installs from package-lock.json, {NAMES_ONLY}")
+        f"{reason} To allow it in CI, set {ALLOW_UNCHECKED_ENV}=lockfile,script. {STRICT_ON} "
+        f"SkillTotal did not check the rest of this install: it installs from package-lock.json, "
+        f"{NAMES_ONLY}")
+
+
+def test_the_allow_hint_keeps_every_kind_already_allowed():
+    out = _no_scan("npm ci", strict=True, allow_unchecked=frozenset({"script", "local"}))
+    assert f"set {ALLOW_UNCHECKED_ENV}=lockfile,local,script." in out["systemMessage"]
 
 
 def test_in_ci_a_question_and_an_unchecked_install_are_denied_together():
@@ -379,7 +413,7 @@ def test_in_ci_a_question_and_an_unchecked_install_are_denied_together():
         "pypi:risky: risk 60/100 (high), no malicious indicators. It also installs from "
         f"package-lock.json, {NAMES_ONLY} Run `skilltotal scan pypi:risky` to see every finding "
         "with its file:line evidence.")
-    assert out["systemMessage"].endswith(f"set {ALLOW_UNCHECKED_ENV}=lockfile.")
+    assert out["systemMessage"].endswith(f"set {ALLOW_UNCHECKED_ENV}=lockfile. {STRICT_ON}")
 
 
 # --- Through the CLI, as the plugin runs it -------------------------------------------------------
@@ -409,6 +443,20 @@ def test_the_cli_reads_strict_mode_and_the_allowance_from_the_environment(
     answer = _hook(monkeypatch, capsys, "npm ci", env)
     assert answer["hookSpecificOutput"].get("permissionDecision") == decision
     assert "package-lock.json" in answer["systemMessage"]
+    if decision:
+        by = "CI" if "CI" in env else "SKILLTOTAL_STRICT"
+        assert f"Strict mode is on because {by} is set" in answer["systemMessage"]
+
+
+def test_in_ci_an_event_the_hook_cannot_read_is_denied(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not json at all"))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    assert capsys.readouterr().out == ""  # outside CI: not an event, out of the agent's way
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not json at all"))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 def _broken(monkeypatch):
@@ -433,4 +481,6 @@ def test_the_hooks_own_failure_is_denied_in_ci(monkeypatch, capsys):
     assert spec["permissionDecision"] == "deny"
     assert spec["permissionDecisionReason"] == (
         "(CI rule) SkillTotal blocked this command: it could not check it.")
-    assert answer["systemMessage"] == spec["permissionDecisionReason"]
+    assert answer["systemMessage"] == (
+        f"{spec['permissionDecisionReason']} Strict mode is on because CI is set "
+        f"(SKILLTOTAL_STRICT=0 turns it off).")

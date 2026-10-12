@@ -15,9 +15,11 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.fixture(autouse=True)
 def _outside_ci(monkeypatch):
-    """The hook's strict mode follows the CI variable, and this suite itself runs in CI: every test
+    """The hook's strict mode follows CI's variables, and this suite itself runs in CI: every test
     starts outside it, and the strict-mode tests set what they need."""
-    for name in ("CI", "SKILLTOTAL_STRICT", "SKILLTOTAL_ALLOW_UNCHECKED"):
+    from skilltotal.cli import HOOK_CI_MARKERS
+
+    for name in (*HOOK_CI_MARKERS, "SKILLTOTAL_STRICT", "SKILLTOTAL_ALLOW_UNCHECKED"):
         monkeypatch.delenv(name, raising=False)
 
 

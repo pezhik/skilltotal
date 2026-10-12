@@ -9,17 +9,29 @@
 # `hook`) would otherwise look exactly like protection that found nothing. In CI (strict mode)
 # nobody is there to read a warning, so an install that cannot be checked is denied.
 
-# CI strict mode, read the way the CLI reads it: SKILLTOTAL_STRICT=1/true turns it on and 0/false
-# off; otherwise it is on exactly when CI is set to anything but empty, 0 or false.
+# CI strict mode, read the way the CLI reads it: SKILLTOTAL_STRICT=1/true/yes/on turns it on and
+# 0/false/no/off off; otherwise it is on when CI, or the marker of a CI service that does not always
+# set CI, is set to anything but empty or a false value. `strict_by` names the variable that did.
+# Only ASCII letters are lowercased, and only spaces, tabs and line ends are removed.
+word() {
+  printf '%s' "$1" | tr 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' 'abcdefghijklmnopqrstuvwxyz' | tr -d ' \t\r\n'
+}
 strict() {
-  case "$(printf '%s' "${SKILLTOTAL_STRICT:-}" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')" in
-    1|true) return 0 ;;
-    0|false) return 1 ;;
-  esac
-  case "$(printf '%s' "${CI:-}" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')" in
-    ''|0|false) return 1 ;;
-  esac
-  return 0
+  if [ -n "${SKILLTOTAL_STRICT:-}" ]; then
+    case "$(word "$SKILLTOTAL_STRICT")" in
+      1|true|yes|on) strict_by=SKILLTOTAL_STRICT; return 0 ;;
+      0|false|no|off) return 1 ;;
+    esac
+  fi
+  for name in CI TF_BUILD JENKINS_URL TEAMCITY_VERSION CODEBUILD_BUILD_ID BUILDKITE GITLAB_CI; do
+    eval "value=\${$name:-}"
+    [ -n "$value" ] || continue
+    case "$(word "$value")" in
+      ''|0|false|no|off) ;;
+      *) strict_by=$name; return 0 ;;
+    esac
+  done
+  return 1
 }
 
 # Tell the person, for commands that look like an install, and deny them in strict mode. Only a
@@ -33,7 +45,8 @@ unchecked() {
   fix="To fix it, run pipx install skilltotal, or pipx upgrade skilltotal for an existing install."
   if strict; then
     reason="(CI rule) SkillTotal blocked this command: $1, so it could not be checked."
-    printf '%s\n' "{\"systemMessage\": \"$reason $fix\", \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"$reason\"}}"
+    note="Strict mode is on because $strict_by is set (SKILLTOTAL_STRICT=0 turns it off)."
+    printf '%s\n' "{\"systemMessage\": \"$reason $fix $note\", \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"permissionDecision\": \"deny\", \"permissionDecisionReason\": \"$reason\"}}"
     return
   fi
   printf '%s\n' "{\"systemMessage\": \"SkillTotal did not check this command: $1. $fix\", \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"additionalContext\": \"SkillTotal did not check this install: $1.\"}}"

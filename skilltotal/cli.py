@@ -674,28 +674,49 @@ HOOK_FAILED = {
         "permissionDecisionReason": "SkillTotal could not check this command.",
     },
 }
-HOOK_FAILED_STRICT = {
-    "systemMessage": "(CI rule) SkillTotal blocked this command: it could not check it.",
-    "hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "deny",
-        "permissionDecisionReason": "(CI rule) SkillTotal blocked this command: it could not "
-                                    "check it.",
-    },
-}
-# CI strict mode for the hook. SKILLTOTAL_STRICT=1/true turns it on and 0/false off; otherwise it is
-# on exactly when CI is set to anything but empty, 0 or false. The plugin's wrapper reads the same.
+# CI strict mode for the hook: SKILLTOTAL_STRICT=1/true/yes/on turns it on and 0/false/no/off off;
+# otherwise it is on when CI, or the marker of a CI service that does not always set CI, is set to
+# anything but empty or a false value. The plugin's wrapper reads them the same way (a shared test
+# table keeps the two in step): only ASCII letters are lowercased, and only spaces, tabs and line
+# ends are removed.
 HOOK_STRICT_ENV = "SKILLTOTAL_STRICT"
+HOOK_CI_MARKERS = ("CI", "TF_BUILD", "JENKINS_URL", "TEAMCITY_VERSION", "CODEBUILD_BUILD_ID",
+                   "BUILDKITE", "GITLAB_CI")
+_ENV_TRUE = frozenset({"1", "true", "yes", "on"})
+_ENV_FALSE = frozenset({"0", "false", "no", "off"})
+_ENV_SPACE = re.compile(r"[ \t\r\n]")
+_ENV_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
-def _hook_strict(environ) -> bool:
-    """Whether the hook runs in CI strict mode, where what it would ask about is denied."""
-    value = environ.get(HOOK_STRICT_ENV, "").strip().lower()
-    if value in ("1", "true"):
-        return True
-    if value in ("0", "false"):
-        return False
-    return environ.get("CI", "").strip().lower() not in ("", "0", "false")
+def _env_word(value: str) -> str:
+    return _ENV_SPACE.sub("", value).translate(_ENV_LOWER)
+
+
+def _hook_strict(environ) -> str:
+    """The variable that turns CI strict mode on (where what the hook would ask about is denied),
+    or "" when it is off."""
+    value = _env_word(environ.get(HOOK_STRICT_ENV, ""))
+    if value in _ENV_TRUE:
+        return HOOK_STRICT_ENV
+    if value in _ENV_FALSE:
+        return ""
+    return next((name for name in HOOK_CI_MARKERS
+                 if _env_word(environ.get(name, "")) not in _ENV_FALSE | {""}), "")
+
+
+def _hook_failed_strict(strict_by: str) -> dict:
+    """The hook's own failure in CI strict mode, where nobody is there to decide: denied."""
+    from skilltotal.agent_hook import strict_note
+
+    reason = "(CI rule) SkillTotal blocked this command: it could not check it."
+    return {
+        "systemMessage": f"{reason} {strict_note(strict_by)}",
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        },
+    }
 
 
 def _hook_allowed_unchecked(environ) -> frozenset[str]:
@@ -713,16 +734,17 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         if args.scan_into:
             return hook_scan.scan_into(Path(args.scan_into))
         return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
+    strict_by = _hook_strict(os.environ)
     try:
-        answer = _hook_answer()
+        answer = _hook_answer(strict_by)
     except Exception:  # noqa: BLE001 - a failure of ours asks (in CI denies), never passes silently
-        answer = HOOK_FAILED_STRICT if _hook_strict(os.environ) else HOOK_FAILED
+        answer = _hook_failed_strict(strict_by) if strict_by else HOOK_FAILED
     if answer is not None:
         print(json.dumps(answer))
     return EXIT_OK
 
 
-def _hook_answer() -> dict | None:
+def _hook_answer(strict_by: str = "") -> dict | None:
     from skilltotal.agent_hook import BUDGET_ENV, hook_response
 
     if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
@@ -732,7 +754,9 @@ def _hook_answer() -> dict | None:
     try:
         event = json.loads(raw or "{}")
     except json.JSONDecodeError:
-        return None  # not a hook event at all: stay out of the agent's way
+        # Not a hook event at all: stay out of the agent's way, except in CI, where a command the
+        # hook could not read must not pass.
+        return _hook_failed_strict(strict_by) if strict_by else None
     try:
         budget = float(os.environ.get(BUDGET_ENV, HOOK_BUDGET_S))
     except ValueError:
@@ -741,7 +765,7 @@ def _hook_answer() -> dict | None:
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
     budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
     return hook_response(event, scan=_hook_scan_cached, budget_s=budget,
-                         strict=_hook_strict(os.environ),
+                         strict=bool(strict_by), strict_by=strict_by,
                          allow_unchecked=_hook_allowed_unchecked(os.environ))
 
 

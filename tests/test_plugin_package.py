@@ -266,7 +266,8 @@ def test_in_ci_an_install_without_the_cli_is_denied(tmp_path, command):
     reason, message = _denial(done)
     assert reason == ("(CI rule) SkillTotal blocked this command: the skilltotal CLI is not on "
                       "PATH, so it could not be checked.")
-    assert message == f"{reason} {FIX}"
+    assert message == (f"{reason} {FIX} Strict mode is on because CI is set "
+                       f"(SKILLTOTAL_STRICT=0 turns it off).")
 
 
 @needs_sh
@@ -291,10 +292,11 @@ def test_in_ci_the_cli_answer_passes_through_unchanged(tmp_path):
 
 
 @needs_sh
-@pytest.mark.parametrize(("env", "strict"), STRICT_ENVS)
-def test_the_wrapper_reads_strict_mode_as_the_cli_does(tmp_path, env, strict):
+@pytest.mark.parametrize(("env", "strict_by"), STRICT_ENVS)
+def test_the_wrapper_reads_strict_mode_as_the_cli_does(tmp_path, env, strict_by):
     done, _ = _run_wrapper(tmp_path, "npm install lodash", with_cli=False, extra_env=env)
-    if strict:
-        _denial(done)
+    if strict_by:
+        _, message = _denial(done)
+        assert f"Strict mode is on because {strict_by} is set" in message
     else:
         _warning(done)
