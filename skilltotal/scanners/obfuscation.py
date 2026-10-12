@@ -33,25 +33,28 @@ _HEX_DECODER = (
     r"(?:[\w$]+\.)?(?i:hex_?decode|decode_?hex|from_?hex|unhex|"
     r"hex_?(?:2|to_?)(?:str|string|ascii|utf8|text))\s*\("
 )
-_DECODE_EXEC = alternation(
-    r"exec\s*\(\s*(?:\w+\.)?b64decode",
-    r"eval\s*\(\s*(?:\w+\.)?b64decode",
-    r"exec\s*\(\s*bytes\.fromhex",
-    r"eval\s*\(\s*bytes\.fromhex",
-    r"(?:exec|eval)\s*\(\s*codecs\.decode",
-    r"(?:exec|eval)\s*\(\s*(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\(",
-    r"eval\s*\(\s*atob\s*\(",
+# What a sink may run straight from a decoder: Python's decoders, and the JavaScript ones --
+# `atob`, Buffer-decoded base64 or hex (`new Function(Buffer.from(h, "hex").toString())()`), a hex
+# decoder, and a string literal written entirely as escapes, which the parser decodes.
+_PY_DECODE_CALL = (
+    r"(?:\w+\.)?b64decode|bytes\.fromhex|codecs\.decode|(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\("
+)
+_JS_DECODE_CALL = (
+    r"atob\s*\(|Buffer\.from\s*\([^)]*['\"](?:base64|hex)['\"]|" + _HEX_DECODER
+    + r"|['\"`](?:\\x[0-9A-Fa-f]{2}|\\u00[0-9A-Fa-f]{2}){8}"
+)
+# One alternative per sink, each starting with a literal character. That is what lets the regex
+# engine skip ahead to the few places a match can begin; an alternative opening with a group such
+# as `(?:eval|Function)` or with `\b` turns that off for the whole regex (it ran five to ten times
+# slower over a large package), and a dozen alternatives sharing `eval(` re-test it at every `e`.
+_DECODE_EXEC_ALTERNATIVES = (
+    rf"exec\s*\(\s*(?:{_PY_DECODE_CALL})",
+    rf"eval\s*\(\s*(?:{_PY_DECODE_CALL}|{_JS_DECODE_CALL})",
     # Indirect eval to dodge a literal ``eval(`` token: ``(0, eval)(atob(...))``.
     r"\(\s*0\s*,\s*eval\s*\)\s*\(\s*(?:atob|Buffer\.from)\s*\(",
-    r"Function\s*\(\s*atob\s*\(",
-    # Buffer-decoded text run by eval or the Function constructor, base64 or hex:
-    # `new Function(Buffer.from(h, "hex").toString())()`.
-    r"(?:\beval|\bFunction)\s*\(\s*Buffer\.from\s*\([^)]*['\"](?:base64|hex)['\"]",
-    r"(?:\beval|\bFunction)\s*\(\s*" + _HEX_DECODER,
-    # A string literal written entirely as escapes and handed straight to eval / Function: the
-    # parser decodes it, the sink runs it.
-    r"(?:\beval|\bFunction)\s*\(\s*['\"`](?:\\x[0-9A-Fa-f]{2}|\\u00[0-9A-Fa-f]{2}){8}",
+    rf"Function\s*\(\s*(?:{_JS_DECODE_CALL})",
 )
+_DECODE_EXEC = alternation(*_DECODE_EXEC_ALTERNATIVES)
 
 # The same decode and execute split over two statements: the decoded text is kept in a variable
 # that eval / the Function constructor / exec then runs (`const stage = Buffer.from(h, "hex")
@@ -59,8 +62,10 @@ _DECODE_EXEC = alternation(
 # Both halves must be there, and the sink must take that very variable: a hex utility, or a
 # `new Function("return this")`, is not a decode-and-execute.
 _JS_DECODED_VARIABLE = re.compile(
-    # An optional TypeScript annotation: `const stage: string = ...`.
-    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})(?:\s*:\s*[\w$.<>\[\]| ]{1,40}?)?\s*=\s*(?:"
+    # Starts with the keyword itself, so the engine can skip to the letters it begins with; the
+    # word boundary in front is checked in code. An optional TypeScript annotation:
+    # `const stage: string = ...`.
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})(?:\s*:\s*[\w$.<>\[\]| ]{1,40}?)?\s*=\s*(?:"
     r"Buffer\.from\s*\([^;\n]{0,200}?['\"](?:hex|base64)['\"]"
     r"|(?:window\.|globalThis\.)?atob\s*\("
     r"|" + _HEX_DECODER
@@ -68,10 +73,10 @@ _JS_DECODED_VARIABLE = re.compile(
     r")"
 )
 # A code sink and the variable it runs (for the Function constructor, its last argument, the body).
+# Like the regexes above, it starts with a literal; the word boundary in front is checked in code.
 _JS_CODE_SINK = re.compile(
-    r"(?:\beval|(?:\bnew\s+)?\bFunction|\bsetTimeout|\bsetInterval|\bvm\.runIn(?:This|New)Context"
-    r"|\bnew\s+vm\.Script)\s*\(\s*(?:[^()\n]{0,200},\s*)?([A-Za-z_$][\w$]{0,60})"
-    r"(?:\.toString\(\s*\))?\s*[,)]"
+    r"(?:eval|Function|setTimeout|setInterval|vm\.runIn(?:This|New)Context|vm\.Script)"
+    r"\s*\(\s*(?:[^()\n]{0,200},\s*)?([A-Za-z_$][\w$]{0,60})(?:\.toString\(\s*\))?\s*[,)]"
 )
 _PY_DECODED_VARIABLE = re.compile(
     r"(?m)^[ \t]*([A-Za-z_]\w{0,60})\s*=\s*(?:"
@@ -80,13 +85,25 @@ _PY_DECODED_VARIABLE = re.compile(
     r"|[bru]{0,2}['\"](?:\\x[0-9A-Fa-f]{2}){8}"
     r")"
 )
-_PY_CODE_SINK = re.compile(r"(?<![\w.])(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w{0,60})\b")
+# Builtins only: `re.compile(pattern)` is not a sink, so a `.` in front rules a match out (in code).
+_PY_CODE_SINK = re.compile(r"(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w{0,60})\b")
 _FLOW_REACH = 4000
-# Every sink above contains one of these.
+# Every sink above contains one of the first tokens, every decoded source one of the second.
 _JS_SINK_TOKENS = ("eval", "Function", "setTimeout", "setInterval", "runIn", "Script")
 _PY_SINK_TOKENS = ("exec", "eval", "compile")
+_JS_SOURCE_TOKENS = ("Buffer.from", "atob", "hex", "Hex", "HEX", "\\x", "\\u00")
+_PY_SOURCE_TOKENS = ("fromhex", "unhexlify", "a2b_hex", "codecs", "b64decode", "\\x")
 _JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _PY_SUFFIXES = (".py", ".pyw")
+
+
+def _starts_a_word(text: str, start: int, word_chars: str) -> bool:
+    """True if nothing that continues an identifier (letters, digits, ``word_chars``) sits right
+    before ``start``: `eval(` but not `myeval(`, `Function(` but not `isFunction(`."""
+    if not start:
+        return True
+    before = text[start - 1]
+    return not (before.isalnum() or before in word_chars)
 
 
 def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
@@ -95,18 +112,23 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
     the variable they run once, so the cost stays linear in the file."""
     evidence: list[Evidence] = []
     for f in index.select(suffixes=_JS_SUFFIXES + _PY_SUFFIXES):
+        text = f.text
         if f.suffix in _PY_SUFFIXES:
-            source, sink, tokens = _PY_DECODED_VARIABLE, _PY_CODE_SINK, _PY_SINK_TOKENS
+            source, sink = _PY_DECODED_VARIABLE, _PY_CODE_SINK
+            sinks, sources, before_sink = _PY_SINK_TOKENS, _PY_SOURCE_TOKENS, "_."
         else:
-            source, sink, tokens = _JS_DECODED_VARIABLE, _JS_CODE_SINK, _JS_SINK_TOKENS
-        if not any(token in f.text for token in tokens):
-            continue  # no sink at all: a substring check skips the file for free
-        decoded = list(source.finditer(f.text))
+            source, sink = _JS_DECODED_VARIABLE, _JS_CODE_SINK
+            sinks, sources, before_sink = _JS_SINK_TOKENS, _JS_SOURCE_TOKENS, "_$"
+        # No sink or no decoder in the file: substring checks skip it before any regex runs.
+        if not (any(t in text for t in sinks) and any(t in text for t in sources)):
+            continue
+        decoded = [m for m in source.finditer(text) if _starts_a_word(text, m.start(), "_$")]
         if not decoded:
             continue
         runs: dict[str, list[re.Match[str]]] = {}
-        for run in sink.finditer(f.text):
-            runs.setdefault(run.group(1), []).append(run)
+        for run in sink.finditer(text):
+            if _starts_a_word(text, run.start(), before_sink):
+                runs.setdefault(run.group(1), []).append(run)
         starts = {name: [r.start() for r in found] for name, found in runs.items()}
         for m in decoded:
             found = runs.get(m.group(1))
@@ -121,6 +143,7 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 return evidence
     return evidence
+
 
 # A decode-function name resolved dynamically instead of written as a literal attribute access,
 # so the call never shows the ``exec(``/``eval(`` immediately followed by ``b64decode``/``atob``

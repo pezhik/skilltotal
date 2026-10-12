@@ -399,6 +399,78 @@ def test_the_decoded_variable_pass_is_linear(tmp_path):
     _timed(lambda: _decoded_then_executed(index))
 
 
+def test_every_decode_exec_alternative_starts_with_a_literal():
+    # The regex engine skips ahead to where a match can begin only when every alternative opens
+    # with a literal character. One `(?:eval|Function)` group, or a leading `\b`, turned that off
+    # for the whole regex, and the obfuscation scanner ran five to ten times slower.
+    from skilltotal.scanners.obfuscation import _DECODE_EXEC_ALTERNATIVES
+
+    for alternative in _DECODE_EXEC_ALTERNATIVES:
+        assert alternative[0].isalpha() or alternative.startswith("\\("), alternative
+
+
+# The ruleset 67 decode-and-execute regex, kept as the cost reference for the scanner below.
+_RULESET_67_DECODE_EXEC = (
+    r"exec\s*\(\s*(?:\w+\.)?b64decode",
+    r"eval\s*\(\s*(?:\w+\.)?b64decode",
+    r"exec\s*\(\s*bytes\.fromhex",
+    r"eval\s*\(\s*bytes\.fromhex",
+    r"exec\s*\(\s*codecs\.decode",
+    r"eval\s*\(\s*atob\s*\(",
+    r"\(\s*0\s*,\s*eval\s*\)\s*\(\s*(?:atob|Buffer\.from)\s*\(",
+    r"Function\s*\(\s*atob\s*\(",
+    r"eval\s*\(\s*Buffer\.from\s*\([^)]*['\"]base64['\"]",
+)
+
+
+def test_the_obfuscation_scanner_costs_what_it_did_on_ruleset_67(tmp_path, monkeypatch):
+    # The scanner as it is, against the same scanner with the ruleset 67 regex and without the
+    # two-statement pass, on ordinary code dense in the letters and calls both regexes start on,
+    # with decoded values and sinks that never meet. Timed in one process, best of three, so the
+    # bound holds on a slow machine too. A regex that loses its first-character skip, or a sink
+    # regex that opens with `\b`, costs three to five times the reference here; the two-statement
+    # pass itself, given a decoded value in every block, about a third more.
+    from dataclasses import replace
+
+    from skilltotal.file_index import FileIndex
+    from skilltotal.scanners import obfuscation
+    from skilltotal.scanners.base import alternation
+
+    block = (
+        "export function render(element, props) {\n"
+        "  const value = element.getAttribute('data-value') ?? props.defaultValue;\n"
+        "  const key = Buffer.from(props.hexKey, 'hex');\n"
+        "  if (typeof props.onChange === 'function') props.onChange(eval(value));\n"
+        "  return new Function('return this')() || Function.prototype.call(element, key);\n"
+        "}\n"
+    )
+    for i in range(8):
+        (tmp_path / f"module{i}.js").write_text(block * 500, encoding="utf-8")
+    index = FileIndex.build(tmp_path)
+    assert len(index.files) == 8
+
+    current = obfuscation.ObfuscationScanner()
+    reference = obfuscation.ObfuscationScanner()
+    old = alternation(*_RULESET_67_DECODE_EXEC)
+    reference.rules = [
+        replace(r, pattern=old) if r.id == "ST-OBF-DECODE-EXEC" else r for r in reference.rules
+    ]
+
+    def best(scanner, flow) -> float:
+        monkeypatch.setattr(obfuscation, "_decoded_then_executed", flow)
+        times = []
+        for _ in range(3):
+            start = time.perf_counter()
+            scanner.scan(index)
+            times.append(time.perf_counter() - start)
+        return min(times)
+
+    flow = obfuscation._decoded_then_executed
+    took = best(current, flow)
+    baseline = best(reference, lambda index: [])
+    assert took < baseline * 1.5 + 0.05, f"{took:.2f}s against {baseline:.2f}s on ruleset 67"
+
+
 # --- Gap 4: a bind to all interfaces through a variable -------------------------------------
 
 @pytest.mark.parametrize(
