@@ -41,6 +41,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Over-broad MCP scope** (wildcard / full-access permission) | `ST-MCP-OVERBROAD-SCOPE` | — |
 | **E-mail/SMTP credential exfiltration** (read secret → e-mail it out) | `ST-COMBO-EXFIL` via smtplib/nodemailer egress | `py-email-stealer` |
 | **Mail backdoor** (hardcoded BCC/CC copies outgoing mail) | `ST-EMAIL-BCC-EXFIL` | — |
+| **CI-token exfiltration from a composite action** (a `run:` step sends `GITHUB_TOKEN` / a `${{ secrets.* }}` to a non-GitHub host) | `ST-ACTION-SECRET-EXFIL` (malicious) | — |
 
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
 risk; `exposure` rules (`ST-SECRET-EMBEDDED`, `ST-ENV-SHIPPED`) report a credential the component

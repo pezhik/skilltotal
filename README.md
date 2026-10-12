@@ -94,8 +94,8 @@ that produced them.
   [Aggregates (JSON)](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-registry-survey.json) ·
   [the harness](https://github.com/pezhik/skilltotal/blob/main/tests/manual_eval/survey_registry.py).
 - **[Detection efficacy](https://github.com/pezhik/skilltotal/blob/main/docs/efficacy-report.md)**:
-  recall and precision on a labeled corpus we built and publish (73 malicious and
-  50 benign samples), regenerated every release and enforced by CI as a floor. A perfect
+  recall and precision on a labeled corpus we built and publish (75 malicious and
+  52 benign samples), regenerated every release and enforced by CI as a floor. A perfect
   score on our own corpus guards against regressions; it is not a claim about every attack in the
   wild.
 
