@@ -141,6 +141,16 @@ def analyze_directory(
             )
         )
     needs_review.extend(_unread_notes(index))
+    # A script npm runs at install that is too large already has a note of its own.
+    large = [p for p in index.large if p not in install_scripts]
+    if large:
+        needs_review.append(aggregated_review(
+            category="coverage",
+            title="Files too large to analyze",
+            places=[(p, None) for p in large],
+            what=f"text file(s) larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB were not read",
+            advice="Nothing in them was checked.",
+        ))
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
@@ -294,13 +304,38 @@ def _assign_owasp(findings: list[Finding]) -> None:
 # Source languages whose behavior (shell, network, file access, dynamic code) no scanner reads yet.
 # Secrets, sensitive paths, hidden Unicode and manifest checks still run on these files; the gap is
 # behavior. Without saying so, a Go server that shells out and posts a credential file scored "low"
-# with nothing to tell the reader why.
+# with nothing to tell the reader why. A suffix that can also mean something other than code with
+# shell, network or file access is left out: `.m` (often MATLAB), `.jl` (JSON Lines) and `.fs`
+# (shaders); shell, PowerShell and batch files are read by the shell scanners. `.pl` stays: it is
+# Perl far more often than Prolog, and Prolog code is not analyzed either, so the note holds for
+# both and only the language it names could be off.
 _UNANALYZED_LANGUAGES = {
     ".go": "Go",
     ".rs": "Rust",
     ".java": "Java",
     ".rb": "Ruby",
     ".php": "PHP",
+    **dict.fromkeys((".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"), "C/C++"),
+    ".cs": "C#",
+    ".swift": "Swift",
+    ".kt": "Kotlin",
+    ".kts": "Kotlin",
+    ".scala": "Scala",
+    ".dart": "Dart",
+    ".lua": "Lua",
+    ".pl": "Perl",
+    ".pm": "Perl",
+    ".ex": "Elixir",
+    ".exs": "Elixir",
+    ".groovy": "Groovy",
+    ".hs": "Haskell",
+    ".clj": "Clojure",
+    ".cljs": "Clojure",
+    ".cljc": "Clojure",
+    ".erl": "Erlang",
+    ".hrl": "Erlang",
+    ".r": "R",
+    ".zig": "Zig",
 }
 
 

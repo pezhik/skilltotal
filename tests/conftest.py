@@ -13,6 +13,16 @@ from skilltotal.models import Report
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _outside_ci(monkeypatch):
+    """The hook's strict mode follows CI's variables, and this suite itself runs in CI: every test
+    starts outside it, and the strict-mode tests set what they need."""
+    from skilltotal.cli import HOOK_CI_MARKERS
+
+    for name in (*HOOK_CI_MARKERS, "SKILLTOTAL_STRICT", "SKILLTOTAL_ALLOW_UNCHECKED"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def analyze_fixture(name: str) -> Report:
     root = FIXTURES / name
     component = detect_component(root, source=str(root))

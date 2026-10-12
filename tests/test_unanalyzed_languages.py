@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skilltotal.engine import analyze_directory
 from skilltotal.models import Component
 
@@ -89,3 +91,46 @@ def test_a_higher_verdict_keeps_its_headline(tmp_path: Path):
     assert report.verdict["unanalyzed_code"] == {"Go": 1}
     assert report.verdict["level"] != "low"
     assert not report.verdict["headline"].startswith("Partially analyzed")
+
+
+# C, C++ and the other common languages no scanner reads for behavior were passed over in silence:
+# a native addon that called system() read "No significant risks found".
+_C = '#include <stdlib.h>\nint main(void) { return system("id"); }\n'
+
+
+def test_c_and_cpp_code_is_named_as_unanalyzed(tmp_path: Path):
+    report = _report(tmp_path, {"src/main.c": _C, "src/util.h": "int helper(void);\n",
+                                "src/addon.cc": "int x = 1;\n"})
+    (note,) = _coverage_notes(report)
+    assert "3 C/C++ source file(s)" in note.reason
+    assert report.verdict["unanalyzed_code"] == {"C/C++": 3}
+    assert report.verdict["headline"] == (
+        "Partially analyzed - C/C++ code not checked for shell, network or file access"
+    )
+    assert report.verdict["level"] == "low"
+
+
+_SUFFIXES = {
+    "a.c": "C/C++", "a.h": "C/C++", "a.cc": "C/C++", "a.cpp": "C/C++", "a.cxx": "C/C++",
+    "a.hpp": "C/C++", "a.hh": "C/C++", "a.hxx": "C/C++",
+    "Program.cs": "C#", "App.swift": "Swift", "Main.kt": "Kotlin", "build.gradle.kts": "Kotlin",
+    "Main.scala": "Scala", "main.dart": "Dart", "init.lua": "Lua", "run.pl": "Perl",
+    "Lib.pm": "Perl", "app.ex": "Elixir", "mix.exs": "Elixir", "build.groovy": "Groovy",
+    "Main.hs": "Haskell", "core.clj": "Clojure", "app.cljs": "Clojure", "shared.cljc": "Clojure",
+    "srv.erl": "Erlang", "rec.hrl": "Erlang", "fit.R": "R", "main.zig": "Zig",
+}
+
+
+@pytest.mark.parametrize(("name", "language"), sorted(_SUFFIXES.items()))
+def test_each_language_suffix_is_named(tmp_path: Path, name: str, language: str):
+    report = _report(tmp_path, {name: "x\n"})
+    assert report.verdict["unanalyzed_code"] == {language: 1}
+
+
+@pytest.mark.parametrize("name", ["view.m", "items.jl", "shader.fs", "run.sh", "setup.ps1",
+                                  "build.bat"])
+def test_suffixes_of_more_than_one_language_or_read_by_scanners_are_not_named(
+    tmp_path: Path, name: str
+):
+    report = _report(tmp_path, {name: "x\n"})
+    assert "unanalyzed_code" not in report.verdict

@@ -108,7 +108,10 @@ def test_a_cached_verdict_keeps_the_unread_install_script(tmp_path, monkeypatch)
     monkeypatch.setattr(cli, "_hook_scan", lambda source, timeout, job=None: full)
     cli._hook_scan_cached("npm:some-pkg", 20)
     cached = cli._hook_scan_cached("npm:some-pkg", 20)
-    assert [n["title"] for n in cached["needs_review"]] == [UNANALYZED_INSTALL_SCRIPT]
+    # Every note that says part of it was not analyzed is kept: the hook says so for a cached
+    # answer as for a fresh one.
+    assert [n["title"] for n in cached["needs_review"]] == [
+        UNANALYZED_INSTALL_SCRIPT, "Minified bundle not analyzed"]
     assert not evaluate(cached).allow
 
 

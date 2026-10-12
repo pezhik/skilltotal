@@ -1037,7 +1037,7 @@ def test_the_hook_waits_sixty_seconds_unless_told_otherwise(monkeypatch, setting
 
     seen = []
     monkeypatch.setattr(agent_hook, "hook_response",
-                        lambda event, scan, budget_s: seen.append(budget_s))
+                        lambda event, scan, budget_s, **_: seen.append(budget_s))
     if setting is None:
         monkeypatch.delenv("SKILLTOTAL_HOOK_BUDGET", raising=False)
     else:
