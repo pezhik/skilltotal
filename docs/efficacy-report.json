@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.64.0",
+  "engine_version": "0.65.0",
   "ruleset_version": 69,
   "python_version": "3.14",
-  "positives": 75,
-  "negatives": 52,
+  "positives": 90,
+  "negatives": 60,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -24,6 +24,7 @@
     "dns-exfil": 1.0,
     "dynamic-call-resolution": 1.0,
     "email-exfil": 1.0,
+    "env-dump-exfil": 1.0,
     "git-hook-persistence": 1.0,
     "github-action-secret-exfil": 1.0,
     "gyp-command-substitution": 1.0,
@@ -31,6 +32,7 @@
     "install-dropper": 1.0,
     "lethal-trifecta": 1.0,
     "mcp-config-inject": 1.0,
+    "mcp-launch-command": 1.0,
     "mcp-sampling-injection": 1.0,
     "mcp-tool-poisoning": 1.0,
     "password-archive": 1.0,
@@ -45,13 +47,13 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 14,
-      "python": 10,
+      "node": 18,
+      "python": 12,
       "manifest/text": 8,
       "shell": 2
     },
     "AST02": {
-      "manifest/text": 5,
+      "manifest/text": 14,
       "node": 9,
       "python": 2
     },

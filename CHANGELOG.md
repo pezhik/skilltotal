@@ -4,7 +4,30 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.65.0]
+
+Nothing the engine skips is skipped in silence, and agent auto-run commands are read. Ruleset 69.
+
+### Detection (ruleset 69)
+Details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 90 malicious and 60 benign samples,
+90/90 flagged, 0 false positives.
+- Every command an agent host or editor runs on its own is read with one parser: MCP server
+  launch commands (Claude, VS Code, Codex, Gemini and bundles), hooks (including http hooks),
+  status lines and helper commands, and the hooks, monitors, LSP and MCP servers of plugins,
+  skills and subagents. Reading a key, the whole environment or a CLI token and sending it out
+  from such a command is a malicious indicator (`ST-SECRET-EXFIL`), as is passing the whole
+  `process.env` / `os.environ` to a network call.
+- A JSON string that is a command is no longer read as a deny-list entry, so a credential path
+  inside an agent's launch command is no longer set aside for review.
+- Code in `env/`, `venv/` or `vendor/` is analyzed unless the folder is a real virtual
+  environment, and code loaded by path from a skipped folder is followed; what stays unread
+  gets a note.
+- A name bound to `__import__`, `importlib.import_module` or `getattr(<module>, ...)` and called
+  later is read as the call it resolves to.
+- A composite GitHub Action step that sends a CI token to a host outside GitHub is a malicious
+  indicator (`ST-ACTION-SECRET-EXFIL`).
+- An all-interfaces address inside the text of a warning or log message is no longer read as
+  a server bind.
 
 ### Breaking for CI
 - **In CI the Claude Code hook denies what it could not check.** Strict mode is on when `CI` (or
@@ -32,6 +55,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - The report names code in C/C++, C#, Swift, Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy,
   Haskell, Clojure, Erlang, R and Zig as not analyzed for behavior, as it already did for Go,
   Rust, Java, Ruby and PHP. Scores do not change. A low verdict reads "Partially analyzed".
+
+### Changed
+- README and docs name exactly what each coverage row checks and what is not checked yet. A
+  skill's `allowed-tools` is described as what it is: it pre-approves tools and does not limit
+  the skill's code (`ST-SKILL-CAP-MISMATCH` text updated).
 
 ## [0.64.0]
 
