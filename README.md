@@ -94,8 +94,8 @@ that produced them.
   [Aggregates (JSON)](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-registry-survey.json) ·
   [the harness](https://github.com/pezhik/skilltotal/blob/main/tests/manual_eval/survey_registry.py).
 - **[Detection efficacy](https://github.com/pezhik/skilltotal/blob/main/docs/efficacy-report.md)**:
-  recall and precision on a labeled corpus we built and publish (73 malicious and
-  50 benign samples), regenerated every release and enforced by CI as a floor. A perfect
+  recall and precision on a labeled corpus we built and publish (75 malicious and
+  52 benign samples), regenerated every release and enforced by CI as a floor. A perfect
   score on our own corpus guards against regressions; it is not a claim about every attack in the
   wild.
 
@@ -174,9 +174,31 @@ What happens to the install:
   - the sixth and later packages in one command
   - a package name a letter or two away from a popular one
   - a package with an install script SkillTotal could not read, or with nothing it could read
-  - an error inside the hook: SkillTotal never denies an install because of its own failure
+  - an error inside the hook: outside CI, SkillTotal never denies an install because of its own
+    failure
 - **Clean:** the package installs as usual, and the agent gets a one-line note with the version
-  that was checked and its score.
+  that was checked and its score. If part of the package could not be analyzed (code in a
+  language SkillTotal does not analyze, a file too large or impossible to parse), the note says
+  "partly analyzed" and lists what was left out.
+- **Installs with no package name:** installs from a lockfile, manifest or requirements file (`npm ci`,
+  `npm install`, `pip install -r`, `uv sync`, `poetry install`, updates such as `npm update`,
+  and `uv run` in a project), from a local path (`pip install -e .`, `npm install ./dir`), or a
+  script downloaded and run (`curl ... | bash`, `curl -o i.sh ... && bash i.sh`,
+  `iex (irm ...)`). Outside CI they run as usual.
+
+Every install command gets one line in the Claude Code console: what was checked and its score,
+the decision and why, or what was not checked (for example "SkillTotal did not check this install:
+it installs from package-lock.json, and SkillTotal checks only the packages a command names.").
+
+**In CI (strict mode)** nobody is there to answer a question, so everything SkillTotal would ask
+about is denied. So is every install it could not check, by kind: an install from a lockfile,
+manifest or requirements file (`lockfile`), from a local path (`local`), a downloaded script
+(`script`), and a partly analyzed package (`partial`). Strict mode is on when `CI` or one of
+`TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE` and `GITLAB_CI` is
+set to anything but empty, `0`, `false`, `no` or `off`. `SKILLTOTAL_STRICT=1` (or `true`, `yes`,
+`on`) turns it on anywhere, and `SKILLTOTAL_STRICT=0` turns it off. To let some kinds through, list
+them in `SKILLTOTAL_ALLOW_UNCHECKED`, for example `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`.
+Allowed kinds still get their console line. Malicious indicators are denied in and out of CI.
 
 Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) are scanned
 at the ref that will be installed. A verdict is reused for the same artifact (an exact npm release
@@ -198,9 +220,11 @@ done, the same command goes through if the package is clean. The plugin also add
 `/skilltotal:scan <target>` command and registers the MCP server described below.
 
 The plugin calls the CLI, so install the CLI where Claude Code can find it: `skilltotal --version`
-should work in the terminal you start Claude Code from. If the CLI is missing or fails to start,
-install commands run unchecked and nothing is blocked. Claude Code then shows a warning on each
-one, so you can tell a broken setup from a clean check.
+should work in the terminal you start Claude Code from. Outside CI, if the CLI is missing or fails
+to start, install commands run unchecked; if it is older than the plugin, it still checks what it
+knows. Either way, Claude Code shows a warning on each install command, so you can tell a broken
+setup from a clean check. In CI, every command is denied until the CLI works, and the console line
+says how to fix it.
 
 The hook loads along with the plugins, so run `/reload-plugins` (or restart Claude Code) after
 `/plugin install`. To see it work without touching a real package, ask the agent to run
@@ -211,17 +235,22 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
 
 - **Dependencies.** It scans the package a command names, not the packages it pulls in.
 - **Installs that name no package.** `npm install`, `npm ci`, `pip install -r requirements.txt` and
-  `uv sync` install from a lockfile or a requirements file, which the hook does not read.
+  `uv sync` install from a lockfile or a requirements file, which the hook does not read. The hook
+  says so in the console. In CI it denies them unless `SKILLTOTAL_ALLOW_UNCHECKED` includes
+  `lockfile`.
 - **Scripts and shell-profile definitions.** The hook reads only the command line. It does not
-  read a script on disk (`bash install.sh`), a script the agent downloads and runs
-  (`curl ... | bash`), or the aliases, functions and variables your shell profile defines.
+  read a script on disk (`bash install.sh`) or the aliases, functions and variables your shell
+  profile defines. It does not read a script the agent downloads and runs (`curl ... | bash`)
+  either. It says so in the console, and in CI it denies the command unless
+  `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
 - **Minified bundles.** They are listed in the report but not analyzed. The scripts npm runs at
   install are the exception: they are analyzed even when minified.
 - **Platform-specific wheels.** For a PyPI release that ships them, SkillTotal scans the source
   distribution; the wheel pip picks for your machine can differ from it. A release whose only
   wheel is pure Python is scanned as that wheel.
 - **Behavior in languages other than Python, JavaScript/TypeScript and shell.** Secrets, sensitive
-  paths and hidden Unicode are still checked there.
+  paths and hidden Unicode are still checked there. The console line says the package was partly
+  analyzed.
 
 It is a static guardrail, not a sandbox. For code you don't trust, run the agent in a container.
 
@@ -258,6 +287,9 @@ skilltotal scan ./component --output report.json
 skilltotal scan ./component --fail-on-high             # alias for --fail-on high
 skilltotal scan ./component --fail-on medium
 skilltotal scan ./component --fail-on-score 50
+# ...or when part of the component could not be analyzed: unreadable, too large or unparseable
+# files, or code in a language SkillTotal does not analyze (binaries and dependency folders don't count)
+skilltotal scan ./component --fail-on-unanalyzed
 
 # Skip paths (repeatable; combined with the config file's `exclude`)
 skilltotal scan ./component --exclude "vendor/*" --exclude "*.min.js"
@@ -327,6 +359,7 @@ scan stays component-only.
 ```toml
 fail_on = "high"           # low | medium | high | critical
 fail_on_score = 50         # or gate on the 0-100 risk score
+fail_on_unanalyzed = true  # or when part of the component could not be analyzed (true/false)
 exclude = ["vendor/*", "*.min.js"]
 ignore = ["ST-NET-PY"]     # rule ids to drop
 baseline = ".skilltotal-baseline.json"
@@ -355,7 +388,7 @@ directory you are scanning: a `json.py` there would run instead of the one in th
 |------|---------|
 | 0 | Success |
 | 1 | Usage or collection error (for example an unknown flag value, a missing path or a failed clone) |
-| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score` or `diff --fail-on-new`), or `guard` blocked the component |
+| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score`, `--fail-on-unanalyzed` or `diff --fail-on-new`), or `guard` blocked the component |
 
 > **Gate semantics:** `--fail-on`/`--fail-on-high` trip on the **severity of a single finding**,
 > not the aggregate `risk_score`. They count risk findings: a malicious indicator at any severity,
@@ -389,6 +422,7 @@ jobs:
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail on a high/critical risk finding (or 'none')
+          fail-on-unanalyzed: 'false' # 'true': also fail when part of it could not be analyzed
           comment-on-pr: 'true' # post a sticky summary comment on pull requests (optional)
 ```
 
@@ -396,7 +430,9 @@ The action runs the engine that ships with the tag you pin, so nothing is downlo
 scans `source` and uploads SARIF (so findings appear inline on pull requests and in Code Scanning).
 It fails the job on a finding at or above `fail-on` (`low`, `medium`, `high`, `critical`; `none`
 never fails). The gate semantics above apply: a malicious indicator fails the job at any severity,
-and a capability on its own, such as a shell call or network access, never does.
+and a capability on its own, such as a shell call or network access, never does. With
+`fail-on-unanalyzed: 'true'` it also fails the job when part of the component could not be
+analyzed, as `--fail-on-unanalyzed` does.
 
 With `comment-on-pr: 'true'`, the action posts a single summary comment on the pull request (risk
 level, score, findings, capabilities) and updates it in place on later runs. The comment is off by
@@ -490,16 +526,20 @@ published npm/PyPI package.
 | Category | MCP | npm | PyPI | AI project |
 |---|---|---|---|---|
 | Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ✅ |
-| Tool poisoning (MCP tool metadata) | ✅ | ❌ | ❌ | ⚠️ |
+| Tool poisoning (MCP tool and parameter descriptions) | ✅ | ❌ | ❌ | ⚠️ |
 | Dangerous capabilities (shell / fs / network) | ✅ | ✅ | ✅ | ⚠️ |
 | Data exfiltration (secret access + egress) | ✅ | ✅ | ✅ | ⚠️ |
 | Secret theft / sensitive-path access | ✅ | ✅ | ✅ | ⚠️ |
 | Dynamic code execution | ✅ | ✅ | ✅ | ⚠️ |
 | Obfuscation (decode-and-execute) | ✅ | ✅ | ✅ | ✅ |
-| Hidden-Unicode smuggling | ✅ | ✅ | ✅ | ✅ |
+| Hidden-Unicode smuggling (tag, bidi control and zero-width characters) | ✅ | ✅ | ✅ | ✅ |
 | Embedded secrets (hardcoded keys/tokens) | ✅ | ✅ | ✅ | ✅ |
 | Install-time / supply-chain hooks | ⚠️ | ✅ | ✅ | ❌ |
-| Overprivileged / auto-approved tools | ✅ | ❌ | ❌ | ⚠️ |
+| Overprivileged tools, auto-approve keys in MCP server entries | ✅ | ❌ | ❌ | ⚠️ |
+
+Each row names what the engine checks today. Not checked yet: nested schema fields, prompts,
+resources and server instructions; Unicode variation selectors and ANSI terminal escape
+sequences; auto-approve settings that agent hosts keep outside MCP server entries.
 
 ### Typical findings
 
@@ -513,8 +553,9 @@ published npm/PyPI package.
 - An MCP server with auto-approved or overprivileged tools
 - Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
   shell: a traced path, not just a dangerous API in isolation
-- An **agent skill** does more than its declared `allowed-tools` allow (undeclared capability /
-  least-privilege violation)
+- An **agent skill** whose bundled code does more than its declared `allowed-tools` cover. The
+  field pre-approves tools and does not limit the skill's code, so a narrow list can make a skill
+  look safer than it is.
 
 ## Out of scope
 
@@ -570,7 +611,8 @@ pytest
 - Python is analyzed via an **AST** (resolves import aliases, tells `open(p,'w')` from a
   read, ignores API names that only appear in strings/comments). Node.js/config use regex.
 - **Languages:** shell execution, network access, file access and dynamic code are detected in
-  Python and JavaScript/TypeScript. Go, Rust, Java, Ruby and PHP files still get the secret,
+  Python and JavaScript/TypeScript. Go, Rust, Java, Ruby, PHP, C/C++, C#, Swift, Kotlin, Scala,
+  Dart, Lua, Perl, Elixir, Groovy, Haskell, Clojure, Erlang, R and Zig files still get the secret,
   sensitive-path and hidden-Unicode checks, but their behavior is not analyzed yet. If a component
   ships code in those languages, the report adds a `needs_review` note, and a low verdict reads
   "Partially analyzed" instead of "No significant risks found".

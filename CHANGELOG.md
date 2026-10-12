@@ -4,6 +4,35 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+### Breaking for CI
+- **In CI the Claude Code hook denies what it could not check.** Strict mode is on when `CI` (or
+  `TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE`, `GITLAB_CI`) is
+  set. `SKILLTOTAL_STRICT=0` turns it off, and `SKILLTOTAL_STRICT=1` turns it on anywhere. In
+  strict mode the hook denies:
+  - everything it would otherwise ask about;
+  - installs that name no package (kind `lockfile`): `npm ci`, `npm install`, `pip install -r`,
+    `uv sync`, `poetry install`, updates, and `uv run` in a project;
+  - `pip install -e .` and other local paths (`local`);
+  - a downloaded script that is run (`script`);
+  - a package only partly analyzed (`partial`).
+
+  To let some of these kinds through, list them in `SKILLTOTAL_ALLOW_UNCHECKED` (any of
+  `lockfile`, `local`, `script`, `partial`), for example
+  `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`. Without a working CLI, or with one older than the
+  plugin, every command is denied in CI.
+
+### Added
+- Every install command gets one line in the Claude Code console: what was checked and its score,
+  the decision, or what was not checked and why.
+- `skilltotal scan --fail-on-unanalyzed`, `fail_on_unanalyzed = true` in `.skilltotal.toml` and the
+  Action input `fail-on-unanalyzed`: exit 2 when part of the component could not be analyzed.
+- A text file too large to analyze (over 2 MiB) gets a `needs_review` note.
+- The report names code in C/C++, C#, Swift, Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy,
+  Haskell, Clojure, Erlang, R and Zig as not analyzed for behavior, as it already did for Go,
+  Rust, Java, Ruby and PHP. Scores do not change. A low verdict reads "Partially analyzed".
+
 ## [0.64.0]
 
 Found while preparing the launch. Ruleset 68.

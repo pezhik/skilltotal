@@ -1036,7 +1036,6 @@ NORMAL_COMMANDS = [
     "npm ls",
     "pip list",
     "pip show requests",
-    "uv run x.py",
     "echo hello",
     "cat package.json",
     'python -c "print(1)"',
@@ -1049,10 +1048,10 @@ NORMAL_COMMANDS = [
     "for f in *.py; do python -m py_compile \"$f\"; done",
     "if [ -f package.json ]; then npm test; fi",
     "echo $((1 << 4))",
-    "npm i # nothing new: the lockfile",
-    "cd web && npm ci",
     "",
 ]
+# `npm i # ...` and `cd web && npm ci` install what the lockfile lists, and `uv run x.py` in a
+# project syncs it first: no decision, but a line in the console (tests/test_hook_visibility.py).
 
 
 @pytest.mark.parametrize("command", NORMAL_COMMANDS)
@@ -1758,7 +1757,7 @@ def _failed_check(answer):
 def test_a_crash_inside_the_hook_asks_the_person(monkeypatch, capsys):
     import json
 
-    def boom(event, scan, budget_s):
+    def boom(event, scan, budget_s, **_):
         raise RuntimeError("a bug in the hook")
 
     monkeypatch.setattr("skilltotal.agent_hook.hook_response", boom)
@@ -2029,12 +2028,10 @@ def test_poetry_pdm_and_pipenv_installs_are_checked(command, expected):
     assert install_targets(command) == expected
 
 
-@pytest.mark.parametrize(
-    "command",
-    ["poetry install", "pdm install", "pipenv install", "poetry run pytest", "pdm sync",
-     "pipenv sync", "poetry lock", "pipenv graph"],
-)
-def test_installing_a_lockfile_with_poetry_pdm_or_pipenv_stays_silent(command):
+@pytest.mark.parametrize("command", ["poetry run pytest", "poetry lock", "pipenv graph"])
+def test_poetry_pdm_and_pipenv_commands_that_install_nothing_stay_silent(command):
+    # `poetry install`, `pdm sync`, `pipenv install`: what the lockfile lists, said in the console
+    # (tests/test_hook_visibility.py).
     from skilltotal.agent_hook import parse_installs
 
     assert parse_installs(command) == []
@@ -2063,7 +2060,7 @@ def test_a_custom_source_for_poetry_pdm_or_pipenv_asks(command):
     [
         "$v = npm --version",
         "$out = npm ls; $out | Select-String lodash",
-        "$ErrorActionPreference = 'Stop'; npm ci",
+        "$ErrorActionPreference = 'Stop'; npm test",  # `...; npm ci`: tests/test_hook_visibility
         "[int]$n = 3; npm test",
         "$env:Path += ';C:\\tools'; npm run build",
         "$files = Get-ChildItem; $files.Count",

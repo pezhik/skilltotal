@@ -1617,6 +1617,13 @@ class IndexedFile:
                 return bool(sink.search(self.text, max(0, start - 60), start))
         return False
 
+    def c_string_spans(self) -> list[tuple[int, int]]:
+        """Char-spans of the C-family string literals (``'…'`` / ``"…"`` / a `` `…` `` template,
+        delimiters included) in file order, from the file's one lexing pass: a quote or backtick
+        inside a comment or a regex literal never starts one. Empty for other files."""
+        self._ensure_c_code_spans()
+        return self._c_string_spans_cache or []
+
     def string_span_at(self, offset: int) -> tuple[int, int] | None:
         """The char-span of the Python or C-family string literal holding ``offset``, if any."""
         if self.suffix in (".py", ".pyw"):
@@ -1886,6 +1893,7 @@ class FileIndex:
         unreadable: list[str] | None = None,
         skipped_dirs: list[tuple[str, str]] | None = None,
         skip_build_output: bool = True,
+        large: list[str] | None = None,
     ):
         self.root = root
         self.files = files
@@ -1904,6 +1912,9 @@ class FileIndex:
         self.skipped_dirs = skipped_dirs or []
         # Whether build output was set aside (a repository) or read (a published package).
         self.skip_build_output = skip_build_output
+        # Relative paths of text files larger than MAX_FILE_BYTES, not read (binaries are not
+        # listed: nothing here reads them, whatever their size).
+        self.large = large or []
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -1938,6 +1949,7 @@ class FileIndex:
         links: list[str] = []
         unreadable: list[str] = []
         skipped: list[tuple[str, str]] = []
+        large: list[str] = []
 
         for path in cls._walk(root, excludes, skip_build_output=skip_build_output,
                               links=links, unreadable=unreadable, skipped=skipped):
@@ -1949,6 +1961,8 @@ class FileIndex:
                 continue
             if size > MAX_FILE_BYTES:
                 stats["skipped_large"] += 1
+                if cls._large_text(path):
+                    large.append(path.relative_to(root).as_posix())
                 continue
             try:
                 raw = path.read_bytes()
@@ -2014,7 +2028,8 @@ class FileIndex:
         files.sort(key=lambda f: f.relpath)
         return cls(root, files, stats, sorted(minified), git_config,
                    links=sorted(links), unreadable=sorted(unreadable),
-                   skipped_dirs=sorted(skipped), skip_build_output=skip_build_output)
+                   skipped_dirs=sorted(skipped), skip_build_output=skip_build_output,
+                   large=sorted(large))
 
     def with_files(
         self, extra: list[IndexedFile], minified: list[str] | None = None
@@ -2027,7 +2042,7 @@ class FileIndex:
         return FileIndex(
             self.root, files, stats, sorted({*self.minified, *(minified or [])}), self.git_config,
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
-            skip_build_output=self.skip_build_output,
+            skip_build_output=self.skip_build_output, large=self.large,
         )
 
     @staticmethod
@@ -2049,6 +2064,16 @@ class FileIndex:
             return None, "minified"
         return IndexedFile(path=path, relpath=relpath, text=text,
                            _line_starts=FileIndex._compute_line_starts(text)), ""
+
+    @staticmethod
+    def _large_text(path: Path) -> bool:
+        """Whether a file too large to read is text: the same sniff, on its first bytes."""
+        try:
+            with path.open("rb") as handle:
+                head = handle.read(_BINARY_SNIFF_BYTES)
+        except OSError:
+            return True  # not even its start could be read: say so rather than nothing
+        return _sniffed_text(path.name, head) is not None
 
     @staticmethod
     def _walk(

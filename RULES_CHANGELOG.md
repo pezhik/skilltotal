@@ -6,12 +6,57 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 
 ## ruleset 69 (unreleased)
 
+Two remaining constructs from the blind red-team (2026-10-10) and one false positive found by
+dogfooding. Each is pinned by a sanitized sample that fails on ruleset 68 and by the near-misses
+that must stay as they were (`tests/test_ruleset69.py`). Detection-efficacy corpus, now 90 positive
+/ 60 negative: 90/90 flagged, 0 false positives (ruleset 68 misses the two new positives here and
+the fifteen of the auto-run changes below).
+
+- **`ST-SHELL-PY` / `ST-CMDI-PY` / `ST-DYN-PY` / `ST-NET-PY` / `ST-TAINT-SHELL-PY` /
+  `ST-TAINT-EXEC-PY`** (changed): the Python AST now follows a name bound to a module or to a
+  dangerous callable, then called later in the same scope, the way the direct one-expression form
+  already resolved. A name assigned `__import__("os")` or `importlib.import_module("os")` (the
+  module name spelled out as a constant) is an alias for that module, so a later `m.system(cmd)` is
+  read as `os.system`; a name assigned `getattr(<module>, "system")` (the attribute spelled out as a
+  literal or folded from pieces) is an alias for that function, so a later `f(cmd)` is read as the
+  call it resolves to. This reaches the shell/process family (`os.system`, the subprocess family,
+  `os.exec*`/`spawn*`), dynamic execution (`builtins.exec` / `eval` / `compile`, directly or bound),
+  the network/deserialize classifiers, and the untrusted-input flow rules, which read the same
+  resolved name: the bound form gets the same rule ids as the direct call (an environment value
+  reaching `f(...)` is `ST-TAINT-SHELL-PY`, as for `os.system(...)`). Resolution stays within one
+  function or module scope and only for a plain assignment made exactly once: a name reassigned in
+  the scope, a `getattr` on a value that is not a module, a non-constant attribute or a runtime
+  module name, and a free name with no binding in the scope being read all stay unresolved, as
+  before. A `.pth` persistence file that runs a sibling import (`exec("import helper")`) is left to
+  the imported module's own code, because that `.pth` shape is indistinguishable from several
+  legitimate startup hooks; the shell or egress hidden in the helper is what now resolves.
+- **`ST-ACTION-SECRET-EXFIL`** (new, malicious indicator, high): a composite GitHub Action `run:`
+  step that sends a continuous-integration secret -- `GITHUB_TOKEN`, an Actions OIDC/runtime token
+  (`ACTIONS_RUNTIME_TOKEN`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN`), or a `${{ secrets.* }}` /
+  `${{ github.token }}` expression -- to a non-GitHub host through a network client (`curl`, `wget`,
+  `Invoke-WebRequest`, `nc`, ...). The step runs on the runner of whoever uses the action, so every
+  consumer's token is exfiltrated. Each pipeline / `;` / `&&` segment of the step is judged on its
+  own, honoring quoting and backslash line-continuation, so the secret and the destination are read
+  together: handing the token to `gh` or `git` against GitHub, calling the GitHub API, pushing to a
+  `github.com` URL, downloading from GitHub releases, or reaching a documented Actions service URL
+  (`$ACTIONS_RESULTS_URL`, `$GITHUB_API_URL`, ...) is not matched, and the token merely masked or
+  echoed is not matched. Scoped to composite-action metadata (`action.yml`); a workflow or a plain
+  shell script is not in scope.
+- **`ST-EXPOSE-BIND`** (changed): an all-interfaces address literal inside a format or template
+  string whose own constant text contains whitespace is a warning/log message, not a bind, and no
+  longer fires (`f"WARNING: binding {host or '0.0.0.0'} with no api-key..."`; the JS template-literal
+  analog `` `binding ${host || '0.0.0.0'} ...` ``, a template read the way the language reads it,
+  so a backtick inside a comment never opens one). A real bind string is a bare address or a
+  `host:port` and never contains a space, so a bind built with an f-string (`f"{host or '0.0.0.0'}:
+  {port}"`), a fallback assigned then bound (`host = args.host or "0.0.0.0"`), and every earlier
+  positive still fire.
+
 Commands an agent host or editor runs on its own are now read from every place they can be
 declared, credentials or the whole environment sent over the network are a malicious indicator,
 and code loaded from a folder the scanner skips is followed instead of ignored. Each change is
 pinned by sanitized samples that ruleset 68 misses and by near-misses that must stay clean
-(`tests/test_autorun_surfaces.py`). Detection-efficacy corpus, now 88 positive / 58 negative:
-88/88 flagged, 0 false positives (ruleset 68 misses all fifteen new positives).
+(`tests/test_autorun_surfaces.py`), and by fifteen new positives and eight new negatives in the
+detection-efficacy corpus (ruleset 68 misses all fifteen positives).
 
 - **One reading of auto-run commands** (new, shared by `ST-AGENT-AUTORUN`,
   `ST-AGENT-AUTORUN-REMOTE`, `ST-MCP-SERVER-EXEC` and `ST-SECRET-EXFIL`): the launch command,

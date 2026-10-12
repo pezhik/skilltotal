@@ -191,6 +191,22 @@ UNANALYZED_LOADED_CODE = "Code loaded from a skipped folder not analyzed"
 # a working tree, and code the component loads from them was read.
 SKIPPED_FOLDERS = "Folders not analyzed"
 
+# The needs_review titles that say a file, or a part of one, was not analyzed: what
+# `scan --fail-on-unanalyzed` fails on. Every other note is a signal to read, not a gap in the scan.
+UNANALYZED_TITLES = frozenset({
+    UNANALYZED_INSTALL_SCRIPT,
+    NOTHING_READ,
+    "Files could not be read",
+    "Files too large to analyze",
+    "Links not followed",
+    "Archive entries not extracted",
+    "Minified bundle not analyzed",
+    "Code in languages not analyzed for behavior",
+    "Unparseable Python file",
+    "Unparseable potential MCP manifest",
+    "Deeply nested JSON partly analyzed",
+})
+
 
 @dataclass
 class NeedsReview:

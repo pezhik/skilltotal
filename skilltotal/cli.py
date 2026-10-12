@@ -3,14 +3,16 @@
 Commands:
     skilltotal scan <source> [--json|--sarif] [--output FILE]
                              [--fail-on LEVEL | --fail-on-high] [--fail-on-score N]
+                             [--fail-on-unanalyzed]
                              [--exclude GLOB ...] [--config FILE]
                              [--baseline FILE | --write-baseline FILE]
         <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
         file, a git URL, or an npm:<name> / pypi:<name> package spec.
-        Optional project config: .skilltotal.toml (fail_on, fail_on_score, exclude, ignore,
-        baseline, and a per-rule [policy] table with block/warn/ignore actions). CLI flags
-        override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a finding on its line
-        when the source is a local directory (never in a fetched package or repository).
+        Optional project config: .skilltotal.toml (fail_on, fail_on_score, fail_on_unanalyzed,
+        exclude, ignore, baseline, and a per-rule [policy] table with block/warn/ignore
+        actions). CLI flags override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a
+        finding on its line when the source is a local directory (never in a fetched package
+        or repository).
     skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
@@ -28,8 +30,10 @@ Commands:
     skilltotal hook claude-code
         Claude Code PreToolUse hook (used by the SkillTotal plugin): reads the hook event on
         stdin, scans any package the Bash command would install, and prints the decision.
-        Always exits 0; a failed scan never blocks the install. A scan that outlasts the wait
-        goes on in the background and keeps its verdict for the next run of the command.
+        Always exits 0; a failed scan asks the person and never blocks the install, except in
+        CI strict mode (CI or SKILLTOTAL_STRICT set), where what would be asked is denied. A
+        scan that outlasts the wait goes on in the background and keeps its verdict for the
+        next run of the command.
 
 Exit codes:
     0  success
@@ -137,6 +141,14 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         type=int,
         help="Exit with code 2 if the risk score is >= N (0-100).",
+    )
+    scan.add_argument(
+        "--fail-on-unanalyzed",
+        action="store_true",
+        help=(
+            "Exit with code 2 if the report says a file, or part of one, could not be analyzed "
+            "(binary files and dependency folders are skipped by design and do not count)."
+        ),
     )
     scan.add_argument(
         "--exclude",
@@ -279,6 +291,8 @@ def build_parser() -> argparse.ArgumentParser:
     # The two processes a check runs in, started by the hook itself (see skilltotal.hook_scan).
     hook.add_argument("--supervise", metavar="DIR", help=argparse.SUPPRESS)
     hook.add_argument("--scan-into", metavar="DIR", help=argparse.SUPPRESS)
+    # The hook protocol the plugin's wrapper needs (HOOK_PROTOCOL).
+    hook.add_argument("--protocol", metavar="N", type=int, default=0, help=argparse.SUPPRESS)
 
     return parser
 
@@ -370,11 +384,16 @@ class _ProgressLine:
 def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.baseline import build_baseline, load_baseline
     from skilltotal.collector import CollectionError, classify_source
+    from skilltotal.config import ConfigError
     from skilltotal.engine import analyze
     from skilltotal.report import render_json, render_text
     from skilltotal.sarif import render_sarif
 
-    config = _load_config(args)
+    try:
+        config = _load_config(args)
+    except ConfigError as exc:  # a gate that would silently be off
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
 
     baseline_path = args.baseline or config.baseline
     suppress: set[str] = set()
@@ -455,18 +474,35 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
     score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
-    if _fails_gate(report, level, score, config.policy):
+    gaps = _unanalyzed(report) if args.fail_on_unanalyzed or config.fail_on_unanalyzed else []
+    if gaps:
+        # With --json or --sarif the report is all stdout carries (SARIF has no needs_review):
+        # say in the log what was not analyzed.
+        print(f"Not everything was analyzed: {'; '.join(gaps)}.", file=sys.stderr)
+    if gaps or _fails_gate(report, level, score, config.policy):
         return EXIT_FAIL_ON_HIGH
     return EXIT_OK
 
 
+def _unanalyzed(report) -> list[str]:
+    """The titles of the needs_review notes that say a file, or a part of one, was not analyzed."""
+    from skilltotal.models import UNANALYZED_TITLES
+
+    return list(dict.fromkeys(n.title for n in report.needs_review if n.title in UNANALYZED_TITLES))
+
+
 def _cmd_diff(args: argparse.Namespace) -> int:
     from skilltotal.collector import CollectionError
+    from skilltotal.config import ConfigError
     from skilltotal.diff import diff_reports, max_new_severity
     from skilltotal.models import Severity
     from skilltotal.report import render_diff_json, render_diff_text
 
-    config = _load_config(args)
+    try:
+        config = _load_config(args)
+    except ConfigError as exc:  # a gate that would silently be off
+        print(f"error: {exc}", file=sys.stderr)
+        return EXIT_ERROR
     exclude = [*config.exclude, *args.exclude]
 
     try:
@@ -644,14 +680,72 @@ def _cmd_mcp() -> int:
 
 # The answer when the hook cannot finish its own check. Exiting with an error would let the plugin's
 # wrapper pass the command with only a warning, and denying would block for SkillTotal's own fault:
-# the person decides.
+# the person decides. In CI strict mode nobody is there to decide, so the command is denied.
 HOOK_FAILED = {
+    "systemMessage": "SkillTotal could not check this command.",
     "hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "ask",
         "permissionDecisionReason": "SkillTotal could not check this command.",
-    }
+    },
 }
+# The hook protocol this CLI speaks, which the plugin's wrapper asks for with --protocol: 2 is the
+# console line for every install and CI strict mode. A CLI that speaks an older one, or knows no
+# --protocol at all, fails on it, and the wrapper says the CLI is older than the plugin (in CI it
+# denies). Raise it, with the wrapper's PROTOCOL (a test keeps them equal), when the wrapper comes
+# to rely on something an older CLI does not do.
+HOOK_PROTOCOL = 2
+# CI strict mode for the hook: SKILLTOTAL_STRICT=1/true/yes/on turns it on and 0/false/no/off off;
+# otherwise it is on when CI, or the marker of a CI service that does not always set CI, is set to
+# anything but empty or a false value. The plugin's wrapper reads them the same way (a shared test
+# table keeps the two in step): only ASCII letters are lowercased, and only spaces, tabs and line
+# ends are removed.
+HOOK_STRICT_ENV = "SKILLTOTAL_STRICT"
+HOOK_CI_MARKERS = ("CI", "TF_BUILD", "JENKINS_URL", "TEAMCITY_VERSION", "CODEBUILD_BUILD_ID",
+                   "BUILDKITE", "GITLAB_CI")
+_ENV_TRUE = frozenset({"1", "true", "yes", "on"})
+_ENV_FALSE = frozenset({"0", "false", "no", "off"})
+_ENV_SPACE = re.compile(r"[ \t\r\n]")
+_ENV_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def _env_word(value: str) -> str:
+    return _ENV_SPACE.sub("", value).translate(_ENV_LOWER)
+
+
+def _hook_strict(environ) -> str:
+    """The variable that turns CI strict mode on (where what the hook would ask about is denied),
+    or "" when it is off."""
+    value = _env_word(environ.get(HOOK_STRICT_ENV, ""))
+    if value in _ENV_TRUE:
+        return HOOK_STRICT_ENV
+    if value in _ENV_FALSE:
+        return ""
+    return next((name for name in HOOK_CI_MARKERS
+                 if _env_word(environ.get(name, "")) not in _ENV_FALSE | {""}), "")
+
+
+def _hook_failed_strict(strict_by: str) -> dict:
+    """The hook's own failure in CI strict mode, where nobody is there to decide: denied."""
+    from skilltotal.agent_hook import strict_note
+
+    reason = "(CI rule) SkillTotal blocked this command: it could not check it."
+    return {
+        "systemMessage": f"{reason} {strict_note(strict_by)}",
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        },
+    }
+
+
+def _hook_allowed_unchecked(environ) -> frozenset[str]:
+    """The kinds of unchecked install strict mode lets through (SKILLTOTAL_ALLOW_UNCHECKED)."""
+    from skilltotal.agent_hook import ALLOW_UNCHECKED_ENV, UNCHECKED_KINDS
+
+    named = {part.strip().lower() for part in environ.get(ALLOW_UNCHECKED_ENV, "").split(",")}
+    return frozenset(named & set(UNCHECKED_KINDS))
 
 
 def _cmd_hook(args: argparse.Namespace) -> int:
@@ -661,16 +755,21 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         if args.scan_into:
             return hook_scan.scan_into(Path(args.scan_into))
         return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
+    if args.protocol > HOOK_PROTOCOL:
+        print(f"error: this skilltotal speaks hook protocol {HOOK_PROTOCOL}, the plugin needs "
+              f"{args.protocol}; run pipx upgrade skilltotal", file=sys.stderr)
+        return EXIT_ERROR
+    strict_by = _hook_strict(os.environ)
     try:
-        answer = _hook_answer()
-    except Exception:  # noqa: BLE001 - any failure of ours asks; it must not pass silently
-        answer = HOOK_FAILED
+        answer = _hook_answer(strict_by)
+    except Exception:  # noqa: BLE001 - a failure of ours asks (in CI denies), never passes silently
+        answer = _hook_failed_strict(strict_by) if strict_by else HOOK_FAILED
     if answer is not None:
         print(json.dumps(answer))
     return EXIT_OK
 
 
-def _hook_answer() -> dict | None:
+def _hook_answer(strict_by: str = "") -> dict | None:
     from skilltotal.agent_hook import BUDGET_ENV, hook_response
 
     if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
@@ -680,7 +779,9 @@ def _hook_answer() -> dict | None:
     try:
         event = json.loads(raw or "{}")
     except json.JSONDecodeError:
-        return None  # not a hook event at all: stay out of the agent's way
+        # Not a hook event at all: stay out of the agent's way, except in CI, where a command the
+        # hook could not read must not pass.
+        return _hook_failed_strict(strict_by) if strict_by else None
     try:
         budget = float(os.environ.get(BUDGET_ENV, HOOK_BUDGET_S))
     except ValueError:
@@ -688,7 +789,9 @@ def _hook_answer() -> dict | None:
     # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
     budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
-    return hook_response(event, scan=_hook_scan_cached, budget_s=budget)
+    return hook_response(event, scan=_hook_scan_cached, budget_s=budget,
+                         strict=bool(strict_by), strict_by=strict_by,
+                         allow_unchecked=_hook_allowed_unchecked(os.environ))
 
 
 # How long the agent waits for the checks of one install command (a check that needs longer goes
@@ -852,7 +955,7 @@ def _hook_remember(job: dict, report: dict, deadline: float | None = None) -> di
     The one way a verdict is kept, whoever keeps it: the hook, for a scan that finished while it
     waited, or the check itself, for one that finished after the hook had stopped waiting.
     """
-    from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
+    from skilltotal.models import UNANALYZED_TITLES
 
     verdict = report.get("verdict") or {}
     entry = {
@@ -884,11 +987,12 @@ def _hook_remember(job: dict, report: dict, deadline: float | None = None) -> di
                 if f.get("threat_class") in ("malicious_indicator", "risky_construct")
             ],
             # What the scan could not read decides the answer as much as a finding: an install
-            # script it could not analyze, or a component nothing of which was read.
+            # script it could not analyze, a component nothing of which was read, or any other
+            # part of it left unanalyzed (said in the console, denied in CI).
             "needs_review": [
                 {"category": n.get("category"), "title": n.get("title"), "file": n.get("file")}
                 for n in report.get("needs_review") or []
-                if n.get("title") in (UNANALYZED_INSTALL_SCRIPT, NOTHING_READ)
+                if n.get("title") in UNANALYZED_TITLES
             ],
         },
     }

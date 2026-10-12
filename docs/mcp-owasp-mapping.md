@@ -29,9 +29,9 @@ These OWASP controls require executing the server or observing the live deployme
 addressable by static analysis: sandboxing enforcement, human-in-loop approval UI, rate limiting /
 DoS resistance, runtime rug-pull (tool re-hash at call time), replay/nonce enforcement, session
 binding & confusion-deputy checks, cross-server runtime data-flow, credential rotation, and
-verifying secrets are stored in an OS keychain at runtime. Typosquatting and dependency-CVE checks
-require registry/advisory data and likewise live outside the offline engine.
+verifying secrets are stored in an OS keychain at runtime. Dependency-CVE checks require registry
+and advisory data and likewise live outside the offline engine. Typosquatting is checked offline:
+`ST-TYPOSQUAT` compares an npm or PyPI package name with a built-in list of popular packages.
 
-> A complete MCP posture needs both static (this engine) and runtime verification; SkillTotal's
-> free engine covers the static half end-to-end and reports the rest honestly rather than implying
-> coverage it does not have.
+> A complete MCP posture needs both static (this engine) and runtime verification. SkillTotal's
+> free engine runs the static checks mapped above and names the controls it does not cover.

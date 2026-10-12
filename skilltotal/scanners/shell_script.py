@@ -31,6 +31,73 @@ _TO_SHELL = r"\|\s*(?:sudo\s+)?\b(?:bash|zsh|sh)\b"
 R_DECODE_EXEC_SH = "ST-OBF-DECODE-EXEC-SH"
 R_PIPE_EXEC = "ST-SHELL-PIPE-EXEC"
 R_PASSWORD_ARCHIVE = "ST-ARCHIVE-PASSWORD-EXTRACT"  # nosec B105 - a rule id, not a password
+R_ACTION_SECRET_EXFIL = "ST-ACTION-SECRET-EXFIL"  # nosec B105 - a rule id, not a secret
+
+# --- CI-token exfiltration from a composite action run step --------------------------------
+# A continuous-integration secret the runner holds: the workflow token, the artifact/OIDC tokens,
+# or any `${{ secrets.* }}` / `${{ github.token }}` expression interpolated into the step.
+_CI_SECRET = re.compile(
+    r"\bGITHUB_TOKEN\b"
+    r"|\bACTIONS_RUNTIME_TOKEN\b"
+    r"|\bACTIONS_ID_TOKEN_REQUEST_TOKEN\b"
+    r"|\$\{\{\s*secrets\.[A-Za-z_][A-Za-z0-9_]*\s*\}\}"
+    r"|\$\{\{\s*github\.token\s*\}\}",
+    re.IGNORECASE,
+)
+# A generic network client (not `gh` / `git`, which speak to GitHub legitimately).
+_NET_CLIENT = re.compile(
+    r"\b(?:curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|ncat|nc|telnet|httpie)\b",
+    re.IGNORECASE,
+)
+# A GitHub / Actions-infrastructure destination, named by host or by its documented URL env var.
+# A command segment carrying one of these is talking to GitHub, where the token belongs.
+_GITHUB_DEST = re.compile(
+    r"github\.com"
+    r"|githubusercontent\.com"
+    r"|ghcr\.io"
+    r"|\.pkg\.github\.com"
+    r"|GITHUB_(?:API|SERVER|GRAPHQL)_URL"
+    r"|ACTIONS_(?:RESULTS|CACHE|ID_TOKEN_REQUEST|RUNTIME)_URL",
+    re.IGNORECASE,
+)
+# A shell metacharacter that ends one command in a pipeline / list.
+_SEGMENT_BREAK = frozenset(";&|\n")
+
+
+def _command_segments(command: str) -> list[tuple[int, int]]:
+    """``(start, end)`` ranges of the separate commands in ``command``, split on unquoted ``;`` /
+    ``&`` / ``|`` / newline. Quotes are honored (a separator inside a quoted string does not split),
+    and a backslash before a newline is a line continuation, not a break -- so a single ``curl``
+    written across several lines stays one segment with its host and its token together."""
+    segments: list[tuple[int, int]] = []
+    quote: str | None = None
+    start = 0
+    i = 0
+    n = len(command)
+    while i < n:
+        c = command[i]
+        if quote == "'":
+            if c == "'":
+                quote = None
+        elif quote == '"':
+            if c == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if c == '"':
+                quote = None
+        elif c == "\\":
+            i += 2  # an escaped char (incl. a line-continuation newline) is part of this segment
+            continue
+        elif c in "'\"":
+            quote = c
+        elif c in _SEGMENT_BREAK:
+            if start < i:
+                segments.append((start, i))
+            start = i + 1
+        i += 1
+    if start < n:
+        segments.append((start, n))
+    return segments
 # Markdown whose fenced shell blocks are commands for a person or an agent to run. The ClawHavoc
 # skills (ClawHub, early 2026) put `echo '<base64>' | base64 -D | bash` under "Prerequisites".
 _MARKDOWN = (".md", ".mdx")
@@ -299,6 +366,25 @@ def _without_shell_comments(value: _Text) -> _Text:
     return out_chars, out_idx
 
 
+def _secret_exfil_spans(command: str) -> list[tuple[int, int]]:
+    """Spans (in ``command``) of a network client that carries a CI secret to a non-GitHub host.
+
+    Each pipeline/``;``/``&&`` segment is judged on its own: it must invoke a network client and
+    hold a CI secret, and must not name a GitHub destination (where the token legitimately goes).
+    The span returned is the network-client token, so the evidence points at the exfiltrating
+    call."""
+    spans: list[tuple[int, int]] = []
+    for start, end in _command_segments(command):
+        piece = command[start:end]
+        client = _NET_CLIENT.search(piece)
+        if client is None or not _CI_SECRET.search(piece):
+            continue
+        if _GITHUB_DEST.search(piece):
+            continue  # the secret is being sent to GitHub, which is legitimate
+        spans.append((start + client.start(), start + client.end()))
+    return spans
+
+
 def _action_commands(text: str) -> list[tuple[str, list[int]]]:
     """The shell command of each ``run:`` step of a composite action, as the runner's shell
     receives it, with every character's offset in ``text`` (so evidence points at the file)."""
@@ -387,6 +473,31 @@ class ShellScriptScanner(Scanner):
                 r"\bunrar\s+[xe]\b[^\n]*\s-p\S+",
             ),
         ),
+        RuleSpec(
+            id=R_ACTION_SECRET_EXFIL,
+            category="exfiltration_path",
+            severity=Severity.HIGH,
+            title="CI token sent off GitHub from a composite action",
+            description=(
+                "A composite GitHub Action's run step sends a continuous-integration secret "
+                "(GITHUB_TOKEN, an Actions OIDC/runtime token, or a ${{ secrets.* }} / "
+                "${{ github.token }} expression) to a non-GitHub host through a network client "
+                "(curl / wget / Invoke-WebRequest / nc). The step runs on the runner of whoever "
+                "uses the action, so the token and secrets of every consumer are exfiltrated. "
+                "Handing the token to gh / git against GitHub, or to the documented Actions "
+                "service URLs, is not matched."
+            ),
+            recommendation=(
+                "Never send a CI token or repository secret to a host you do not control. If a "
+                "third-party service needs a credential, use its own scoped secret and send it "
+                "only to that service's documented endpoint."
+            ),
+            capability=None,  # egress of a credential; capability chips come from other rules
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # Custom matching (see _secret_exfil_spans); applied only to composite-action run steps.
+            # No regex pattern / fallback: it needs client + secret + host co-occurrence in a step.
+            names=("action.yml", "action.yaml"),
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -400,7 +511,10 @@ class ShellScriptScanner(Scanner):
         actions = {f.relpath: _action_commands(f.text) for f in files if self._is_action(f)}
         findings = []
         for rule in self.rules:
-            if rule.pattern is None:
+            # ST-ACTION-SECRET-EXFIL has no regex (custom co-occurrence match) and applies only to
+            # composite-action run steps; every other rule needs a pattern.
+            is_action_secret = rule.id == R_ACTION_SECRET_EXFIL
+            if rule.pattern is None and not is_action_secret:
                 continue
             seen: set[tuple[str, int, int]] = set()
             evidence = []
@@ -409,17 +523,25 @@ class ShellScriptScanner(Scanner):
                     continue
                 if f.relpath in actions:
                     for command, idx in actions[f.relpath]:
-                        if rule.id == R_PASSWORD_ARCHIVE and not _DOWNLOAD.search(command):
+                        if is_action_secret:
+                            spans = _secret_exfil_spans(command)
+                        elif rule.id == R_PASSWORD_ARCHIVE and not _DOWNLOAD.search(command):
                             continue
-                        for m in rule.pattern.finditer(command):
-                            if m.end() <= m.start():
-                                continue
-                            ev = f.evidence_for_span(idx[m.start()], idx[m.end() - 1] + 1)
+                        else:
+                            spans = [
+                                (m.start(), m.end())
+                                for m in rule.pattern.finditer(command)
+                                if m.end() > m.start()
+                            ]
+                        for s, e in spans:
+                            ev = f.evidence_for_span(idx[s], idx[e - 1] + 1)
                             key = (ev.file, ev.line_start, ev.line_end)
                             if key not in seen and len(evidence) < MAX_EVIDENCE_SCANNED:
                                 seen.add(key)
                                 evidence.append(ev)
                     continue
+                if is_action_secret:
+                    continue  # this rule is scoped to composite-action run steps only
                 regions = self._regions(f)
                 for m, ev in f.finditer(rule.pattern):
                     region = next((r for r in regions if r[0] <= m.start() < r[1]), None)

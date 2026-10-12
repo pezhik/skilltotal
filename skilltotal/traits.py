@@ -302,6 +302,9 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     "ST-NET-PY": (_T.NETWORK_EGRESS,),
     "ST-NET-NODE": (_T.NETWORK_EGRESS,),
     "ST-EMAIL-BCC-EXFIL": (_T.NETWORK_EGRESS,),
+    # A CI token egressed from a composite action: network egress delivered through the supply
+    # chain (the step runs on every consumer's runner).
+    "ST-ACTION-SECRET-EXFIL": (_T.NETWORK_EGRESS, _T.SUPPLY_CHAIN_PROVENANCE),
     "ST-EXPOSE-BIND": (_T.NETWORK_EXPOSURE,),
     "ST-EXPOSE-DEBUG": (_T.NETWORK_EXPOSURE,),
     # Credentials / sensitive data.

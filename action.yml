@@ -19,6 +19,10 @@ inputs:
     description: "Fail the job on a finding at or above this severity: 'low', 'medium', 'high', 'critical' or 'none'. Malicious indicators fail it at any severity; a capability (what a component can do, such as running a shell) never does."
     required: false
     default: "high"
+  fail-on-unanalyzed:
+    description: "Fail the job when a file, or a part of one, was not analyzed: 'true' or 'false'."
+    required: false
+    default: "false"
   upload-sarif:
     description: "Upload SARIF to GitHub Code Scanning (job needs 'security-events: write')."
     required: false
@@ -72,6 +76,7 @@ runs:
         INPUT_SOURCE: ${{ inputs.source }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FAIL_ON_UNANALYZED: ${{ inputs.fail-on-unanalyzed }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
       run: |
@@ -99,6 +104,14 @@ runs:
           none) ;;
           low|medium|high|critical) GATE+=(--fail-on "$FAIL_ON") ;;
           *) echo "::error::fail-on must be low, medium, high, critical or none (got '$INPUT_FAIL_ON')"
+             echo "gate-exit=1" >> "$GITHUB_OUTPUT"
+             exit 0 ;;
+        esac
+        FAIL_UNANALYZED="$(printf '%s' "$INPUT_FAIL_ON_UNANALYZED" | tr '[:upper:]' '[:lower:]')"
+        case "$FAIL_UNANALYZED" in
+          false) ;;
+          true) GATE+=(--fail-on-unanalyzed) ;;
+          *) echo "::error::fail-on-unanalyzed must be true or false (got '$INPUT_FAIL_ON_UNANALYZED')"
              echo "gate-exit=1" >> "$GITHUB_OUTPUT"
              exit 0 ;;
         esac
