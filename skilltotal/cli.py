@@ -665,11 +665,12 @@ def _cmd_mcp() -> int:
 # wrapper pass the command with only a warning, and denying would block for SkillTotal's own fault:
 # the person decides.
 HOOK_FAILED = {
+    "systemMessage": "SkillTotal could not check this command.",
     "hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "ask",
         "permissionDecisionReason": "SkillTotal could not check this command.",
-    }
+    },
 }
 
 

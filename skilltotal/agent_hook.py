@@ -15,10 +15,14 @@ packages an install command would bring in (``npx``, ``npm install``, ``pip inst
   time is not lost: it goes on in the background and keeps its verdict, so the same command run
   again is answered from it;
 * everything clean: no decision (the normal permission flow applies) plus a one-line note for the
-  agent.
+  agent;
+* what installs with no package name to check (a lockfile or requirements file, a local path, a
+  script downloaded and piped to a shell): no decision.
 
-The hook never denies for its own failure: the person decides, and the install goes ahead if they
-approve. The parser errs toward finding installs: a shell that would install a package must not
+Every command that installs something also gets one line in the person's console: what was
+checked and its risk, the decision, and what was not checked. The hook never denies for its own
+failure: the person decides, and the install goes ahead if they approve. The parser errs toward
+finding installs: a shell that would install a package must not
 slip past it through a global flag, a full path, a wrapper (``bash -c``, ``sudo``, ``env``,
 ``timeout``...), a command substitution or an alias of the subcommand. It reads the command line
 the way the shell does (quotes, escapes, line continuations, comments, here-documents), and a
@@ -64,14 +68,53 @@ _MAX_LAUNCHES = 16
 
 @dataclass(frozen=True)
 class Install:
-    """One thing an install command brings in: a scannable ``source``, or why it cannot be one."""
+    """One thing an install command brings in: a scannable ``source``, why it cannot be one
+    (``unverifiable``: asked about), or what installs with no package name to check
+    (``unchecked``: its kind, one of ``UNCHECKED_KINDS``; ``does``: what it does, for the line the
+    person sees)."""
 
     source: str | None
     unverifiable: str | None = None  # e.g. "pkg from https://registry.example"
+    unchecked: str | None = None
+    does: str | None = None  # e.g. "installs from package-lock.json"
 
 
 # Text the hook could not take apart as commands, when it names an installer.
 _NOT_READ = Install(None, "a command SkillTotal could not read")
+
+# What installs with no package name the hook could check: the packages a lockfile or manifest
+# lists, the person's own code on disk, a script downloaded and run. Said in the console.
+LOCKFILE, LOCAL, SCRIPT = "lockfile", "local", "script"
+UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT)
+# A URL a line may quote: no whitespace, quotes or anything a shell fills in.
+_PLAIN_URL = re.compile(r"https?://[A-Za-z0-9._~/:@%+=?&#-]{1,200}")
+
+
+def _lockfile(file: str) -> list[Install]:
+    """An install of the packages ``file`` lists (a lockfile, manifest or requirements file)."""
+    shown = file if _PLAIN_PATH.fullmatch(file) or _PLAIN_URL.fullmatch(file) else None
+    does = f"installs from {shown}" if shown else "installs from a requirements file"
+    return [Install(None, unchecked=LOCKFILE, does=does)]
+
+
+def _local(spec: str) -> list[Install]:
+    """An install of the person's own code on disk: ``.``, ``./dir``, ``file:../lib``, a wheel."""
+    path = re.sub(r"\[[^\]]*\]$", "", spec)  # `.[dev]`: the extras are not part of the path
+    if path.startswith(("file:", "link:")):
+        path = path.split(":", 1)[1]
+    if path in (".", "./"):
+        does = "installs the project in this folder"
+    elif _PLAIN_PATH.fullmatch(path):
+        does = f"installs from the local path {path}"
+    else:
+        does = "installs from a local path"
+    return [Install(None, unchecked=LOCAL, does=does)]
+
+
+def _downloaded_script(url: str | None) -> list[Install]:
+    """A script downloaded and run as it arrives (``curl ... | bash``, ``iex (irm ...)``)."""
+    where = url if url and _PLAIN_URL.fullmatch(url) else "the internet"
+    return [Install(None, unchecked=SCRIPT, does=f"runs a script downloaded from {where}")]
 # Stands in for a command substitution among a command's words: what it prints is not known here.
 _SUB = "$(...)"
 # An installer and an install-like verb near it: read in text that runs but that the parser could
@@ -333,6 +376,8 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
     level = _Level(outer.ctx, cwd, tuple(subs))
     if shell == "powershell" and _PS_DYNAMIC.search(text):
         found.update(dict.fromkeys(_net(text)))  # `[scriptblock]::Create('npm i x')`
+    if shell == "powershell":
+        found.update(dict.fromkeys(_ps_runs_download(lexed.pipelines, text)))
     seen: list[str] = [text]
     # A command substitution runs too: `echo $(npm install x)` installs x.
     for sub in subs:
@@ -518,22 +563,77 @@ def _unseen(text: str, shell: str, level: _Level) -> list[Install]:
     """Text another program runs, with parts the shell fills in when it runs: a command
     substitution's output (``eval "$(...)"``), a variable's value (``P='npm i x'; eval $P``).
     What they hold comes from this command line if from anywhere, so the person is asked when
-    the substitution, or the line, names an installer."""
+    the substitution, or the line, names an installer. A substitution that downloads
+    (``bash -c "$(curl -fsSL ...)"``, ``bash <(curl ...)``) runs a script nothing checked."""
+    found = [item for sub in level.subs for item in _download_of(sub, shell)] if (
+        _SUB in text) else []
     if _SUB in text and level.subs_install:
-        return [_NOT_READ]
-    if _VARIABLE[shell].search(text.replace(_SUB, "")) and level.ctx.root_installs:
-        return [_NOT_READ]
-    return []
+        found.append(_NOT_READ)
+    elif _VARIABLE[shell].search(text.replace(_SUB, "")) and level.ctx.root_installs:
+        found.append(_NOT_READ)
+    return found
 
 
 def _from_stdin(feed: list[tuple[str, bool]], shell: str, depth: int,
                 level: _Level) -> list[Install]:
     """A script a shell (or ``iex``) reads on stdin: read as commands when the hook could read
-    it, else asked about when it names an installer."""
+    it, else asked about when it names an installer, and said to be unchecked when it is a
+    download (``curl ... | bash``)."""
     found: dict[Install, None] = {}
     for text, readable in feed:
         found.update(dict.fromkeys(_run(text, shell, depth, level) if readable else _net(text)))
+    found.update(dict.fromkeys(_stdin_downloads(feed, shell)))
     return list(found)
+
+
+# Programs that print what they download: piped into a shell, or run by `bash -c "$(...)"`, the
+# script runs as it arrives (PowerShell's `irm`/`iwr` and their long names too).
+_DOWNLOADERS = frozenset({"curl", "wget", "irm", "iwr", "invoke-restmethod",
+                          "invoke-webrequest"})
+# Only text that names one is taken apart to find out (the hook runs before every command).
+_DOWNLOADER_WORD = re.compile(
+    r"(?<![\w.-])(?:curl|wget|irm|iwr|invoke-restmethod|invoke-webrequest)(?![\w-])",
+    re.IGNORECASE)
+
+
+@functools.lru_cache(maxsize=1024)
+def _download_of(text: str, shell: str) -> tuple[Install, ...]:
+    """The script ``text`` downloads, when it is a download command (``curl -fsSL https://...``,
+    ``wget -qO- ...``, ``irm ...``): what it prints is the script."""
+    if not _DOWNLOADER_WORD.search(text):
+        return ()
+    words = _unwrap(_words(text, shell) or [])
+    if not words or _base(words[0]) not in _DOWNLOADERS:
+        return ()
+    url = next((w for w in words[1:] if w.lower().startswith(("https://", "http://"))), None)
+    return tuple(_downloaded_script(url))
+
+
+def _stdin_downloads(feed: list[tuple[str, bool]], shell: str) -> list[Install]:
+    """The downloads piped into a program that runs what it reads (``curl ... | python3 -``)."""
+    return [item for text, readable in feed if not readable
+            for item in _download_of(text, shell)]
+
+
+def _ps_runs_download(pipelines: list[list[_Stage]], text: str) -> list[Install]:
+    """``iex (irm https://...)``, ``iex ((New-Object Net.WebClient).DownloadString('...'))``,
+    ``& ([scriptblock]::Create((irm ...)))``: PowerShell's grouping makes the parenthesized part a
+    command of its own, so the ``iex`` that runs the download stands alone among the line's."""
+    stages = [_ps_statement(_redirects(stage.words)[0]) for pipeline in pipelines
+              for stage in pipeline]
+    stages = [words for words in stages if words]
+    runs = bool(_PS_DYNAMIC.search(text)) or any(  # `iex`, `Invoke-Expression -Command`
+        _base(words[0]) in _PS_EVAL and all(w.startswith(tuple(_PS_DASHES)) for w in words[1:])
+        for words in stages)
+    downloads = any(
+        _base(words[0]) in _DOWNLOADERS
+        or any(w.lower().endswith((".downloadstring", ".downloaddata")) for w in words)
+        for words in stages)
+    if not (runs and downloads):
+        return []
+    url = next((w for words in stages for w in words
+                if w.lower().startswith(("https://", "http://"))), None)
+    return _downloaded_script(url)
 
 
 def _words(text: str, shell: str, marked: bool = False) -> list[str] | None:
@@ -1421,7 +1521,7 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head == "find":
         return _find_exec(rest, shell, depth, level)
     if head in _CODE_OPTIONS and (head != "bun" or _code_args(rest[:1], *_CODE_OPTIONS["bun"])):
-        return _interpreter(head, rest, feed)
+        return _interpreter(head, rest, feed, shell)
     if shell == "powershell" and head in _PS_START:
         started = _start_process(rest)
         if started is None:
@@ -1534,13 +1634,15 @@ def _code_args(rest: list[str], short: str, long: tuple[str, ...]) -> list[str]:
     return codes
 
 
-def _interpreter(head: str, rest: list[str], feed: list[tuple[str, bool]]) -> list[Install]:
+def _interpreter(head: str, rest: list[str], feed: list[tuple[str, bool]],
+                 shell: str) -> list[Install]:
     """Code in another language (``node -e``, ``perl -e``, ``deno eval``, a script piped into
-    ``node``) is not read here: the person is asked when it names an installer."""
+    ``node``) is not read here: the person is asked when it names an installer, and told when it
+    is a download (``curl ... | node``)."""
     codes = _code_args(rest, *_CODE_OPTIONS[head])
     if head == "deno" and "eval" in rest:
         codes.append(" ".join(rest[rest.index("eval") + 1:]))
-    return _net(*codes, *(text for text, _ in feed))
+    return _net(*codes, *(text for text, _ in feed)) + _stdin_downloads(feed, shell)
 
 
 def _script(head: str, rest: list[str]) -> str | None:
@@ -1777,11 +1879,24 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
         return _npx(args, shell, depth, level, registry, fetches=sub == "dlx", quiet=quiet)
     if sub in _SCAFFOLDERS[head]:
         return _scaffold(args, registry)
+    if head == "yarn" and sub in (None, "install"):
+        return _lockfile("package.json")  # `yarn`, `yarn install`: what package.json lists
     if head == "yarn" and sub != "add":
-        return []  # `yarn install` installs the lockfile only
+        return []  # `yarn <script>` runs a script of package.json
+    if sub in _NPM_CI:
+        return _lockfile(_LOCKFILES[head])
     if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
+        if not _npm_positionals(args, head):
+            return _lockfile("package.json")  # no package named: what package.json lists
         return _npm_packages(args, registry, head)
     return []
+
+
+# npm's clean install and its aliases (with `install-ci-test`): exactly what the lockfile lists.
+_NPM_CI = {"ci", "clean-install", "ic", "install-clean", "isntall-clean", "cit",
+           "clean-install-test", "install-ci-test", "sit"}
+_LOCKFILES = {"npm": "package-lock.json", "pnpm": "pnpm-lock.yaml", "yarn": "yarn.lock",
+              "bun": "bun.lock"}
 
 
 def _npm_source_flag(arg: str, head: str = "npm") -> bool:
@@ -1953,9 +2068,9 @@ def _npm_bin(spec: str) -> str:
     return spec.rsplit("@", 1)[0] if versioned else spec
 
 
-def _npm_packages(args: list[str], registry: str | None, head: str = "npm") -> list[Install]:
-    """Every package named after the install subcommand, wherever the flags sit."""
-    out: list[Install] = []
+def _npm_positionals(args: list[str], head: str = "npm") -> list[str]:
+    """The words after an install subcommand that name what to install, wherever the flags sit."""
+    out: list[str] = []
     skip = False
     for arg in args:
         if skip:
@@ -1964,8 +2079,13 @@ def _npm_packages(args: list[str], registry: str | None, head: str = "npm") -> l
         if arg.startswith("-"):
             skip = _npm_takes_value(arg, head) and "=" not in arg
             continue
-        out.extend(_npm_spec(arg, registry))
+        out.append(arg)
     return out
+
+
+def _npm_packages(args: list[str], registry: str | None, head: str = "npm") -> list[Install]:
+    """Every package named after the install subcommand, wherever the flags sit."""
+    return [item for spec in _npm_positionals(args, head) for item in _npm_spec(spec, registry)]
 
 
 def _computed(spec: str) -> list[Install]:
@@ -1975,11 +2095,11 @@ def _computed(spec: str) -> list[Install]:
 
 
 def _npm_spec(spec: str, registry: str | None) -> list[Install]:
-    """A registry name, a GitHub source, an unscannable remote, or a local path (ignored)."""
+    """A registry name, a GitHub source, an unscannable remote, or a local path (not checked)."""
     if _COMPUTED.search(spec):
         return _computed(spec)
     if spec.startswith((".", "/", "~", "file:", "link:", "workspace:")) or _DRIVE.match(spec):
-        return []  # the person's own code on disk
+        return _local(spec)  # the person's own code on disk
     alias = _NPM_ALIAS.match(spec)
     if alias:
         spec = alias.group(1)  # what npm fetches; the alias is only the folder it lands in
@@ -2119,6 +2239,11 @@ def _pip_install(args: list[str], tool: str = "pip", index: str | None = None) -
         if editable is not None:
             out.extend(_py_spec(editable, index))
             continue
+        listed, takes_next = _requirements(arg, args[i + 1] if i + 1 < len(args) else "")
+        if listed is not None:
+            out.extend(_lockfile(listed))  # `-r requirements.txt`: the packages a file lists
+            skip = takes_next
+            continue
         if arg.startswith("-"):
             skip = _py_option(arg, tool)[1]
             continue
@@ -2126,19 +2251,41 @@ def _pip_install(args: list[str], tool: str = "pip", index: str | None = None) -
     return out
 
 
+def _requirements(arg: str, following: str) -> tuple[str | None, bool]:
+    """The file a ``-r`` option names (``-r f``, ``-Ur f``, ``-rf``, ``--requirement=f``, pip's
+    shortest unambiguous prefix ``--requirem``, uv's ``--requirements``), and whether it is the
+    next word; None when ``arg`` is not one."""
+    if arg.startswith("--"):
+        name, eq, value = arg[2:].partition("=")
+        name = name.lower()
+        if name == "requirements" or (len(name) >= 8 and "requirement".startswith(name)):
+            return (value, False) if eq else (following, True)
+        return None, False
+    if arg.startswith("-") and len(arg) > 1:
+        for k, letter in enumerate(arg[1:], 1):
+            if letter == "r":
+                attached = arg[k + 1:]
+                return (attached, False) if attached else (following, True)
+            if letter in "if" or letter in _SHORT_VALUE_OPTIONS:
+                return None, False  # another option's value comes first
+    return None, False
+
+
 def _py_spec(spec: str, index: str | None) -> list[Install]:
     """``fastapi[standard]>=0.110`` -> pypi:fastapi; a GitHub VCS spec is scanned from GitHub."""
     if _COMPUTED.search(spec):
         return _computed(spec)
-    if not spec or spec.startswith((".", "/", "~")) or _DRIVE.match(spec):
+    if not spec:
         return []
+    if spec.startswith((".", "/", "~")) or _DRIVE.match(spec):
+        return _local(spec)
     gh = _github(spec, pip=True) if ("://" in spec or spec.startswith("git+")) else None
     if gh:
         return [gh]
     if "://" in spec or spec.startswith("git+"):
         return [Install(None, f"{spec} (a remote archive or repository)")]
     if spec.endswith((".whl", ".tar.gz", ".zip")) or "/" in spec or "\\" in spec:
-        return []  # a local file
+        return _local(spec)  # a local file
     m = _PY_NAME.match(spec)
     if not m:
         return []
@@ -2178,8 +2325,8 @@ def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
                         return _net(value)
                     break
         i += 1
-    if i >= len(rest) or rest[i] == "-":
-        return _net(*(text for text, _ in feed))  # the script comes from stdin
+    if i >= len(rest) or rest[i] == "-":  # the script comes from stdin
+        return _net(*(text for text, _ in feed)) + _stdin_downloads(feed, shell)
     return []  # `python script.py`
 
 
@@ -2202,8 +2349,13 @@ def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]
         return [_NOT_READ]
     if sub == "add":
         return _pip_install(args, "uv", index)
+    if sub == "sync":
+        return _lockfile("pyproject.toml")  # what the project (and uv.lock) lists
     if sub == "pip":
         sub2, args2 = _subcommand(args, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
+        if sub2 == "sync":  # `uv pip sync requirements.txt`
+            files = _positionals(args2, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
+            return [item for file in files or [""] for item in _lockfile(file)]
         return _pip_install(args2, "uv", index) if sub2 == "install" else []
     if sub == "tool":
         sub2, args2 = _subcommand(args, _UV_VALUE_FLAGS)
@@ -2315,18 +2467,26 @@ def _pyproject(head: str, rest: list[str], shell: str, depth: int,
                level: _Level) -> list[Install]:
     """``poetry add x``, ``pdm add x``, ``pipenv install x`` install from PyPI unless a source of
     their own is named (``--source``, ``--index``, ``--pypi-mirror``); ``run`` starts a command
-    in the project's environment. Installing the lockfile names nothing new."""
+    in the project's environment. ``poetry install``, ``pdm sync``, ``pipenv install`` with no
+    package install what the project lists, which names no package to check."""
     sub, args = _subcommand(rest, _PYPROJECT_VALUE_FLAGS)
     if _filled_in(sub or ""):
         return [_NOT_READ]
     if sub == "run":
         start = _command_start(args, _PYPROJECT_VALUE_FLAGS)
         return _installs_in(args[start:], shell, depth + 1, level)
+    if head == "pipenv" and sub == "sync":
+        return _lockfile("Pipfile.lock")
+    if head != "pipenv" and sub in ("install", "sync"):
+        return _lockfile("pyproject.toml")
     if sub != _PYPROJECT_ADD[head]:
         return []
     index = _py_source(args, "pip") or _flag_value(args, {"--source", "--pypi-mirror"})
-    return [item for spec in _positionals(args, _PYPROJECT_VALUE_FLAGS)
-            for item in _py_spec(spec, index)]
+    specs = _positionals(args, _PYPROJECT_VALUE_FLAGS)
+    if head == "pipenv" and not specs:  # `pipenv install [-r requirements.txt]`
+        listed = _flag_value(args, {"-r", "--requirements"})
+        return _lockfile(listed if listed is not None else "Pipfile")
+    return [item for spec in specs for item in _py_spec(spec, index)]
 
 
 def _pip_args_source(args: list[str]) -> str | None:
@@ -2395,6 +2555,10 @@ def hook_response(
     when the check goes on without the hook, ``BackgroundFull`` when it could not. All the
     command's checks share ``budget_s`` seconds: each gets what is left, and none starts once it
     is spent.
+
+    Every command that installs something gets one line in the person's console
+    (``systemMessage``): what was checked and its risk, the decision and why, and what installs
+    unchecked (a lockfile, a local path, a downloaded script).
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -2412,9 +2576,13 @@ def hook_response(
     failed: list[str] = []
     late: list[str] = []
     skipped: list[str] = []
+    unchecked: list[Install] = []
     deadline = time.monotonic() + budget_s
     checked = 0
     for item in installs:
+        if item.unchecked:
+            unchecked.append(item)
+            continue
         if item.source is None:
             asked.append(f"{item.unverifiable}: SkillTotal can't check what this would install.")
             continue
@@ -2477,14 +2645,58 @@ def hook_response(
     if denied:
         reason = "SkillTotal blocked this install: it found malicious indicators. " + " ".join(
             denied)
-        return _answer(permission="deny", reason=f"{reason} {_details(scanned)}")
+        reason = f"{reason} {_details(scanned)}"
+        return _answer(permission="deny", reason=reason,
+                       message=_line(reason, _not_checked(unchecked, rest=True)))
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
         # The hint only helps for what the scanner read; a custom index or archive it can't.
-        return _answer(permission="ask", reason=f"{reason} {_details(scanned)}" if scanned
-                       else reason)
-    return _answer(context="SkillTotal checked " + "; ".join(clean)
-                   + ", no malicious indicators.")
+        reason = f"{reason} {_details(scanned)}" if scanned else reason
+        return _answer(permission="ask", reason=reason,
+                       message=_line(reason, _not_checked(unchecked, rest=True)))
+    context = ("SkillTotal checked " + "; ".join(clean) + ", no malicious indicators."
+               if clean else None)
+    return _answer(context=context,
+                   message=_line(_checked(clean), _not_checked(unchecked, rest=bool(clean))))
+
+
+def _line(*parts: str) -> str:
+    return " ".join(part for part in parts if part)
+
+
+def _checked(clean: list[str]) -> str:
+    """The console line for the packages that were checked and passed."""
+    if not clean:
+        return ""
+    whose = "Its" if len(clean) == 1 else "Their"
+    return f"SkillTotal checked {'; '.join(clean)}. {whose} dependencies were not checked."
+
+
+def _not_checked(items: list[Install], *, rest: bool) -> str:
+    """The console line for what installs with no package name to check; ``rest`` when the line
+    already says what was checked."""
+    if not items:
+        return ""
+    what = "the rest of this install" if rest else "this install"
+    return (f"SkillTotal did not check {what}: it {_does(items)}, and SkillTotal checks only the "
+            f"packages a command names.")
+
+
+def _does(items: list[Install]) -> str:
+    """What the unchecked parts of a command do, as one phrase (``installs from package.json and
+    requirements.txt and runs a script downloaded from https://...``)."""
+    sources: list[str] = []
+    others: list[str] = []
+    for does in dict.fromkeys(item.does or "" for item in items):
+        if does.startswith("installs from "):
+            sources.append(does.removeprefix("installs from "))
+        elif does:
+            others.append(does)
+    return _and(([f"installs from {_and(sources)}"] if sources else []) + others)
+
+
+def _and(words: list[str]) -> str:
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def _background_detail(source: str, check: CheckInBackground, budget_s: float) -> str:
@@ -2634,12 +2846,18 @@ def _sentence(text: str) -> str:
 
 
 def _answer(
-    *, permission: str | None = None, reason: str | None = None, context: str | None = None
+    *, permission: str | None = None, reason: str | None = None, context: str | None = None,
+    message: str | None = None,
 ) -> dict[str, Any]:
+    """Claude Code's hook output: the decision and its reason (for the agent), a note for the
+    agent (``context``), and the line shown to the person (``message``)."""
     spec: dict[str, Any] = {"hookEventName": "PreToolUse"}
     if permission:
         spec["permissionDecision"] = permission
         spec["permissionDecisionReason"] = reason or ""
     if context:
         spec["additionalContext"] = context
-    return {"hookSpecificOutput": spec}
+    answer: dict[str, Any] = {"hookSpecificOutput": spec}
+    if message:
+        answer["systemMessage"] = message
+    return answer
