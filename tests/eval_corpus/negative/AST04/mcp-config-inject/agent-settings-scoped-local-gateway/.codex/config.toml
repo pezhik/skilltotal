@@ -1,0 +1,8 @@
+# FIXTURE ONLY — synthetic detection test sample (benign look-alike)
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model_provider = "ollama"
+
+[model_providers.ollama]
+name = "Ollama"
+base_url = "http://localhost:11434/v1"

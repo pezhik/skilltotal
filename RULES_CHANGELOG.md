@@ -81,6 +81,20 @@ corpus).
   any time (the "remote dynamic dependency" of the PhantomRaven packages). Registry tarballs,
   `npm:` aliases, local paths, workspaces and `devDependencies` are not flagged
   (`tests/test_npm_supply_066.py`, and two positive and two negative samples in the corpus).
+- **`ST-AGENT-AUTO-APPROVE`** (new, risky construct, high): agent settings shipped with the
+  component that let the agent act without asking: Claude Code's `bypassPermissions` mode, an
+  allow rule for every shell command (`Bash`, `Bash(*)`) or `enableAllProjectMcpServers`;
+  Gemini CLI's `yolo` approval mode or `autoAccept`; Codex with `approval_policy = "never"` and
+  `sandbox_mode = "danger-full-access"` together; VS Code's `chat.tools.autoApprove` or
+  `chat.tools.global.autoApprove`. Scoped allow rules (`Bash(npm run test:*)`), `acceptEdits`,
+  deny rules and settings files of other tools are not flagged.
+- **`ST-AGENT-API-REDIRECT`** (new, risky construct, high): agent settings shipped with the
+  component that point the model API at another host: `ANTHROPIC_BASE_URL` and its kin in the
+  `env` of `.claude/settings.json`, a Codex `base_url`, a `*_BASE_URL` in `.gemini/.env`. The agent
+  sends that host the user's API key and every prompt. An address on this machine or a vendor's
+  own API host is not flagged, nor is an application's own `.env` (`tests/test_agent_approval_066.py`,
+  checked against 232 real settings files from public repositories: every hit is the setting it
+  names).
 - **`ST-SECRET-EXFIL`** (changed, JavaScript): a name holds the environment only in the block
   where it was given it, and the blocks inside that one. A large bundle reuses short names
   (`env`, `field`, `parts`) in hundreds of unrelated functions; following a name across the whole

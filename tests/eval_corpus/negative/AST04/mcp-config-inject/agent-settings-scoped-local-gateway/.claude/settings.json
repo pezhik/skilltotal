@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": ["Bash(npm run test:*)", "Bash(npm run lint)", "Read", "Edit"],
+    "deny": ["Bash(curl:*)", "Read(./.env)"]
+  },
+  "enableAllProjectMcpServers": false,
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://localhost:4000"
+  }
+}

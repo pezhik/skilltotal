@@ -7,6 +7,7 @@ capability engine share a single source of truth.
 
 from __future__ import annotations
 
+from skilltotal.scanners.agent_approval import AgentApprovalScanner
 from skilltotal.scanners.agent_config import AgentConfigScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.clipper import ClipperScanner
@@ -58,6 +59,7 @@ SCANNERS: list[Scanner] = [
     AgentConfigScanner(),
     ClipperScanner(),
     NpmSupplyScanner(),
+    AgentApprovalScanner(),
 ]
 
 
