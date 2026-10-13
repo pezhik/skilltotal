@@ -381,10 +381,13 @@ def fake_supervisor(tmp_path, monkeypatch):
         return started[-1]
 
     monkeypatch.setattr(hook_scan, "_spawn", spawn)
+    # As the real supervisor is started: a venv's launcher, started detached, would give the
+    # interpreter it runs a visible console window.
+    python = hook_scan._interpreter()[0]
 
     def use(steps):
         monkeypatch.setattr(hook_scan, "_role_argv",
-                            lambda role, tmp: [sys.executable, str(script), steps, tmp])
+                            lambda role, tmp: [python, str(script), steps, tmp])
         return SimpleNamespace(log=log, temp=temp, started=started)
 
     yield use
