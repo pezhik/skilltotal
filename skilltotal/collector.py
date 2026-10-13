@@ -108,7 +108,36 @@ class CollectionError(Exception):
     """Raised when a source cannot be resolved into an analyzable directory."""
 
 
-class SourceTooLargeError(CollectionError):
+# Every setting a SizeLimitError can name. A hook reads the name back from a file its check
+# wrote, and takes only one of these.
+LIMIT_VARIABLES = frozenset({
+    "SKILLTOTAL_MAX_ARCHIVE_MB", "SKILLTOTAL_MAX_EXTRACT_MB", "SKILLTOTAL_MAX_ARCHIVE_MEMBERS",
+    "SKILLTOTAL_MAX_CLONE_MB", "SKILLTOTAL_MAX_READABLE_MB",
+})
+
+
+def _raise_hint(variable: str) -> str:
+    return f"To scan it anyway, set {variable} to a higher value."
+
+
+def _mb(n_bytes: int) -> int:
+    return n_bytes // (1024 * 1024)
+
+
+class SizeLimitError(CollectionError):
+    """A source over one of the size limits a person can raise.
+
+    ``variable`` names the setting that raises it, so the CLI and the hook can say which one.
+    "archive is too large" alone left people guessing which of five limits had refused them.
+    The start of each message stays as it was: callers file these refusals by it.
+    """
+
+    def __init__(self, message: str, *, variable: str) -> None:
+        super().__init__(f"{message} {_raise_hint(variable)}")
+        self.variable = variable
+
+
+class SourceTooLargeError(SizeLimitError):
     """Raised when a repository exceeds the configured size cap (pre-clone or mid-clone).
 
     ``measured_mb`` and ``limit_mb`` carry the numbers as data, not only inside the message, so a
@@ -119,8 +148,9 @@ class SourceTooLargeError(CollectionError):
     """
 
     def __init__(self, message: str, *, measured_mb: int | None = None,
-                 limit_mb: int | None = None) -> None:
-        super().__init__(message)
+                 limit_mb: int | None = None,
+                 variable: str = "SKILLTOTAL_MAX_CLONE_MB") -> None:
+        super().__init__(message, variable=variable)
         self.measured_mb = measured_mb
         self.limit_mb = limit_mb if limit_mb is not None else _MAX_CLONE_MB
 
@@ -311,8 +341,11 @@ def _collect_local(source: str) -> SourceContext:
 
 def _collect_local_archive(path: Path, kind: str) -> SourceContext:
     try:
-        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
-            raise CollectionError("archive is too large")
+        size = path.stat().st_size
+        if size > _MAX_ARCHIVE_BYTES:
+            raise SizeLimitError(
+                f"archive is too large: {_mb(size)} MB, over the {_mb(_MAX_ARCHIVE_BYTES)} MB "
+                "limit.", variable="SKILLTOTAL_MAX_ARCHIVE_MB")
         data = path.read_bytes()
     except OSError as exc:
         raise _unreadable_source(path, exc) from exc
@@ -345,8 +378,11 @@ def _collect_local_file(path: Path) -> SourceContext:
     display = neutralize_hidden(path.name)
     tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
     try:
-        if path.stat().st_size > _MAX_ARCHIVE_BYTES:
-            raise CollectionError("file is too large")
+        size = path.stat().st_size
+        if size > _MAX_ARCHIVE_BYTES:
+            raise SizeLimitError(
+                f"file is too large: {_mb(size)} MB, over the {_mb(_MAX_ARCHIVE_BYTES)} MB "
+                "limit.", variable="SKILLTOTAL_MAX_ARCHIVE_MB")
         root = Path(tmp.name)
         # path.name is a bare filename; we control `root`, so the destination stays inside it.
         shutil.copy2(path, root / path.name)
@@ -581,7 +617,7 @@ def _reject_if_too_large(
                 f"working tree holds ~{round(tree.readable / 1024 / 1024)} MB of readable text, "
                 f"which exceeds the {_MAX_READABLE_MB} MB scan limit ({where}).",
                 measured_mb=round(tree.readable / 1024 / 1024),
-                limit_mb=_MAX_READABLE_MB,
+                limit_mb=_MAX_READABLE_MB, variable="SKILLTOTAL_MAX_READABLE_MB",
             )
         # Reported only once the size is accepted: a caller wanting to show progress has no use
         # for the measurement of a scan that is about to be refused.
@@ -747,7 +783,9 @@ def _http_get(url: str) -> bytes:
     except (OSError, ValueError) as exc:  # URLError/HTTPError are OSError subclasses
         raise CollectionError(f"failed to fetch {url}: {exc}") from exc
     if len(data) > _MAX_ARCHIVE_BYTES:
-        raise CollectionError(f"response from {url} exceeds the size limit")
+        raise SizeLimitError(
+            f"response from {url} exceeds the size limit of {_mb(_MAX_ARCHIVE_BYTES)} MB.",
+            variable="SKILLTOTAL_MAX_ARCHIVE_MB")
     return data
 
 
@@ -794,7 +832,9 @@ class _BoundedReader:
 
     def _refuse_past(self, end: int) -> None:
         if end > self._limit:
-            raise CollectionError("archive too large when extracted")
+            raise SizeLimitError(
+                "archive too large when extracted: more than "
+                f"{_mb(_MAX_EXTRACT_BYTES)} MB.", variable="SKILLTOTAL_MAX_EXTRACT_MB")
 
     def read(self, size: int | None = -1) -> bytes:
         room = self._limit - self._stream.tell()
@@ -854,7 +894,9 @@ def _safe_extract_tar(data: bytes, dest: Path) -> int:
             for member in tf:
                 entries += 1
                 if entries > _MAX_ARCHIVE_MEMBERS:
-                    raise CollectionError("archive has too many entries")
+                    raise SizeLimitError(
+                        f"archive has too many entries: more than {_MAX_ARCHIVE_MEMBERS:,}.",
+                        variable="SKILLTOTAL_MAX_ARCHIVE_MEMBERS")
                 if member.issym() or member.islnk() or member.isdev():
                     skipped += 1
                     continue
@@ -867,7 +909,9 @@ def _safe_extract_tar(data: bytes, dest: Path) -> int:
                 if not member.isdir():
                     total += member.size
                     if total > _MAX_EXTRACT_BYTES:
-                        raise CollectionError("archive too large when extracted")
+                        raise SizeLimitError(
+                            "archive too large when extracted: more than "
+                            f"{_mb(_MAX_EXTRACT_BYTES)} MB.", variable="SKILLTOTAL_MAX_EXTRACT_MB")
                 tf.extract(member, dest, set_attrs=False, **_TAR_FILTER)
     except CollectionError:
         raise
@@ -892,7 +936,9 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
             infos = zf.infolist()
             if len(infos) > _MAX_ARCHIVE_MEMBERS:
-                raise CollectionError("archive has too many entries")
+                raise SizeLimitError(
+                    f"archive has too many entries: more than {_MAX_ARCHIVE_MEMBERS:,}.",
+                    variable="SKILLTOTAL_MAX_ARCHIVE_MEMBERS")
             safe, total, skipped = [], 0, 0
             for info in infos:
                 # zipfile.extractall can create symlinks from the stored unix mode on some
@@ -907,7 +953,9 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
                     raise CollectionError("archive contains an unsafe path")
                 total += info.file_size
                 if total > _MAX_EXTRACT_BYTES:
-                    raise CollectionError("archive too large when extracted")
+                    raise SizeLimitError(
+                        "archive too large when extracted: more than "
+                        f"{_mb(_MAX_EXTRACT_BYTES)} MB.", variable="SKILLTOTAL_MAX_EXTRACT_MB")
                 safe.append(info)
             zf.extractall(dest, members=safe)  # nosec B202 - members validated above
     except CollectionError:

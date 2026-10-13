@@ -504,11 +504,33 @@ class RunningScan:
         """The report of a check that ended while the hook was there to read it."""
         try:
             report = _read_json(Path(self.tmp, "report.json"))
+            limit = _read_limit(Path(self.tmp, "limit"))
         finally:
             remove_tree(self.tmp, deadline)
         if not isinstance(report, dict):
+            if limit is not None:
+                raise OverSizeLimit(limit)
             raise RuntimeError("the scan failed")
         return report
+
+
+class OverSizeLimit(RuntimeError):
+    """The check stopped at a size limit; ``variable`` is the setting that raises it."""
+
+    def __init__(self, variable: str) -> None:
+        super().__init__(f"over the size limit set by {variable}")
+        self.variable = variable
+
+
+def _read_limit(path: Path) -> str | None:
+    """The setting a check named in its ``limit`` file, if it is one of ours; else None."""
+    from skilltotal.collector import LIMIT_VARIABLES
+
+    try:
+        name = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return name if name in LIMIT_VARIABLES else None
 
 
 # --- The check's own processes -------------------------------------------------------------------
@@ -760,7 +782,7 @@ def scan_into(tmp: Path) -> int:
     normalized, archive entries it left out); the hook's verdict uses neither. Returns 1, having
     touched nothing, when ``tmp`` is no check of a hook's.
     """
-    from skilltotal.collector import collect
+    from skilltotal.collector import SizeLimitError, collect
     from skilltotal.engine import analyze_directory
 
     spec = _check_spec(tmp, "scan-into")
@@ -776,10 +798,15 @@ def scan_into(tmp: Path) -> int:
         except OSError:
             pass  # the hook then waits as it would have anyway; the scan goes on
 
-    with collect(source, on_size=report_size) as ctx:
-        if not size_file.exists():
-            report_size(tree_size(ctx.root))
-        report = analyze_directory(ctx.root, ctx.component)
+    try:
+        with collect(source, on_size=report_size) as ctx:
+            if not size_file.exists():
+                report_size(tree_size(ctx.root))
+            report = analyze_directory(ctx.root, ctx.component)
+    except SizeLimitError as exc:
+        # Which limit refused it, so the hook can name the setting instead of "the scan failed".
+        write_atomic(tmp / "limit", exc.variable)
+        raise
     write_atomic(tmp / "report.json", json.dumps(report.to_dict()))
     return 0
 

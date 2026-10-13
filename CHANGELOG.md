@@ -11,6 +11,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
   14 at most (`SKILLTOTAL_HOOK_BUDGET`), instead of denying it after 60 seconds. Outside CI the
   wait is unchanged. The plugin's hook timeout is now 15 minutes.
 
+### CLI
+- A source over a size limit is refused with its size, the limit and the setting that raises it
+  (`SKILLTOTAL_MAX_ARCHIVE_MB`, `_EXTRACT_MB`, `_ARCHIVE_MEMBERS`, `_CLONE_MB`, `_READABLE_MB`).
+  The hook names the same setting instead of saying the scan failed.
+
 ## [0.65.0]
 
 Nothing the engine skips is skipped in silence, and agent auto-run commands are read. Ruleset 69.

@@ -65,6 +65,11 @@ DEFAULT_BUDGET_S = 60.0
 BUDGET_ENV = "SKILLTOTAL_HOOK_BUDGET"
 MAX_BUDGET_S = 100.0
 STRICT_MAX_BUDGET_S = 840.0
+# The size settings a check may name when it stops at a limit (collector.LIMIT_VARIABLES).
+LIMIT_SETTINGS = frozenset({
+    "SKILLTOTAL_MAX_ARCHIVE_MB", "SKILLTOTAL_MAX_EXTRACT_MB", "SKILLTOTAL_MAX_ARCHIVE_MEMBERS",
+    "SKILLTOTAL_MAX_CLONE_MB", "SKILLTOTAL_MAX_READABLE_MB",
+})
 _MAX_DEPTH = 4  # nested `bash -c "$(...)"`; deeper than this is not an honest install command
 # Quotes and substitutions nested deeper than this inside one command line are not read.
 _MAX_NESTING = 64
@@ -2833,8 +2838,14 @@ def hook_response(
         except TimeoutError:
             late.append(source)
             continue
-        except Exception:  # noqa: BLE001 - our own failure is never a reason to deny
-            failed.append(source)
+        except Exception as exc:  # noqa: BLE001 - our own failure is never a reason to deny
+            variable = getattr(exc, "variable", None)
+            if variable in LIMIT_SETTINGS:
+                asked.append(f"{source}: not checked: it is over SkillTotal's size limit. To "
+                             f"check it, set {variable} to a higher value and run the same "
+                             f"command again.")
+            else:
+                failed.append(source)
             continue
         decision = evaluate(report)
         verdict = report.get("verdict") or {}
