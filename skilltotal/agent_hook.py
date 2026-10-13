@@ -141,7 +141,8 @@ _SUB = "$(...)"
 # not split into commands (an unclosed quote, code in another language, a script piped to a shell).
 _INSTALL_WORDS = re.compile(
     r"(?<![\w.-])(?:(?:npx|bunx|pnpx|uvx|pipx|pip-sync)(?![\w.-])"
-    r"|(?:npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv)(?![\w.-])[^\n;&|]{0,80}?"
+    r"|(?:npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv|conda|mamba|micromamba)(?![\w.-])"
+    r"[^\n;&|]{0,80}?"
     r"(?<![\w.-])(?:install|isntall|i|in|it|add|create|init|innit|exec|x|dlx|tool|run)(?![\w.-]))",
     re.IGNORECASE,
 )
@@ -166,7 +167,7 @@ _COMPUTED_HEAD = {"bash": _COMPUTED, "powershell": _COMPUTED, "cmd": re.compile(
 # An installer named anywhere, verb or not: what a command name the shell computes can turn into.
 _INSTALLER_NAME = re.compile(
     r"(?<![\w.-])(?:npx|bunx|pnpx|uvx|pipx|npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv"
-    r"|corepack|pip-sync)(?![\w.-])",
+    r"|corepack|pip-sync|conda|mamba|micromamba)(?![\w.-])",
     re.IGNORECASE,
 )
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -1705,6 +1706,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _pyproject(head, rest, shell, depth, level)
     if head in _PROJECT_ENVS:
         return _project_envs(head, rest, shell, depth, level)
+    if head in _CONDA:
+        return _conda(rest, shell, depth, level)
     return []
 
 
@@ -1861,7 +1864,7 @@ def _could_launch(word: str) -> bool:
         head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx",
                                          "pip-sync", "cmd",
                                          "powershell", "pwsh", "eval", "xargs", "parallel")
-        or head in _PYPROJECT_ADD or head in _PROJECT_ENVS
+        or head in _PYPROJECT_ADD or head in _PROJECT_ENVS or head in _CONDA
         or head in _SHELLS or head in _WRAPPERS or head in _LAUNCHERS or head in _PASSTHROUGH
         or head in _CODE_OPTIONS or head in _PS_EVAL
         or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
@@ -2788,6 +2791,69 @@ def _project_envs(head: str, rest: list[str], shell: str, depth: int,
         if colon and env and first:
             command = [first, *command[1:]]
     return _lockfile(_PROJECT_ENVS[head]) + _installs_in(command, shell, depth + 1, level)
+
+
+# conda and its drop-in replacements install conda packages from conda channels, not from npm or
+# PyPI: the scanner cannot fetch what they name.
+_CONDA = frozenset({"conda", "mamba", "micromamba"})
+_CONDA_VALUE_FLAGS = {"-n", "--name", "-p", "--prefix", "-c", "--channel", "--file", "-f",
+                      "--repodata-fn", "--solver", "--experimental-solver", "--clone", "--subdir",
+                      "--platform", "-r", "--root-prefix", "--rc-file", "--channel-priority"}
+_CONDA_RUN_VALUE_FLAGS = {"-n", "--name", "-p", "--prefix", "--cwd", "-a", "--attach",
+                          "-r", "--root-prefix", "--rc-file", "--label"}
+_CONDA_DRY = frozenset({"--dry-run", "-d"})
+# A conda package's name, as a reason may quote it.
+_CONDA_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,99}")
+
+
+def _conda(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    """``conda install x``, ``conda create -n e x``, ``conda update x`` (mamba and micromamba
+    too): each package named is a conda package, asked about since it cannot be checked.
+    ``--file f`` and ``conda env create|update [-f environment.yml]`` install what a file lists.
+    ``conda run -n e cmd`` installs nothing itself; the command it runs is read."""
+    sub, args = _subcommand(rest, _CONDA_VALUE_FLAGS)
+    if _filled_in(sub or ""):
+        return [_NOT_READ]
+    if sub == "run":
+        start = _command_start(args, _CONDA_RUN_VALUE_FLAGS)
+        return _installs_in(args[start:], shell, depth + 1, level)
+    listed_only = sub == "env"
+    if listed_only:
+        sub, args = _subcommand(args, _CONDA_VALUE_FLAGS)
+        if sub not in ("create", "update"):
+            return []  # `conda env list`, `conda env remove`, `conda env export`
+    elif sub not in ("install", "create", "update", "upgrade"):
+        return []  # `conda list`, `conda activate`, `conda remove`, `conda info`, ...
+    if _help(args, _PY_HELP) or any(a in _CONDA_DRY for a in args):
+        return []
+    files = _conda_files(args)
+    if listed_only:  # `conda env create` reads environment.yml when no file is named
+        return [item for file in files or ["environment.yml"] for item in _lockfile(file)]
+    found = [item for file in files for item in _lockfile(file)]
+    for spec in _positionals(args, _CONDA_VALUE_FLAGS):
+        found.extend(_computed(spec) if _COMPUTED.search(spec) else [_conda_package(spec)])
+    return found
+
+
+def _conda_files(args: list[str]) -> list[str]:
+    """The files ``--file f`` (micromamba's ``-f f``) names, each a list of packages to install."""
+    files: list[str] = []
+    for i, arg in enumerate(args):
+        if arg in ("--file", "-f") and i + 1 < len(args):
+            files.append(args[i + 1])
+        elif arg.startswith("--file="):
+            files.append(arg.split("=", 1)[1])
+    return files
+
+
+def _conda_package(spec: str) -> Install:
+    """A conda package spec (``numpy``, ``numpy>=1.26``, ``conda-forge::numpy=1.26``): named in
+    the reason only when its name is plain and only a version or build follows it."""
+    name = spec.rsplit("::", 1)[-1]  # `channel::package`
+    plain = _CONDA_NAME.match(name)
+    if plain and (plain.end() == len(name) or name[plain.end()] in "=<>!~[ "):
+        return Install(None, f"{plain.group(0)} (a conda package, not from npm or PyPI)")
+    return Install(None, "a conda package (not from npm or PyPI)")
 
 
 def _pip_args_source(args: list[str]) -> str | None:

