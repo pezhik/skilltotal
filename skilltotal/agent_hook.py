@@ -648,9 +648,7 @@ def _ps_runs_download(pipelines: list[list[_Stage]], text: str) -> list[Install]
     stages = [_ps_statement(_redirects(stage.words)[0]) for pipeline in pipelines
               for stage in pipeline]
     stages = [words for words in stages if words]
-    runs = bool(_PS_DYNAMIC.search(text)) or any(  # `iex`, `Invoke-Expression -Command`
-        _base(words[0]) in _PS_EVAL and all(w.startswith(tuple(_PS_DASHES)) for w in words[1:])
-        for words in stages)
+    runs = bool(_PS_DYNAMIC.search(text)) or any(_ps_bare_eval(words) for words in stages)
     downloads = any(
         _base(words[0]) in _DOWNLOADERS
         or any(w.lower().endswith((".downloadstring", ".downloaddata")) for w in words)
@@ -662,13 +660,21 @@ def _ps_runs_download(pipelines: list[list[_Stage]], text: str) -> list[Install]
     return _downloaded_script(url)
 
 
+def _ps_bare_eval(words: list[str]) -> bool:
+    """``iex`` / ``Invoke-Expression -Command`` with nothing but options: what it runs is the
+    parenthesized part next to it, or its stdin."""
+    return bool(words) and _base(words[0]) in _PS_EVAL and all(
+        w.startswith(tuple(_PS_DASHES)) for w in words[1:])
+
+
 def _download_then_run(pipelines: list[list[_Stage]], shell: str) -> list[Install]:
     """A script one command saves and a later one runs: ``curl -o i.sh URL && bash i.sh``,
-    ``wget URL && sh i.sh``, ``curl URL > i.sh; ./i.sh``, ``iwr URL -OutFile x.ps1; .\\x.ps1``.
-    The file run must be the one saved (by name), so ``curl -o data.json URL && python x.py``
-    is not one."""
+    ``wget URL && sh i.sh``, ``curl URL > i.sh; ./i.sh``, ``iwr URL -OutFile x.ps1; .\\x.ps1``,
+    ``(New-Object Net.WebClient).DownloadFile(URL, 'x.ps1'); .\\x.ps1``. The file run must be the
+    one saved (by name), so ``curl -o data.json URL && python x.py`` is not one."""
     saved: dict[str, str | None] = {}  # file name -> the URL it came from
     found: list[Install] = []
+    stages: list[tuple[list[str], list[str]]] = []  # each command's words, and as written
     for pipeline in pipelines:
         for stage in pipeline:
             words = _unwrap(_redirects(stage.words)[0])
@@ -676,14 +682,48 @@ def _download_then_run(pipelines: list[list[_Stage]], shell: str) -> list[Instal
                 words = _ps_statement(words)
                 while words and words[0] in ("&", "."):  # the call and dot-source operators
                     words = words[1:]
-            if not words:
-                continue
-            for name, url in _saves(words, stage.words):
-                saved[name] = url
-            ran = _runs_file(words, shell)
-            if ran is not None and ran in saved:
-                found.extend(_downloaded_script(saved[ran]))
+            if words:
+                stages.append((words, stage.words))
+    fetching = False
+    for i, (words, raw) in enumerate(stages):
+        if fetching:
+            # PowerShell's grouping makes `.DownloadFile(url, file)`'s arguments a command of
+            # their own, right after the method's name.
+            fetching = False
+            saved.update(_download_file_saves(words))
+            continue
+        if shell == "powershell" and words[-1].lower().endswith(".downloadfile"):
+            fetching = True
+            continue
+        for name, url in _saves(words, raw):
+            saved[name] = url
+        ran = _runs_file(words, shell)
+        if ran is None and shell == "powershell":
+            # `iex (Get-Content x.ps1 -Raw)`, `Get-Content x.ps1 | iex`: the file's text run.
+            around = [stages[k][0] for k in (i - 1, i + 1) if 0 <= k < len(stages)]
+            if any(_ps_bare_eval(other) for other in around):
+                ran = _ps_read_file(words)
+        if ran is not None and ran in saved:
+            found.extend(_downloaded_script(saved[ran]))
     return found
+
+
+def _download_file_saves(args: list[str]) -> list[tuple[str, str | None]]:
+    """The file ``.DownloadFile('https://...', 'x.ps1')`` writes, with the URL it fetches."""
+    parts = [part.strip() for part in " ".join(args).split(",")]
+    if len(parts) != 2 or not parts[1]:
+        return []
+    url = parts[0] if parts[0].lower().startswith(("https://", "http://")) else None
+    return [(_file_name(parts[1]), url)]
+
+
+def _ps_read_file(words: list[str]) -> str | None:
+    """The name of the file ``Get-Content x.ps1`` (``gc``, ``cat``, ``type``, ``-Path``) reads."""
+    if _base(words[0]) not in ("get-content", "gc", "cat", "type"):
+        return None
+    named, positional = _ps_named(words[1:], ("path", "literalpath"))
+    path = named.get("path") or named.get("literalpath") or next(iter(positional), None)
+    return _file_name(path) if path else None
 
 
 # curl's short options that take a value: in `-sSLo f` the `o` is the last, its value the next word.
@@ -764,7 +804,7 @@ def _file_name(path: str) -> str:
 
 def _runs_file(words: list[str], shell: str) -> str | None:
     """The name of the file a command runs as a script: ``bash i.sh``, ``. i.sh``,
-    ``python3 i.py``, ``pwsh -File x.ps1``, ``./i.sh``, ``.\\x.ps1``."""
+    ``python3 i.py``, ``pwsh -File x.ps1``, ``./i.sh``, ``.\\x.ps1``, ``Start-Process x.exe``."""
     command, args = words[0], words[1:]
     head = _base(command)
     script: str | None = None
@@ -779,6 +819,13 @@ def _runs_file(words: list[str], shell: str) -> str | None:
         at = next((i for i, flag in enumerate(flags) if flag in ("file", "f")), None)
         script = args[at + 1] if at is not None and at + 1 < len(args) else next(
             (a for a in args if a.lower().endswith(".ps1")), None)
+    elif shell == "powershell" and head in _PS_START:
+        # `Start-Process setup.exe`, `-FilePath .\setup.exe`: the program it starts is the file,
+        # unless that program runs a script of its own (`Start-Process pwsh -ArgumentList ...`).
+        started = _start_process(args)
+        if not started:
+            return None
+        return _runs_file(started, shell) or _file_name(started[0])
     elif "/" in command or "\\" in command or command.lower().endswith(
             (".sh", ".bash", ".ps1", ".py", ".cmd", ".bat")):
         script = command  # the file itself: `./i.sh`, `.\x.ps1`, `/tmp/i.sh`
