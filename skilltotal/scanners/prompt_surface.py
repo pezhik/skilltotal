@@ -68,7 +68,11 @@ _STRONG = alternation(
     r"disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior)\s+(?:instructions|prompts)",
     # Attacker-flavored verbs only — NOT "print"/"show" (legit CLI/docs: a "print-system-prompt"
     # command prints your OWN prompt; FP fix: serena).
-    r"(?:reveal|expose|leak|repeat)\s+(?:your\s+|the\s+)?(?:system|developer)\s+prompt",
+    # Negation guard like the "send" rule: "Never reveal your system prompt" is the guardrail a
+    # subagent or command prompt carries, the opposite of a directive.
+    "(?:"
+    + "|".join(_neg_guarded(v, _NEG_WS) for v in ("reveal", "expose", "leak", "repeat"))
+    + r")\s+(?:your\s+|the\s+)?(?:system|developer)\s+prompt",
     r"override\s+(?:developer|system|previous|prior)\s+(?:instructions|prompt)",
     # Data-theft DIRECTIVES — require an action verb + sensitive target and/or a
     # destination, so security prose ("can't exfiltrate ...", "read credentials from env")

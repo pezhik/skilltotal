@@ -9,11 +9,19 @@ manifest source.
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Iterator
 
 from skilltotal import bounded_json
 from skilltotal.autorun import KIND_MCP_SERVER, autorun_commands
-from skilltotal.file_index import FileIndex, IndexedFile, is_doc_path, is_test_path
+from skilltotal.file_index import (
+    FileIndex,
+    IndexedFile,
+    agent_prompt_dirs,
+    is_doc_path,
+    is_test_path,
+)
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -296,6 +304,109 @@ _PY_TOOL_NAME_ARG = re.compile(
 )
 
 
+# Every string of a JSON schema the client hands to the model: a property's description and
+# title, enum values, defaults, examples and const values, at any depth (nested `properties`,
+# `items`, `anyOf`/`oneOf`/`allOf`, `$defs` ...). The walk is iterative and bounded, so a crafted
+# schema cannot exhaust the stack or the scan.
+_SCHEMA_KEYS = ("inputSchema", "input_schema", "parameters", "outputSchema", "output_schema")
+_SCHEMA_TEXT_KEYS = frozenset({"description", "title", "default", "enum", "examples", "const"})
+_MAX_SCHEMA_DEPTH = 64
+_MAX_METADATA_STRINGS = 10_000
+
+
+def _schema_texts(schema: object) -> Iterator[str]:
+    """The text strings of a JSON schema, as above (at most ``_MAX_METADATA_STRINGS``)."""
+    stack: list[tuple[object, int]] = [(schema, 0)]
+    count = 0
+    while stack and count < _MAX_METADATA_STRINGS:
+        node, depth = stack.pop()
+        if depth > _MAX_SCHEMA_DEPTH:
+            continue
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in _SCHEMA_TEXT_KEYS:
+                    for text in value if isinstance(value, list) else (value,):
+                        if isinstance(text, str) and text:
+                            count += 1
+                            yield text
+                if isinstance(value, (dict, list)):
+                    stack.append((value, depth + 1))
+        elif isinstance(node, list):
+            stack.extend((item, depth + 1) for item in node)
+
+
+def _dicts(value: object) -> list[dict]:
+    """The dict entries of a manifest list (or of a name-keyed dict)."""
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return [item for item in items if isinstance(item, dict)]
+
+
+def _strings(item: dict, *keys: str) -> Iterator[str]:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            yield value
+
+
+def _listing_texts(data: dict, is_manifest_name: bool) -> Iterator[str]:
+    """Agent-facing text of an MCP manifest or listing beyond each tool's own description.
+
+    The tool's title and every schema string; prompts (description, title, an MCPB prompt's
+    template ``text``, each argument's description); resources and resource templates; the
+    server's ``instructions``; and, in a file named as a manifest (``server.json``, an MCPB
+    ``manifest.json``), its own ``description``/``long_description``.
+    """
+    is_listing = False
+    for tool in _dicts(data.get("tools")):
+        is_listing = True
+        yield from _strings(tool, "title")
+        annotations = tool.get("annotations")
+        if isinstance(annotations, dict):
+            yield from _strings(annotations, "title")
+        for key in _SCHEMA_KEYS:
+            if key in tool:
+                yield from _schema_texts(tool[key])
+    for prompt in _dicts(data.get("prompts")):
+        if "name" not in prompt:
+            continue
+        is_listing = True
+        yield from _strings(prompt, "description", "title", "text")
+        for arg in _dicts(prompt.get("arguments")):
+            yield from _strings(arg, "description", "title")
+    for key, uri in (("resources", "uri"), ("resourceTemplates", "uriTemplate")):
+        for resource in _dicts(data.get(key)):
+            if uri not in resource:
+                continue
+            is_listing = True
+            yield from _strings(resource, "name", "title", "description")
+    if is_listing or is_manifest_name:
+        yield from _strings(data, "instructions")
+    if is_manifest_name:
+        yield from _strings(data, "description", "long_description")
+
+
+def is_mcp_listing(data: object) -> bool:
+    """True if parsed JSON is shaped as an MCP tool/prompt/resource listing (a tools/list dump,
+    a ``tools.json`` a server loads): every value in it is text the client hands to the model."""
+    if not isinstance(data, dict):
+        return False
+    tools = _dicts(data.get("tools"))
+    if any("name" in t and ("description" in t or any(k in t for k in _SCHEMA_KEYS))
+           for t in tools):
+        return True
+    if any("name" in p and ("description" in p or "arguments" in p)
+           for p in _dicts(data.get("prompts"))):
+        return True
+    return any("uri" in r for r in _dicts(data.get("resources")))
+
+
+# A markdown file's leading frontmatter, and its `description:` value (with indented
+# continuation lines, as a YAML block scalar writes them).
+_FRONTMATTER = re.compile(r"\A---[ \t]*\r?\n(.*?)\r?\n---[ \t]*(?:\r?\n|\Z)", re.DOTALL)
+_FRONTMATTER_DESCRIPTION = re.compile(r"(?m)^description[ \t]*:[^\n]*(?:\n[ \t]+[^\n]*)*")
+_FRONTMATTER_LIMIT = 64 * 1024
+
+
 def _match_categories(text: str) -> list[str]:
     """Return the dangerous-capability categories a tool name/description matches."""
     return [label for label, pat in DANGEROUS_TOOL_PATTERNS.items() if pat.search(text)]
@@ -352,10 +463,14 @@ class McpScanner(Scanner):
             id="ST-MCP-TOOL-POISONING",
             category=CATEGORY,
             severity=Severity.HIGH,
-            title="MCP tool description contains agent-directed instructions (tool poisoning)",
+            title=(
+                "MCP tool or skill metadata contains agent-directed instructions (tool poisoning)"
+            ),
             description=(
-                "An MCP tool's description/metadata (including its inputSchema parameter "
-                "descriptions) embeds instructions aimed at the agent rather than documenting "
+                "An MCP tool's description/metadata (including any string of its input schema, "
+                "the server's instructions and its prompt and resource descriptions) or the "
+                "frontmatter description of a skill, subagent or command embeds instructions "
+                "aimed at the agent rather than documenting "
                 "the tool (e.g. fake 'system note:' authority, 'before using this tool ...', a "
                 "precondition forced on another tool's operation such as 'before any file "
                 "operation, you must ...' disguised as a 'mandatory security check', 'ignore "
@@ -527,6 +642,7 @@ class McpScanner(Scanner):
         # Scope to files that actually expose an MCP tool surface to keep this high-signal /
         # low false-positive.
         self._scan_code_phrases(index, _POISONING, poisoning)
+        self._scan_frontmatter_descriptions(index, poisoning)
         self._scan_code_phrases(index, _SHADOWING, shadowing)
         sampling = self._scan_sampling_prompts(index)
 
@@ -723,19 +839,26 @@ class McpScanner(Scanner):
                 anchor = _evidence_for(f, sphrase) or _evidence_for(f, '"description"')
                 if anchor:
                     shadowing.append(anchor)
-            # Poisoning also hides in inputSchema parameter descriptions, not just the top-level
-            # tool description (MCPTox). Scan each declared parameter's description too.
-            schema = tool.get("inputSchema")
-            props = schema.get("properties") if isinstance(schema, dict) else None
-            if isinstance(props, dict):
-                for pname, pspec in props.items():
-                    if not isinstance(pspec, dict):
-                        continue
-                    pphrase = _match_phrase(str(pspec.get("description", "")), _POISONING)
-                    if pphrase and len(poisoning) < MAX_EVIDENCE_SCANNED:
-                        anchor = _evidence_for(f, pphrase) or _evidence_for(f, f'"{pname}"')
-                        if anchor:
-                            poisoning.append(anchor)
+        # Poisoning also hides in the rest of the metadata the client hands to the model, not
+        # just the top-level tool description (MCPTox): every input-schema string at any depth,
+        # prompts, resources, the server's instructions and a manifest's own description.
+        seen = {(e.file, e.match_offset) for e in poisoning}
+        for text in _listing_texts(data, is_manifest_name):
+            if len(poisoning) >= MAX_EVIDENCE_SCANNED:
+                break
+            pphrase = _match_phrase(text, _POISONING)
+            if not pphrase:
+                continue
+            anchor = (
+                _evidence_for(f, pphrase)
+                or _evidence_for(f, json.dumps(pphrase, ensure_ascii=False)[1:-1])
+                or _evidence_for(f, json.dumps(pphrase)[1:-1])
+                or _evidence_for(f, json.dumps(text, ensure_ascii=False)[1:61])
+                or _evidence_for(f, json.dumps(text)[1:61])
+            )
+            if anchor and (anchor.file, anchor.match_offset) not in seen:
+                seen.add((anchor.file, anchor.match_offset))
+                poisoning.append(anchor)
 
     @staticmethod
     def _mcp_code_files(index: FileIndex) -> list[IndexedFile]:
@@ -833,6 +956,27 @@ class McpScanner(Scanner):
                 seen.add(key)
                 if len(sink) < MAX_EVIDENCE_SCANNED:
                     sink.append(ev)
+
+    @staticmethod
+    def _scan_frontmatter_descriptions(index: FileIndex, sink: list[Evidence]) -> None:
+        """Flag poisoning phrases in the frontmatter ``description`` of a skill, subagent or
+        command: the agent reads it, like a tool's description, to decide when to use it."""
+        prompt_dirs = agent_prompt_dirs(f.relpath for f in index.files)
+        for f in index.select(suffixes=(".md", ".mdx")):
+            lower = f.relpath.lower()
+            if f.name.lower() != "skill.md" and not any(
+                lower.startswith(d + "/") for d in prompt_dirs
+            ):
+                continue
+            head = _FRONTMATTER.match(f.text[:_FRONTMATTER_LIMIT])
+            if head is None:
+                continue
+            for desc in _FRONTMATTER_DESCRIPTION.finditer(f.text, head.start(1), head.end(1)):
+                phrase = _match_phrase(desc.group(0), _POISONING)
+                if phrase and len(sink) < MAX_EVIDENCE_SCANNED:
+                    start = f.text.find(phrase, desc.start())
+                    if start >= 0:
+                        sink.append(f.evidence_for_span(start, start + len(phrase)))
 
     def _rule(self, rule_id: str) -> RuleSpec:
         return next(r for r in self.rules if r.id == rule_id)
