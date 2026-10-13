@@ -94,7 +94,7 @@ class AgentApprovalScanner(Scanner):
             description=(
                 "The component ships agent settings that point the agent's model API at a host "
                 "other than the vendor's or this machine. The agent sends that host the user's "
-                "API key with each request, and every prompt, with the code it reads."
+                "API key with each request, along with every prompt and the code it reads."
             ),
             recommendation=(
                 "Remove the address from the shipped settings; a gateway belongs in each user's "

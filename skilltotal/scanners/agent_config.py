@@ -659,8 +659,8 @@ class AgentConfigScanner(Scanner):
             severity=Severity.HIGH,
             title="Install- or import-time code writes into the user's AI agent configuration",
             description=(
-                "Code that runs when the package is installed or imported -- a script an npm "
-                "install hook runs, a .pth line, setup.py, or the top level of a package module -- "
+                "Code that runs when the package is installed or imported (a script an npm "
+                "install hook runs, a .pth line, setup.py, or the top level of a package module) "
                 "writes into an AI agent's configuration in the user's home directory (settings, "
                 "MCP servers, skills, instruction or memory files such as ~/.claude/CLAUDE.md, "
                 "~/.codex/AGENTS.md, ~/.gemini/GEMINI.md), or adds a hook or permission entry to "

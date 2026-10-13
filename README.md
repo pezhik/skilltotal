@@ -210,12 +210,12 @@ calls don't trigger a rescan. When the engine version changes, everything is sca
 A first check takes a second or two for a small package, about 10 seconds for one the size of
 `typescript` or `lodash`, half a minute for `openai` and about a minute for `django` (about 2,000
 files each), on a 4-core machine. A large package is checked by up to four processes at once;
-`SKILLTOTAL_WORKERS` sets how many (1 for one). All checks of one command share 60 seconds; to wait longer
-before asking, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). In CI, where a question
-becomes a denial, the hook waits up to 10 minutes for the full check instead (`SKILLTOTAL_HOOK_BUDGET`
-goes up to 840 there). Once a package is downloaded,
-the hook uses its size to estimate how long the check will take. If that does not fit in the time
-left, Claude Code asks you right away instead of waiting it out. A check the hook stops waiting for
+`SKILLTOTAL_WORKERS` sets how many (1 turns this off). All checks of one command share 60
+seconds; to wait longer before asking, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). In
+CI, where a question becomes a denial, the hook instead waits up to 10 minutes for the full check
+(`SKILLTOTAL_HOOK_BUDGET` goes up to 840 there). Once a package is downloaded, the hook uses its
+size to estimate how long the check will take. If that does not fit in the time left, Claude Code
+asks you right away instead of waiting it out. A check the hook stops waiting for
 goes on in the background (two at a time at most, for up to 20 minutes) and saves its verdict, so
 the same command, run again once it is done, gets that verdict at once.
 

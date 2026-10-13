@@ -57,9 +57,9 @@ corpus).
   'settings.json')`, `Path.home() / ".gemini" / "GEMINI.md"`). Reading these files is not this
   rule. A write into the user's home directory from ordinary code is `ST-AGENT-CONFIG-INJECT`:
   a setup command the user runs may do it honestly. The same write made at install or import
-  time -- by a script an npm install hook runs (or the hook command itself), a `.pth` line,
-  `setup.py`, or the top level of a module an import runs (a package's modules, `sitecustomize`,
-  a module a `.pth` line imports) -- is `ST-AGENT-CONFIG-PERSIST`, as is an install-time write that
+  time is `ST-AGENT-CONFIG-PERSIST`: by a script an npm install hook runs (or the hook command
+  itself), a `.pth` line, `setup.py`, or the top level of a module an import runs (a package's
+  modules, `sitecustomize`, a module a `.pth` line imports). So is an install-time write that
   adds a hook, permission or auto-approve entry to agent settings in the project. A project
   `AGENTS.md`/`CLAUDE.md` written by a CLI's `init` command is only listed for review, never
   scored, and the top level of a standalone installer script, which no import runs, stays the

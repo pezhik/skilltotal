@@ -9,36 +9,37 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ### Detection (ruleset 70)
 Details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 111 malicious and 78 benign samples,
 111/111 flagged, 0 false positives.
-- Tool poisoning and prompt injection are looked for everywhere an agent reads MCP or skill
+- Tool poisoning and prompt injection are now looked for everywhere an agent reads MCP or skill
   metadata: nested input-schema fields, prompts, resources, server instructions, `server.json`,
   Python `Field(description=...)` and `Annotated[...]`, zod's `.describe(...)`, the bodies of
   subagents and slash commands, and frontmatter descriptions.
 - Agent instructions (skills, subagents, commands, `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, editor
-  rules) that download a script and run it are a risk; told to do it silently or without asking,
-  or from a bare IP address, a malicious indicator.
+  rules) that download a script and run it are a risk. When they say to do it silently or
+  without asking, or fetch from a bare IP address, they are a malicious indicator.
 - Code that writes into an agent's settings, instructions or memory (`.claude/settings.json`,
-  `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, skill folders and more) is a risk; at install or import
-  time, a malicious indicator.
-- Agent settings shipped with a component that turn approvals off (bypass mode, every shell
-  command allowed, yolo mode, auto-approved tools) or point the model API at another host.
-- npm: install-time code that publishes a package is a malicious indicator; dependencies fetched
-  from a URL or a git repository are a risk.
-- MCP: a server that asks the user for a secret through elicitation is a risk; a server launched
-  at whatever release is current is noted for review; VS Code's `mcp.json` auto-approve is read.
-- A `.pth` file that imports a module which starts a process at import time, a fixed crypto
-  address written over the clipboard (clipper), and invisible text in variation selectors,
-  invisible operators, Hangul filler identifiers and agent-facing ANSI escapes are malicious
-  indicators.
-- `ST-SECRET-EXFIL` (JavaScript) follows a name only in the block where it holds the
-  environment. A large bundle could be reported with or without this finding from one scan to
-  the next; it now gives one answer, without the false positive.
+  `CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, skill folders and more) is a risk, and a malicious
+  indicator when the write runs at install or import time.
+- Agent settings shipped with a component are a risk when they turn approvals off (bypass mode,
+  every shell command allowed, yolo mode, auto-approved tools) or point the model API at another
+  host.
+- npm: install-time code that publishes a package is a malicious indicator. A dependency fetched
+  from a URL or a git repository is a risk.
+- MCP: a server that asks the user for a secret through elicitation is a risk. A server launched
+  at whatever release is current is noted for review. Auto-approve in VS Code's `mcp.json` is
+  now read.
+- New malicious indicators: a `.pth` file that imports a module which starts a process at import
+  time; a fixed crypto address written over the clipboard (clipper); text hidden in variation
+  selectors, invisible operators, Hangul filler identifiers or agent-facing ANSI escapes.
+- `ST-SECRET-EXFIL` (JavaScript) now follows a name only in the block where it holds the
+  environment. A large bundle used to get this finding on one scan and not on the next. Every
+  scan now gives the same answer, and the false positive is gone.
 
 ### Engine
 - A large component (200 files or 4 MB of text and up) is scanned by up to four worker
-  processes, one check per process, with results used in the usual order, so the report is
-  byte for byte the same. Django's sdist went from 170 to 87 seconds, the `openai` package from
-  74 to 39. `SKILLTOTAL_WORKERS` sets the number (1 turns workers off). The CLI uses workers; a
-  program calling the engine as a library gets one process unless it calls
+  processes, one check per process. Results are used in the usual order, so the report is byte
+  for byte the same. Django's sdist went from 170 to 87 seconds, the `openai` package from
+  74 to 39. `SKILLTOTAL_WORKERS` sets the number (1 turns workers off). The CLI uses workers. A
+  program that calls the engine as a library gets one process unless it calls
   `skilltotal.parallel.enable()`.
 - On Windows, a scan started from a background job no longer flashes console windows: the
   workers run under `pythonw.exe`, and `git` and the hook's `taskkill` start without a window.
@@ -46,13 +47,13 @@ Details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 111 malicious and 78
 ### Plugin
 - The hook reads more install commands: `codex mcp add` and `gemini mcp add`; `npx skills add
   owner/repo` (the repository's skills are checked, not only the installer) and `gemini
-  extensions install`; `volta install`; Deno's `npm:` packages, and a module run from a URL as a
-  downloaded script; `pip download` and `pip wheel`, which run a source distribution's build
+  extensions install`; `volta install`; Deno's `npm:` packages (a module run from a URL counts as
+  a downloaded script); `pip download` and `pip wheel`, which run a source distribution's build
   code; `easy_install`; `python setup.py install`/`develop`; `rye add`/`install`; `pixi add`.
-  A `claude plugin install`, a Smithery server, a JSR package and a conda package from pixi are
-  asked about, since the hook has no source to check for them. cmd's `call npm i x` no longer
-  hides the install. A table of real install commands, family by family, pins all of this
-  (`tests/test_hook_conformance.py`).
+  The hook asks about a `claude plugin install`, a Smithery server, a JSR package and a conda
+  package from pixi, since it has no source to check for them. cmd's `call npm i x` no longer
+  hides the install. `tests/test_hook_conformance.py` pins all of this with a table of real
+  install commands, family by family.
 - Also read now: `pip-sync` (installs what `requirements.txt` lists); `hatch`, `tox` and `nox`,
   which install what the project lists, and the commands they run; conda, mamba and micromamba
   (a named conda package is asked about, an environment file is what the project lists, and

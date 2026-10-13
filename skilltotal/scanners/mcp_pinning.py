@@ -55,8 +55,9 @@ class McpPinningScanner(Scanner):
             places=places,
             what="MCP server launch command(s) fetch the newest release at every start",
             advice=(
-                "The release that runs later is not the one checked now; pin a version "
-                "(pkg@1.2.3, pkg==1.2.3, image:tag or @sha256) to keep it."
+                "The release that runs later is not the one checked now. Pin a version "
+                "(pkg@1.2.3, pkg==1.2.3, image:tag or @sha256) so the checked release is the "
+                "one that runs."
             ),
         )])
 

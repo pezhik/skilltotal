@@ -3277,9 +3277,9 @@ def hook_response(
         except Exception as exc:  # noqa: BLE001 - our own failure is never a reason to deny
             variable = getattr(exc, "variable", None)
             if variable in LIMIT_SETTINGS:
-                asked.append(f"{source}: not checked: it is over SkillTotal's size limit. To "
-                             f"check it, set {variable} to a higher value and run the same "
-                             f"command again.")
+                asked.append(f"{source}: not checked because it is over SkillTotal's size "
+                             f"limit. To check it, set {variable} to a higher value and run the "
+                             f"same command again.")
             else:
                 failed.append(source)
             continue
@@ -3383,7 +3383,8 @@ def _runs_current_release(command: str, installs: list[Install]) -> str:
     if not names:
         return ""
     return (f"{_names(names)} will run as an MCP server at whatever release is current each "
-            f"time it starts, not only the release checked now; pin a version to keep it.")
+            f"time it starts, not only the release checked now. Pin a version to run the one "
+            f"that was checked.")
 
 
 # CI strict mode: what the hook would otherwise ask about is denied, and the reason says why.

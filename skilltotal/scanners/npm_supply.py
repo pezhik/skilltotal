@@ -105,7 +105,7 @@ class NpmSupplyScanner(Scanner):
             description=(
                 "Code that npm runs when this package is installed publishes a package: it runs "
                 "`npm publish` or sends a publish document to the registry. Installing a package "
-                "has no reason to publish one. Run with the npm token of the machine it is "
+                "has no reason to publish one. With the npm token of the machine it is "
                 "installed on, such code can publish new versions of every package that token "
                 "can publish."
             ),

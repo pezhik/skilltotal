@@ -68,7 +68,7 @@ class ClipperScanner(Scanner):
             description=(
                 "The code writes a cryptocurrency address fixed in the code to the clipboard, in "
                 "a file that also recognizes addresses with a pattern. This is how a clipper "
-                "replaces an address the user copied, so the user pastes the attacker's address "
+                "replaces an address the user copied, so the user pastes the fixed address "
                 "instead."
             ),
             recommendation=(
