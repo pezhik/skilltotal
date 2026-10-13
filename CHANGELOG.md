@@ -4,7 +4,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.66.0]
+
+Detection reads every place an agent takes instructions, settings or MCP metadata from, and a
+large package is scanned in about half the time. Ruleset 70.
 
 ### Detection (ruleset 70)
 Details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 111 malicious and 78 benign samples,
