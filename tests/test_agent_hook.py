@@ -42,6 +42,8 @@ INSTALL_COMMANDS = [
     ),
     ("claude mcp add git -- uvx mcp-server-git", ["pypi:mcp-server-git"]),
     ("FOO=1 sudo npm install -g pnpm", ["npm:pnpm"]),
+    ("npm i --location=global typescript eslint", ["npm:typescript", "npm:eslint"]),
+    ("npm install --global left-pad", ["npm:left-pad"]),
     ("cd web; npm install express", ["npm:express"]),
     # hatch and tox run a command in the environment they set up: what it installs is checked.
     ("hatch run pip install requests", ["pypi:requests"]),

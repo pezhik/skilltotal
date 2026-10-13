@@ -2108,9 +2108,21 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
         return [] if _help(rest, _NODE_HELP) else _lockfile(_LOCKFILES[head])
     if sub in _NPM_INSTALL or (head == "bun" and sub == "a"):
         if not _npm_positionals(args, head):  # no package named: what package.json lists
-            return [] if _help(rest, _NODE_HELP) else _lockfile("package.json")
+            if _help(rest, _NODE_HELP):
+                return []
+            # `npm install -g` with no package installs the package in this folder, globally.
+            return _local(".") if head == "npm" and _npm_global(rest) else _lockfile(
+                "package.json")
         return _npm_packages(args, registry, head)
     return []
+
+
+def _npm_global(args: list[str]) -> bool:
+    """Whether npm is told to install globally: ``-g``, ``--global``, ``--location=global``."""
+    return any(
+        arg in ("-g", "--global", "--location=global")
+        or (arg == "--location" and args[i + 1:i + 2] == ["global"])
+        for i, arg in enumerate(args))
 
 
 # Options with which an installer prints its help or its version and installs nothing. To the npm

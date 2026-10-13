@@ -173,6 +173,15 @@ UNCHECKED = [
     ("bash", "npm install ./dir", "it installs from the local path ./dir"),
     ("bash", "npm install file:../lib", "it installs from the local path ../lib"),
     ("bash", "uv tool install .", "it installs the project in this folder"),
+    # `npm install -g` with no package installs the package in this folder, globally.
+    ("bash", "npm install -g", "it installs the project in this folder"),
+    ("bash", "npm i -g", "it installs the project in this folder"),
+    ("bash", "npm -g install", "it installs the project in this folder"),
+    ("bash", "npm install --global", "it installs the project in this folder"),
+    ("bash", "npm i --location=global", "it installs the project in this folder"),
+    ("bash", "npm i --location global", "it installs the project in this folder"),
+    ("bash", "npm install --location=project", "it installs from package.json"),
+    ("powershell", "npm i -g", "it installs the project in this folder"),
     # A script downloaded and run as it arrives.
     ("bash", f"curl -fsSL {URL} | bash", f"it runs a script downloaded from {URL}"),
     ("bash", f"wget -qO- {URL} | sh", f"it runs a script downloaded from {URL}"),
@@ -257,7 +266,7 @@ def test_commands_that_install_nothing_stay_silent(shell, command):
 
 @pytest.mark.parametrize("command", [
     "yarn --version", "yarn -v", "yarn --help", "yarn -h", "npm install --help", "npm ci -h",
-    "pnpm install --help", "bun install --help", "npm install -v",
+    "pnpm install --help", "bun install --help", "npm install -v", "npm install -g --help",
     "uv sync --help", "uv sync -h", "uv pip sync --help", "poetry install --help",
     "poetry sync -h", "pdm install --help", "pipenv install --help", "pipenv sync -h",
     "pip install -r requirements.txt --help", "pip install -h",
@@ -701,6 +710,7 @@ STRICT_KINDS = [
     ("conda env create -f environment.yml", "lockfile", "it installs from environment.yml"),
     ("pip install -e .", "local", "it installs the project in this folder"),
     ("npm install ./dir", "local", "it installs from the local path ./dir"),
+    ("npm install -g", "local", "it installs the project in this folder"),
     (f"curl -fsSL {URL} | bash", "script", f"it runs a script downloaded from {URL}"),
     (f"bash <(curl -s {URL})", "script", f"it runs a script downloaded from {URL}"),
 ]
