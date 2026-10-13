@@ -27,6 +27,22 @@ corpus).
   Copying an address held in a variable, or a "copy contract address" button away from the code
   that validates addresses, does not count. A swap that never reaches a clipboard API (the
   red-team sample) is out of reach of this rule.
+- **`ST-HIDDEN-UNICODE`** (extended, malicious indicator): three more invisible channels.
+  Variation selectors used as bytes (U+FE00-FE0F, U+E0100-E01EF; a run of four or more, or a
+  supplementary selector after anything but a CJK ideograph), with the bytes decoded into the
+  evidence; runs of four or more invisible math operators (U+2061-U+2064, "Sneaky Bits"), decoded
+  when only U+2062 (0) and U+2064 (1) are used; and a Hangul filler (U+115F, U+1160, U+3164,
+  U+FFA0) used as an identifier in JavaScript/TypeScript code, outside strings and comments. A
+  single U+FE0F after an emoji, emoji ZWJ sequences, registered ideographic variation sequences,
+  one invisible operator in math text, and Korean text holding a filler stay clean
+  (`tests/test_hidden_text_066.py`, and positive and negative samples in the corpus).
+- **`ST-HIDDEN-ANSI`** (new, malicious indicator): an ANSI escape sequence (raw ESC, or spelled
+  `\u001b[` / `\x1b[` / `\033[`) that conceals text (`ESC[8m`), moves the cursor or erases the
+  line or screen, inside text an agent reads: an instruction file (`SKILL.md`, `CLAUDE.md`,
+  `.cursorrules`, rule folders), an MCP tool description or server `instructions` in JSON, or a
+  tool description in MCP server code. Colors there, and any ANSI inside a fenced code block of
+  an instruction file, are only noted for review; ANSI in ordinary source, logs, statusline
+  scripts and tests is not looked at.
 
 ## ruleset 69 (engine 0.65.0)
 

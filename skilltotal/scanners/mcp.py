@@ -258,6 +258,13 @@ _CODE_SURFACE = re.compile(
 _MCP_IMPORT = re.compile(
     r"\bfastmcp\b|\bmcp\.server\b|@modelcontextprotocol/sdk/server|mcp[-_]nest"
 )
+
+
+def exposes_mcp_surface(text: str) -> bool:
+    """True if source ``text`` defines MCP server tools or imports a server-side MCP library."""
+    return bool(_CODE_SURFACE.search(text) or _MCP_IMPORT.search(text))
+
+
 _CONTEXT_SURFACE = re.compile(
     r"\.add_tool\s*\(|\bTool\s*\(\s*name\s*=|@Tool\s*\(\s*\{|\bTool\s*\)\s*\(\s*\{|"
     # The Python SDK's server-side stdio transport (`async with stdio_server() as ...`).

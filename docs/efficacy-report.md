@@ -2,8 +2,8 @@
 
 Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (92/92 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/64 benign samples wrongly flagged)
+- **recall: 100.0%** (97/97 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/67 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -54,7 +54,7 @@ Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 |---|---|---|---|---|
 | AST01 | 8 | 19 | 13 | 2 |
 | AST02 | 14 | 9 | 2 | 0 |
-| AST04 | 13 | 2 | 6 | 0 |
+| AST04 | 17 | 3 | 6 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.

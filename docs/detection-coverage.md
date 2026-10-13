@@ -23,7 +23,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Unsafe deserialization** (pickle/marshal/dill loader) | `ST-DESERIALIZE-PY` | `py-marshal-loader` |
 | **Deserialize-and-execute dropper** (`exec(marshal.loads(<remote>))`) | `ST-OBF-DECODE-EXEC-PY` (malicious) | `py-marshal-loader` |
 | **Shell / command execution & injection** | `ST-SHELL-PY`/`ST-SHELL-NODE`, `ST-CMDI-PY`/`ST-CMDI-NODE` | `pypi-typosquat-dropper` |
-| **Hidden-Unicode / Trojan-Source instruction smuggling** | `ST-HIDDEN-UNICODE` (malicious); `ST-HIDDEN-UNICODE-AMBIG` (needs_review) | `zero-width-injection` |
+| **Hidden-Unicode / Trojan-Source instruction smuggling** (tag characters, variation-selector or invisible-operator payloads, Hangul-filler identifiers, ANSI that hides agent-facing text) | `ST-HIDDEN-UNICODE`, `ST-HIDDEN-ANSI` (malicious); `ST-HIDDEN-UNICODE-AMBIG` (needs_review) | `zero-width-injection` |
 | **Prompt injection / instruction override** | `ST-PROMPT-INJECTION` (malicious); `ST-PROMPT-WEAK` (needs_review) | `agent-instruction-override` |
 | **MCP tool poisoning** (agent-directed instructions in tool metadata) | `ST-MCP-TOOL-POISONING` (malicious); `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-TOOL-SHADOWING` | `mcp-tool-poisoning` |
 | **MCP sampling abuse** (server-written prompt asks the client's model for credentials or a command, and for silence) | `ST-MCP-SAMPLING-INJECTION` (malicious) | `mcp-sampling-injection` |

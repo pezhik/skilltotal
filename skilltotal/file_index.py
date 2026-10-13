@@ -615,6 +615,24 @@ def _in_instruction_dir(dirs: list[str]) -> bool:
     )
 
 
+def is_instruction_path(relpath: str) -> bool:
+    """True if ``relpath`` is a file an agent loads as its instructions.
+
+    ``CLAUDE.md``, ``SKILL.md``, ``.cursorrules`` and the other names in ``_INSTRUCTION_NAMES``,
+    Cursor's ``.mdc`` rules, and any file in a rule folder (``.clinerules/``, ``.cursor/rules/``,
+    ``.windsurf/rules/``).
+    """
+    parts = relpath.lower().split("/")
+    name = parts[-1]
+    while name.endswith(_TEMPLATE_SUFFIXES):
+        name = name[: name.rindex(".")]
+    return (
+        name in _INSTRUCTION_NAMES
+        or name.endswith(_INSTRUCTION_SUFFIXES)
+        or _in_instruction_dir(parts[:-1])
+    )
+
+
 def skill_dirs(relpaths: Iterable[str]) -> frozenset[str]:
     """Directories (``""`` for the root) holding a ``SKILL.md``: an agent reads what is in them."""
     dirs = set()
