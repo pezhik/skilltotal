@@ -6,9 +6,10 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 
 ## ruleset 70 (engine 0.66.0)
 
-One construct left from the blind red-team (2026-10-10). Pinned by a sanitized sample that fails
-on ruleset 69 and by look-alikes that must stay clean (`tests/test_pth_import_exec.py`, and a
-positive and a negative sample in the detection-efficacy corpus).
+Two constructs left from the blind red-team (2026-10-10). Each is pinned by sanitized samples
+that fail on ruleset 69 and by look-alikes that must stay clean (`tests/test_pth_import_exec.py`,
+`tests/test_clipper.py`, and a positive and a negative sample each in the detection-efficacy
+corpus).
 
 - **`ST-PTH-IMPORT-EXEC`** (new, malicious indicator): a `.pth` file whose executed `import` line
   (`import x`, `from x import y`, `__import__("x")`, `importlib.import_module("x")`, or any of
@@ -18,6 +19,14 @@ positive and a negative sample in the detection-efficacy corpus).
   `if __name__ == "__main__":`, are not run by an import and do not count; nor do modules under
   test folders, or modules the component does not ship. `ST-PTH-EXEC` still reads the `.pth`
   file on its own.
+- **`ST-CLIPPER`** (new, malicious indicator, JS/TS and Python): a fixed cryptocurrency address
+  (Bitcoin, Ethereum or Tron; spliced literals are read joined) written to the clipboard
+  (`clipboardy`, `navigator.clipboard`, Electron's `clipboard`, `pyperclip`, `win32clipboard`,
+  Tk's `clipboard_append`) as the consequence of recognizing an address: within eight lines after
+  an address pattern, or as the replacement in a `.replace(...)` whose pattern recognizes one.
+  Copying an address held in a variable, or a "copy contract address" button away from the code
+  that validates addresses, does not count. A swap that never reaches a clipboard API (the
+  red-team sample) is out of reach of this rule.
 
 ## ruleset 69 (engine 0.65.0)
 

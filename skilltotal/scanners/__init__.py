@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from skilltotal.scanners.agent_config import AgentConfigScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
+from skilltotal.scanners.clipper import ClipperScanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
 from skilltotal.scanners.encrypted_archive import EncryptedArchiveScanner
@@ -54,6 +55,7 @@ SCANNERS: list[Scanner] = [
     EmailExfilScanner(),
     SecretExfilScanner(),
     AgentConfigScanner(),
+    ClipperScanner(),
 ]
 
 
