@@ -141,10 +141,12 @@ one, shows only the command. The plugin checks each package on your machine, wit
 as the CLI, before the install command runs. Its hook recognizes these commands:
 
 - npm packages: `npm`/`pnpm`/`yarn`/`bun` add or install, `npx`, `bunx`, `pnpx`, `npm exec`,
-  `pnpm dlx`, `yarn dlx`, `bun x` and `npm create`
-- Python packages: `pip` (also as `python -m pip`), `uv`, `uvx`, `pipx`, `poetry add`, `pdm add`
-  and `pipenv install`
-- MCP servers: `claude mcp add` and `claude mcp add-json`
+  `pnpm dlx`, `yarn dlx`, `bun x`, `npm create`, `volta install` and Deno's `npm:` packages
+- Python packages: `pip` (also as `python -m pip`, and `pip download`/`pip wheel`), `uv`, `uvx`,
+  `pipx`, `poetry add`, `pdm add`, `pipenv install`, `rye add`, `pixi add --pypi` and
+  `easy_install`
+- MCP servers: `claude mcp add`, `claude mcp add-json`, `codex mcp add` and `gemini mcp add`
+- Skills and extensions from GitHub: `npx skills add owner/repo` and `gemini extensions install`
 
 The hook reads a command the way the shell would, so it finds installs behind `sudo`, `env`,
 `timeout`, `nohup`, `bash -c '...'`, `eval '...'`, `cmd /c`, `xargs` and `find -exec`. It also

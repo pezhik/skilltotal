@@ -140,8 +140,9 @@ _SUB = "$(...)"
 # An installer and an install-like verb near it: read in text that runs but that the parser could
 # not split into commands (an unclosed quote, code in another language, a script piped to a shell).
 _INSTALL_WORDS = re.compile(
-    r"(?<![\w.-])(?:(?:npx|bunx|pnpx|uvx|pipx|pip-sync)(?![\w.-])"
-    r"|(?:npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv|conda|mamba|micromamba)(?![\w.-])"
+    r"(?<![\w.-])(?:(?:npx|bunx|pnpx|uvx|pipx|pip-sync|easy_install)(?![\w.-])"
+    r"|(?:npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv|conda|mamba|micromamba|rye|pixi"
+    r"|volta)(?![\w.-])"
     r"[^\n;&|]{0,80}?"
     r"(?<![\w.-])(?:install|isntall|i|in|it|add|create|init|innit|exec|x|dlx|tool|run)(?![\w.-]))",
     re.IGNORECASE,
@@ -167,7 +168,7 @@ _COMPUTED_HEAD = {"bash": _COMPUTED, "powershell": _COMPUTED, "cmd": re.compile(
 # An installer named anywhere, verb or not: what a command name the shell computes can turn into.
 _INSTALLER_NAME = re.compile(
     r"(?<![\w.-])(?:npx|bunx|pnpx|uvx|pipx|npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv"
-    r"|corepack|pip-sync|conda|mamba|micromamba)(?![\w.-])",
+    r"|corepack|pip-sync|conda|mamba|micromamba|rye|pixi|volta|easy_install)(?![\w.-])",
     re.IGNORECASE,
 )
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -212,6 +213,7 @@ _WRAPPERS: dict[str, set[str]] = {
     "nice": {"-n"},
     "stdbuf": {"-i", "-o", "-e"},
     "timeout": {"-s", "-k", "--signal", "--kill-after"},
+    "call": set(),  # cmd
 }
 # Shell keywords that can stand in front of a command: `if npm i x; then`, `! npm i x`.
 _KEYWORDS = frozenset({"if", "then", "else", "elif", "do", "while", "until", "!", "{", "coproc"})
@@ -1718,6 +1720,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _xargs(rest, shell, depth, level, feed)
     if head == "find":
         return _find_exec(rest, shell, depth, level)
+    if head == "deno":
+        return _deno(rest) + _interpreter(head, rest, feed, shell, level)
     if head in _CODE_OPTIONS and (head != "bun" or _code_args(rest[:1], *_CODE_OPTIONS["bun"])):
         return _interpreter(head, rest, feed, shell, level)
     if shell == "powershell" and head in _PS_START:
@@ -1729,6 +1733,25 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _launched(rest[2:], shell, depth, level)
     if head == "claude" and rest[:2] == ["mcp", "add-json"]:
         return _add_json(rest[2:], shell, depth, level)
+    if head in ("codex", "gemini") and rest[:2] == ["mcp", "add"]:
+        return _launched(rest[2:], shell, depth, level)
+    if head == "claude" and rest[:1] == ["plugin"] and rest[1:2] in (["install"], ["i"]):
+        return _plugin_install(rest[2:])
+    if head == "gemini" and rest[:1] in (["extensions"], ["extension"]) \
+            and rest[1:2] == ["install"]:
+        return _gemini_extension(rest[2:])
+    if head in _SKILLS_CLIS:
+        return _skills_add(rest)
+    if command.lower() in ("@smithery/cli", "smithery"):
+        return _smithery(rest)
+    if head == "volta":
+        return _volta(rest)
+    if _EASY_INSTALL.fullmatch(head):
+        return _easy_install(rest)
+    if head == "rye":
+        return _rye(rest, shell, depth, level)
+    if head == "pixi":
+        return _pixi(rest, shell, depth, level)
     if head in _NPM_RUNNERS:
         return _npx(rest, shell, depth, level, _npm_source(rest, head),
                     fetches=head == "pnpx")
@@ -1738,7 +1761,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         sub, args = _subcommand(rest, _PIP_VALUE_FLAGS)
         if _filled_in(sub or ""):
             return [_NOT_READ]  # `pip $C x`: the subcommand is filled in when the line runs
-        return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
+        return (_pip_install(args, "pip", _py_source(rest, "pip")) if sub in _PIP_FETCHES
+                else [])
     if head == "pip-sync":
         return _pip_sync(rest)
     if _PYTHON_HEAD.fullmatch(head):
@@ -1909,11 +1933,12 @@ def _could_launch(word: str) -> bool:
     head = _base(word)
     return (
         head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx",
-                                         "pip-sync", "cmd",
+                                         "pip-sync", "cmd", "volta", "rye", "pixi",
                                          "powershell", "pwsh", "eval", "xargs", "parallel")
         or head in _PYPROJECT_ADD or head in _PROJECT_ENVS or head in _CONDA
         or head in _SHELLS or head in _WRAPPERS or head in _LAUNCHERS or head in _PASSTHROUGH
         or head in _CODE_OPTIONS or head in _PS_EVAL
+        or head in _SKILLS_CLIS or bool(_EASY_INSTALL.fullmatch(head))
         or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
     )
 
@@ -2581,14 +2606,19 @@ def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
     if i >= len(rest) or rest[i] == "-":  # the script comes from stdin
         return _net(*(text for text, _ in feed)) + _stdin_downloads(feed, shell)
     # `python script.py`; `python3 <(curl ...)` runs what a substitution prints.
-    return _unseen(rest[i], shell, level) if _SUB in rest[i] else []
+    if _SUB in rest[i]:
+        return _unseen(rest[i], shell, level)
+    if _base(rest[i]) == "setup.py" and any(a in ("install", "develop") for a in rest[i + 1:]):
+        return _local(".")
+    return []
 
 
 def _python_m(module: str, args: list[str], shell: str, depth: int,
               level: _Level) -> list[Install]:
     if re.fullmatch(r"pip\d*", module):
         sub, sub_args = _subcommand(args, _PIP_VALUE_FLAGS)
-        return _pip_install(sub_args, "pip", _py_source(args, "pip")) if sub == "install" else []
+        return (_pip_install(sub_args, "pip", _py_source(args, "pip")) if sub in _PIP_FETCHES
+                else [])
     if module == "pipx":
         return _pipx(args, shell, depth, level)
     if module == "uv":
@@ -2739,6 +2769,207 @@ def _pip_sync(args: list[str]) -> list[Install]:
         return []
     files = _positionals(args, _PIP_SYNC_VALUE_FLAGS) or ["requirements.txt"]
     return [item for file in files for item in _lockfile(file)]
+
+
+# pip subcommands that fetch a package and run its build code: `install`, and `download` and
+# `wheel`, which build a source distribution (its setup.py runs) as an install does.
+_PIP_FETCHES = frozenset({"install", "download", "wheel"})
+_EASY_INSTALL = re.compile(r"easy_install(?:-\d+(?:\.\d+)?)?")
+_EASY_INSTALL_VALUE_FLAGS = {"-d", "--install-dir", "-s", "--script-dir", "-f", "--find-links",
+                             "-i", "--index-url", "-b", "--build-directory"}
+
+
+def _easy_install(args: list[str]) -> list[Install]:
+    """``easy_install x``: setuptools' old installer, from PyPI unless ``-i`` names an index."""
+    index = _flag_value(args, {"-i", "--index-url"})
+    return [item for spec in _positionals(args, _EASY_INSTALL_VALUE_FLAGS)
+            for item in _py_spec(spec, index)]
+
+
+# rye: `add` puts packages in the project (from PyPI unless a repository, URL or path is named),
+# `install` installs a tool, `sync` installs what the project lists, `run` starts a command.
+_RYE_VALUE_FLAGS = {"--git", "--url", "--path", "--tag", "--rev", "--branch", "--features",
+                    "--optional", "--pyproject", "--pin", "--python", "-p", "--index-url",
+                    "--extra-index-url"}
+_RYE_ELSEWHERE = ("--git", "--url", "--path")
+
+
+def _rye(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    sub, args = _subcommand(rest, _RYE_VALUE_FLAGS)
+    if _filled_in(sub or ""):
+        return [_NOT_READ]
+    if sub == "run":
+        start = _command_start(args, _RYE_VALUE_FLAGS)
+        return _installs_in(args[start:], shell, depth + 1, level)
+    if sub == "sync":
+        return [] if _help(args, _PY_HELP) else _lockfile("pyproject.toml")
+    if sub == "tools":
+        sub, args = _subcommand(args, _RYE_VALUE_FLAGS)
+    if sub not in ("add", "install"):
+        return []
+    specs = _positionals(args, _RYE_VALUE_FLAGS)
+    if any(a in _RYE_ELSEWHERE or a.startswith(tuple(f + "=" for f in _RYE_ELSEWHERE))
+           for a in args):
+        return [item for spec in specs for item in (
+            _computed(spec) if _COMPUTED.search(spec) else
+            [Install(None, f"{spec} (from a repository, a URL or a path rye was given)")])]
+    index = _flag_value(args, {"--index-url", "--extra-index-url"})
+    return [item for spec in specs for item in _py_spec(spec, index)]
+
+
+# pixi: `add` puts conda packages in the project (PyPI ones with `--pypi`), `global install` and
+# `exec` fetch conda packages, `install` installs what the project lists, `run` starts a task or
+# a command.
+_PIXI_VALUE_FLAGS = {"--manifest-path", "--feature", "-f", "--platform", "-p", "--environment",
+                     "-e", "--channel", "-c", "--git", "--branch", "--tag", "--rev", "--subdir",
+                     "--spec", "-s"}
+
+
+def _pixi(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    sub, args = _subcommand(rest, _PIXI_VALUE_FLAGS)
+    if _filled_in(sub or ""):
+        return [_NOT_READ]
+    if sub == "run":
+        start = _command_start(args, _PIXI_VALUE_FLAGS)
+        return _installs_in(args[start:], shell, depth + 1, level)
+    if sub == "install":
+        return [] if _help(args, _PY_HELP) else _lockfile("pixi.toml")
+    specs = _positionals(args, _PIXI_VALUE_FLAGS)
+    if sub == "global":
+        sub, args = _subcommand(args, _PIXI_VALUE_FLAGS)
+        if sub not in ("install", "add"):
+            return []
+        specs = _positionals(args, _PIXI_VALUE_FLAGS)
+    elif sub == "exec":
+        specs = specs[:1]
+    elif sub != "add":
+        return []
+    if "--git" in args or any(a.startswith("--git=") for a in args):
+        return [Install(None, f"{spec} (from a repository pixi was given)") for spec in specs]
+    if "--pypi" in args:
+        return [item for spec in specs for item in _py_spec(spec, None)]
+    return [_computed(spec)[0] if _COMPUTED.search(spec) else _conda_package(spec)
+            for spec in specs]
+
+
+def _volta(args: list[str]) -> list[Install]:
+    """``volta install x``: an npm package as a global tool. Node itself comes from Node.js's own
+    downloads, not from npm."""
+    sub, rest = _subcommand(args, set())
+    if sub != "install":
+        return []
+    return [item for spec in _positionals(rest, set())
+            if spec.split("@", 1)[0].lower() != "node"
+            for item in _npm_spec(spec, None)]
+
+
+# deno: `npm:` packages and `jsr:` packages, or a module from a URL. `add` and `install` (in the
+# project) take any number; `install -g`, `run` and `x` take the one module they run.
+_DENO_VALUE_FLAGS = {"-n", "--name", "--root", "-c", "--config", "--import-map", "--lock",
+                     "--cert", "--location", "--seed", "--v8-flags", "--env-file", "--ext"}
+
+
+def _deno(args: list[str]) -> list[Install]:
+    sub, rest = _subcommand(args, _DENO_VALUE_FLAGS)
+    if sub not in ("install", "i", "add", "run", "x"):
+        return []
+    specs = _positionals(rest, _DENO_VALUE_FLAGS)
+    if sub in ("install", "i") and not specs:
+        return [] if _help(rest, _PY_HELP) else _lockfile("deno.json")
+    if sub in ("run", "x") or (sub in ("install", "i") and ("-g" in rest or "--global" in rest)):
+        specs = specs[:1]
+    return [item for spec in specs for item in _deno_spec(spec, sub == "add")]
+
+
+def _deno_spec(spec: str, bare_is_jsr: bool) -> list[Install]:
+    if _COMPUTED.search(spec):
+        return _computed(spec)
+    if spec.startswith("npm:"):
+        return _npm_spec(spec[4:], None)
+    if bare_is_jsr and spec.startswith("@") and ":" not in spec:
+        spec = f"jsr:{spec}"  # `deno add @std/path` takes the package from JSR
+    if spec.startswith("jsr:"):
+        shown = spec if _PLAIN_REF.fullmatch(spec[4:].replace("@", "").replace("/", "")) else None
+        return [Install(None, f"{shown or 'a package'} (a JSR package, not from npm or PyPI)")]
+    if spec.startswith(("https://", "http://")):
+        return _downloaded_script(spec)
+    return []  # a module on disk
+
+
+def _plugin_install(args: list[str]) -> list[Install]:
+    """``claude plugin install name@marketplace``: a plugin the hook has no source for."""
+    found: list[Install] = []
+    for name in _positionals(args, {"-s", "--scope"}):
+        if _COMPUTED.search(name):
+            found.extend(_computed(name))
+            continue
+        shown = name if _PLAIN_PLUGIN.fullmatch(name) else "a plugin"
+        found.append(Install(None, f"{shown} (a Claude Code plugin from a marketplace)"))
+    return found
+
+
+_PLAIN_PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}(?:@[A-Za-z0-9][A-Za-z0-9._-]{0,99})?")
+
+
+def _gemini_extension(args: list[str]) -> list[Install]:
+    """``gemini extensions install <repository URL or path> [--ref r]``."""
+    specs = _positionals(args, {"--ref"})
+    if not specs:
+        return []
+    ref = _flag_value(args, {"--ref"})
+    return _repository_source(f"{specs[0]}#{ref}" if ref and "#" not in specs[0] else specs[0])
+
+
+# A folder of a GitHub repository at a ref, as GitHub links it; the scan checks out that folder.
+_GH_TREE = re.compile(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/tree/"
+                      r"(?!.*\.\.)[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*")
+
+
+def _repository_source(spec: str) -> list[Install]:
+    """A repository an agent's own installer clones: GitHub (checked), a path on disk (the
+    person's own), or another host (asked about)."""
+    if _COMPUTED.search(spec):
+        return _computed(spec)
+    if spec.startswith((".", "/", "~")) or _DRIVE.match(spec):
+        return _local(spec)
+    if _GH_TREE.fullmatch(spec):
+        return [Install(spec)]
+    gh = _github(spec)
+    if gh:
+        return [gh]
+    return [Install(None, f"{spec} (a remote archive or repository)")]
+
+
+# The skills installer (`npx skills add owner/repo`): it copies the skills of a repository into
+# the agents' skill folders.
+_SKILLS_CLIS = frozenset({"skills", "add-skill"})
+_SKILLS_VALUE_FLAGS = {"-s", "--skill", "-a", "--agent"}
+
+
+def _skills_add(args: list[str]) -> list[Install]:
+    sub, rest = _subcommand(args, _SKILLS_VALUE_FLAGS)
+    if sub not in ("add", "a", "install", "i") or any(a in ("-l", "--list") for a in rest):
+        return []
+    specs = _positionals(rest, _SKILLS_VALUE_FLAGS)
+    return _repository_source(specs[0]) if specs else []
+
+
+_SMITHERY_VALUE_FLAGS = {"--client", "-c", "--config", "--key", "--profile"}
+
+
+def _smithery(args: list[str]) -> list[Install]:
+    """``npx @smithery/cli install|run <server>``: a server from the Smithery registry, which the
+    hook cannot look up."""
+    sub, rest = _subcommand(args, _SMITHERY_VALUE_FLAGS)
+    if sub not in ("install", "run"):
+        return []
+    specs = _positionals(rest, _SMITHERY_VALUE_FLAGS)
+    if not specs:
+        return []
+    if _COMPUTED.search(specs[0]):
+        return _computed(specs[0])
+    shown = specs[0] if _NPM_NAME.match(specs[0]) else "a server"
+    return [Install(None, f"{shown} (a server from the Smithery registry)")]
 
 
 # poetry, pdm and pipenv: the subcommand that adds packages from PyPI, and their options that take

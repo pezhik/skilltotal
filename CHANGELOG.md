@@ -17,6 +17,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
   workers run under `pythonw.exe`, and `git` and the hook's `taskkill` start without a window.
 
 ### Plugin
+- The hook reads more install commands: `codex mcp add` and `gemini mcp add`; `npx skills add
+  owner/repo` (the repository's skills are checked, not only the installer) and `gemini
+  extensions install`; `volta install`; Deno's `npm:` packages, and a module run from a URL as a
+  downloaded script; `pip download` and `pip wheel`, which run a source distribution's build
+  code; `easy_install`; `python setup.py install`/`develop`; `rye add`/`install`; `pixi add`.
+  A `claude plugin install`, a Smithery server, a JSR package and a conda package from pixi are
+  asked about, since the hook has no source to check for them. cmd's `call npm i x` no longer
+  hides the install. A table of real install commands, family by family, pins all of this
+  (`tests/test_hook_conformance.py`).
 - In CI the hook waits for the full check of a large package, up to 10 minutes by default and
   14 at most (`SKILLTOTAL_HOOK_BUDGET`), instead of denying it after 60 seconds. Outside CI the
   wait is unchanged. The plugin's hook timeout is now 15 minutes.
