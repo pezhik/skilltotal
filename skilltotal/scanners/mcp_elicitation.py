@@ -16,7 +16,7 @@ from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
 
-R_ELICIT_SECRET = "ST-MCP-ELICIT-SECRET"
+R_ELICIT_SECRET = "ST-MCP-ELICIT-SECRET"  # nosec B105 - a rule id, not a secret
 
 _JS_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts")
 _JS_CALL = re.compile(r"\belicitInput\s*\(")
