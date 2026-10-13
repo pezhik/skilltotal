@@ -169,6 +169,13 @@ _JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts")
 _JS_WHOLE_ENV = re.compile(r"(?<![\w$.])process\.env(?!\s*(?:\?\.|\.)\s*[\w$]|\s*\[|[\w$])")
 # A name followed by a property read (`env.TOKEN`, `env?.TOKEN`, `env['TOKEN']`): one variable of
 # an environment alias, not the environment. A method call (`payload.toString()`) still carries it.
+# `process.env` that is tested or listed, not passed on: `typeof process.env`, `Object.keys(
+# process.env)` (the names only), `k in process.env`, `process.env && ...`, `process.env === x`,
+# `process.env ? a : b`.
+_JS_ENV_NOT_VALUE_BEFORE = re.compile(
+    r"(?:\btypeof\s+|\bObject\s*\.\s*(?:keys|getOwnPropertyNames)\s*\(\s*|\bin\s+)$"
+)
+_JS_ENV_NOT_VALUE_AFTER = re.compile(r"\s*(?:[=!]==?|&&|\?(?!\.))")
 _JS_MEMBER_READ = re.compile(r"\s*(?:(?:\?\.|\.)\s*[\w$]+(?![\w$])(?!\s*\()|(?:\?\.)?\s*\[)")
 _JS_SINK = re.compile(
     r"(?<![\w$.])(?:fetch|axios(?:\.(?:post|put|patch|request|get))?|got(?:\.(?:post|put|patch))?|"
@@ -178,6 +185,8 @@ _JS_SINK = re.compile(
 )
 # `.send(` / `.write(` / `.end(` on a request or socket the same file opens.
 _JS_SEND = re.compile(r"\.(?:send|write|end)\s*\(")
+# The process's own output streams: a log line written there stays on the machine.
+_JS_LOCAL_STREAM = re.compile(r"(?:\bprocess\s*\.\s*(?:stdout|stderr)|\bconsole)\s*$")
 _JS_OPENS_CHANNEL = re.compile(
     r"\b(?:https?|http2)\.request\s*\(|\bnet\.(?:connect|createConnection)\s*\(|"
     r"\btls\.connect\s*\(|\bnew\s+(?:XMLHttpRequest|WebSocket)\s*\(|\bdgram\.createSocket\s*\("
@@ -185,6 +194,7 @@ _JS_OPENS_CHANNEL = re.compile(
 # A shell command run from JavaScript with a network client in it.
 _JS_EXEC = re.compile(r"(?<![\w$.])(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)\s*\(")
 _SHELL_NET = re.compile(r"\b(?:curl|wget|nc|ncat)\b")
+_JS_DECLARED = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)")
 _JS_ASSIGN = re.compile(
     r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=(?![=>])"
     r"|(?<![\w$.])([A-Za-z_$][\w$]*)(?:\s*\.\s*[A-Za-z_$][\w$]*|\[[^\]\n]{0,80}\])*\s*=(?![=>])"
@@ -260,14 +270,18 @@ def _same_statement(seg: str) -> bool:
             i = _skip_string(seg, i, n)
             last = "x"
             continue
+        if ch == "{" and (last == ")" or (last == ">" and seg[:i].rstrip().endswith("=>"))):
+            # A function body: what it uses is not the value being assigned (a bundled module
+            # `var require_x = __commonJS({ "x.js"(exports) { ... } })` is not its contents).
+            return False
         if ch in "([{":
             depth += 1
         elif ch in ")]}":
             depth -= 1
             if depth < 0:
                 return False
-        elif ch == ";" and depth == 0:
-            return False
+        elif ch in ";," and depth == 0:
+            return False  # the end of the statement, or of one declarator / parameter
         elif ch == "\n" and depth == 0:
             rest = seg[i + 1 :].lstrip()
             if last not in _CONTINUATION and rest and rest[0] not in _CONTINUES_LINE:
@@ -278,8 +292,14 @@ def _same_statement(seg: str) -> bool:
     return True
 
 
-def _assigned_name(text: str, pos: int) -> str | None:
-    """The variable whose assignment statement holds offset ``pos``, if any."""
+def _assigned_name(text: str, pos: int, declared: frozenset[str] = frozenset()) -> str | None:
+    """The variable whose assignment statement holds offset ``pos``, if any.
+
+    A parameter default (`function f(env = process.env)`) is not one: the name is local to a
+    function, and every other function in the file may use the same name for something else. A
+    property set on an object (`loot.env = process.env`) names the object only when the file
+    declares it; a parameter or a module object (`exports.x = ...`) is not the code's payload.
+    """
     start = max(0, pos - _ASSIGN_WINDOW)
     window = text[start:pos]
     last = None
@@ -287,20 +307,34 @@ def _assigned_name(text: str, pos: int) -> str | None:
         last = m
     if last is None or not _same_statement(window[last.end():]):
         return None
-    return last.group(1) or last.group(2)
+    if last.group(1):
+        return last.group(1)
+    if window[: last.start()].rstrip(" \t").endswith(("(", ",")):
+        return None
+    name = last.group(2)
+    member = last.group(0)[len(name):].lstrip().startswith((".", "["))
+    if member and name not in declared:
+        return None
+    return name
 
 
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     text = f.text
     if "process.env" not in text:
         return []
-    whole = [m.start() for m in _JS_WHOLE_ENV.finditer(text) if _code_offset(f, m.start())]
+    whole = [
+        m.start() for m in _JS_WHOLE_ENV.finditer(text)
+        if _code_offset(f, m.start())
+        and not _JS_ENV_NOT_VALUE_BEFORE.search(text, max(0, m.start() - 40), m.start())
+        and not _JS_ENV_NOT_VALUE_AFTER.match(text, m.end())
+    ]
     if not whole:
         return []
     whole = whole[:_MAX_ENV_USES]
+    declared = frozenset(_JS_DECLARED.findall(text))
     tainted: set[str] = set()
     for pos in whole:
-        name = _assigned_name(text, pos)
+        name = _assigned_name(text, pos, declared)
         if name:
             tainted.add(name)
     for _ in range(3):  # a payload built in a few steps (env -> object -> JSON -> base64)
@@ -312,7 +346,7 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
                     break
                 if not _code_offset(f, m.start()) or _JS_MEMBER_READ.match(text, m.end()):
                     continue
-                other = _assigned_name(text, m.start())
+                other = _assigned_name(text, m.start(), declared)
                 if other and other not in tainted and other != name:
                     grown.add(other)
             if len(tainted) + len(grown) >= _MAX_TAINTED:
@@ -345,6 +379,10 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
             if k >= _MAX_CALLS:
                 break
             if not _code_offset(f, m.start()):
+                continue
+            if pattern is _JS_SEND and _JS_LOCAL_STREAM.search(
+                text, max(0, m.start() - 40), m.start()
+            ):
                 continue
             open_at = m.end() - 1
             close = _call_args(text, open_at)

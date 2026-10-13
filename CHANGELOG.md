@@ -9,7 +9,7 @@ All notable changes to the SkillTotal engine. Format loosely follows
 Nothing the engine skips is skipped in silence, and agent auto-run commands are read. Ruleset 69.
 
 ### Detection (ruleset 69)
-Details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 90 malicious and 60 benign samples,
+Details in `RULES_CHANGELOG.md`. Detection-efficacy corpus: 90 malicious and 62 benign samples,
 90/90 flagged, 0 false positives.
 - Every command an agent host or editor runs on its own is read with one parser: MCP server
   launch commands (Claude, VS Code, Codex, Gemini and bundles), hooks (including http hooks),

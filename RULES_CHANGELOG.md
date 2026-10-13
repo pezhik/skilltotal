@@ -9,7 +9,7 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 Two remaining constructs from the blind red-team (2026-10-10) and one false positive found by
 dogfooding. Each is pinned by a sanitized sample that fails on ruleset 68 and by the near-misses
 that must stay as they were (`tests/test_ruleset69.py`). Detection-efficacy corpus, now 90 positive
-/ 60 negative: 90/90 flagged, 0 false positives (ruleset 68 misses the two new positives here and
+/ 62 negative: 90/90 flagged, 0 false positives (ruleset 68 misses the two new positives here and
 the fifteen of the auto-run changes below).
 
 - **`ST-SHELL-PY` / `ST-CMDI-PY` / `ST-DYN-PY` / `ST-NET-PY` / `ST-TAINT-SHELL-PY` /
@@ -79,7 +79,12 @@ detection-efficacy corpus (ruleset 68 misses all fifteen positives).
   through a name assigned from it) passed into an HTTP request or socket send. A single named
   variable stays a capability; a credential handed to its own client (`ssh -i`, `--kubeconfig`, a
   container mount), a provider token sent only to that provider's hosts, the environment passed to
-  a child process, and a send to localhost stay clean.
+  a child process, and a send to localhost stay clean. So does what only looks at the environment:
+  its variable names (`Object.keys(process.env)`), a `typeof` or truthiness test, the environment
+  as a function's parameter default (`function f(env = process.env)`: the name is local, so another
+  function's payload built from command-line options is not the environment), a property set on a
+  module object rather than an object the code declares, and a log line written to
+  `process.stdout`/`process.stderr` or the console.
 - **`ST-AGENT-AUTORUN-REMOTE`** (changed): applies to every surface above, whatever declared it,
   and reads more fetch-and-run forms: `sh -c "$(curl ...)"`, `eval "$(curl ...)"`, process
   substitution `<(curl ...)`, `irm ... | iex`, and a download piped into an interpreter's stdin
