@@ -2,9 +2,29 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
+
+if os.name == "nt":
+    # A program the suite starts from a process without a console (an editor's or an agent's test
+    # run) gets a console window of its own, which flashes on the screen: dozens per run. Every
+    # child is started with no window unless the code chose a console itself; subprocess and
+    # multiprocessing's worker processes both start children through this one call.
+    import _winapi
+
+    _CREATE_NO_WINDOW = 0x08000000
+    _CHOSE_A_CONSOLE = 0x00000008 | 0x00000010  # DETACHED_PROCESS | CREATE_NEW_CONSOLE
+    _create_process = _winapi.CreateProcess
+
+    def _create_process_without_window(app, cmd, proc_attrs, thread_attrs, inherit, flags,
+                                       *rest):
+        if not flags & (_CHOSE_A_CONSOLE | _CREATE_NO_WINDOW):
+            flags |= _CREATE_NO_WINDOW
+        return _create_process(app, cmd, proc_attrs, thread_attrs, inherit, flags, *rest)
+
+    _winapi.CreateProcess = _create_process_without_window
 
 from skilltotal.collector import detect_component
 from skilltotal.engine import analyze_directory
