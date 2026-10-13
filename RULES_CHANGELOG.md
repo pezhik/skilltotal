@@ -66,6 +66,21 @@ corpus).
   risky construct (`tests/test_agent_config_write_066.py`, and four positive and three negative
   samples in the corpus).
 
+- **`ST-NPM-INSTALL-PUBLISH`** (new, malicious indicator, critical): code npm runs when the package
+  is installed publishes a package. It runs `npm publish` (also `pnpm`/`yarn`/`bun`, through
+  `exec`/`spawn`/`execa`, a bundler's `(0,o.execSync)(...)`, or a shell line) or builds the
+  document a publish PUTs to the registry (`_attachments` with `dist-tags`); an install command
+  in `package.json` that publishes counts too. This is how a self-spreading worm puts itself into
+  the installer's own packages with the token it finds. Only install-time files are read: a
+  release tool publishes from a command the maintainer types and stays clean, and so does an
+  install script that only tells the user how to publish.
+- **`ST-NPM-URL-DEP`** (new, risky construct, high) and **`ST-NPM-GIT-DEP`** (new, risky
+  construct, low): a dependency in `dependencies`, `optionalDependencies` or `peerDependencies`
+  given as an archive URL on a host of its own, or as a git or GitHub source. npm fetches it at
+  install time, outside the registry and outside this scan; an archive URL can serve anything at
+  any time (the "remote dynamic dependency" of the PhantomRaven packages). Registry tarballs,
+  `npm:` aliases, local paths, workspaces and `devDependencies` are not flagged
+  (`tests/test_npm_supply_066.py`, and two positive and two negative samples in the corpus).
 - **`ST-SECRET-EXFIL`** (changed, JavaScript): a name holds the environment only in the block
   where it was given it, and the blocks inside that one. A large bundle reuses short names
   (`env`, `field`, `parts`) in hundreds of unrelated functions; following a name across the whole

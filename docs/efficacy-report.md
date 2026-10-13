@@ -2,8 +2,8 @@
 
 Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (101/101 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/70 benign samples wrongly flagged)
+- **recall: 100.0%** (103/103 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/72 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -39,6 +39,7 @@ Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 | mcp-launch-command | 100% |
 | mcp-sampling-injection | 100% |
 | mcp-tool-poisoning | 100% |
+| npm-worm | 100% |
 | password-archive | 100% |
 | pickle-reduce-gadget | 100% |
 | plugin-hook-trojan | 100% |
@@ -54,7 +55,7 @@ Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
 | AST01 | 14 | 21 | 14 | 2 |
-| AST02 | 14 | 9 | 2 | 0 |
+| AST02 | 14 | 11 | 2 | 0 |
 | AST04 | 13 | 2 | 6 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 

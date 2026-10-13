@@ -2,8 +2,8 @@
   "engine_version": "0.65.0",
   "ruleset_version": 70,
   "python_version": "3.14",
-  "positives": 101,
-  "negatives": 70,
+  "positives": 103,
+  "negatives": 72,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -37,6 +37,7 @@
     "mcp-launch-command": 1.0,
     "mcp-sampling-injection": 1.0,
     "mcp-tool-poisoning": 1.0,
+    "npm-worm": 1.0,
     "password-archive": 1.0,
     "pickle-reduce-gadget": 1.0,
     "plugin-hook-trojan": 1.0,
@@ -56,7 +57,7 @@
     },
     "AST02": {
       "manifest/text": 14,
-      "node": 9,
+      "node": 11,
       "python": 2
     },
     "AST04": {

@@ -1,0 +1,6 @@
+{
+  "name": "fixture-release-helper",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample (benign look-alike)",
+  "bin": { "release-helper": "cli.js" }
+}

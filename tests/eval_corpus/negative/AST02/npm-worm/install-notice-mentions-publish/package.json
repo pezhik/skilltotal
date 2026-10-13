@@ -1,0 +1,8 @@
+{
+  "name": "fixture-starter-kit",
+  "version": "3.1.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample (benign look-alike)",
+  "scripts": {
+    "postinstall": "node notice.js"
+  }
+}

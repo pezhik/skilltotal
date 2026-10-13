@@ -1,0 +1,9 @@
+{
+  "name": "fixture-color-utils",
+  "version": "2.4.1",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node setup.js"
+  }
+}

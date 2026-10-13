@@ -1,0 +1,8 @@
+{
+  "name": "fixture-string-pad",
+  "version": "0.3.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "scripts": {
+    "install": "node lib/i.js"
+  }
+}

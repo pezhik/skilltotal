@@ -69,6 +69,9 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.
     "ST-INSTALL-DROPPER": ("AST02",),
     "ST-INSTALL-NPM": ("AST02",),
+    "ST-NPM-INSTALL-PUBLISH": ("AST02",),
+    "ST-NPM-URL-DEP": ("AST02",),
+    "ST-NPM-GIT-DEP": ("AST02",),
     "ST-INSTALL-GYP": ("AST02",),
     "ST-AGENT-AUTORUN": ("AST02",),
     "ST-AGENT-AUTORUN-REMOTE": ("AST02",),
