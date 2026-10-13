@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import re
+from dataclasses import dataclass
 
 from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
@@ -1680,6 +1681,103 @@ def _yaml_load_is_unsafe(node: ast.Call) -> bool:
         return True  # no loader -> historically the unsafe full loader
     tail = loader.attr if isinstance(loader, ast.Attribute) else getattr(loader, "id", "")
     return "Safe" not in tail  # SafeLoader / CSafeLoader are safe
+
+
+# --- paths a module writes (read by the agent-configuration check) ----------------------------
+# Calls that write the file named by one of their arguments: (call, index of the target argument).
+_COPY_CALLS = {
+    "shutil.copy": 1, "shutil.copy2": 1, "shutil.copyfile": 1, "shutil.move": 1,
+    "os.rename": 1, "os.replace": 1,
+}
+_OPEN_CALLS = frozenset({"open", "io.open", "codecs.open"})
+_MODULE_OPENS = frozenset({"io.open", "codecs.open", "os.open"})
+
+
+@dataclass(frozen=True)
+class PathWrite:
+    """A call that writes a file, the path it writes (``~`` for the home directory, ``\x00`` for
+    a segment that cannot be named) and whether it runs when the module is imported."""
+
+    evidence: Evidence
+    path: str
+    top_level: bool
+
+
+def python_path_writes(f: IndexedFile) -> list[PathWrite]:
+    """Every file write in a Python module, with the path it writes as far as it can be read:
+    ``open(p, "w")``, ``p.write_text()``, ``p.open("a")``, ``shutil.copy(src, p)``. A name the
+    path was assigned to is followed (``target = Path.home() / ".x"; target.write_text(...)``).
+    Parsing only: nothing is run."""
+    try:
+        tree = ast.parse(f.text, filename=f.relpath)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    visitor = _WriteVisitor(f)
+    try:
+        visitor.visit(tree)
+    except RecursionError:
+        return []
+    return visitor.writes
+
+
+class _WriteVisitor(_CallVisitor):
+    """The import resolution, home-directory folding and import-time tracking of _CallVisitor,
+    collecting file writes instead of rule hits."""
+
+    def __init__(self, file: IndexedFile):
+        super().__init__(file)
+        self.writes: list[PathWrite] = []
+        self._assigned: dict[str, ast.expr] = {}
+        self._resolving: set[str] = set()
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            self._assigned[node.targets[0].id] = node.value
+        super().visit_Assign(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if isinstance(node.target, ast.Name) and node.value is not None:
+            self._assigned[node.target.id] = node.value
+        self.generic_visit(node)
+
+    def _path_part(self, node: ast.expr, parts: set[int]) -> str:
+        # One name deep per hop, and never round a cycle (`p = p / "x"`).
+        if (isinstance(node, ast.Name) and node.id not in self._home_names
+                and node.id in self._assigned and node.id not in self._resolving):
+            self._resolving.add(node.id)
+            try:
+                return super()._path_part(self._assigned[node.id], parts)
+            finally:
+                self._resolving.discard(node.id)
+        return super()._path_part(node, parts)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        target = self._write_target(node)
+        if target is not None and len(self.writes) < MAX_EVIDENCE_SCANNED:
+            path = re.sub(r"/{2,}", "/", self._path_part(target, set()).replace("\\", "/"))
+            self.writes.append(PathWrite(self._evidence(node), path, not self._deferred))
+        self.generic_visit(node)
+
+    def _write_target(self, node: ast.Call) -> ast.expr | None:
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in FS_WRITE_SUFFIXES:
+            return func.value
+        name = self._dotted(func) or ""
+        if isinstance(func, ast.Attribute) and func.attr == "open" and name not in _MODULE_OPENS:
+            # pathlib: p.open("w"). A receiver the resolver cannot name may read as plain "open".
+            mode = node.args[0] if node.args else next(
+                (kw.value for kw in node.keywords if kw.arg == "mode"), None)
+            if isinstance(mode, ast.Constant) and isinstance(mode.value, str) and any(
+                ch in WRITE_MODE_CHARS for ch in mode.value
+            ):
+                return func.value
+            return None
+        if name in _OPEN_CALLS and _open_is_write(node):
+            return node.args[0] if node.args else next(
+                (kw.value for kw in node.keywords if kw.arg == "file"), None)
+        if name in _COPY_CALLS and len(node.args) > _COPY_CALLS[name]:
+            return node.args[_COPY_CALLS[name]]
+        return None
 
 
 def _open_is_write(node: ast.Call) -> bool:

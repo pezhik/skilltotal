@@ -63,6 +63,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-OBF-DYNAMIC-DECODE-EXEC": ("AST01",),
     "ST-PTH-EXEC": ("AST01",),
     "ST-PTH-IMPORT-EXEC": ("AST01",),
+    "ST-AGENT-CONFIG-PERSIST": ("AST01", "AST04"),
     "ST-CLIPPER": ("AST01",),
     "ST-SHELL-EVASION": ("AST01",),
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.

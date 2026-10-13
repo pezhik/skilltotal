@@ -43,6 +43,28 @@ corpus).
   tool description in MCP server code. Colors there, and any ANSI inside a fenced code block of
   an instruction file, are only noted for review; ANSI in ordinary source, logs, statusline
   scripts and tests is not looked at.
+- **`ST-AGENT-CONFIG-INJECT`** (extended, risky construct) and **`ST-AGENT-CONFIG-PERSIST`** (new,
+  malicious indicator): code that writes into an AI agent's own configuration, instructions or
+  memory, not only into another client's MCP config. The targets added are the agent settings
+  (`.claude/settings.json` and `settings.local.json`, `.codex/config.toml`,
+  `.gemini/settings.json`, `.vscode/settings.json`), the `.claude/skills|agents|commands/` and
+  `.cursor/rules/` folders, and the instruction and memory files (`CLAUDE.md`, `AGENTS.md`,
+  `GEMINI.md`, `SOUL.md`, `MEMORY.md`, `.github/copilot-instructions.md`). Only a write counts:
+  `writeFileSync`/`appendFile`/`createWriteStream` and their kin, the destination of a copy or
+  move, `open(..., "w"/"a")`, `Path.write_text()`/`.open("a")`, a shell redirect, `tee`,
+  `cp`/`mv` and PowerShell's file cmdlets, also when the path is joined from segments onto the
+  home directory or onto a name that holds a path built earlier (`path.join(dir,
+  'settings.json')`, `Path.home() / ".gemini" / "GEMINI.md"`). Reading these files is not this
+  rule. A write into the user's home directory from ordinary code is `ST-AGENT-CONFIG-INJECT`:
+  a setup command the user runs may do it honestly. The same write made at install or import
+  time -- by a script an npm install hook runs (or the hook command itself), a `.pth` line,
+  `setup.py`, or the top level of a module an import runs (a package's modules, `sitecustomize`,
+  a module a `.pth` line imports) -- is `ST-AGENT-CONFIG-PERSIST`, as is an install-time write that
+  adds a hook, permission or auto-approve entry to agent settings in the project. A project
+  `AGENTS.md`/`CLAUDE.md` written by a CLI's `init` command is only listed for review, never
+  scored, and the top level of a standalone installer script, which no import runs, stays the
+  risky construct (`tests/test_agent_config_write_066.py`, and four positive and three negative
+  samples in the corpus).
 
 ## ruleset 69 (engine 0.65.0)
 

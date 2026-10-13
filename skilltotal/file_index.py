@@ -1912,6 +1912,7 @@ class FileIndex:
         skipped_dirs: list[tuple[str, str]] | None = None,
         skip_build_output: bool = True,
         large: list[str] | None = None,
+        install_scripts: frozenset[str] = frozenset(),
     ):
         self.root = root
         self.files = files
@@ -1933,6 +1934,8 @@ class FileIndex:
         # Relative paths of text files larger than MAX_FILE_BYTES, not read (binaries are not
         # listed: nothing here reads them, whatever their size).
         self.large = large or []
+        # Relative paths of the files npm runs at install time (see engine._install_script_files).
+        self.install_scripts = install_scripts
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -2047,7 +2050,7 @@ class FileIndex:
         return cls(root, files, stats, sorted(minified), git_config,
                    links=sorted(links), unreadable=sorted(unreadable),
                    skipped_dirs=sorted(skipped), skip_build_output=skip_build_output,
-                   large=sorted(large))
+                   large=sorted(large), install_scripts=always)
 
     def with_files(
         self, extra: list[IndexedFile], minified: list[str] | None = None
@@ -2061,6 +2064,7 @@ class FileIndex:
             self.root, files, stats, sorted({*self.minified, *(minified or [])}), self.git_config,
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
             skip_build_output=self.skip_build_output, large=self.large,
+            install_scripts=self.install_scripts,
         )
 
     @staticmethod
