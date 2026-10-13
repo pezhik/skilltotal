@@ -17,7 +17,9 @@ different one. An error raised by a scanner itself is raised as it would be with
 from __future__ import annotations
 
 import multiprocessing
+import multiprocessing.spawn
 import os
+import sys
 from collections.abc import Callable, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
@@ -90,14 +92,39 @@ def _in_workers(
         _SLOWEST_FIRST.index(names[i]) if names[i] in _SLOWEST_FIRST else len(_SLOWEST_FIRST), i))
     results: list[ScanResult | None] = [None] * len(scanners)
     context = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=workers, mp_context=context,
-                             initializer=_receive_index, initargs=(index, names)) as pool:
-        futures = {pool.submit(_scan_one, i): i for i in order}
-        for done, future in enumerate(as_completed(futures), 1):
-            if progress is not None:
-                progress(done)
-            results[futures[future]] = future.result()
+    # The interpreter workers start with is a process-wide setting: put back what was there.
+    previous = multiprocessing.spawn.get_executable()
+    windowless = _windowless_python()
+    if windowless is not None:
+        context.set_executable(windowless)
+    try:
+        with ProcessPoolExecutor(max_workers=workers, mp_context=context,
+                                 initializer=_receive_index, initargs=(index, names)) as pool:
+            futures = {pool.submit(_scan_one, i): i for i in order}
+            for done, future in enumerate(as_completed(futures), 1):
+                if progress is not None:
+                    progress(done)
+                results[futures[future]] = future.result()
+    finally:
+        if windowless is not None:
+            context.set_executable(previous)
     return results  # type: ignore[return-value]
+
+
+def _windowless_python() -> str | None:
+    """On Windows, the interpreter without a console (pythonw.exe) next to this one, if any.
+
+    multiprocessing starts console-program workers with no console flags, so a scan run from a
+    process without a console (a background job, an agent's shell, the plugin's check) gives each
+    worker a console window of its own, flashing on the screen. pythonw never opens one. The base
+    interpreter is used, as multiprocessing itself does in a venv; workers get the caller's
+    sys.path from multiprocessing, and they write nothing to stdout or stderr.
+    """
+    if os.name != "nt":
+        return None
+    base = getattr(sys, "_base_executable", "") or sys.executable
+    candidate = os.path.join(os.path.dirname(base), "pythonw.exe")
+    return candidate if os.path.isfile(candidate) else None
 
 
 # --- In the worker -------------------------------------------------------------------------------

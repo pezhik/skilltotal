@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -98,3 +99,27 @@ def test_a_small_component_never_starts_workers(tmp_path, monkeypatch):
     monkeypatch.setenv(parallel.WORKERS_ENV, "4")
     monkeypatch.setattr(parallel, "_in_workers", lambda *a, **k: pytest.fail("workers started"))
     _report(root)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="console windows are a Windows matter")
+def test_workers_never_open_a_console_window(tmp_path, monkeypatch, small_gate):
+    """A scan started from a process without a console (a background job, an agent's shell) would
+    give each console-program worker a console window of its own, flashing on the screen. The
+    workers run under the windowless interpreter, and the setting is put back afterwards."""
+    import _winapi
+    import multiprocessing.spawn
+
+    started: list[str] = []
+    real = _winapi.CreateProcess
+
+    def record(app, *rest):
+        started.append(app)
+        return real(app, *rest)
+
+    monkeypatch.setattr(_winapi, "CreateProcess", record)
+    monkeypatch.setenv(parallel.WORKERS_ENV, "2")
+    before = multiprocessing.spawn.get_executable()
+    _report(_component(tmp_path))
+    assert started, "the workers were not used"
+    assert all(Path(app).name.lower() == "pythonw.exe" for app in started), started
+    assert multiprocessing.spawn.get_executable() == before

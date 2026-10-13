@@ -13,6 +13,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
   74 to 39. `SKILLTOTAL_WORKERS` sets the number (1 turns workers off). The CLI uses workers; a
   program calling the engine as a library gets one process unless it calls
   `skilltotal.parallel.enable()`.
+- On Windows, a scan started from a background job no longer flashes console windows: the
+  workers run under `pythonw.exe`, and `git` and the hook's `taskkill` start without a window.
 
 ### Plugin
 - In CI the hook waits for the full check of a large package, up to 10 minutes by default and

@@ -678,7 +678,8 @@ def _stop(proc: subprocess.Popen, job: Any = None) -> None:
                                     "taskkill.exe")
             subprocess.run(  # nosec B603 - the system's taskkill, on a process id
                 [taskkill, "/T", "/F", "/PID", str(proc.pid)], stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False)
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30, check=False,
+                creationflags=_CREATE_NO_WINDOW)  # the supervisor has no console to lend it
     except (OSError, subprocess.SubprocessError):
         pass
     try:

@@ -641,7 +641,8 @@ def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
     """
     cap = _MAX_CLONE_MB * 1024 * 1024
     proc = subprocess.Popen(  # nosec B603 B607
-        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+        creationflags=_NO_WINDOW,
     )
     exceeded = {"hit": False}
 
@@ -683,6 +684,10 @@ def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
 # not change the settings of the machine it runs on. The option is Windows-only in effect and is
 # accepted and ignored elsewhere, so there is no platform branch to get wrong.
 _GIT_LONG_PATHS = ["-c", "core.longpaths=true"]
+# git is a console program: started from a process without a console (a background job), Windows
+# gives it a console window of its own, which flashes on the screen. Its output is captured and it
+# never prompts, so it needs no window. Zero (no flags) elsewhere.
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 def _git(dest: Path, args: list[str], env: dict, *, timeout: int) -> None:
@@ -690,6 +695,7 @@ def _git(dest: Path, args: list[str], env: dict, *, timeout: int) -> None:
     subprocess.run(  # nosec B603 B607
         ["git", *_GIT_LONG_PATHS, "-C", str(dest), *args],
         check=True, capture_output=True, text=True, timeout=timeout, env=env,
+        creationflags=_NO_WINDOW,
     )
 
 
