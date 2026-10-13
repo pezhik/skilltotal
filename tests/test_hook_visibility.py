@@ -529,10 +529,11 @@ def test_in_ci_what_would_be_asked_is_denied(case, command, scan):
     reason = spec["permissionDecisionReason"]
     prefix = "(CI rule) SkillTotal blocked this install; outside CI it would ask for approval. "
     assert reason.startswith(prefix)
-    # The same explanation as the question it replaces.
+    # The same explanation as the question it replaces, except that the time hint names the longer
+    # wait CI allows.
     asked = ask["hookSpecificOutput"]["permissionDecisionReason"]
     assert reason[len(prefix):] == asked.removeprefix(
-        "SkillTotal needs your approval for this install. ")
+        "SkillTotal needs your approval for this install. ").replace("up to 100)", "up to 840)")
     assert out["systemMessage"] == f"{reason} {STRICT_ON}"
 
 

@@ -782,13 +782,17 @@ def _hook_answer(strict_by: str = "") -> dict | None:
         # Not a hook event at all: stay out of the agent's way, except in CI, where a command the
         # hook could not read must not pass.
         return _hook_failed_strict(strict_by) if strict_by else None
+    # In CI nobody can answer a question, so a check the hook stopped waiting for is a denial:
+    # there the hook waits for the full check of all but the largest packages instead.
+    default, ceiling = ((HOOK_STRICT_BUDGET_S, HOOK_STRICT_MAX_BUDGET_S) if strict_by
+                        else (HOOK_BUDGET_S, HOOK_MAX_BUDGET_S))
     try:
-        budget = float(os.environ.get(BUDGET_ENV, HOOK_BUDGET_S))
+        budget = float(os.environ.get(BUDGET_ENV, default))
     except ValueError:
-        budget = HOOK_BUDGET_S
-    # Claude Code lets a command through when its hook outlives the hook's timeout (120 s in the
+        budget = default
+    # Claude Code lets a command through when its hook outlives the hook's timeout (900 s in the
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
-    budget = max(1.0, min(budget, HOOK_MAX_BUDGET_S))
+    budget = max(1.0, min(budget, ceiling))
     return hook_response(event, scan=_hook_scan_cached, budget_s=budget,
                          strict=bool(strict_by), strict_by=strict_by,
                          allow_unchecked=_hook_allowed_unchecked(os.environ))
@@ -800,6 +804,9 @@ def _hook_answer(strict_by: str = "") -> dict | None:
 # repository, or a package whose release could not be resolved).
 HOOK_BUDGET_S = 60.0
 HOOK_MAX_BUDGET_S = 100.0
+# The same in CI strict mode, where a question becomes a denial: wait for the check itself.
+HOOK_STRICT_BUDGET_S = 600.0
+HOOK_STRICT_MAX_BUDGET_S = 840.0
 HOOK_RELEASE_TTL_S = 7 * 24 * 3600
 HOOK_MOVING_TTL_S = 3600
 HOOK_CACHE_MAX_ENTRIES = 500

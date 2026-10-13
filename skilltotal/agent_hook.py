@@ -60,9 +60,11 @@ MAX_TARGETS = 5
 # so the same command run again is answered from its verdict.
 DEFAULT_BUDGET_S = 60.0
 # The variable that sets that time, and the most it may be: Claude Code lets a command through
-# when its hook outlives the hook's timeout (120 s in the plugin's hooks.json).
+# when its hook outlives the hook's timeout (900 s in the plugin's hooks.json). In CI strict mode
+# the hook waits longer (cli.HOOK_STRICT_BUDGET_S), since there a question becomes a denial.
 BUDGET_ENV = "SKILLTOTAL_HOOK_BUDGET"
 MAX_BUDGET_S = 100.0
+STRICT_MAX_BUDGET_S = 840.0
 _MAX_DEPTH = 4  # nested `bash -c "$(...)"`; deeper than this is not an honest install command
 # Quotes and substitutions nested deeper than this inside one command line are not read.
 _MAX_NESTING = 64
@@ -2858,8 +2860,9 @@ def hook_response(
     if late:
         asked.append(f"{_names(late)}: not checked within SkillTotal's {budget_s:g}-second "
                      f"time limit.")
+        most = STRICT_MAX_BUDGET_S if strict else MAX_BUDGET_S
         asked.append(f"To give the checks more time, set {BUDGET_ENV} (seconds, up to "
-                     f"{MAX_BUDGET_S:g}).")
+                     f"{most:g}).")
     if failed:
         asked.append(f"{_names(failed)}: not checked because the scan failed.")
     if skipped:

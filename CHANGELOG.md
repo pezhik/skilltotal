@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+### Plugin
+- In CI the hook waits for the full check of a large package, up to 10 minutes by default and
+  14 at most (`SKILLTOTAL_HOOK_BUDGET`), instead of denying it after 60 seconds. Outside CI the
+  wait is unchanged. The plugin's hook timeout is now 15 minutes.
+
 ## [0.65.0]
 
 Nothing the engine skips is skipped in silence, and agent auto-run commands are read. Ruleset 69.

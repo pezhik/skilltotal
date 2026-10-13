@@ -208,7 +208,9 @@ calls don't trigger a rescan. When the engine version changes, everything is sca
 A first check takes a second or two for a small package, about 10 seconds for one the size of
 `typescript` or `lodash`, and two to three minutes for the largest common ones, such as `openai`
 and `django` (about 2,000 files each). All checks of one command share 60 seconds; to wait longer
-before asking, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). Once a package is downloaded,
+before asking, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). In CI, where a question
+becomes a denial, the hook waits up to 10 minutes for the full check instead (`SKILLTOTAL_HOOK_BUDGET`
+goes up to 840 there). Once a package is downloaded,
 the hook uses its size to estimate how long the check will take. If that does not fit in the time
 left, Claude Code asks you right away instead of waiting it out. A check the hook stops waiting for
 goes on in the background (two at a time at most, for up to 20 minutes) and saves its verdict, so

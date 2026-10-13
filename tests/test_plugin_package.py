@@ -396,3 +396,45 @@ def test_the_wrapper_reads_strict_mode_as_the_cli_does(tmp_path, env, strict_by)
         assert f"Strict mode is on because {strict_by} is set" in message
     else:
         _warning(done)
+
+
+def test_ci_waits_for_the_full_check_and_still_ends_before_the_hook_timeout(monkeypatch):
+    """In CI nobody answers a question, so a check that stops waiting is a denial. There the hook
+    waits up to ten minutes by default (fourteen at most), and Claude Code's own timeout is past
+    the longest of those waits, so the CLI always answers first."""
+    import io
+    import sys
+
+    import skilltotal.cli as cli
+
+    (hook,) = _bash_hooks()
+    assert hook["timeout"] >= cli.HOOK_STRICT_MAX_BUDGET_S + 15
+    seen = []
+    monkeypatch.setattr("skilltotal.agent_hook.hook_response",
+                        lambda event, scan, budget_s, **_: seen.append(budget_s))
+    monkeypatch.delenv("SKILLTOTAL_HOOK_BUDGET", raising=False)
+    monkeypatch.delenv("SKILLTOTAL_STRICT", raising=False)
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    monkeypatch.setenv("SKILLTOTAL_HOOK_BUDGET", "5000")
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    assert seen == [cli.HOOK_STRICT_BUDGET_S, cli.HOOK_STRICT_MAX_BUDGET_S]
+    assert cli.HOOK_STRICT_BUDGET_S == 600.0
+
+
+def test_outside_ci_the_wait_is_unchanged(monkeypatch):
+    import io
+    import sys
+
+    import skilltotal.cli as cli
+
+    seen = []
+    monkeypatch.setattr("skilltotal.agent_hook.hook_response",
+                        lambda event, scan, budget_s, **_: seen.append(budget_s))
+    for name in ("SKILLTOTAL_HOOK_BUDGET", "SKILLTOTAL_STRICT", *cli.HOOK_CI_MARKERS):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
+    assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
+    assert seen == [cli.HOOK_BUDGET_S]
