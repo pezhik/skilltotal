@@ -12,7 +12,7 @@ from __future__ import annotations
 import ast
 import re
 
-from skilltotal.file_index import FileIndex, IndexedFile
+from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
@@ -171,6 +171,8 @@ _ENV_GETTERS = frozenset({"os.getenv", "os.environ.get"})
 _UNKNOWN_SEGMENT = "\x00"
 
 # --- taint analysis (intra-procedural) -----------------------------------------------
+# A .pth file imports a module of the same component whose top level spawns a process.
+R_PTH_IMPORT_EXEC = "ST-PTH-IMPORT-EXEC"
 R_TAINT_EXEC = "ST-TAINT-EXEC-PY"
 R_TAINT_SHELL = "ST-TAINT-SHELL-PY"
 R_TAINT_DESERIAL = "ST-TAINT-DESERIAL-PY"
@@ -422,6 +424,27 @@ class PythonAstScanner(Scanner):
             # pattern is never flagged here.
         ),
         RuleSpec(
+            id=R_PTH_IMPORT_EXEC,
+            category="shell_execution",
+            severity=Severity.HIGH,
+            title="A .pth file runs a module that spawns a process at import",
+            description=(
+                "A .pth file imports a module shipped in this component, and that module spawns "
+                "an OS process at its top level, outside any function. Python runs a .pth file's "
+                "import lines at every interpreter start, so the process starts each time Python "
+                "does, without the package ever being used."
+            ),
+            recommendation=(
+                "A legitimate .pth file adds import paths or imports a module that only defines "
+                "things. Treat a process started from a .pth import as malicious; remove the "
+                "package and check what the command ran."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            suffixes=(*PY_SUFFIXES, ".pth"),
+            # AST-only: the .pth import line and the module-level spawn are matched structurally.
+        ),
+        RuleSpec(
             id=R_TAINT_EXEC,
             category="dynamic_code_execution",
             severity=Severity.HIGH,
@@ -486,6 +509,8 @@ class PythonAstScanner(Scanner):
         needs_review: list[NeedsReview] = []
         unparseable: list[tuple[str, int | None]] = []
         dynamic_imports: list[tuple[str, int | None]] = []
+        # Shipped modules whose top level spawns a process, by path (see ST-PTH-IMPORT-EXEC).
+        module_spawns: dict[str, list[Evidence]] = {}
 
         for f in index.select(suffixes=PY_SUFFIXES):
             try:
@@ -509,6 +534,8 @@ class PythonAstScanner(Scanner):
                 continue
             for rid, evidence in visitor.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
+            if visitor.module_spawns and not is_test_path(f.relpath):
+                module_spawns[f.relpath] = visitor.module_spawns
             dynamic_imports.extend((ev.file, ev.line_start) for ev in visitor.dynamic_imports)
             for rid, evidence in taint.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
@@ -533,6 +560,9 @@ class PythonAstScanner(Scanner):
                        "names are not attacker-controlled.",
             ))
 
+        if module_spawns:
+            for evidence in _pth_import_chains(index, module_spawns):
+                acc.setdefault(R_PTH_IMPORT_EXEC, []).extend(evidence)
         _suppress_cmdi_covered_by_taint(acc)
         return ScanResult(findings=self._build_findings(acc), needs_review=needs_review)
 
@@ -572,6 +602,70 @@ class PythonAstScanner(Scanner):
                 acc.setdefault(rule.id, []).append(ev)
 
 
+def _is_main_guard(test: ast.expr) -> bool:
+    """`__name__ == "__main__"`, either way round: its body does not run on import."""
+    if not (isinstance(test, ast.Compare) and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)):
+        return False
+    sides = (test.left, test.comparators[0])
+    return (any(isinstance(s, ast.Name) and s.id == "__name__" for s in sides)
+            and any(isinstance(s, ast.Constant) and s.value == "__main__" for s in sides))
+
+
+def _pth_imported_modules(line: str) -> set[str]:
+    """Module names one executed .pth line imports: `import a, b.c`, `from a import b`,
+    `__import__('a')`, `importlib.import_module('a')`, and the same inside exec("...")."""
+    try:
+        tree = ast.parse(line)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return set()
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module)
+            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str):
+            func = node.func
+            called = func.id if isinstance(func, ast.Name) else (
+                func.attr if isinstance(func, ast.Attribute) else "")
+            if called in ("__import__", "import_module"):
+                names.add(node.args[0].value)
+            elif called in ("exec", "eval") and len(node.args[0].value) < 2000:
+                names |= _pth_imported_modules(node.args[0].value)
+    return names
+
+
+def _pth_import_chains(
+    index: FileIndex, module_spawns: dict[str, list[Evidence]]
+) -> list[list[Evidence]]:
+    """Evidence for each .pth import line that runs a shipped module with a top-level spawn.
+
+    Python's site module executes a .pth line only when it starts with `import ` or `import\t`;
+    every other line is a path. A module counts when its file ends the path of the dotted name
+    (`pkg/boot.py`, `pkg/boot/__init__.py`), wherever the package sits (`src/`, the root).
+    """
+    chains: list[list[Evidence]] = []
+    for f in index.select(suffixes=(".pth",)):
+        if is_test_path(f.relpath):
+            continue
+        for lineno, line in enumerate(f.text.splitlines(), start=1):
+            if not line.startswith(("import ", "import\t")):
+                continue
+            spawns: list[Evidence] = []
+            for module in sorted(_pth_imported_modules(line)):
+                stem = module.replace(".", "/")
+                for target in (f"{stem}.py", f"{stem}/__init__.py"):
+                    for relpath, evidence in module_spawns.items():
+                        if relpath == target or relpath.endswith("/" + target):
+                            spawns.extend(evidence)
+            if spawns:
+                chains.append([f.evidence_for_lines(lineno, lineno), *spawns])
+    return chains
+
+
 class _CallVisitor(ast.NodeVisitor):
     """Collects rule hits from a parsed Python module, resolving import aliases."""
 
@@ -596,6 +690,10 @@ class _CallVisitor(ast.NodeVisitor):
         self._module_from: dict[str, str] = {}
         self._home_names: frozenset[str] = frozenset()
         self._path_parts: set[int] = set()
+        # Process spawns that run when the module is imported: outside any function or lambda,
+        # and outside an `if __name__ == "__main__":` block. A .pth import runs exactly these.
+        self.module_spawns: list[Evidence] = []
+        self._deferred = 0  # > 0 while visiting code an import does not run
 
     def visit_Module(self, node: ast.Module) -> None:
         for sub in ast.walk(node):
@@ -814,6 +912,8 @@ class _CallVisitor(ast.NodeVisitor):
     def _classify_call(self, name: str, node: ast.Call) -> None:
         if name in SHELL_CALLS:
             self._add(R_SHELL, node)
+            if not self._deferred and len(self.module_spawns) < MAX_EVIDENCE_SCANNED:
+                self.module_spawns.append(self._evidence(node))
             if _is_command_injection(name, node, frozenset(self._loop_constants)):
                 self._add(R_CMDI, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:
@@ -882,19 +982,44 @@ class _CallVisitor(ast.NodeVisitor):
         self._functions[node.name] = node
         self._check_reduce_gadget(node)
         saved = self._enter_scope(node.body)
+        self._deferred += 1
         try:
             self.generic_visit(node)
         finally:
+            self._deferred -= 1
             self._restore_scope(saved)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._functions[node.name] = node
         self._check_reduce_gadget(node)
         saved = self._enter_scope(node.body)
+        self._deferred += 1
         try:
             self.generic_visit(node)
         finally:
+            self._deferred -= 1
             self._restore_scope(saved)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        self._deferred += 1
+        try:
+            self.generic_visit(node)
+        finally:
+            self._deferred -= 1
+
+    def visit_If(self, node: ast.If) -> None:
+        if not _is_main_guard(node.test):
+            self.generic_visit(node)
+            return
+        self.visit(node.test)
+        self._deferred += 1
+        try:
+            for stmt in node.body:
+                self.visit(stmt)
+        finally:
+            self._deferred -= 1
+        for stmt in node.orelse:
+            self.visit(stmt)
 
     # -- names bound to a module / dangerous callable (resolved within one scope) ----------
     def _enter_scope(self, body: list[ast.stmt]) -> tuple[dict[str, str], dict[str, str]]:

@@ -1,0 +1,2 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+import os; var = "SHIM_ENABLED"; enabled = os.environ.get(var, "1") == "1"; enabled and __import__("_shim_hack").add_shim()

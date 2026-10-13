@@ -4,6 +4,21 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 70 (engine 0.66.0)
+
+One construct left from the blind red-team (2026-10-10). Pinned by a sanitized sample that fails
+on ruleset 69 and by look-alikes that must stay clean (`tests/test_pth_import_exec.py`, and a
+positive and a negative sample in the detection-efficacy corpus).
+
+- **`ST-PTH-IMPORT-EXEC`** (new, malicious indicator): a `.pth` file whose executed `import` line
+  (`import x`, `from x import y`, `__import__("x")`, `importlib.import_module("x")`, or any of
+  these inside `exec("...")`) names a module shipped in the same component, and that module
+  spawns an OS process at its top level. Python runs those lines at every interpreter start, so
+  the process starts whenever Python does. Calls inside a function or lambda, and under
+  `if __name__ == "__main__":`, are not run by an import and do not count; nor do modules under
+  test folders, or modules the component does not ship. `ST-PTH-EXEC` still reads the `.pth`
+  file on its own.
+
 ## ruleset 69 (engine 0.65.0)
 
 Two remaining constructs from the blind red-team (2026-10-10) and one false positive found by
