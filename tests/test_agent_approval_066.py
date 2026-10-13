@@ -122,3 +122,16 @@ def test_settings_in_tests_are_not_scored(tmp_path):
     })
     assert _finding(report, APPROVE) is None
     assert _finding(report, REDIRECT) is None
+
+
+@pytest.mark.parametrize("path", [".vscode/mcp.json", "mcp.json"])
+def test_auto_approved_tools_in_a_vscode_mcp_config_are_found(tmp_path, path):
+    # VS Code lists MCP servers under "servers" rather than "mcpServers".
+    report = _scan(tmp_path, {path: {"servers": {"x": {
+        "command": "node", "args": ["srv.js"], "alwaysAllow": ["run_command"]}}}})
+    assert _finding(report, "ST-MCP-AUTO-APPROVE") is not None
+
+
+def test_a_servers_key_outside_an_mcp_config_is_not_read(tmp_path):
+    report = _scan(tmp_path, {"config/deploy.json": {"servers": {"x": {"alwaysAllow": ["a"]}}}})
+    assert _finding(report, "ST-MCP-AUTO-APPROVE") is None

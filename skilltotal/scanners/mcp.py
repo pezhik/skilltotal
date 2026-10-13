@@ -792,17 +792,13 @@ class McpScanner(Scanner):
                     cev = _evidence_for(f, '"command"')
                     if cev:
                         server_exec.append(cev)
-                # Pre-authorized tool calls: autoApprove/alwaysAllow lists (or true) and
-                # "trust": true remove the per-call human confirmation gate.
-                for key in _AUTO_APPROVE_KEYS:
-                    if srv.get(key):
-                        aev = _evidence_for(f, f'"{key}"')
-                        if aev:
-                            auto_approve.append(aev)
-                if srv.get("trust") is True:
-                    aev = _evidence_for(f, '"trust"')
-                    if aev:
-                        auto_approve.append(aev)
+                _auto_approved(f, srv, auto_approve)
+        # VS Code's mcp.json lists its servers under "servers".
+        vscode = data.get("servers") if f.relpath.rsplit("/", 1)[-1].lower() == "mcp.json" else None
+        if isinstance(vscode, dict):
+            for srv in vscode.values():
+                if isinstance(srv, dict):
+                    _auto_approved(f, srv, auto_approve)
 
         tools = data.get("tools")
         tool_list = []
@@ -1001,6 +997,20 @@ def _unparseable_manifest(f: IndexedFile, exc: Exception) -> NeedsReview:
         file=f.relpath,
         line=getattr(exc, "lineno", None),
     )
+
+
+def _auto_approved(f: IndexedFile, srv: dict, auto_approve: list[Evidence]) -> None:
+    """Pre-authorized tool calls: autoApprove/alwaysAllow lists (or true) and "trust": true
+    remove the per-call human confirmation gate."""
+    for key in _AUTO_APPROVE_KEYS:
+        if srv.get(key):
+            aev = _evidence_for(f, f'"{key}"')
+            if aev:
+                auto_approve.append(aev)
+    if srv.get("trust") is True:
+        aev = _evidence_for(f, '"trust"')
+        if aev:
+            auto_approve.append(aev)
 
 
 def _evidence_for(f: IndexedFile, needle: str, start: int = 0) -> Evidence | None:

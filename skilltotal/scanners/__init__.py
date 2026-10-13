@@ -19,6 +19,8 @@ from skilltotal.scanners.filesystem import FilesystemScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
 from skilltotal.scanners.mcp import McpScanner
+from skilltotal.scanners.mcp_elicitation import McpElicitationScanner
+from skilltotal.scanners.mcp_pinning import McpPinningScanner
 from skilltotal.scanners.network import NetworkScanner
 from skilltotal.scanners.npm_supply import NpmSupplyScanner
 from skilltotal.scanners.oauth_auth import OAuthAuthScanner
@@ -62,6 +64,8 @@ SCANNERS: list[Scanner] = [
     NpmSupplyScanner(),
     AgentApprovalScanner(),
     SkillFetchExecScanner(),
+    McpPinningScanner(),
+    McpElicitationScanner(),
 ]
 
 

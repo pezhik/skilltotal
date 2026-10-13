@@ -26,6 +26,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
   asked about, since the hook has no source to check for them. cmd's `call npm i x` no longer
   hides the install. A table of real install commands, family by family, pins all of this
   (`tests/test_hook_conformance.py`).
+- When an install registers an MCP server without a version (`claude mcp add x -- npx -y pkg`),
+  the console line says the server will run whatever release is current each time it starts,
+  not only the one checked now.
 - In CI the hook waits for the full check of a large package, up to 10 minutes by default and
   14 at most (`SKILLTOTAL_HOOK_BUDGET`), instead of denying it after 60 seconds. Outside CI the
   wait is unchanged. The plugin's hook timeout is now 15 minutes.

@@ -106,6 +106,19 @@ corpus).
   indicator. Human docs and tests are not read (`tests/test_skill_fetch_exec_066.py`, a positive
   and a negative sample in the corpus; across nine public skill and subagent collections the
   risk fires only on honest installer lines and the indicator never fires).
+- **`ST-MCP-ELICIT-SECRET`** (new, risky construct, high): MCP server code whose elicitation
+  request (`elicitInput(...)` in TypeScript, `ctx.elicit(...)` in Python) asks the user for a
+  password, key, token, recovery phrase, card number or one-time code, in its message, its
+  schema, or the fields of the Python model it names. The MCP specification says servers must
+  not request sensitive information this way (`tests/test_mcp_elicitation_066.py`; the official
+  SDKs' and FastMCP's own elicitation examples stay clean).
+- **`ST-MCP-AUTO-APPROVE`** (extended): also read in VS Code's `mcp.json`, which lists its
+  servers under `servers`.
+- **MCP server at the current release** (new review note, never scored): an MCP launch command
+  that fetches the newest release at every start (`npx -y pkg`, `pkg@latest`, `uvx pkg`,
+  `pipx run pkg`, `docker run image` or `image:latest`) is listed in one note per report. A
+  version, an image tag or digest, or the component's own files are not noted
+  (`tests/test_mcp_unpinned_066.py`).
 - **`ST-SECRET-EXFIL`** (changed, JavaScript): a name holds the environment only in the block
   where it was given it, and the blocks inside that one. A large bundle reuses short names
   (`env`, `field`, `parts`) in hundreds of unrelated functions; following a name across the whole

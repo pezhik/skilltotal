@@ -3353,16 +3353,37 @@ def hook_response(
         return _answer(permission="deny", reason=reason,
                        message=_line(reason, allow, strict_note(strict_by),
                                      _not_checked(passed, rest=True)))
+    current = _runs_current_release(command, installs)
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
         # The hint only helps for what the scanner read; a custom index or archive it can't.
         reason = f"{reason} {_details(scanned)}" if scanned else reason
         return _answer(permission="ask", reason=reason,
-                       message=_line(reason, _not_checked(unchecked, rest=True)))
+                       message=_line(reason, _not_checked(unchecked, rest=True), current))
     context = ("SkillTotal checked " + "; ".join(clean) + ", no malicious indicators."
                if clean else None)
     return _answer(context=context,
-                   message=_line(_checked(clean), _not_checked(unchecked, rest=bool(clean))))
+                   message=_line(_checked(clean), _not_checked(unchecked, rest=bool(clean)),
+                                 current))
+
+
+# Registering an MCP server: what it names is started again at every launch of the agent.
+_MCP_ADD = re.compile(r"\b(?:claude|codex|gemini)\s+mcp\s+add(?:-json)?\b")
+_EXACT_RELEASE = re.compile(r"^(?:npm:(?:@[^/@]+/)?[^@]+@\d|pypi:[^=]+==)")
+
+
+def _runs_current_release(command: str, installs: list[Install]) -> str:
+    """For the console: an MCP server added without a version runs whatever release is current
+    each time it starts, not only the one checked now."""
+    if not _MCP_ADD.search(command):
+        return ""
+    names = [i.source for i in installs
+             if i.source and i.source.startswith(("npm:", "pypi:"))
+             and not _EXACT_RELEASE.match(i.source)]
+    if not names:
+        return ""
+    return (f"{_names(names)} will run as an MCP server at whatever release is current each "
+            f"time it starts, not only the release checked now; pin a version to keep it.")
 
 
 # CI strict mode: what the hook would otherwise ask about is denied, and the reason says why.
