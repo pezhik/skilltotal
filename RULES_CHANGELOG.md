@@ -66,6 +66,15 @@ corpus).
   risky construct (`tests/test_agent_config_write_066.py`, and four positive and three negative
   samples in the corpus).
 
+- **`ST-SECRET-EXFIL`** (changed, JavaScript): a name holds the environment only in the block
+  where it was given it, and the blocks inside that one. A large bundle reuses short names
+  (`env`, `field`, `parts`) in hundreds of unrelated functions; following a name across the whole
+  file joined a config parser that reads the environment to a chat client sending its own message
+  parts. The names followed are also taken in source order: they were taken in an order that
+  changed with each process's string hashing, so the same bundle could be reported with or
+  without this finding from one scan to the next (`tests/test_secret_exfil_scope.py`,
+  `tests/test_secret_exfil_determinism.py`).
+
 ## ruleset 69 (engine 0.65.0)
 
 Two remaining constructs from the blind red-team (2026-10-10) and one false positive found by

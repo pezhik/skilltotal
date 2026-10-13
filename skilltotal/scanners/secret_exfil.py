@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 import re
+from bisect import bisect_right
 
 from skilltotal.autorun import AutorunCommand, autorun_commands
 from skilltotal.file_index import FileIndex, IndexedFile
@@ -292,8 +293,11 @@ def _same_statement(seg: str) -> bool:
     return True
 
 
-def _assigned_name(text: str, pos: int, declared: frozenset[str] = frozenset()) -> str | None:
-    """The variable whose assignment statement holds offset ``pos``, if any.
+def _assignment(
+    text: str, pos: int, declared: frozenset[str] = frozenset(),
+) -> tuple[str, int] | None:
+    """The variable whose assignment statement holds offset ``pos``, and where that statement
+    starts, if any.
 
     A parameter default (`function f(env = process.env)`) is not one: the name is local to a
     function, and every other function in the file may use the same name for something else. A
@@ -308,14 +312,52 @@ def _assigned_name(text: str, pos: int, declared: frozenset[str] = frozenset()) 
     if last is None or not _same_statement(window[last.end():]):
         return None
     if last.group(1):
-        return last.group(1)
+        return last.group(1), start + last.start()
     if window[: last.start()].rstrip(" \t").endswith(("(", ",")):
         return None
     name = last.group(2)
     member = last.group(0)[len(name):].lstrip().startswith((".", "["))
     if member and name not in declared:
         return None
-    return name
+    return name, start + last.start()
+
+
+_BRACE = re.compile(r"[{}]")
+
+
+class _Blocks:
+    """The ``{ ... }`` blocks of a file's code, to tell which block a statement is in.
+
+    A name holds the environment only in the block where it was given it (with the blocks inside
+    that one): a large bundle reuses short names (``env``, ``field``, ``parts``) in hundreds of
+    unrelated functions, and following a name across the whole file joins them all up.
+    """
+
+    def __init__(self, f: IndexedFile) -> None:
+        self.end = len(f.text)
+        self.opens: list[int] = []
+        self.closes: list[int] = []
+        self.parent: list[int] = []
+        stack: list[int] = []
+        for m in _BRACE.finditer(f.text):
+            at = m.start()
+            if not _code_offset(f, at):
+                continue
+            if f.text[at] == "{":
+                self.parent.append(stack[-1] if stack else -1)
+                self.opens.append(at)
+                self.closes.append(self.end)  # until its close is found
+                stack.append(len(self.opens) - 1)
+            elif stack:
+                self.closes[stack.pop()] = at
+
+    def around(self, pos: int) -> tuple[int, int]:
+        """The innermost block holding ``pos`` (the whole file at the top level)."""
+        i = bisect_right(self.opens, pos) - 1
+        # The block opened last before pos holds it, or one of the blocks around that one does.
+        while i >= 0 and self.closes[i] < pos:
+            i = self.parent[i]
+        return (self.opens[i], self.closes[i] + 1) if i >= 0 else (0, self.end)
 
 
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
@@ -332,31 +374,40 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
         return []
     whole = whole[:_MAX_ENV_USES]
     declared = frozenset(_JS_DECLARED.findall(text))
-    tainted: set[str] = set()
+    blocks = _Blocks(f)
+    # (name, the block it holds the environment in), in the order the source gives them (dicts
+    # keep it; a set's order changes with each process's string hashing), so the cap below always
+    # keeps the same ones.
+    tainted: dict[tuple[str, tuple[int, int]], None] = {}
     for pos in whole:
-        name = _assigned_name(text, pos, declared)
-        if name:
-            tainted.add(name)
+        found_at = _assignment(text, pos, declared)
+        if found_at:
+            tainted[(found_at[0], blocks.around(found_at[1]))] = None
     for _ in range(3):  # a payload built in a few steps (env -> object -> JSON -> base64)
-        grown: set[str] = set()
-        for name in tainted:
-            uses = re.finditer(rf"(?<![\w$.]){re.escape(name)}(?![\w$])", text)
+        grown: dict[tuple[str, tuple[int, int]], None] = {}
+        for name, (start, end) in tainted:
+            uses = re.compile(rf"(?<![\w$.]){re.escape(name)}(?![\w$])").finditer(text, start, end)
             for k, m in enumerate(uses):
                 if k >= _MAX_ENV_USES:
                     break
                 if not _code_offset(f, m.start()) or _JS_MEMBER_READ.match(text, m.end()):
                     continue
-                other = _assigned_name(text, m.start(), declared)
-                if other and other not in tainted and other != name:
-                    grown.add(other)
+                found_at = _assignment(text, m.start(), declared)
+                if found_at and found_at[0] != name:
+                    key = (found_at[0], blocks.around(found_at[1]))
+                    if key not in tainted:
+                        grown[key] = None
             if len(tainted) + len(grown) >= _MAX_TAINTED:
                 break
         if not grown:
             break
-        tainted |= grown
+        tainted.update(grown)
+    scopes: dict[str, list[tuple[int, int]]] = {}
+    for name, scope in tainted:
+        scopes.setdefault(name, []).append(scope)
     names = re.compile(
-        rf"(?<![\w$.])(?:{'|'.join(re.escape(n) for n in sorted(tainted))})(?![\w$])"
-    ) if tainted else None
+        rf"(?<![\w$.])(?:{'|'.join(re.escape(n) for n in sorted(scopes))})(?![\w$])"
+    ) if scopes else None
     opens_channel = bool(_JS_OPENS_CHANNEL.search(text))
 
     def carries_env(start: int, end: int) -> bool:
@@ -366,6 +417,7 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
             return False
         return any(
             _code_offset(f, m.start()) and not _JS_MEMBER_READ.match(text, m.end())
+            and any(a <= m.start() < b for a, b in scopes[m.group(0)])
             for m in names.finditer(text, start, end)
         )
 
