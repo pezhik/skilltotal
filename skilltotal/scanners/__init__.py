@@ -33,6 +33,7 @@ from skilltotal.scanners.sensitive_paths import SensitivePathScanner
 from skilltotal.scanners.shell_evasion import ShellEvasionScanner
 from skilltotal.scanners.shell_exec import ShellExecScanner
 from skilltotal.scanners.shell_script import ShellScriptScanner
+from skilltotal.scanners.skill_fetch_exec import SkillFetchExecScanner
 
 SCANNERS: list[Scanner] = [
     PythonAstScanner(),
@@ -60,6 +61,7 @@ SCANNERS: list[Scanner] = [
     ClipperScanner(),
     NpmSupplyScanner(),
     AgentApprovalScanner(),
+    SkillFetchExecScanner(),
 ]
 
 

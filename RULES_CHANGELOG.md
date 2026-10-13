@@ -95,6 +95,17 @@ corpus).
   own API host is not flagged, nor is an application's own `.env` (`tests/test_agent_approval_066.py`,
   checked against 232 real settings files from public repositories: every hit is the setting it
   names).
+- **`ST-SKILL-FETCH-EXEC`** (new, risky construct, medium) and **`ST-SKILL-FETCH-EXEC-HIDDEN`**
+  (new, malicious indicator, high): an instruction file the agent follows (`SKILL.md`, a
+  subagent or command, `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, Cursor, Windsurf, Cline or Copilot
+  rules) tells it to download a script and run it: `curl ... | bash` (or into Python, Node, Perl,
+  Ruby), `bash <(curl ...)`, `sh -c "$(curl ...)"`, `irm ... | iex`, `iex (iwr ...)`. Code
+  blocks count. An `allowed-tools` line that admits the shell is added to the evidence. The same
+  instruction told to run silently, without asking, or without mentioning it (in its paragraph,
+  or in the lead-in of its code block), or aimed at a bare IP address, is the malicious
+  indicator. Human docs and tests are not read (`tests/test_skill_fetch_exec_066.py`, a positive
+  and a negative sample in the corpus; across nine public skill and subagent collections the
+  risk fires only on honest installer lines and the indicator never fires).
 - **`ST-SECRET-EXFIL`** (changed, JavaScript): a name holds the environment only in the block
   where it was given it, and the blocks inside that one. A large bundle reuses short names
   (`env`, `field`, `parts`) in hundreds of unrelated functions; following a name across the whole

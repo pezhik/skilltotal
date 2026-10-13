@@ -2,8 +2,8 @@
   "engine_version": "0.65.0",
   "ruleset_version": 70,
   "python_version": "3.14",
-  "positives": 110,
-  "negatives": 77,
+  "positives": 111,
+  "negatives": 78,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -45,6 +45,7 @@
     "pth-persistence": 1.0,
     "shell-decode-exec": 1.0,
     "skill-dynamic-exec": 1.0,
+    "skill-fetch-exec": 1.0,
     "typosquat-dropper": 1.0,
     "wallet-key-exfil": 1.0
   },
@@ -56,7 +57,7 @@
       "shell": 2
     },
     "AST02": {
-      "manifest/text": 14,
+      "manifest/text": 15,
       "node": 11,
       "python": 2
     },

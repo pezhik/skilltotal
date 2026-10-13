@@ -2,8 +2,8 @@
 
 Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (110/110 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/77 benign samples wrongly flagged)
+- **recall: 100.0%** (111/111 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/78 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -47,6 +47,7 @@ Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 | pth-persistence | 100% |
 | shell-decode-exec | 100% |
 | skill-dynamic-exec | 100% |
+| skill-fetch-exec | 100% |
 | typosquat-dropper | 100% |
 | wallet-key-exfil | 100% |
 
@@ -55,7 +56,7 @@ Engine 0.65.0 · ruleset 70 · Python 3.14 · offline corpus.
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
 | AST01 | 14 | 21 | 14 | 2 |
-| AST02 | 14 | 11 | 2 | 0 |
+| AST02 | 15 | 11 | 2 | 0 |
 | AST04 | 17 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 

@@ -74,6 +74,8 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-NPM-GIT-DEP": ("AST02",),
     "ST-AGENT-AUTO-APPROVE": ("AST03",),
     "ST-AGENT-API-REDIRECT": ("AST04",),
+    "ST-SKILL-FETCH-EXEC": ("AST02",),
+    "ST-SKILL-FETCH-EXEC-HIDDEN": ("AST01", "AST02"),
     "ST-INSTALL-GYP": ("AST02",),
     "ST-AGENT-AUTORUN": ("AST02",),
     "ST-AGENT-AUTORUN-REMOTE": ("AST02",),
