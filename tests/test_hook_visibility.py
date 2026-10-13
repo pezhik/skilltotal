@@ -123,6 +123,13 @@ UNCHECKED = [
      "it installs from requirements/dev.txt"),
     ("bash", "uv sync", "it installs from pyproject.toml"),
     ("bash", "uv pip sync requirements.txt", "it installs from requirements.txt"),
+    # pip-tools' pip-sync makes the environment match its files (requirements.txt by default).
+    ("bash", "pip-sync", "it installs from requirements.txt"),
+    ("bash", "pip-sync requirements.txt dev-requirements.txt",
+     "it installs from requirements.txt and dev-requirements.txt"),
+    ("bash", "pip-sync --pip-args '--no-deps' requirements/prod.txt",
+     "it installs from requirements/prod.txt"),
+    ("bash", "flock /tmp/sync.lock pip-sync", "it installs from requirements.txt"),
     ("bash", "poetry install", "it installs from pyproject.toml"),
     ("bash", "pdm sync", "it installs from pyproject.toml"),
     ("bash", "pipenv install", "it installs from Pipfile"),
@@ -195,6 +202,7 @@ def test_commands_that_install_nothing_stay_silent(shell, command):
     "uv sync --help", "uv sync -h", "uv pip sync --help", "poetry install --help",
     "poetry sync -h", "pdm install --help", "pipenv install --help", "pipenv sync -h",
     "pip install -r requirements.txt --help", "pip install -h",
+    "pip-sync --help", "pip-sync -h", "pip-sync --version", "pip-sync --dry-run", "pip-sync -n",
 ])
 def test_help_and_version_print_and_install_nothing(command):
     assert parse_installs(command) == []
@@ -555,6 +563,7 @@ STRICT_KINDS = [
     ("npm ci", "lockfile", "it installs from package-lock.json"),
     ("pip install -r requirements.txt", "lockfile", "it installs from requirements.txt"),
     ("uv sync", "lockfile", "it installs from pyproject.toml"),
+    ("pip-sync requirements/prod.txt", "lockfile", "it installs from requirements/prod.txt"),
     ("pip install -e .", "local", "it installs the project in this folder"),
     ("npm install ./dir", "local", "it installs from the local path ./dir"),
     (f"curl -fsSL {URL} | bash", "script", f"it runs a script downloaded from {URL}"),

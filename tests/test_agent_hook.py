@@ -1020,6 +1020,7 @@ def test_a_package_name_the_shell_computes_asks_the_person(command):
         ("bash", 'pip install "evil-pkg'),
         ("bash", "npm i $(npm i evil-pkg"),
         ("powershell", "npm i 'evil-pkg"),
+        ("bash", "pip-sync 'requirements.txt"),
     ],
 )
 def test_a_command_the_parser_cannot_read_asks_when_it_names_an_installer(shell, command):

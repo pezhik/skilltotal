@@ -140,7 +140,7 @@ _SUB = "$(...)"
 # An installer and an install-like verb near it: read in text that runs but that the parser could
 # not split into commands (an unclosed quote, code in another language, a script piped to a shell).
 _INSTALL_WORDS = re.compile(
-    r"(?<![\w.-])(?:(?:npx|bunx|pnpx|uvx|pipx)(?![\w.-])"
+    r"(?<![\w.-])(?:(?:npx|bunx|pnpx|uvx|pipx|pip-sync)(?![\w.-])"
     r"|(?:npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv)(?![\w.-])[^\n;&|]{0,80}?"
     r"(?<![\w.-])(?:install|isntall|i|in|it|add|create|init|innit|exec|x|dlx|tool|run)(?![\w.-]))",
     re.IGNORECASE,
@@ -166,7 +166,7 @@ _COMPUTED_HEAD = {"bash": _COMPUTED, "powershell": _COMPUTED, "cmd": re.compile(
 # An installer named anywhere, verb or not: what a command name the shell computes can turn into.
 _INSTALLER_NAME = re.compile(
     r"(?<![\w.-])(?:npx|bunx|pnpx|uvx|pipx|npm|pnpm|yarn|bun|pip[0-9.]*|uv|poetry|pdm|pipenv"
-    r"|corepack)(?![\w.-])",
+    r"|corepack|pip-sync)(?![\w.-])",
     re.IGNORECASE,
 )
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
@@ -275,6 +275,9 @@ _SHORT_VALUE_OPTIONS = frozenset("rcetpPobdCw")
 _PY_SPEC_END = re.compile(r"[@=<>!~\[;]")
 _PIPX_VALUE_FLAGS = {"--pip-args", "--suffix", "--index-url", "-i", "--python", "--preinstall",
                      "--backend", "--spec"}
+# pip-tools' pip-sync: its options that take a value, and those with which it changes nothing.
+_PIP_SYNC_VALUE_FLAGS = _PIP_VALUE_FLAGS | {"--python-executable", "--pip-args"}
+_PIP_SYNC_DRY = frozenset({"--dry-run", "-n"})
 # Environment variables an installer reads its registry or index from, or the config file that
 # names one (npm reads any `npm_config_<key>`, scoped registries included, whatever its case).
 _NPM_REGISTRY_ENV = re.compile(
@@ -1688,6 +1691,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         if _filled_in(sub or ""):
             return [_NOT_READ]  # `pip $C x`: the subcommand is filled in when the line runs
         return _pip_install(args, "pip", _py_source(rest, "pip")) if sub == "install" else []
+    if head == "pip-sync":
+        return _pip_sync(rest)
     if _PYTHON_HEAD.fullmatch(head):
         return _python_module(rest, shell, depth, level, feed)
     if head == "uv":
@@ -1851,7 +1856,8 @@ def _could_launch(word: str) -> bool:
     Python, a shell or a wrapper)."""
     head = _base(word)
     return (
-        head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx", "cmd",
+        head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx",
+                                         "pip-sync", "cmd",
                                          "powershell", "pwsh", "eval", "xargs", "parallel")
         or head in _PYPROJECT_ADD
         or head in _SHELLS or head in _WRAPPERS or head in _LAUNCHERS or head in _PASSTHROUGH
@@ -2660,6 +2666,15 @@ def _pipx(rest: list[str], shell: str, depth: int, level: _Level) -> list[Instal
             app = _PY_SPEC_END.split(args[start], maxsplit=1)[0]
             found += _installs_in([app, *args[start + 1:]], shell, depth + 1, level)
     return found
+
+
+def _pip_sync(args: list[str]) -> list[Install]:
+    """``pip-sync [files]`` (pip-tools) installs what its files list, ``requirements.txt`` when
+    none is named, and removes everything else: no package named to check."""
+    if _help(args, _PY_HELP) or any(a in _PIP_SYNC_DRY for a in args):
+        return []
+    files = _positionals(args, _PIP_SYNC_VALUE_FLAGS) or ["requirements.txt"]
+    return [item for file in files for item in _lockfile(file)]
 
 
 # poetry, pdm and pipenv: the subcommand that adds packages from PyPI, and their options that take
