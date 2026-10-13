@@ -2,8 +2,8 @@
   "engine_version": "0.65.0",
   "ruleset_version": 70,
   "python_version": "3.14",
-  "positives": 103,
-  "negatives": 73,
+  "positives": 110,
+  "negatives": 77,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -61,9 +61,9 @@
       "python": 2
     },
     "AST04": {
-      "node": 2,
-      "python": 6,
-      "manifest/text": 13
+      "node": 3,
+      "python": 8,
+      "manifest/text": 17
     },
     "AST05": {
       "python": 4

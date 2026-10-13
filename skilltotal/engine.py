@@ -29,6 +29,7 @@ from skilltotal.file_index import (
     SKIP_VIRTUALENV,
     FileIndex,
     IndexedFile,
+    agent_prompt_dirs,
     is_build_output_path,
     is_ci_path,
     is_data_corpus_path,
@@ -63,6 +64,7 @@ from skilltotal.parallel import run_scanners
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
+from skilltotal.scanners.mcp import is_mcp_listing
 from skilltotal.scoring import compute_score, is_own_provider_read, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID, package_name_typosquatting
@@ -212,8 +214,11 @@ def analyze_directory(
     install_files = frozenset(install_scripts)
     findings, test_review = _hold_out(install_files, _split_test_evidence, findings, index)
     needs_review.extend(test_review)
+    # Skills, subagents and commands: their markdown is read by the agent, not by a person.
+    relpaths = [f.relpath for f in index.files]
     findings, doc_review = _hold_out(
-        install_files, _split_doc_evidence, findings, skill_dirs(f.relpath for f in index.files),
+        install_files, _split_doc_evidence, findings,
+        skill_dirs(relpaths) | agent_prompt_dirs(relpaths),
         autorun_commands(index).frontmatter_lines,
     )
     needs_review.extend(doc_review)
@@ -224,7 +229,7 @@ def analyze_directory(
     findings, ci_review = _hold_out(install_files, _split_ci_evidence, findings)
     needs_review.extend(ci_review)
     findings, structured_data_review = _split_structured_data_evidence(
-        findings, _command_lines(index)
+        findings, _command_lines(index), index
     )
     needs_review.extend(structured_data_review)
     findings, code_ctx_review = _split_code_context_evidence(findings, index)
@@ -1078,6 +1083,7 @@ def _command_lines(index: FileIndex) -> frozenset[tuple[str, int]]:
 def _split_structured_data_evidence(
     findings: list[Finding],
     command_lines: frozenset[tuple[str, int]] = frozenset(),
+    index: FileIndex | None = None,
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Demote code-pattern / injection evidence found in a structured-data file (JSON/YAML/TOML).
 
@@ -1089,13 +1095,28 @@ def _split_structured_data_evidence(
     (its content-filter guardrail's keyword YAML).
 
     A value an agent or editor runs as a command (``command_lines``: a hook, an MCP server's
-    launch command, a status line) is not inert data, so evidence on it is kept.
+    launch command, a status line) is not inert data, so evidence on it is kept. Nor is a JSON
+    file shaped as an MCP tool/prompt/resource listing whatever it is named (``tools.json``, a
+    tools/list dump a server loads): the client hands every description in it to the model.
     """
+    by_path = {f.relpath: f for f in index.files} if index is not None else {}
+    listings: dict[str, bool] = {}
+
+    def is_listing(relpath: str) -> bool:
+        if relpath not in listings:
+            f = by_path.get(relpath)
+            listings[relpath] = False
+            if f is not None and f.suffix == ".json":
+                try:
+                    listings[relpath] = is_mcp_listing(bounded_json.loads_cut(f.text)[0])
+                except ValueError:
+                    pass
+        return listings[relpath]
 
     def is_data(e: Evidence) -> bool:
         if (e.file, e.line_start) in command_lines:
             return False
-        return _is_structured_data_file(e.file)
+        return _is_structured_data_file(e.file) and not is_listing(e.file)
 
     kept: list[Finding] = []
     review: list[NeedsReview] = []
@@ -1262,8 +1283,9 @@ def _is_noncode_context(
     # treating it as behavior escalated real projects to `high` once a package's build output
     # supplied the network half of ST-COMBO-EXFIL. Prompt injection is exempt on purpose: there
     # the prose IS the directive, so demoting it would trade away the recall that matters most.
+    # The same holds for tool poisoning in a skill's or subagent's frontmatter description.
     if f.in_markdown_prose(e.match_offset) or f.in_markdown_fenced_comment(e.match_offset):
-        return policy != "strings_and_comments_all"
+        return policy != "strings_and_comments_all" and rule_id not in _AGENT_TEXT_RULES
     # C-family: demote matches in // and /* */ comments (a description in a code comment is not
     # behavior). String literals are demoted ONLY for the strings_and_comments_all policy
     # (ST-PROMPT-INJECTION); for every other rule a credential path passed as a string argument is

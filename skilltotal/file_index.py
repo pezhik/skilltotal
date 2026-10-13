@@ -643,6 +643,30 @@ def skill_dirs(relpaths: Iterable[str]) -> frozenset[str]:
     return frozenset(dirs)
 
 
+_AGENT_PROMPT_DIR_NAMES = ("agents", "commands")
+
+
+def agent_prompt_dirs(relpaths: Iterable[str]) -> frozenset[str]:
+    """Directories whose markdown an agent loads as a prompt, like a skill's (lower case).
+
+    A subagent file is the subagent's system prompt and its frontmatter ``description`` is how
+    the main agent picks it; a command file is the prompt a slash command runs. They live in
+    ``.claude/agents`` and ``.claude/commands`` (at any depth), and in a Claude Code plugin's
+    ``agents/`` and ``commands/`` beside its ``.claude-plugin/plugin.json``. A bare ``commands/``
+    folder with no plugin manifest is a CLI's documentation as often as not, so it is not one.
+    """
+    dirs = set()
+    for rel in relpaths:
+        parts = rel.lower().split("/")
+        for i in range(len(parts) - 2):
+            if parts[i] == ".claude" and parts[i + 1] in _AGENT_PROMPT_DIR_NAMES:
+                dirs.add("/".join(parts[: i + 2]))
+        if parts[-2:] == [".claude-plugin", "plugin.json"]:
+            root = "/".join(parts[:-2])
+            dirs.update(f"{root}/{d}" if root else d for d in _AGENT_PROMPT_DIR_NAMES)
+    return frozenset(dirs)
+
+
 def _under_skill(relpath: str, skills: frozenset[str]) -> bool:
     return any(d == "" or relpath.startswith(d + "/") for d in skills)
 
@@ -904,6 +928,25 @@ _JSX_UI_ATTRIBUTE = re.compile(
 # Decorators whose function a model sees: its docstring becomes the tool/prompt description.
 _AGENT_FACING_DECORATORS = frozenset({"tool", "prompt"})
 _SAMPLING_CALLS = frozenset({"create_message"})
+# A file written against an MCP server library (FastMCP, the official SDK's server packages).
+# The shapes below are agent metadata only there: a pydantic `Field(description=...)` in any other
+# file is an ordinary model, and `@api.resource` is a REST route.
+_PY_MCP_SERVER = re.compile(r"\bfastmcp\b|\bmcp\.server\b")
+# In an MCP server file: a resource's docstring is its description, like a tool's.
+_MCP_AGENT_FACING_DECORATORS = frozenset({"resource"})
+# Calls whose keyword values an MCP SDK publishes to the client's model: the server's
+# `instructions`, the description/title/schema of a tool, prompt or resource built by hand
+# (`types.Tool(inputSchema={...})`), a pydantic `Field` that becomes a schema property, and the
+# text of a content block a handler returns.
+_MCP_METADATA_CALLS = frozenset(
+    {"FastMCP", "Server", "MCPServer", "Tool", "Prompt", "PromptArgument", "Resource",
+     "ResourceTemplate", "ToolAnnotations", "Field", "TextContent", "add_tool", "add_prompt",
+     "add_resource"}
+)
+_MCP_METADATA_KEYWORDS = frozenset(
+    {"instructions", "description", "title", "inputSchema", "input_schema", "outputSchema",
+     "output_schema", "examples", "default", "text"}
+)
 
 
 def _python_agent_facing_spans(
@@ -948,10 +991,43 @@ def _python_agent_facing_spans(
     }
     spans: list[tuple[int, int]] = []
     regions: list[tuple[int, int]] = []
+    mcp_server = bool(_PY_MCP_SERVER.search(text))
+    decorators = _AGENT_FACING_DECORATORS | (_MCP_AGENT_FACING_DECORATORS if mcp_server else set())
+
+    def strings_in(value: ast.AST) -> None:
+        for sub in ast.walk(value):
+            if isinstance(sub, ast.JoinedStr) or (
+                isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+            ):
+                spans.append(span(sub))
+        if isinstance(value, ast.Name) and value.id in module_values:
+            strings_in(module_values[value.id])
+
     for node in ast.walk(tree):
+        if mcp_server and isinstance(node, ast.Call):
+            name = decorator_name(node)
+            if name in _MCP_METADATA_CALLS:
+                for kw in node.keywords:
+                    if kw.arg in _MCP_METADATA_KEYWORDS:
+                        strings_in(kw.value)
+                # `FastMCP("name", "instructions")`: the second positional is the instructions.
+                if name == "FastMCP" and len(node.args) > 1:
+                    strings_in(node.args[1])
+            continue
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        facing = [d for d in node.decorator_list if decorator_name(d) in _AGENT_FACING_DECORATORS]
+        facing = [d for d in node.decorator_list if decorator_name(d) in decorators]
+        if facing and mcp_server:
+            # The parameters' annotations and defaults become the tool's input schema: the text
+            # in `Annotated[str, "..."]`, `Field(description=...)`, `Literal[...]` and a default
+            # string is shown to the model as property descriptions, enum values and defaults.
+            args = node.args
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                if arg.annotation is not None:
+                    strings_in(arg.annotation)
+            for default in (*args.defaults, *args.kw_defaults):
+                if default is not None:
+                    strings_in(default)
         if facing:
             body = node.body
             if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
@@ -991,6 +1067,75 @@ def _python_agent_facing_spans(
                 ):
                     spans.append(span(sub))
     return spans, regions
+
+
+# A JavaScript/TypeScript file written against an MCP server SDK (source or bundled output).
+_JS_MCP_SERVER = re.compile(
+    r"@modelcontextprotocol/sdk/server|\bMcpServer\b|\b(?:ListTools|ListPrompts|ListResources)"
+    r"RequestSchema\b|\bFastMCP\b"
+)
+# What sits right before a string literal the SDK publishes to the model, in such a file:
+# a `description:` / `title:` / `instructions:` value; a zod `.describe(...)` / `.default(...)`;
+# the description argument of `server.tool("name", "...")` and its prompt/resource siblings; an
+# element of an `enum: [...]`, `z.enum([...])` or `examples: [...]` array.
+_JS_META_BEFORE = re.compile(
+    r"""(?:\b|["'])(?:description|title|instructions)["']?\s*:\s*$"""
+    r"|\.(?:describe|default)\s*\(\s*$"
+    r"""|\.(?:tool|prompt|resource|registerTool|registerPrompt|registerResource)\s*\(\s*"""
+    r"""(?:"[^"\n]{0,200}"|'[^'\n]{0,200}'|`[^`]{0,200}`)\s*,\s*$"""
+)
+_JS_ARRAY_OPEN = re.compile(r"""(?:\benum["']?\s*:|\.enum\s*\(|\bexamples["']?\s*:)\s*$""")
+# The text of a content block (`{ type: "text", text: "..." }`): a prompt template or a tool result.
+_JS_TEXT_KEY = re.compile(r"""(?:\b|["'])text["']?\s*:\s*$""")
+_JS_TEXT_TYPE = re.compile(r"""\btype["']?\s*:\s*["']text["']""")
+_JS_CONCAT = re.compile(r"\s*\+\s*$")
+_JS_CONST = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*$")
+_JS_LOOKBEHIND = 240
+_JS_CONCAT_LINKS = 16
+
+
+def _js_agent_facing(
+    text: str, spans: list[tuple[int, int]], k: int, names: dict[str, bool]
+) -> bool:
+    """True if the ``k``-th string literal of an MCP-server JS file is text the model reads.
+
+    Linear in a bounded look-behind: a string joined with ``+`` to such a string counts (up to
+    ``_JS_CONCAT_LINKS`` links), as does a constant later used as a description.
+    """
+    for _ in range(_JS_CONCAT_LINKS):
+        start = spans[k][0]
+        before = text[max(0, start - _JS_LOOKBEHIND) : start]
+        if _JS_META_BEFORE.search(before):
+            return True
+        if _JS_TEXT_KEY.search(before) and _JS_TEXT_TYPE.search(before[-120:]):
+            return True
+        bracket = before.rfind("[")
+        if bracket >= 0 and "]" not in before[bracket:] and _JS_ARRAY_OPEN.search(
+            before[:bracket]
+        ):
+            return True
+        const = _JS_CONST.search(before)
+        if const:
+            return _js_name_is_metadata(text, const.group(1), names)
+        # `"..." + "..."` / `` `...` + "..." ``: the string continues the one before it.
+        if k == 0 or not _JS_CONCAT.fullmatch(text, spans[k - 1][1], start):
+            return False
+        k -= 1
+    return False
+
+
+def _js_name_is_metadata(text: str, name: str, names: dict[str, bool]) -> bool:
+    """True if the constant ``name`` is used where the SDK publishes its value to the model."""
+    if name not in names:
+        ident = re.escape(name)
+        names[name] = bool(re.search(
+            r"""(?:(?:description|title|instructions)["']?\s*:\s*|\.describe\s*\(\s*|"""
+            r"""\.(?:tool|prompt|resource|registerTool|registerPrompt|registerResource)\s*\(\s*"""
+            r"""(?:"[^"\n]{0,200}"|'[^'\n]{0,200}')\s*,\s*)"""
+            + ident + r"(?![\w$])",
+            text,
+        ))
+    return names[name]
 
 
 def _python_docstring_spans(text: str, line_starts: list[int]) -> list[tuple[int, int]]:
@@ -1346,6 +1491,10 @@ class IndexedFile:
         default=None, repr=False, compare=False
     )
     _sampling_cache: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
+    # JavaScript: whether the file is an MCP server (None = not yet known), and per constant name
+    # whether it is used as a description; see ``in_agent_facing_string``.
+    _js_mcp_server: bool | None = field(default=None, repr=False, compare=False)
+    _js_metadata_names: dict[str, bool] = field(default_factory=dict, repr=False, compare=False)
     # Per line: the quoted regions ``in_printed_command`` reads, and whether each one is printed
     # (filled in when first asked); see ``_quoted_regions``.
     _quoted_cache: dict[int, tuple[list[int], list[int], dict[int, bool]]] = field(
@@ -1557,9 +1706,9 @@ class IndexedFile:
         return _offset_in_spans(self._c_string_spans_cache, offset)
 
     def in_agent_facing_string(self, offset: int) -> bool:
-        """True if ``offset`` is inside a Python string that a model reads as text.
+        """True if ``offset`` is inside a Python or JS/TS string that a model reads as text.
 
-        String literals are normally demoted as pattern definitions, but four kinds are the
+        String literals are normally demoted as pattern definitions, but these are the
         opposite: they are exactly what an MCP client hands to the model.
 
         * the docstring of a function decorated as a tool or prompt (``@mcp.tool()``,
@@ -1571,11 +1720,32 @@ class IndexedFile:
           exactly like the static description. A tool can stay quiet on its first few calls and
           only start returning agent-directed instructions once a runtime trigger fires; the
           text is no less agent-facing for being built at call time instead of declared upfront.
+
+        In a file written against an MCP server library, also the rest of the metadata the SDK
+        publishes: Python ``@mcp.resource`` docstrings, the text in a tool parameter's
+        annotation or default (``Annotated[str, Field(description=...)]``), the keyword values
+        of ``FastMCP(instructions=...)``, ``Field(...)``, ``types.Tool(inputSchema=...)`` and
+        their siblings; JS/TS ``description:``/``title:``/``instructions:`` values, zod
+        ``.describe(...)``, ``enum``/``examples`` elements, the description argument of
+        ``server.tool/prompt/resource(...)`` and the text of a ``{type: "text"}`` block.
         """
+        if self.suffix in _JS_FAMILY_SUFFIXES:
+            return self._js_agent_facing(offset)
         if self.suffix not in (".py", ".pyw"):
             return False
         self._ensure_agent_facing()
         return _offset_in_spans(self._agent_facing_cache, offset)
+
+    def _js_agent_facing(self, offset: int) -> bool:
+        if self._js_mcp_server is None:
+            self._js_mcp_server = bool(_JS_MCP_SERVER.search(self.text))
+        if not self._js_mcp_server:
+            return False
+        spans = self.c_string_spans()
+        k = bisect.bisect_right(spans, (offset, len(self.text) + 1)) - 1
+        if k < 0 or not spans[k][0] <= offset < spans[k][1]:
+            return False
+        return _js_agent_facing(self.text, spans, k, self._js_metadata_names)
 
     def in_python_docstring(self, offset: int) -> bool:
         """True if ``offset`` is inside a Python docstring (a string literal used as a statement).
