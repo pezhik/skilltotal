@@ -43,6 +43,11 @@ INSTALL_COMMANDS = [
     ("claude mcp add git -- uvx mcp-server-git", ["pypi:mcp-server-git"]),
     ("FOO=1 sudo npm install -g pnpm", ["npm:pnpm"]),
     ("cd web; npm install express", ["npm:express"]),
+    # hatch and tox run a command in the environment they set up: what it installs is checked.
+    ("hatch run pip install requests", ["pypi:requests"]),
+    ("hatch run test:pip install requests", ["pypi:requests"]),
+    ("hatch env run -e test -- pip install requests", ["pypi:requests"]),
+    ("tox exec -e py -- pip install requests", ["pypi:requests"]),
     # npx fetches `tsc` from the registry when it is not installed locally (a squatted name).
     ("npx tsc --noEmit", ["npm:tsc"]),
 ]

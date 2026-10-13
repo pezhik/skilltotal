@@ -1703,6 +1703,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _pipx(rest, shell, depth, level)
     if head in _PYPROJECT_ADD:
         return _pyproject(head, rest, shell, depth, level)
+    if head in _PROJECT_ENVS:
+        return _project_envs(head, rest, shell, depth, level)
     return []
 
 
@@ -1859,7 +1861,7 @@ def _could_launch(word: str) -> bool:
         head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx",
                                          "pip-sync", "cmd",
                                          "powershell", "pwsh", "eval", "xargs", "parallel")
-        or head in _PYPROJECT_ADD
+        or head in _PYPROJECT_ADD or head in _PROJECT_ENVS
         or head in _SHELLS or head in _WRAPPERS or head in _LAUNCHERS or head in _PASSTHROUGH
         or head in _CODE_OPTIONS or head in _PS_EVAL
         or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
@@ -2723,6 +2725,69 @@ def _pyproject(head: str, rest: list[str], shell: str, depth: int,
         listed = _flag_value(args, {"-r", "--requirements"})
         return _lockfile(listed if listed is not None else "Pipfile")
     return [item for spec in specs for item in _py_spec(spec, index)]
+
+
+# hatch, tox and nox: the file where each one's environments are listed, by default.
+_PROJECT_ENVS = {"hatch": "pyproject.toml", "tox": "tox.ini", "nox": "noxfile.py"}
+_HATCH_VALUE_FLAGS = {"-e", "--env", "-p", "--project", "--data-dir", "--cache-dir", "--config"}
+_HATCH_ENV_VALUE_FLAGS = {"-e", "--env", "-i", "--include", "-x", "--exclude", "--filter"}
+_TOX_VALUE_FLAGS = {"-e", "-c", "--conf", "--root", "--workdir", "-m", "-f", "-x", "--override",
+                    "--colored", "--exit-and-dump-after", "--hashseed", "--installpkg",
+                    "--discover", "--runner", "-p", "--parallel", "--result-json"}
+# tox's subcommands (with their short forms) that only print or write a config, and its legacy
+# options that list or show the environments; nox's options that list its sessions.
+_TOX_PRINTS = frozenset({"list", "l", "config", "c", "quickstart", "q", "depends", "de"})
+_TOX_LISTS = frozenset({"-l", "--listenvs", "-a", "--listenvs-all", "--showconfig",
+                        "--help-ini", "--hi"})
+_NOX_LISTS = frozenset({"-l", "--list", "--list-sessions"})
+
+
+def _project_envs(head: str, rest: list[str], shell: str, depth: int,
+                  level: _Level) -> list[Install]:
+    """``hatch run``/``shell``/``test``/``env create``, ``tox [run] -e py``, ``nox -s x``: each
+    first installs what the project lists into an environment of its own, as ``uv sync`` does,
+    so no package is named to check. ``hatch run`` and ``tox exec`` then run a command there,
+    read like ``poetry run``'s. Help, listings and every other subcommand install nothing.
+
+    tox reads anything it does not list as a subcommand that installs (a value of an option not
+    known here, a new subcommand): it is said in the console, never skipped."""
+    if head == "nox":
+        return [] if _help(rest, _PY_HELP | _NOX_LISTS) else _lockfile(_PROJECT_ENVS[head])
+    if head == "tox":
+        # After `--` come the arguments tox hands to the commands it runs, not its own.
+        end = rest.index("--") if "--" in rest else len(rest)
+        sub, _ = _subcommand(rest[:end], _TOX_VALUE_FLAGS)
+        if _help(rest, _PY_HELP | _TOX_LISTS) or sub in _TOX_PRINTS:
+            return []
+        if _filled_in(sub or ""):
+            return [_NOT_READ]
+        found = _lockfile(_PROJECT_ENVS[head])
+        if sub in ("exec", "e"):  # `tox exec -e py -- pip install x` runs that command
+            found += _installs_in(rest[end + 1:], shell, depth + 1, level)
+        return found
+    sub, args = _subcommand(rest, _HATCH_VALUE_FLAGS)
+    if _filled_in(sub or ""):
+        return [_NOT_READ]
+    if _help(rest[:len(rest) - len(args)], _PY_HELP):  # `hatch --help`, `hatch --version`
+        return []
+    if sub == "env":
+        sub, args = _subcommand(args, _HATCH_ENV_VALUE_FLAGS)
+        if sub not in ("create", "run"):
+            return []  # `hatch env show`, `hatch env remove`, `hatch env prune`
+    elif sub not in ("run", "shell", "test"):
+        return []  # `hatch version`, `hatch status`, `hatch new`, ...
+    if sub != "run":
+        return [] if _help(args, _PY_HELP) else _lockfile(_PROJECT_ENVS[head])
+    start = _command_start(args, _HATCH_ENV_VALUE_FLAGS)
+    if _help(args[:start], _PY_HELP):  # `hatch run --help`; `hatch run pytest -h` runs pytest
+        return []
+    command = args[start:]
+    if command:
+        # `hatch run test:pip install x`: the command `pip install x` in the environment `test`.
+        env, colon, first = command[0].partition(":")
+        if colon and env and first:
+            command = [first, *command[1:]]
+    return _lockfile(_PROJECT_ENVS[head]) + _installs_in(command, shell, depth + 1, level)
 
 
 def _pip_args_source(args: list[str]) -> str | None:

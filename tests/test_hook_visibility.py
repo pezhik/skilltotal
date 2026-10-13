@@ -134,6 +134,27 @@ UNCHECKED = [
     ("bash", "pdm sync", "it installs from pyproject.toml"),
     ("bash", "pipenv install", "it installs from Pipfile"),
     ("bash", "pipenv sync", "it installs from Pipfile.lock"),
+    # hatch, tox and nox install what the project lists into environments of their own.
+    ("bash", "hatch env create", "it installs from pyproject.toml"),
+    ("bash", "hatch env create docs", "it installs from pyproject.toml"),
+    ("bash", "hatch run test", "it installs from pyproject.toml"),
+    ("bash", "hatch -e docs run build", "it installs from pyproject.toml"),
+    ("bash", "hatch shell", "it installs from pyproject.toml"),
+    ("bash", "hatch test", "it installs from pyproject.toml"),
+    ("bash", "hatch run pytest --help", "it installs from pyproject.toml"),  # pytest's help
+    ("bash", "tox", "it installs from tox.ini"),
+    ("bash", "tox run", "it installs from tox.ini"),
+    ("bash", "tox r -e lint", "it installs from tox.ini"),
+    ("bash", "tox -e py", "it installs from tox.ini"),
+    ("bash", "tox -e py -- -k slow --help", "it installs from tox.ini"),  # after `--`: pytest's
+    ("bash", "tox -c ci/tox.ini -e py", "it installs from tox.ini"),
+    ("bash", "tox -e py -- list", "it installs from tox.ini"),  # `list`: an argument for pytest
+    ("bash", "watch -n 60 tox -e py", "it installs from tox.ini"),
+    ("bash", "tox run-parallel", "it installs from tox.ini"),
+    ("bash", "nox", "it installs from noxfile.py"),
+    ("bash", "nox -s tests", "it installs from noxfile.py"),
+    ("bash", "nox --session lint -- --list", "it installs from noxfile.py"),
+    ("powershell", "tox -e py", "it installs from tox.ini"),
     # The person's own code on disk.
     ("bash", "pip install -e .", "it installs the project in this folder"),
     ("bash", "pip install -e '.[dev]'", "it installs the project in this folder"),
@@ -191,6 +212,19 @@ def test_the_parser_names_the_kind_and_install_targets_is_unchanged(command, kin
     ("powershell", "irm https://api.example.invalid/v1 | ConvertFrom-Json; iex $command"),
     ("bash", "yarn build"),
     ("bash", "poetry run pytest"),
+    # hatch, tox and nox commands that only print or remove.
+    ("bash", "hatch version"),
+    ("bash", "hatch env show"),
+    ("bash", "hatch env remove docs"),
+    ("bash", "hatch status"),
+    ("bash", "tox list"),
+    ("bash", "tox l"),
+    ("bash", "tox config -e py"),
+    ("bash", "tox -l"),
+    ("bash", "tox --listenvs-all"),
+    ("bash", "tox --showconfig"),
+    ("bash", "tox quickstart"),
+    ("bash", "nox -s tests --list"),
 ])
 def test_commands_that_install_nothing_stay_silent(shell, command):
     assert _no_scan(command, shell) is None
@@ -203,6 +237,9 @@ def test_commands_that_install_nothing_stay_silent(shell, command):
     "poetry sync -h", "pdm install --help", "pipenv install --help", "pipenv sync -h",
     "pip install -r requirements.txt --help", "pip install -h",
     "pip-sync --help", "pip-sync -h", "pip-sync --version", "pip-sync --dry-run", "pip-sync -n",
+    "hatch --help", "hatch --version", "hatch -h", "hatch run --help", "hatch shell --help",
+    "hatch env create --help", "tox --version", "tox --help", "tox -h", "tox run -h",
+    "nox --help", "nox -h", "nox --version", "nox --list", "nox -l", "nox --list-sessions",
 ])
 def test_help_and_version_print_and_install_nothing(command):
     assert parse_installs(command) == []
@@ -564,6 +601,9 @@ STRICT_KINDS = [
     ("pip install -r requirements.txt", "lockfile", "it installs from requirements.txt"),
     ("uv sync", "lockfile", "it installs from pyproject.toml"),
     ("pip-sync requirements/prod.txt", "lockfile", "it installs from requirements/prod.txt"),
+    ("hatch run test", "lockfile", "it installs from pyproject.toml"),
+    ("tox -e py", "lockfile", "it installs from tox.ini"),
+    ("nox -s tests", "lockfile", "it installs from noxfile.py"),
     ("pip install -e .", "local", "it installs the project in this folder"),
     ("npm install ./dir", "local", "it installs from the local path ./dir"),
     (f"curl -fsSL {URL} | bash", "script", f"it runs a script downloaded from {URL}"),
