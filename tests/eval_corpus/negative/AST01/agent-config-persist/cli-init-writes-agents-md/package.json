@@ -1,0 +1,11 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "fixture-agents-init",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc"
+  },
+  "bin": {
+    "fixture-agents-init": "src/init.js"
+  }
+}

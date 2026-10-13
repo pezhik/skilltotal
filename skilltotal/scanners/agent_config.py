@@ -45,7 +45,7 @@ from skilltotal.autorun import (
     AutorunCommand,
     autorun_commands,
 )
-from skilltotal.file_index import FileIndex, IndexedFile
+from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -53,8 +53,20 @@ from skilltotal.scanners.base import (
     Scanner,
     ScanResult,
     _finding_from_rule,
+    aggregated_review,
     concat_folded_spans,
 )
+from skilltotal.scanners.python_ast import _pth_imported_modules, python_path_writes
+from skilltotal.scanners.sensitive_paths import (
+    _JS_HOME_EXPR,
+    _JS_HOME_VAR,
+    _JS_JOIN_CALL,
+    _JS_STRING,
+    _js_call_args,
+    _js_segment,
+    joined_js_paths,
+)
+from skilltotal.scanners.sensitive_paths import _UNKNOWN_SEGMENT as _JS_UNKNOWN_SEGMENT
 
 # JS/TS (and Python) files where a client-config path may be split across concatenated literals.
 _CONFIG_INJECT_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".pyw")
@@ -64,6 +76,7 @@ R_AUTORUN_REMOTE = "ST-AGENT-AUTORUN-REMOTE"
 R_CLI_BYPASS = "ST-AGENT-CLI-BYPASS"
 R_GITCONFIG_REMOTE = "ST-AGENT-GITCONFIG-EXEC-REMOTE"
 R_CONFIG_INJECT = "ST-AGENT-CONFIG-INJECT"
+R_CONFIG_PERSIST = "ST-AGENT-CONFIG-PERSIST"
 R_GIT_PERSIST = "ST-GIT-HOOK-PERSIST"
 R_SKILL_EXEC = "ST-SKILL-DYNAMIC-EXEC"
 
@@ -198,6 +211,290 @@ def _is_write_target(text: str, start: int, end: int) -> bool:
         if re.search(method, text, re.IGNORECASE):
             return True
     return False
+
+
+# --- writes into an AI agent's own configuration, instructions or memory --------------------
+# Beyond the MCP client configs above: the agent's settings (hooks, permissions, status line),
+# its skills/agents/commands folders, and the instruction and memory files it reads at every
+# session start. What is written there steers the agent in every later session. A CLI's own `init`
+# command honestly writes AGENTS.md or CLAUDE.md into the project, so a project-relative write is
+# listed for review; one into the user's home directory is a risky construct; one made at install
+# or import time is a malicious indicator (ST-AGENT-CONFIG-PERSIST).
+_AGENT_SETTINGS_PATHS = re.compile(
+    r"\.claude[/\\](?:settings(?:\.local)?\.json|(?:skills|agents|commands)(?![\w.-]))"
+    r"|\.codex[/\\]config\.toml"
+    r"|\.gemini[/\\]settings\.json"
+    r"|\.vscode[/\\]settings\.json"
+    r"|\.cursor[/\\]rules(?![\w.-])"
+)
+_AGENT_INSTRUCTION_PATHS = re.compile(
+    r"(?<![\w.-])(?:CLAUDE|AGENTS|GEMINI|SOUL|MEMORY)\.md(?![\w.-])"
+    r"|\.github[/\\]copilot-instructions\.md"
+)
+_AGENT_TARGETS = re.compile(
+    _AGENT_SETTINGS_PATHS.pattern + "|" + _AGENT_INSTRUCTION_PATHS.pattern
+)
+# A file names one of the targets only when it holds one of these (a path split into join
+# segments still holds the folder name); every other file is skipped for free.
+_AGENT_TOKENS = (
+    ".claude", ".codex", ".gemini", ".cursor", ".vscode", ".continue", ".codeium", "windsurf",
+    "copilot-instructions", "CLAUDE.md", "AGENTS.md", "GEMINI.md", "SOUL.md", "MEMORY.md",
+)
+_KIND_CLIENT, _KIND_SETTINGS, _KIND_INSTRUCTIONS = "client", "settings", "instructions"
+# A write that adds an auto-run command or an approval: a hook, a permission rule, an MCP
+# server's auto-approve list, a status line or credential helper command.
+_HOOK_KEYS = re.compile(
+    r"[\"']?\b(?:hooks|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|permissions"
+    r"|autoApprove|alwaysAllow|statusLine|apiKeyHelper)\b[\"']?\s*[:=]"
+)
+# The user's home directory (or the per-user application data folder), however it is named.
+_HOME_MARKER = re.compile(
+    r"~[/\\]|\$\{?(?:HOME|USERPROFILE|APPDATA)\b|%(?:USERPROFILE|APPDATA)%"
+    r"|\$env:(?:USERPROFILE|APPDATA)"
+    r"|\bhomedir\s*\)?\s*\(|process\.env(?:\.|\[\s*['\"])(?:HOME|USERPROFILE|APPDATA)\b"
+    r"|\bPath\.home\s*\(|\bexpanduser\s*\("
+    r"|\b(?:environ(?:\.get\s*\(|\s*\[)|getenv\s*\()\s*['\"](?:HOME|USERPROFILE|APPDATA)['\"]",
+    re.IGNORECASE,
+)
+# Calls whose first argument is the file they write, and calls that write their second (copy,
+# move, link). `open` writes only with a write mode, read from the call itself.
+_WRITE_CALLS = frozenset({
+    "writeFileSync", "writeFile", "appendFileSync", "appendFile", "outputFile", "outputFileSync",
+    "outputJson", "outputJsonSync", "writeJson", "writeJsonSync", "createWriteStream",
+})
+_COPY_CALLS = frozenset({
+    "copyFileSync", "copyFile", "cpSync", "renameSync", "rename", "copy", "copySync", "move",
+    "moveSync", "symlinkSync", "symlink", "linkSync", "ensureSymlink",
+})
+_OPEN_CALLS = frozenset({"open", "openSync"})
+_CALLEE = re.compile(r"([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*$")
+_OPEN_WRITE_MODE = re.compile(
+    r",\s*(?:mode\s*=\s*)?['\"][rbt]*[wax]\+?[rbt]*['\"]|flags\s*:\s*['\"][wa]"
+)
+# Shell writes: a redirect, tee, PowerShell's file cmdlets, and cp/mv/install/ln (destination
+# last). `=>`, `->` and an HTML tag's `>` are not redirects.
+_SHELL_WRITE_BEFORE = re.compile(
+    r"(?:(?<![=<>\-\w])>>?\s*|\btee\s+(?:-a\s+)?"
+    r"|\b(?:Out-File|Set-Content|Add-Content|Copy-Item|Move-Item)\b[^\n|;]{0,160}?\s"
+    r"|\b(?:cp|mv|install|ln)\b[^\n;|&]{1,300}?\s)"
+    r"[\"']?[^\s\"'<>|;&]*$",
+    re.IGNORECASE,
+)
+_SHELL_COPY_BEFORE = re.compile(r"\b(?:cp|mv|install|ln|Copy-Item|Move-Item)\b", re.IGNORECASE)
+_SHELL_REDIRECT_BEFORE = re.compile(r"(?:(?<![=<>\-\w])>>?|\btee)\s*(?:-a\s+)?[\"']?\S*$")
+_SHELL_ARG_END = re.compile(r"[^\s\"';|&]*[\"']?[ \t]*(?:[;|&)#].*)?")
+_SHELL_SUFFIXES = (".sh", ".bash", ".zsh", ".ps1")
+# A line of another language that runs a shell command, where a redirect inside a string counts.
+_PROCESS_CALL = re.compile(r"\b(?:exec\w*|spawn\w*|system|Popen|check_call|check_output|run)\s*\(")
+_JS_ASSIGN = re.compile(r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*")
+_PY_SHELL_ASSIGN = re.compile(r"^[ \t]*(?:export[ \t]+)?([A-Za-z_]\w{0,60})[ \t]*=[ \t]*")
+_JS_TEMPLATE_VAR = re.compile(
+    r"`\$\{\s*([A-Za-z_$][\w$]{0,60})\s*\}((?:[^`\\$]|\\.|\$(?!\{)){1,200})`"
+)
+_JS_PLUS_VAR = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]{0,60})\s*\+\s*(['\"])((?:(?!\2)[^\\\n]|\\.){1,300})\2"
+)
+_JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+# A package.json install hook, whose command runs at every install of the package.
+_NPM_INSTALL_HOOK_LINE = re.compile(
+    r"\"(?:preinstall|install|postinstall)\"\s*:\s*\"((?:[^\"\\\n]|\\.){1,2000})\""
+)
+_MAX_TARGETS_PER_FILE = 2000
+# Python files an import runs at the top level: a package's `__init__`, and the start-up hooks.
+_PY_IMPORT_HOOK_NAMES = frozenset({"__init__.py", "sitecustomize.py", "usercustomize.py"})
+
+
+def _target_kind(path: str) -> str | None:
+    if _CLIENT_CONFIG_PATHS.search(path):
+        return _KIND_CLIENT
+    if _AGENT_SETTINGS_PATHS.search(path):
+        return _KIND_SETTINGS
+    if _AGENT_INSTRUCTION_PATHS.search(path):
+        return _KIND_INSTRUCTIONS
+    return None
+
+
+# How far around a match the checks below look: a statement, never a whole minified line.
+_WINDOW = 400
+
+
+def _line_start(text: str, pos: int) -> int:
+    lo = max(0, pos - _WINDOW)
+    return max(lo, text.rfind("\n", lo, pos) + 1)
+
+
+def _line_end(text: str, pos: int) -> int:
+    hi = min(len(text), pos + _WINDOW)
+    end = text.find("\n", pos, hi)
+    return hi if end < 0 else end
+
+
+def _statement_start(text: str, start: int) -> int:
+    line_start = _line_start(text, start)
+    return max(line_start, text.rfind(";", line_start, start) + 1)
+
+
+def _call_args_text(text: str, open_at: int) -> str:
+    """The argument text of the call whose ``(`` is at ``open_at`` (bounded, best effort)."""
+    depth = 0
+    for i in range(open_at, min(len(text), open_at + 400)):
+        if text[i] in "([{":
+            depth += 1
+        elif text[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return text[open_at:i]
+    return text[open_at:open_at + 400]
+
+
+def _in_write_call(text: str, pos: int) -> bool:
+    """True if ``pos`` lies in the argument a write call writes: the first of ``writeFileSync``
+    and its kin (also inside a nested ``path.join``), the second of a copy or move, the first of
+    ``open`` with a write mode. Walks outwards through the enclosing brackets of the statement;
+    a function body's ``{`` ends the walk."""
+    depth, commas = 0, 0
+    lo = max(0, pos - _WINDOW)
+    i = pos - 1
+    while i >= lo:
+        ch = text[i]
+        if ch in ")]}":
+            depth += 1
+        elif ch in "([{":
+            if depth:
+                depth -= 1
+            elif ch == "{" and text[lo:i].rstrip()[-1:] in (")", ">", ""):
+                return False
+            else:
+                if ch == "(":
+                    m = _CALLEE.search(text, max(lo, i - 80), i)
+                    name = re.sub(r"\s+", "", m.group(1)) if m else ""
+                    last = name.rsplit(".", 1)[-1]
+                    if last in _WRITE_CALLS and commas == 0:
+                        return True
+                    if last in _COPY_CALLS and commas >= 1 and (
+                        "." in name or last.endswith("Sync")
+                    ):
+                        return True
+                    if last in _OPEN_CALLS and commas == 0 and _OPEN_WRITE_MODE.search(
+                        _call_args_text(text, i)
+                    ):
+                        return True
+                commas = 0
+        elif ch == "," and not depth:
+            commas += 1
+        elif ch == ";" and not depth:
+            return False
+        i -= 1
+    return False
+
+
+def _shell_writes(text: str, start: int, end: int, stop: int | None = None) -> bool:
+    """True if a shell redirect, ``tee``, a PowerShell file cmdlet or the destination of
+    ``cp``/``mv``/``install``/``ln`` writes the path at ``[start, end)``. ``stop`` ends the
+    command early (a command held in a JSON string)."""
+    before = text[_line_start(text, start):start]
+    m = _SHELL_WRITE_BEFORE.search(before)
+    if m is None:
+        return False
+    if _SHELL_COPY_BEFORE.search(m.group(0)) and not _SHELL_REDIRECT_BEFORE.search(before):
+        line_end = _line_end(text, end)
+        rest = text[end:line_end if stop is None else min(stop, line_end)]
+        return _SHELL_ARG_END.fullmatch(rest) is not None  # the destination is the last word
+    return True
+
+
+class _WriteChecker:
+    """Whether a path span in one file is the target of a write, directly or one name away."""
+
+    def __init__(self, f: IndexedFile, shell_file: bool):
+        self.f = f
+        self.shell_file = shell_file
+
+    def _shell_ok(self, start: int) -> bool:
+        if self.shell_file:
+            return True
+        text = self.f.text
+        return bool(_PROCESS_CALL.search(text, _line_start(text, start), _line_end(text, start)))
+
+    def direct(self, start: int, end: int) -> bool:
+        text = self.f.text
+        if _in_write_call(text, start) or _WRITE_METHOD_AFTER.match(text[end:end + 120]):
+            return True
+        return self._shell_ok(start) and _shell_writes(text, start, end)
+
+    def writes(self, start: int, end: int) -> bool:
+        if self.direct(start, end):
+            return True
+        # One hop: the path is assigned to a name that a write then targets.
+        text = self.f.text
+        head = text[_statement_start(text, start):start].lstrip()
+        m = _ASSIGN_HEAD.match(head) or _PY_SHELL_ASSIGN.match(head)
+        if m is None:
+            return False
+        name = re.escape(m.group(1))
+        use = re.compile(rf"(?<![\w$.])\$?\{{?{name}\}}?(?![\w$])")
+        for count, occurrence in enumerate(use.finditer(text, end)):
+            if count >= 50:
+                break
+            if self.direct(occurrence.start(), occurrence.end()):
+                return True
+        return False
+
+
+def _js_home_pattern(text: str) -> re.Pattern[str]:
+    names = {m.group(1) for m in _JS_HOME_VAR.finditer(text)}
+    alts = [_JS_HOME_EXPR] + [rf"(?<![\w$.]){re.escape(n)}(?![\w$])" for n in sorted(names)]
+    return re.compile("|".join(f"(?:{a})" for a in alts))
+
+
+def _js_built_paths(f: IndexedFile) -> list[tuple[int, int, str]]:
+    """``(start, end, path)`` for each path a JS/TS file builds from segments: joined onto the
+    home directory (see ``joined_js_paths``), or joined from strings and names that hold a path
+    built earlier in the file (``const dir = path.join(os.homedir(), '.claude');
+    path.join(dir, 'settings.json')``). The home directory reads as ``~``."""
+    text = f.text
+    out = list(joined_js_paths(f))
+    home = _js_home_pattern(text)
+    path_vars: dict[str, str] = {}
+
+    def segment(arg: str) -> str:
+        value = _js_segment(arg, home)
+        if value == _JS_UNKNOWN_SEGMENT:
+            return path_vars.get(arg, value)
+        return value
+
+    def joined(pos: int) -> tuple[int, int, str] | None:
+        m = _JS_JOIN_CALL.match(text, pos)
+        if m is None:
+            return None
+        call = _js_call_args(text, m.end() - 1)
+        if call is None or not call[0]:
+            return None
+        segments = [segment(a) for a in call[0]]
+        if all(s == _JS_UNKNOWN_SEGMENT for s in segments):
+            return None
+        return m.start(), call[1], re.sub(r"/{2,}", "/", "/".join(segments))
+
+    for m in _JS_ASSIGN.finditer(text):
+        built = joined(m.end())
+        if built is not None:
+            path_vars[m.group(1)] = built[2]
+            continue
+        literal = _JS_STRING.match(text, m.end())
+        if literal and re.match(r"\s*[;\n]", text[literal.end():literal.end() + 2]):
+            path_vars[m.group(1)] = literal.group(2) if literal.group(1) else literal.group(3)
+    for m in _JS_JOIN_CALL.finditer(text):
+        built = joined(m.start())
+        if built is not None:
+            out.append(built)
+    for m in _JS_TEMPLATE_VAR.finditer(text):
+        if m.group(1) in path_vars:
+            out.append((m.start(), m.end(), path_vars[m.group(1)] + m.group(2)))
+    for m in _JS_PLUS_VAR.finditer(text):
+        if m.group(1) in path_vars:
+            out.append((m.start(), m.end(), path_vars[m.group(1)] + m.group(3)))
+    return out
+
 
 # --- git-hook persistence (SANDWORM_MODE / supply-chain worms, 2026) -------------------------
 # Repointing git's GLOBAL template dir makes a hook run for every repository the victim creates
@@ -337,19 +634,46 @@ class AgentConfigScanner(Scanner):
             id=R_CONFIG_INJECT,
             category="agent_config",
             severity=Severity.HIGH,
-            title="Code writes to another AI client's MCP/agent configuration",
+            title="Code writes to an AI agent's MCP configuration, settings or instruction files",
             description=(
                 "The component writes to a config file of a separate AI client (Claude Desktop, "
-                "Cursor, VS Code, Continue, Windsurf). A server added there loads in that "
-                "client's next session. That is expected from a command the user runs to register "
-                "a server, and unexpected from code that runs on install or import."
+                "Cursor, VS Code, Continue, Windsurf), or, in the user's home directory, to an "
+                "AI agent's settings, skills, subagents, commands or instruction and memory files "
+                "(Claude Code, Codex, Gemini CLI, Cursor rules, AGENTS.md, CLAUDE.md). A server, "
+                "hook or instruction added there loads in the agent's next session. That is "
+                "expected from a command the user runs to set the agent up, and unexpected from "
+                "code that runs on install or import."
             ),
             recommendation=(
-                "Confirm why the component edits another client's configuration. A tool that "
-                "registers itself should ask the user and write only the current client's config."
+                "Confirm why the component edits an agent's configuration or instructions. A tool "
+                "that registers itself should ask the user and write only what it says it writes."
             ),
             capability=Capability.FILESYSTEM_WRITE,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
+            # A comment that names the write does not write anything.
+            code_context="comments",
+        ),
+        RuleSpec(
+            id=R_CONFIG_PERSIST,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="Install- or import-time code writes into the user's AI agent configuration",
+            description=(
+                "Code that runs when the package is installed or imported -- a script an npm "
+                "install hook runs, a .pth line, setup.py, or the top level of a package module -- "
+                "writes into an AI agent's configuration in the user's home directory (settings, "
+                "MCP servers, skills, instruction or memory files such as ~/.claude/CLAUDE.md, "
+                "~/.codex/AGENTS.md, ~/.gemini/GEMINI.md), or adds a hook or permission entry to "
+                "agent settings. Every later agent session then loads what was written, without "
+                "the user having run or seen anything."
+            ),
+            recommendation=(
+                "Do not install this version. Inspect and restore the named agent files on any "
+                "machine that installed it, and remove hooks, servers and instructions it added."
+            ),
+            capability=Capability.FILESYSTEM_WRITE,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            code_context="comments",
         ),
         RuleSpec(
             id=R_GIT_PERSIST,
@@ -493,6 +817,27 @@ class AgentConfigScanner(Scanner):
                 config_inject_lines.add((ev.file, ev.line_start))
                 config_inject.append(ev)
 
+        # Agent settings, instructions and memory, and any agent config written at install or
+        # import time. A line written at install time is reported once, as the stronger rule.
+        more_inject, config_persist, write_review = self._agent_config_writes(index)
+        persist_lines = {(e.file, e.line_start) for e in config_persist}
+        for ev in more_inject:
+            if (ev.file, ev.line_start) not in config_inject_lines:
+                config_inject_lines.add((ev.file, ev.line_start))
+                config_inject.append(ev)
+        config_inject = [e for e in config_inject if (e.file, e.line_start) not in persist_lines]
+        write_review = [p for p in write_review if p not in config_inject_lines | persist_lines]
+        if write_review:
+            needs_review.append(aggregated_review(
+                category="agent_config",
+                title="Code writes an AI agent instruction or settings file in the project",
+                places=sorted(set(write_review)),
+                what="write(s) to an agent instruction or settings file (AGENTS.md, CLAUDE.md, "
+                     ".claude/settings.json, .cursor/rules, ...) in a folder the code is given",
+                advice="A CLI's own init or setup command does this honestly. Confirm it runs "
+                       "only when the user asks, and that what it writes is what it says.",
+            ))
+
         skill_exec: list[Evidence] = []
         for f in index.files:
             if not self._is_skill_file(f):
@@ -534,6 +879,8 @@ class AgentConfigScanner(Scanner):
             findings.append(_finding_from_rule(self._rule(R_CLI_BYPASS), bypass))
         if config_inject:
             findings.append(_finding_from_rule(self._rule(R_CONFIG_INJECT), config_inject))
+        if config_persist:
+            findings.append(_finding_from_rule(self._rule(R_CONFIG_PERSIST), config_persist))
         if git_persist:
             findings.append(_finding_from_rule(self._rule(R_GIT_PERSIST), git_persist))
         if skill_exec:
@@ -541,6 +888,120 @@ class AgentConfigScanner(Scanner):
         if gitconfig_remote:
             findings.append(_finding_from_rule(self._rule(R_GITCONFIG_REMOTE), gitconfig_remote))
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    @staticmethod
+    def _agent_config_writes(
+        index: FileIndex,
+    ) -> tuple[list[Evidence], list[Evidence], list[tuple[str, int | None]]]:
+        """Writes into an agent's configuration, instructions or memory, as (risky, written at
+        install or import time, project-relative for review)."""
+        inject: list[Evidence] = []
+        persist: list[Evidence] = []
+        review: list[tuple[str, int | None]] = []
+        seen: set[tuple[str, int, bool]] = set()
+        relpaths = {f.relpath for f in index.files}
+        pth_modules: set[str] = set()
+        for f in index.select(suffixes=(".pth",)):
+            for line in f.text.splitlines():
+                if line.startswith(("import ", "import\t")):
+                    pth_modules |= _pth_imported_modules(line)
+
+        def record(f: IndexedFile, ev: Evidence, kind: str, home: bool, install: bool) -> None:
+            if install and (home or (kind != _KIND_INSTRUCTIONS and _HOOK_KEYS.search(f.text))):
+                bucket = persist
+            elif home or kind == _KIND_CLIENT:
+                bucket = inject
+            else:
+                if not is_test_path(f.relpath):
+                    review.append((ev.file, ev.line_start))
+                return
+            key = (ev.file, ev.line_start, bucket is persist)
+            if key not in seen and len(bucket) < MAX_EVIDENCE_SCANNED:
+                seen.add(key)
+                bucket.append(ev)
+
+        for f in index.files:
+            suffix = f.suffix
+            if f.relpath == "package.json":
+                AgentConfigScanner._npm_install_hook_writes(f, record)
+                continue
+            if suffix not in _CODE_SUFFIXES and suffix != ".pth":
+                continue
+            if not any(token in f.text for token in _AGENT_TOKENS):
+                continue
+            text = f.text
+            checker = _WriteChecker(f, shell_file=suffix in _SHELL_SUFFIXES)
+            spans = [(m.start(), m.end(), m.group(0)) for m in _AGENT_TARGETS.finditer(text)]
+            spans += [(m.start(), m.end(), m.group(0)) for m in _CLIENT_CONFIG_PATHS.finditer(text)]
+            if suffix in _JS_SUFFIXES:
+                spans += _js_built_paths(f)
+            # One verdict per line, and a bounded number of checks per file: a crafted line that
+            # repeats a target thousands of times costs no more than an honest one.
+            lines_done: set[int] = set()
+            targets = [(s, e, p, k) for s, e, p in spans if (k := _target_kind(p)) is not None]
+            for start, end, path, kind in targets[:_MAX_TARGETS_PER_FILE]:
+                if f.line_of_offset(start) in lines_done:
+                    continue
+                if not checker.writes(start, end):
+                    continue
+                lines_done.add(f.line_of_offset(start))
+                home = path.startswith("~") or bool(
+                    _HOME_MARKER.search(text, _statement_start(text, start), end)
+                )
+                if suffix == ".pth":
+                    line = text[_line_start(text, start):start]
+                    install = line.startswith(("import ", "import\t"))
+                else:
+                    install = f.relpath in index.install_scripts
+                record(f, f.evidence_for_span(start, end), kind, home, install)
+            if suffix in (".py", ".pyw"):
+                when = AgentConfigScanner._python_import_time(f, relpaths, pth_modules)
+                for write in python_path_writes(f):
+                    kind = _target_kind(write.path)
+                    if kind is None:
+                        continue
+                    install = when == "always" or (when == "top level" and write.top_level)
+                    record(f, write.evidence, kind, write.path.startswith("~"), install)
+        return inject, persist, review
+
+    @staticmethod
+    def _npm_install_hook_writes(f: IndexedFile, record) -> None:
+        """An agent file written by the command of a package.json install hook itself."""
+        for hook in _NPM_INSTALL_HOOK_LINE.finditer(f.text):
+            command = hook.group(1)
+            for m in _AGENT_TARGETS.finditer(command):
+                start, end = hook.start(1) + m.start(), hook.start(1) + m.end()
+                if not (_shell_writes(f.text, start, end, stop=hook.end(1))
+                        or _in_write_call(f.text, start)):
+                    continue
+                home = bool(_HOME_MARKER.search(command, 0, m.end()))
+                record(f, f.evidence_for_span(start, end), _target_kind(m.group(0)), home, True)
+            for m in _CLIENT_CONFIG_PATHS.finditer(command):
+                start, end = hook.start(1) + m.start(), hook.start(1) + m.end()
+                if _shell_writes(f.text, start, end, stop=hook.end(1)) or _in_write_call(
+                    f.text, start
+                ):
+                    home = bool(_HOME_MARKER.search(command, 0, m.end()))
+                    record(f, f.evidence_for_span(start, end), _KIND_CLIENT, home, True)
+
+    @staticmethod
+    def _python_import_time(f: IndexedFile, relpaths: set[str], pth_modules: set[str]) -> str:
+        """When a Python file's writes run on install or import: ``always`` for setup.py (its
+        command classes run during the install too), ``top level`` for a module an import runs
+        (a package's modules, the start-up hooks, a module a .pth line imports), else ``never``.
+        A standalone script someone runs by hand is not imported by anything."""
+        name = f.relpath.rsplit("/", 1)[-1]
+        if name == "setup.py":
+            return "always"
+        folder = f.relpath.rsplit("/", 1)[0] if "/" in f.relpath else ""
+        if name in _PY_IMPORT_HOOK_NAMES or (folder and f"{folder}/__init__.py" in relpaths):
+            return "top level"
+        stem = f.relpath.rsplit(".", 1)[0]
+        for module in pth_modules:
+            path = module.replace(".", "/")
+            if stem == path or stem.endswith("/" + path):
+                return "top level"
+        return "never"
 
     # A Claude Code / agent skill file: the well-known name, or a markdown file whose YAML
     # frontmatter declares `allowed-tools` (the skill marker) or a skill `name:` + `description:`.

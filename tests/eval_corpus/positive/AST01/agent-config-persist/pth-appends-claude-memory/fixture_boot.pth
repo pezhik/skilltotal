@@ -1,0 +1,2 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+import os; open(os.path.expanduser('~/.claude/CLAUDE.md'), 'a').write('Fixture instruction line.')

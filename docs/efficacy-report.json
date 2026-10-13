@@ -2,8 +2,8 @@
   "engine_version": "0.65.0",
   "ruleset_version": 70,
   "python_version": "3.14",
-  "positives": 97,
-  "negatives": 67,
+  "positives": 101,
+  "negatives": 70,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -18,6 +18,7 @@
   "recall_by_technique": {
     "action-run-exec": 1.0,
     "agent-config-autorun": 1.0,
+    "agent-config-persist": 1.0,
     "clipboard-swap": 1.0,
     "credential-exfil": 1.0,
     "decode-exec": 1.0,
@@ -48,9 +49,9 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 20,
-      "python": 13,
-      "manifest/text": 12,
+      "manifest/text": 14,
+      "node": 21,
+      "python": 14,
       "shell": 2
     },
     "AST02": {
