@@ -208,8 +208,9 @@ or PyPI file for a week, a git repository for an hour), so repeated `npx prettie
 calls don't trigger a rescan. When the engine version changes, everything is scanned again.
 
 A first check takes a second or two for a small package, about 10 seconds for one the size of
-`typescript` or `lodash`, and two to three minutes for the largest common ones, such as `openai`
-and `django` (about 2,000 files each). All checks of one command share 60 seconds; to wait longer
+`typescript` or `lodash`, half a minute for `openai` and about a minute for `django` (about 2,000
+files each), on a 4-core machine. A large package is checked by up to four processes at once;
+`SKILLTOTAL_WORKERS` sets how many (1 for one). All checks of one command share 60 seconds; to wait longer
 before asking, set `SKILLTOTAL_HOOK_BUDGET` (in seconds, up to 100). In CI, where a question
 becomes a denial, the hook waits up to 10 minutes for the full check instead (`SKILLTOTAL_HOOK_BUDGET`
 goes up to 840 there). Once a package is downloaded,

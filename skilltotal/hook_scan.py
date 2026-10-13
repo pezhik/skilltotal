@@ -94,36 +94,37 @@ _CREATE_NEW_PROCESS_GROUP = 0x00000200
 _CREATE_NO_WINDOW = 0x08000000
 
 # How long a scan takes once it knows its size: seconds ~ _SCAN_FIXED_S + _SCAN_S_PER_MB * MB, the
-# megabytes of readable text it reports (``tree_size``, whole megabytes). Measured on 2026-10-11 on
-# an Intel i7-3770 (4 cores) with Windows 11 and Python 3.14, on 16 packages, 12 of them twice,
-# while other work kept the CPU busy as it is on an agent's machine: seconds from the size report
-# to the report, and seconds to fetch and extract the package before it.
+# megabytes of readable text it reports (``tree_size``, whole megabytes). Measured on 2026-10-13 on
+# an Intel i7-3770 (4 cores) with Windows 11 and Python 3.14, with the scan's worker processes on
+# (``skilltotal.parallel``, as the check runs them), on 16 packages, 5 of them twice: seconds from
+# the size report to the report, and seconds to fetch and extract the package before it.
 #
 #     package                      readable MB   after the size, s   fetch, s
-#     npm express 5.3.0                   0.07        0.6 /   0.6      1 /  1
-#     pypi requests 2.34.2                0.22        1.8 /   2.1      1 /  1
-#     pypi fastapi 0.143.0                0.83        6.8 /   8.3      1 /  1
-#     npm lodash 4.18.1                   1.35       11.5 /  15.3      5 /  6
-#     npm typescript 7.0.2                2.38        9.2 /  10.5      3 /  3
-#     pypi botocore 1.43.111              5.64       39.4 /  45.9     13 / 17
-#     npm zod 4.6.6                       5.86       47.1 /  55.5      5 /  5
-#     npm react-dom 19.3.0                7.69       55.0 /  73.8      2 /  2
-#     pypi openai 3.29.0                  7.95       55.4 /  90.2      8 / 12
-#     npm @anthropic-ai/sdk 0.133.0      12.68       67.8 /  99.7     15 / 25
-#     npm openai 7.32.0                  20.13      102.8 / 154.2     22 / 26
-#     pypi django 6.1.2                  22.57      107.0 / 151.1     17 / 27
-#     pypi sympy 1.14.0                  25.57      240.1              6
-#     pypi transformers 5.19.0           48.10      428.8             15
-#     npm aws-sdk 2.1693.0               69.38      450.8             11
-#     npm next 16.4.0                   135.16      927.5             53
+#     npm express 5.3.0                   0.07        0.6 /   0.5      0.4
+#     pypi requests 2.34.2                0.22        1.8              0.1
+#     pypi fastapi 0.143.0                0.83        6.7 /   6.1      0.2
+#     npm lodash 4.18.1                   1.35        5.6              2.8
+#     npm typescript 7.0.2                2.38        8.8              1.5
+#     pypi botocore 1.43.111              5.64       16.3              6.7
+#     npm zod 4.6.6                       5.86       17.6 /  17.9      2.4
+#     npm react-dom 19.3.0                7.69       20.0              0.5
+#     pypi openai 3.29.0                  7.95       21.7 /  20.8      4.4
+#     npm @anthropic-ai/sdk 0.133.0      12.68       27.7              6.9
+#     npm openai 7.32.0                  20.13       38.8             10.6
+#     pypi django 6.1.2                  22.57       54.4 /  56.3     10.6
+#     pypi sympy 1.14.0                  25.57       93.1              3.7
+#     pypi transformers 5.19.0           48.10      126.1              6.5
+#     npm aws-sdk 2.1693.0               69.38      185.5              8.4
+#     npm next 16.4.0                   135.16      319.2             24.9
 #
-# Least squares over the 28 runs gives 4.5 + 6.9 * MB, below half of them. A wait cut short by an
-# estimate that is too high only sends a check to the background a little early; one that is too
-# low holds the agent until the deadline for a check that goes there anyway. So the line below
-# lies above every run, with the size in whole megabytes as the hook reads it: 1.04 to 3 times the
-# actual time of the runs that took over 5 s, 1.7 times at the median.
+# A wait cut short by an estimate that is too high only sends a check to the background a little
+# early; one that is too low holds the agent until the deadline for a check that goes there
+# anyway. So the line below lies above every run, with the size in whole megabytes as the hook
+# reads it: 1.2 to 2.2 times the actual time of the runs that took over 5 s, 1.7 times at the
+# median. The margin is for an agent's machine, where other work shares the CPU with the workers
+# (the same packages took two to three times as long in one process on a busy CPU on 2026-10-11).
 _SCAN_FIXED_S = 6.0
-_SCAN_S_PER_MB = 11.0
+_SCAN_S_PER_MB = 4.0
 
 
 def scan_seconds(readable_mb: float) -> float:
