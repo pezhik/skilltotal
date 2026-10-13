@@ -55,7 +55,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from skilltotal import __version__
+from skilltotal import __version__, parallel
 from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
 
 # The engine, the collector and the scanners are imported inside the commands that use them:
@@ -307,6 +307,8 @@ def _no_lookup_in_current_directory(environ=os.environ, os_name: str = os.name) 
 
 def main(argv: list[str] | None = None) -> int:
     _no_lookup_in_current_directory()  # before anything can start a program
+    # The CLI's main modules are guarded, so a large scan may use worker processes.
+    parallel.enable()
     # Redirected output on Windows is written in the legacy code page, which cannot encode much of
     # what a scanned package may contain: a `✓` in one snippet crashed `scan --json > r.json` and
     # left the file empty. Reports go out as UTF-8 and never fail on their own content.

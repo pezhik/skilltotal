@@ -6,6 +6,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ## [Unreleased]
 
+### Engine
+- A large component (200 files or 4 MB of text and up) is scanned by up to four worker
+  processes, one check per process, with results used in the usual order, so the report is
+  byte for byte the same. Django's sdist went from 170 to 87 seconds, the `openai` package from
+  74 to 39. `SKILLTOTAL_WORKERS` sets the number (1 turns workers off). The CLI uses workers; a
+  program calling the engine as a library gets one process unless it calls
+  `skilltotal.parallel.enable()`.
+
 ### Plugin
 - In CI the hook waits for the full check of a large package, up to 10 minutes by default and
   14 at most (`SKILLTOTAL_HOOK_BUDGET`), instead of denying it after 60 seconds. Outside CI the

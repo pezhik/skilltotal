@@ -59,6 +59,7 @@ from skilltotal.models import (
     ThreatClass,
 )
 from skilltotal.owasp import owasp_for
+from skilltotal.parallel import run_scanners
 from skilltotal.rules import get_rules
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
@@ -175,10 +176,13 @@ def analyze_directory(
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
-    for number, scanner in enumerate(SCANNERS, 1):
+    def checked(number: int) -> None:
         if progress is not None:
             progress(f"Scanning {len(index.files)} files: check {number} of {len(SCANNERS)}")
-        result = scanner.scan(index)
+
+    # Side by side in worker processes when the component is large and the entry point allows it;
+    # the results are used in SCANNERS order either way (see skilltotal.parallel).
+    for result in run_scanners(index, SCANNERS, checked):
         findings.extend(result.findings)
         needs_review.extend(result.needs_review)
 
