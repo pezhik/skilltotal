@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # Weekly, with no commit needed: the journeys and the action job on GitHub's current runner
+    # images, pip and pipx, which change under a release that does not.
+    - cron: "17 6 * * 1"
 
 # Least privilege by default; jobs elevate only what they need (none here — read-only).
 permissions:

@@ -4,6 +4,42 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.68.0]
+
+Detection is unchanged (ruleset 71).
+
+### pre-commit
+- The hook scans what the commit will contain: `skilltotal scan --staged` writes git's index to a
+  temporary copy and scans that. It reads the whole repository, not only the changed files, so
+  its verdict matches CI. An untracked or ignored file (a local `.env`, a downloaded script) no
+  longer fails a commit it is not part of. `--staged` outside a git work tree is an error.
+
+### CI (plugin strict mode)
+- A partly analyzed package passes in CI, and its console line names what was not read (a bundle
+  too large to read, code in a language the engine does not analyze). What a package runs at
+  install is read either way, and the dependencies a command pulls in are not checked at all, so
+  denying the named package for its unread rest stopped large packages without making the build
+  much safer. `SKILLTOTAL_STRICT_PARTIAL=1` denies it as before; a value that is neither on nor off
+  reads as on.
+
+### GitHub Action
+- With `source` set to a subfolder, the action still read its own SARIF report and failed a clean
+  repository. The report is now left out relative to `source`.
+- A `verdict` output: `malicious` whenever a malicious indicator was found, whatever the risk
+  score, else the risk level.
+
+### CLI
+- `scan --output FILE` into the folder being scanned leaves FILE out of the scan. A pipeline
+  running `skilltotal scan . --sarif --output skilltotal.sarif` read the previous run's report and
+  failed a clean repository on its second run.
+
+### Tests
+- Customer journeys (`tests/journeys`) drive the installed CLI as a pipeline, a developer machine
+  and a security team do: the gate, SARIF levels, every documented setting with a bad value, a
+  config typo, the README's flags, a baseline, per-rule policy, `diff`, the plugin wrapper without
+  the CLI on `PATH`, and a real pre-commit run. CI builds the wheel, installs it with pipx and runs
+  them on Linux and Windows, and runs weekly with no commit.
+
 ## [0.67.0]
 
 Fixes from following the documentation as a DevOps engineer would, on a clean Linux machine and in

@@ -473,7 +473,8 @@ It fails the job on a finding at or above `fail-on` (`low`, `medium`, `high`, `c
 never fails). The gate semantics above apply: a malicious indicator fails the job at any severity,
 and a capability on its own, such as a shell call or network access, never does. With
 `fail-on-unanalyzed: 'true'` it also fails the job when part of the component could not be
-analyzed, as `--fail-on-unanalyzed` does.
+analyzed, as `--fail-on-unanalyzed` does. Its outputs are `risk-level`, `risk-score` and
+`verdict`, which is `malicious` whenever a malicious indicator was found, whatever the score.
 
 With `comment-on-pr: 'true'`, the action posts a single summary comment on the pull request (risk
 level, score, findings, capabilities) and updates it in place on later runs. The comment is off by
