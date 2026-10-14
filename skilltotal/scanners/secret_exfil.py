@@ -360,6 +360,15 @@ class _Blocks:
         return (self.opens[i], self.closes[i] + 1) if i >= 0 else (0, self.end)
 
 
+# The `env` option of a process call (`spawn(cmd, args, {env: process.env})`, also as
+# `Object.assign({}, process.env, ...)`): the environment the child runs in, not data it sends.
+_JS_ENV_OPTION = re.compile(r"(?<![\w$.])env\s*:\s*(?:Object\.assign\(\s*\{\s*\}\s*,\s*)?$")
+
+
+def _env_option(text: str, pos: int) -> bool:
+    return bool(_JS_ENV_OPTION.search(text, max(0, pos - 40), pos))
+
+
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     text = f.text
     if "process.env" not in text:
@@ -411,13 +420,14 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     opens_channel = bool(_JS_OPENS_CHANNEL.search(text))
 
     def carries_env(start: int, end: int) -> bool:
-        if any(start <= p < end for p in whole):
+        if any(start <= p < end and not _env_option(text, p) for p in whole):
             return True
         if names is None:
             return False
         return any(
             _code_offset(f, m.start()) and not _JS_MEMBER_READ.match(text, m.end())
             and any(a <= m.start() < b for a, b in scopes[m.group(0)])
+            and not _env_option(text, m.start())
             for m in names.finditer(text, start, end)
         )
 

