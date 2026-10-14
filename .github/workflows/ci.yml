@@ -189,6 +189,8 @@ jobs:
           echo "outcome=$OUTCOME level=$LEVEL"
           [ "$OUTCOME" = "failure" ] || { echo "::error::gate did not fail the step"; exit 1; }
           [ -n "$LEVEL" ] || { echo "::error::outputs were empty when the gate tripped"; exit 1; }
+          [ '${{ steps.risky.outputs.verdict }}' = "malicious" ] \
+            || { echo "::error::expected verdict malicious, got '${{ steps.risky.outputs.verdict }}'"; exit 1; }
           [ -s risky.sarif ] || { echo "::error::no SARIF written for the risky component"; exit 1; }
 
       - name: Report-only mode reports the same risk without failing

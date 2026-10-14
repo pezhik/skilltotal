@@ -50,6 +50,9 @@ outputs:
   risk-level:
     description: "Risk level: low / medium / high / critical."
     value: ${{ steps.scan.outputs.risk-level }}
+  verdict:
+    description: "Verdict level: malicious when a malicious indicator was found (at any risk score), else critical, high, medium or low."
+    value: ${{ steps.scan.outputs.verdict }}
 
 runs:
   using: "composite"
@@ -100,8 +103,9 @@ runs:
         # from both scans, and the JSON report the gate reads is written outside the workspace.
         # An exclude matches paths inside the scanned folder, so the SARIF path is given relative
         # to `source` (`source: repo` with `sarif-file: repo/skilltotal.sarif` is `skilltotal.sarif`),
-        # with glob characters escaped.
-        SARIF_EXCLUDE="$(python -c 'import os, sys; rel = os.path.relpath(os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])).replace(os.sep, "/"); print("".join("[" + c + "]" if c in "*?[" else c for c in rel))' "$INPUT_SARIF_FILE" "$INPUT_SOURCE")"
+        # with glob characters escaped. `-I`, as everywhere here: the working directory is the
+        # repository being scanned, and an `os.py` planted there must not be imported.
+        SARIF_EXCLUDE="$(python -I -c 'import os, sys; rel = os.path.relpath(os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])).replace(os.sep, "/"); print("".join("[" + c + "]" if c in "*?[" else c for c in rel))' "$INPUT_SARIF_FILE" "$INPUT_SOURCE")"
         BASE+=(--exclude "$SARIF_EXCLUDE")
         REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"
         echo "report-json=$REPORT_JSON" >> "$GITHUB_OUTPUT"
@@ -146,6 +150,8 @@ runs:
         LEVEL=$(python -I -c "import json,sys;print(json.load(open(sys.argv[1])).get('risk_level',''))" "$REPORT_JSON" 2>/dev/null || echo "")
         echo "risk-score=$SCORE" >> "$GITHUB_OUTPUT"
         echo "risk-level=$LEVEL" >> "$GITHUB_OUTPUT"
+        VERDICT=$(python -I -c "import json,sys;print((json.load(open(sys.argv[1])).get('verdict') or {}).get('level',''))" "$REPORT_JSON" 2>/dev/null || echo "")
+        echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
         echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '$INPUT_SOURCE'"
         # The findings, in the log too: Code Scanning is off in many repositories, and the log is
         # then the only place a failed gate can be read. One line each, first evidence only.
