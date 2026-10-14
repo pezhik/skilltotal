@@ -11,6 +11,7 @@ from skilltotal.scanners.agent_approval import AgentApprovalScanner
 from skilltotal.scanners.agent_config import AgentConfigScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.clipper import ClipperScanner
+from skilltotal.scanners.dependency_redirect import DependencyRedirectScanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
 from skilltotal.scanners.encrypted_archive import EncryptedArchiveScanner
@@ -66,6 +67,7 @@ SCANNERS: list[Scanner] = [
     SkillFetchExecScanner(),
     McpPinningScanner(),
     McpElicitationScanner(),
+    DependencyRedirectScanner(),
 ]
 
 

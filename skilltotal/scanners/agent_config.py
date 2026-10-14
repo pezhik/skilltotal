@@ -27,7 +27,10 @@ Three attack shapes published in 2026 live here.
 * **An AI coding CLI launched with its permission checks disabled.** The s1ngularity and
   Shai-Hulud npm campaigns drove the victim's own `claude`/`gemini`/`q` CLI with flags such as
   `--dangerously-skip-permissions` and `--yolo` to search the disk for secrets. Honest wrappers
-  do this too, so it is a risky construct, not a verdict.
+  do this too, so it is a risky construct, not a verdict. When the same file ALSO opens an
+  outbound connection to a remote endpoint, that is the remote-control shape (a relay feeds tasks
+  from a server the user does not control into the approvals-off agent) that a cluster of npm
+  packages used in Sept 2026 -- a malicious indicator, not just a risky construct.
 
 Detection patterns below are string literals; nothing here executes a command.
 """
@@ -74,6 +77,7 @@ _CONFIG_INJECT_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", 
 R_AUTORUN = "ST-AGENT-AUTORUN"
 R_AUTORUN_REMOTE = "ST-AGENT-AUTORUN-REMOTE"
 R_CLI_BYPASS = "ST-AGENT-CLI-BYPASS"
+R_CLI_RELAY = "ST-AGENT-CLI-RELAY"
 R_GITCONFIG_REMOTE = "ST-AGENT-GITCONFIG-EXEC-REMOTE"
 R_CONFIG_INJECT = "ST-AGENT-CONFIG-INJECT"
 R_CONFIG_PERSIST = "ST-AGENT-CONFIG-PERSIST"
@@ -543,6 +547,28 @@ _SKILL_NET_SINK = re.compile(
 # characters took 15 s); no real script path is longer.
 _PATH_TOKEN = re.compile(r"[\w.${}/\\-]{1,300}\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
 
+# An outbound network client: a connection the component itself opens to a remote endpoint.
+# Used ONLY as the second half of the remote-control shape below (never a finding on its own),
+# so a broad idiom list is safe here -- the rare CLI-bypass anchor is what makes a match specific.
+# A relay package (a cluster of npm packages, Sept 2026)
+# opens a socket to a hardcoded host, reads task objects from it, and drives the victim's own
+# agent CLI with approvals off. Local automation that disables approvals operates on the checkout
+# in front of it and does not also phone a remote host.
+_NET_CLIENT = re.compile(
+    r"\bnew\s+WebSocket\s*\("
+    r"|\brequire\(\s*['\"]ws['\"]\s*\)"
+    r"|\bimport\b[^\n]{0,60}?['\"]ws['\"]"
+    r"|\b(?:https?|net|tls|dgram)\.(?:request|get|connect|createConnection)\s*\("
+    r"|\bfetch\s*\("
+    r"|\baxios\b"
+    r"|\bwebsockets?\.(?:connect|ClientConnection)\s*\("
+    r"|\bsocket\.(?:connect|create_connection)\s*\("
+    r"|\brequests\.(?:get|post|put|request)\s*\("
+    r"|\bhttpx\.(?:get|post|stream|Client|AsyncClient)\b"
+    r"|\burllib\.request\.urlopen\s*\(",
+    re.IGNORECASE,
+)
+
 
 class AgentConfigScanner(Scanner):
     name = "agent_config"
@@ -609,6 +635,28 @@ class AgentConfigScanner(Scanner):
             # A launch passes the flag as a value-string; a comment or a docstring that names it
             # documents the flag. (Inline-code mentions in Python text are set aside in scan().)
             code_context="comments_and_docstrings",
+        ),
+        RuleSpec(
+            id=R_CLI_RELAY,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="A remote connection drives an AI coding CLI with its permission checks disabled",
+            description=(
+                "The same file opens an outbound connection to a remote endpoint and launches a "
+                "local AI coding agent (claude, gemini, codex, q ...) with a flag that turns off "
+                "its approval prompts. A relay of this shape can feed tasks from a remote server "
+                "to the user's own agent, which then acts with the user's credentials and file "
+                "access without asking. Local automation that disables approvals runs against "
+                "the checkout in front of it and does not also connect to a remote host."
+            ),
+            recommendation=(
+                "Do not install this component. A package has no reason to pipe instructions from "
+                "a remote server into an AI agent running with approvals off; treat a machine that "
+                "already ran it as exposed."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            code_context="comments",
         ),
         RuleSpec(
             id=R_GITCONFIG_REMOTE,
@@ -767,15 +815,23 @@ class AgentConfigScanner(Scanner):
         bypass_described: list[str] = []
         config_inject: list[Evidence] = []
         git_persist: list[Evidence] = []
+        relay: list[Evidence] = []
         for f in index.select(suffixes=_CODE_SUFFIXES):
+            file_bypass: list[Evidence] = []
             for _m, ev in f.finditer(_CLI_BYPASS):
                 if _flag_in_inline_code(f, _m):
                     if f.relpath not in bypass_described:
                         bypass_described.append(f.relpath)
                     continue
-                bypass.append(ev)
-                if len(bypass) >= MAX_EVIDENCE_SCANNED:
-                    break
+                file_bypass.append(ev)
+            if file_bypass and len(bypass) + len(relay) < MAX_EVIDENCE_SCANNED:
+                net = next((ev for _m, ev in f.finditer(_NET_CLIENT)), None)
+                if net is not None:
+                    # Remote-control shape: approvals-off CLI and an outbound connection, one file.
+                    relay.extend(file_bypass)
+                    relay.append(net)
+                else:
+                    bypass.extend(file_bypass)
             for _m, ev in f.finditer(_GIT_PERSIST):
                 line = f.line_text(ev.line_start)
                 # A read (`--get`/`--list`/`--unset`, or value-less `core.hooksPath`) is not
@@ -875,6 +931,8 @@ class AgentConfigScanner(Scanner):
             findings.append(_finding_from_rule(self._rule(R_AUTORUN_REMOTE), remote))
         elif autorun:
             findings.append(_finding_from_rule(self._rule(R_AUTORUN), autorun))
+        if relay:
+            findings.append(_finding_from_rule(self._rule(R_CLI_RELAY), relay))
         if bypass:
             findings.append(_finding_from_rule(self._rule(R_CLI_BYPASS), bypass))
         if config_inject:

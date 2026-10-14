@@ -83,6 +83,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-AGENT-GITCONFIG-EXEC-REMOTE": ("AST02",),
     "ST-GIT-HOOK-PERSIST": ("AST02",),
     "ST-SKILL-DYNAMIC-EXEC": ("AST01",),
+    "ST-SKILL-DEP-REDIRECT": ("AST02", "AST04"),
     "ST-ARCHIVE-PASSWORD-EXTRACT": ("AST01",),
     "ST-INSTALL-NPM-PREPARE": ("AST02",),
     "ST-INSTALL-PY": ("AST02",),
@@ -94,6 +95,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-MCP-OVERBROAD-SCOPE": ("AST03",),
     "ST-MCP-SERVER-EXEC": ("AST03",),
     "ST-AGENT-CLI-BYPASS": ("AST03",),
+    "ST-AGENT-CLI-RELAY": ("AST03",),
     # AST04 Insecure Metadata — misleading/falsified descriptions, hidden/smuggled instructions.
     "ST-HIDDEN-UNICODE": ("AST04",),
     "ST-HIDDEN-UNICODE-AMBIG": ("AST04",),
