@@ -474,7 +474,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             return EXIT_ERROR
         print(f"Report written to {args.output}", file=sys.stderr)
 
-    if args.sarif or args.json:
+    # With --output the structured report is in the file; the console gets the readable summary
+    # (a SARIF document printed too ran to thousands of lines in a CI log).
+    if (args.sarif or args.json) and not args.output:
         print(structured)
     else:
         print(render_text(report))
