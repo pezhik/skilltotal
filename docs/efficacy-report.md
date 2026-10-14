@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.68.0 · ruleset 71 · Python 3.14 · offline corpus.
+Engine 0.69.0 · ruleset 72 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (111/111 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/78 benign samples wrongly flagged)
+- **recall: 100.0%** (119/119 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/84 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -11,6 +11,7 @@ Engine 0.68.0 · ruleset 71 · Python 3.14 · offline corpus.
 |---|---|
 | AST01 | 100% |
 | AST02 | 100% |
+| AST03 | 100% |
 | AST04 | 100% |
 | AST05 | 100% |
 
@@ -21,9 +22,13 @@ Engine 0.68.0 · ruleset 71 · Python 3.14 · offline corpus.
 | action-run-exec | 100% |
 | agent-config-autorun | 100% |
 | agent-config-persist | 100% |
+| agent-config-persist-write | 100% |
+| cli-relay | 100% |
 | clipboard-swap | 100% |
 | credential-exfil | 100% |
 | decode-exec | 100% |
+| decrypt-and-execute | 100% |
+| dep-redirect | 100% |
 | deserialize-exec | 100% |
 | dns-exfil | 100% |
 | dynamic-call-resolution | 100% |
@@ -36,6 +41,7 @@ Engine 0.68.0 · ruleset 71 · Python 3.14 · offline corpus.
 | install-dropper | 100% |
 | lethal-trifecta | 100% |
 | mcp-config-inject | 100% |
+| mcp-hidden-dotpath-launcher | 100% |
 | mcp-launch-command | 100% |
 | mcp-sampling-injection | 100% |
 | mcp-tool-poisoning | 100% |
@@ -43,6 +49,7 @@ Engine 0.68.0 · ruleset 71 · Python 3.14 · offline corpus.
 | password-archive | 100% |
 | pickle-reduce-gadget | 100% |
 | plugin-hook-trojan | 100% |
+| powershell-download-exec | 100% |
 | prompt-injection | 100% |
 | pth-persistence | 100% |
 | shell-decode-exec | 100% |
@@ -55,8 +62,9 @@ Engine 0.68.0 · ruleset 71 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 14 | 21 | 14 | 2 |
-| AST02 | 15 | 11 | 2 | 0 |
+| AST01 | 17 | 22 | 14 | 2 |
+| AST02 | 16 | 13 | 2 | 0 |
+| AST03 | 0 | 1 | 0 | 0 |
 | AST04 | 17 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 

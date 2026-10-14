@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.69.0]
+
+Ruleset 72: five new malicious-indicator rules and a score floor. See `RULES_CHANGELOG.md`.
+
+### Scoring
+- A component with a malicious indicator scores at least 50 (high). A single high-severity
+  indicator used to sum to 20/100 (low) under a "malicious indicators found" verdict, so a
+  `--fail-on-score` gate, a badge or a sort by score read it as safe. Reports of other components
+  are unchanged; re-scan stored reports to pick this up.
+
+### Detection
+- New rules for an AI coding CLI driven over a remote connection with its approvals off, a skill
+  that hides a dependency-index redirect, an MCP server launched from a hidden dot-path, a
+  decrypt-and-execute loader, and a PowerShell download-and-execute cradle. Install code writing a
+  VS Code `folderOpen` task counts as config persistence. Each rule has an honest look-alike in
+  the efficacy corpus that stays clean (119 malicious and 84 benign samples, 0 false positives).
+
 ## [0.68.0]
 
 Detection is unchanged (ruleset 71).

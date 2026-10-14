@@ -4,6 +4,47 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 72 (engine 0.69.0)
+
+Five techniques from AI-tooling attacks of the past weeks, each pinned by a sanitized sample that
+ruleset 71 scored low and by an honest look-alike that must stay clean
+(`tests/test_research_20261006.py`, `..._20261009.py`, `..._20261013.py`). Detection-efficacy
+corpus, now 119 positive / 84 negative: 119/119 flagged, 0 false positives. And a score floor for
+malicious indicators.
+
+- **Score floor.** A component with a malicious indicator scores at least 50 (high). One
+  indicator weighed only its severity, so a single high-severity install hook scored 20/100 (low)
+  under a "malicious indicators found" verdict, and a `fail_on_score` gate or a sort by score
+  read it as safe. See `docs/scoring.md`.
+- **`ST-AGENT-CLI-RELAY`** (new, malicious indicator): one file opens an outbound connection to a
+  remote endpoint and launches a local AI coding CLI (claude, gemini, codex, q ...) with a flag
+  that turns off its approval prompts. `ST-AGENT-CLI-BYPASS` already matched the approvals-off
+  launch as a risky construct, since an honest local wrapper does the same; the remote connection
+  in the same file is what makes it a relay. A local-only runner is still `ST-AGENT-CLI-BYPASS`.
+- **`ST-SKILL-DEP-REDIRECT`** (new, malicious indicator): an agent-instruction surface (SKILL.md,
+  AGENTS.md, a plugin's rules) tells the agent to install packages from a non-default index and
+  to hide that from the user. A redirect alone is legitimate for a private registry and goes to
+  `needs_review`; the concealment makes it a finding. A skill that names its private index
+  openly stays clean.
+- **`ST-MCP-SERVER-HIDDEN-EXEC`** (new, malicious indicator): an `mcpServers` entry launches a
+  script whose path nests two or more hidden dot-directories (`~/.config/.cache/.sys/.server.py`),
+  so the server's code is outside the component and out of a reviewer's sight. An honest
+  launcher (`npx`, `python3 -m pkg`, `dist/server.js`, `~/.local/bin/x`) and a docker volume
+  mapping (`~/.aws:/root/.aws:ro`) stay clean.
+- **`ST-OBF-DECRYPT-EXEC`** (new, malicious indicator): one code file decrypts data with a
+  symmetric cipher (`createDecipheriv`, WebCrypto `subtle.decrypt`, PyCryptodome, Fernet) and
+  feeds code to a dynamic-execution sink (`new Function`, `eval`, `vm.runInThisContext`).
+  Decrypting to display or write data, or `new Function` with no decryption, stays clean.
+- **`ST-PS-DOWNLOAD-EXEC`** (new, malicious indicator): a PowerShell download-and-execute cradle,
+  a web response fed into `Invoke-Expression`: `Invoke-RestMethod`/`irm`, `curl`/`wget` aliases,
+  `DownloadString`/`DownloadData`/`DownloadFile`, piped (`irm $u | iex`) or through a variable run
+  on a later line. `ST-SHELL-EVASION` still reports the one-line `IEX (New-Object
+  Net.WebClient).DownloadString(...)` idiom as a risky construct. `Invoke-Expression` on a locally
+  built string, or a fetch that is parsed and not run, stays clean.
+- **`ST-AGENT-CONFIG-PERSIST`** now also covers install or import code writing a VS Code task
+  that runs on `folderOpen` into `.vscode/tasks.json`, which runs again each time the project is
+  opened. A generator that writes a build task the user runs by hand (no `runOn`) stays clean.
+
 ## ruleset 71 (engine 0.67.0)
 
 - **Install scripts of nested packages.** The files a `preinstall`/`install`/`postinstall`
