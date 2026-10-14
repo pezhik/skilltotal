@@ -232,9 +232,11 @@ done, the same command goes through if the package is clean. The plugin also add
 
 The plugin calls the CLI, so install the CLI where Claude Code can find it: `skilltotal --version`
 should work in the terminal you start Claude Code from. Outside CI, if the CLI is missing or fails
-to start, install commands run unchecked; if it is older than the plugin, it still checks what it
-knows. Either way, Claude Code shows a warning on each install command, so you can tell a broken
-setup from a clean check. In CI, every command is denied until the CLI works, and the console line
+to start, install commands run unchecked; if it is too old to speak the plugin's hook protocol,
+it still checks what it knows. Either way, Claude Code shows a warning on each install command, so
+you can tell a broken setup from a clean check. A CLI that speaks the protocol but is older than
+the plugin gets no warning; update both together (`pipx upgrade skilltotal`) to get the newest
+checks. In CI, every command is denied until the CLI works, and the console line
 says how to fix it.
 
 The hook loads along with the plugins, so run `/reload-plugins` (or restart Claude Code) after
