@@ -186,3 +186,37 @@ def test_a_prepublish_or_publish_script_is_not_install_time(tmp_path):
         "release.js": 'require("child_process").execSync("npm publish");\n',
     })
     assert _finding(report, "ST-NPM-INSTALL-PUBLISH") is None
+
+
+# --- a package inside the repository (a workspace member, a vendored package) -----------------
+
+def test_a_nested_package_that_publishes_at_install_is_found(tmp_path):
+    report = _scan(tmp_path, {
+        "package.json": _pkg(workspaces=["packages/*"]),
+        "packages/helper/package.json": _pkg(name="helper",
+                                             scripts={"postinstall": "node setup.js"}),
+        "packages/helper/setup.js": WORM_JS,
+    })
+    finding = _finding(report, "ST-NPM-INSTALL-PUBLISH")
+    assert finding is not None
+    assert {ev.file for ev in finding.evidence} == {"packages/helper/setup.js"}
+
+
+def test_a_vendored_package_without_workspaces_is_read_too(tmp_path):
+    report = _scan(tmp_path, {
+        "README.md": "# app\n",
+        "vendor-helper/package.json": _pkg(name="helper", scripts={"postinstall": "node setup.js"}),
+        "vendor-helper/setup.js": WORM_JS,
+    })
+    assert _finding(report, "ST-NPM-INSTALL-PUBLISH") is not None
+
+
+def test_a_package_in_test_fixtures_or_examples_stays_a_fixture(tmp_path):
+    report = _scan(tmp_path, {
+        "package.json": _pkg(),
+        "tests/fixtures/evil/package.json": _pkg(scripts={"postinstall": "node setup.js"}),
+        "tests/fixtures/evil/setup.js": WORM_JS,
+        "examples/demo/package.json": _pkg(scripts={"postinstall": "node setup.js"}),
+        "examples/demo/setup.js": WORM_JS,
+    })
+    assert _finding(report, "ST-NPM-INSTALL-PUBLISH") is None

@@ -8,6 +8,7 @@ expected to import :func:`analyze_directory` (pure, no process I/O) directly; th
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -25,6 +26,7 @@ from skilltotal.file_index import (
     MAX_FILE_BYTES,
     SKIP_BUILD_OUTPUT,
     SKIP_DEPENDENCIES,
+    SKIP_DIRS,
     SKIP_VENDORED,
     SKIP_VIRTUALENV,
     FileIndex,
@@ -387,29 +389,33 @@ def _install_script_files(root: Path) -> dict[str, str]:
     ``lib/x.min.js`` runs that bundle too. Parsing only: nothing is run.
 
     A ``package.json`` that is a link is not read: it can point at any file on the machine.
+
+    The component's own ``package.json`` comes first; then those of packages inside it (a
+    workspace member, a vendored package), whose install scripts npm runs when they are installed
+    from the repository. A package under a test, example, documentation, corpus or CI path is a
+    fixture of that kind, not something the component installs, and stays with its folder's rules.
     """
-    manifest = root / "package.json"
-    if not is_regular_file(manifest):
-        return {}
-    try:
-        data = bounded_json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
-        return {}
-    scripts = data.get("scripts") if isinstance(data, dict) else None
-    if not isinstance(scripts, dict):
-        return {}
     base = root.resolve()
     queue: list[tuple[Path, str]] = []
-    for script in _NPM_INSTALL_SCRIPTS:
-        command = scripts.get(script)
-        if not isinstance(command, str):
+    for manifest in _package_manifests(root):
+        try:
+            data = bounded_json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError):
             continue
-        for word in re.split(r"[\s;&|<>()]+", command):
-            word = word.strip("\"'`")
-            if word and not word.startswith("-"):
-                target = _module_file(base, base, word)
-                if target is not None:
-                    queue.append((target, script))
+        scripts = data.get("scripts") if isinstance(data, dict) else None
+        if not isinstance(scripts, dict):
+            continue
+        package = manifest.parent.resolve()
+        for script in _NPM_INSTALL_SCRIPTS:
+            command = scripts.get(script)
+            if not isinstance(command, str):
+                continue
+            for word in re.split(r"[\s;&|<>()]+", command):
+                word = word.strip("\"'`")
+                if word and not word.startswith("-"):
+                    target = _module_file(base, package, word)
+                    if target is not None:
+                        queue.append((target, script))
     found: dict[str, str] = {}
     while queue and len(found) < _MAX_INSTALL_FILES:
         target, script = queue.pop(0)
@@ -438,6 +444,37 @@ def _install_script_files(root: Path) -> dict[str, str]:
 
 # An install-time dropper is a handful of files; this only bounds a pathological require graph.
 _MAX_INSTALL_FILES = 200
+# Packages inside a component: how deep and how many are read (a monorepo has tens).
+_MAX_PACKAGE_DEPTH = 6
+_MAX_PACKAGES = 100
+
+
+def _package_manifests(root: Path) -> list[Path]:
+    """The ``package.json`` files whose install scripts count: the component's own, then those
+    of packages inside it, outside skipped folders and outside test, example, documentation,
+    corpus and CI paths. Links are not followed."""
+    manifests: list[Path] = []
+    if is_regular_file(root / "package.json"):
+        manifests.append(root / "package.json")
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = Path(dirpath).relative_to(root).as_posix()
+        depth = 0 if rel == "." else rel.count("/") + 1
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in SKIP_DIRS and not (Path(dirpath) / d).is_symlink()
+        ) if depth < _MAX_PACKAGE_DEPTH else []
+        if rel == "." or "package.json" not in filenames:
+            continue
+        relpath = f"{rel}/package.json"
+        if (is_test_path(relpath) or is_example_path(relpath) or is_doc_path(relpath)
+                or is_data_corpus_path(relpath) or is_ci_path(relpath)):
+            continue
+        manifest = Path(dirpath) / "package.json"
+        if is_regular_file(manifest):
+            manifests.append(manifest)
+            if len(manifests) > _MAX_PACKAGES:
+                break
+    return manifests
 
 
 def _unanalyzed_install_script(root: Path, relpath: str, script: str) -> NeedsReview:
