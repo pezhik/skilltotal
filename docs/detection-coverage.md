@@ -20,6 +20,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Import-time / second-stage download-and-execute** | `ST-OBF-DECODE-EXEC` (malicious), `ST-DYN-PY`/`ST-DYN-NODE`, `ST-NET-PY`/`ST-NET-NODE` | `pypi-typosquat-dropper`, `pypi-importtime-stealer` |
 | **Credential / secret exfiltration** (read `~/.aws`, `~/.ssh`, `.env` → POST; the path written out or joined onto the home directory) | `ST-COMBO-EXFIL` (critical), `ST-SENS-PATH`/`ST-SENS-PATH-PY`, `ST-FS-*-READ` + `ST-NET-*` | `npm-postinstall-exfil`, `npm-trapdoor-stealer` |
 | **Obfuscation** (base64/hex/codecs decode → `exec` / `eval` / `new Function`, directly or through a variable) | `ST-OBF-DECODE-EXEC` (malicious); heuristics `ST-OBF-BASE64-BLOB`/`ST-OBF-HEX`/`ST-OBF-MINIFIED` (needs_review) | `pypi-importtime-stealer` |
+| **Decrypt-and-execute** (symmetric-decrypt → dynamic-code sink in one file) | `ST-OBF-DECRYPT-EXEC` (malicious) | `decrypt-and-execute` |
 | **Unsafe deserialization** (pickle/marshal/dill loader) | `ST-DESERIALIZE-PY` | `py-marshal-loader` |
 | **Deserialize-and-execute dropper** (`exec(marshal.loads(<remote>))`) | `ST-OBF-DECODE-EXEC-PY` (malicious) | `py-marshal-loader` |
 | **Shell / command execution & injection** | `ST-SHELL-PY`/`ST-SHELL-NODE`, `ST-CMDI-PY`/`ST-CMDI-NODE` | `pypi-typosquat-dropper` |
@@ -27,6 +28,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Prompt injection / instruction override** | `ST-PROMPT-INJECTION` (malicious); `ST-PROMPT-WEAK` (needs_review) | `agent-instruction-override` |
 | **MCP tool poisoning** (agent-directed instructions in tool metadata) | `ST-MCP-TOOL-POISONING` (malicious); `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-TOOL-SHADOWING` | `mcp-tool-poisoning` |
 | **MCP sampling abuse** (server-written prompt asks the client's model for credentials or a command, and for silence) | `ST-MCP-SAMPLING-INJECTION` (malicious) | `mcp-sampling-injection` |
+| **MCP concealed launcher** (server command launches a script hidden under ≥2 dot-directories) | `ST-MCP-SERVER-HIDDEN-EXEC` (malicious) | `mcp-hidden-dotpath-launcher` |
 | **node-gyp install-time substitution** (`binding.gyp` `<!(…)` running hidden commands) | `ST-INSTALL-GYP` (malicious) | `gyp-command-substitution` |
 | **Auto-run agent / editor configuration** (Claude/Gemini/Cursor hooks, VS Code folder-open tasks) | `ST-AGENT-AUTORUN` (risky), `ST-AGENT-AUTORUN-REMOTE` (malicious), `ST-AGENT-CLI-BYPASS` (risky) | `agent-config-autorun` |
 | **Password-protected payload download** | `ST-ARCHIVE-PASSWORD-EXTRACT` (malicious) | `password-archive` |

@@ -12,7 +12,7 @@ import bisect
 import re
 
 from skilltotal.file_index import FileIndex
-from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
+from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
     RuleSpec,
@@ -168,6 +168,30 @@ _DYNAMIC_DECODE_EXEC = alternation(
     rf"eval\s*\(\s*(?:{_DYNAMIC_DECODE_LOOKUP})\s*\(",
 )
 
+# Symmetric decryption feeding a dynamic-code sink in the SAME file: the staged-loader shape of
+# the mini "Shai-Hulud" npm compromise (Mend, August 2026), whose loader decrypts its next stage
+# with AES-128-GCM and runs the plaintext through `new Function(...)`. _DECODE_EXEC only catches a
+# decode call written directly inside exec(/eval(; here the ciphertext is decrypted into a
+# variable first, so no single call shows the shape. Decrypting data in order to EXECUTE it (not
+# to read, display or write it) keeps the payload opaque to any static reviewer until runtime —
+# a strong obfuscated-execution indicator distinct from a decode-and-exec one-liner.
+_DECRYPT_CONSTRUCT = re.compile(
+    r"\bcreateDecipher(?:iv)?\s*\(|"              # Node: crypto.createDecipheriv(...)
+    r"\bsubtle\s*\.\s*decrypt\s*\(|"              # WebCrypto: crypto.subtle.decrypt(...)
+    r"\bAES\s*\.\s*new\s*\([^)]*\)\s*\.\s*decrypt\b|"  # PyCryptodome: AES.new(...).decrypt(...)
+    r"\bFernet\s*\([^)]*\)\s*\.\s*decrypt\b"      # cryptography.Fernet(...).decrypt(...)
+)
+# Dynamic-code sinks. `.exec(`/`child_process.exec` are command execution, not a code sink, so
+# the method-form and the bare `exec(` token are deliberately excluded (the negative lookbehind
+# drops `.eval`); `eval(`/`new Function(` are code sinks in both JS and Python.
+_EXEC_SINK = re.compile(
+    r"\bnew\s+Function\s*\(|"
+    r"\bvm\s*\.\s*(?:runInThisContext|runInContext|runInNewContext|compileFunction)\s*\(|"
+    r"\bnew\s+vm\s*\.\s*Script\s*\(|"
+    r"(?<![\w.])eval\s*\("
+)
+_DECRYPT_EXEC_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
+
 _BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
 _HEX_ESCAPES = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){10,}")
 _MINIFIED_LINE_CHARS = 2000
@@ -240,6 +264,30 @@ class ObfuscationScanner(Scanner):
             code_context="strings_and_comments_all",
             pattern=_DYNAMIC_DECODE_EXEC,
         ),
+        RuleSpec(
+            id="ST-OBF-DECRYPT-EXEC",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Decrypt-and-execute (encrypted payload run at runtime)",
+            description=(
+                "A file decrypts data with a symmetric cipher (e.g. AES via "
+                "crypto.createDecipheriv / PyCryptodome / Fernet) and, in the same file, feeds "
+                "code to a dynamic-execution sink (new Function / eval / vm.runInThisContext). "
+                "Decrypting a payload in order to run it keeps the real behavior opaque to static "
+                "review until runtime — the staged-loader shape seen in the August 2026 "
+                "'mini Shai-Hulud' npm compromise."
+            ),
+            recommendation=(
+                "Decrypt the payload offline and inspect what it does before trusting this "
+                "component. Running encrypted code at runtime has no honest purpose that cannot "
+                "be met by shipping the code in the clear."
+            ),
+            capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # A match inside a string/comment is a pattern literal or doc example, never live
+            # behavior — same reasoning as ST-OBF-DECODE-EXEC.
+            code_context="strings_and_comments_all",
+        ),
         # The following are listed for `rules list`; they emit needs_review only.
         RuleSpec(
             id="ST-OBF-BASE64-BLOB",
@@ -286,6 +334,19 @@ class ObfuscationScanner(Scanner):
             findings = [f for f in findings if f.id != rule.id]
             findings.insert(0, _finding_from_rule(rule, evidence[:MAX_EVIDENCE_SCANNED]))
 
+        decrypt_exec = self._decrypt_exec(index)
+        if decrypt_exec:
+            rule = next(r for r in self.rules if r.id == "ST-OBF-DECRYPT-EXEC")
+            findings.append(
+                Finding(
+                    id=rule.id, severity=rule.severity, category=rule.category,
+                    title=rule.title, description=rule.description,
+                    evidence=decrypt_exec[:MAX_EVIDENCE_SCANNED],
+                    recommendation=rule.recommendation,
+                    threat_class=rule.threat_class,
+                )
+            )
+
         needs_review: list[NeedsReview] = []
         self._heuristic(index, _BASE64_BLOB, "ST-OBF-BASE64-BLOB",
                         "Large base64 blob", "large base64-looking blob(s)", needs_review)
@@ -293,6 +354,27 @@ class ObfuscationScanner(Scanner):
                         "Excessive hex escaping", "run(s) of hex escape sequences", needs_review)
         self._minified(index, needs_review)
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    @staticmethod
+    def _decrypt_exec(index: FileIndex) -> list[Evidence]:
+        """Evidence when one code file both decrypts data and runs code through a dynamic sink.
+
+        Requires BOTH signals in the same file (the staged loader decrypts, then executes the
+        plaintext). Engine-level string/comment demotion (code_context) drops matches that are
+        only pattern literals or doc examples, so a security tool listing these patterns in a
+        message is not flagged.
+        """
+        evidence: list[Evidence] = []
+        for f in index.select(suffixes=_DECRYPT_EXEC_SUFFIXES):
+            dec = _DECRYPT_CONSTRUCT.search(f.text)
+            sink = _EXEC_SINK.search(f.text)
+            if not dec or not sink:
+                continue
+            evidence.append(f.evidence_for_span(dec.start(), dec.end()))
+            evidence.append(f.evidence_for_span(sink.start(), sink.end()))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                break
+        return evidence
 
     def _heuristic(self, index, pattern, _rule_id, title, what, needs_review) -> None:
         """One aggregated note per heuristic (it used to be one per line, up to 75)."""

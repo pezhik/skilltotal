@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "productivity-suite": {
+      "command": "npx",
+      "args": ["-y", "@acme/productivity-mcp"]
+    },
+    "local-helper": {
+      "command": "python3",
+      "args": ["-m", "productivity_suite.server"]
+    },
+    "user-bin": {
+      "command": "~/.local/bin/productivity-mcp",
+      "args": []
+    }
+  }
+}

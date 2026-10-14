@@ -184,6 +184,26 @@ _SHADOWING = alternation(
 # tool calls removes the human confirmation gate for everything the server exposes.
 _AUTO_APPROVE_KEYS = ("autoApprove", "alwaysAllow")
 
+
+def _concealed_launch_path(value: str) -> str | None:
+    """Return the launch target if it is a *concealed* local path, else None.
+
+    Deadbugz (Pillar Security, Aug 2026) registered a local MCP server pointing at a deeply
+    hidden script — ``~/.config/.cache/.sys/.deadbug-mcp.py`` — so a reviewer scanning the
+    repository never sees the server's code. An honest MCP launcher is a package runner
+    (``npx``/``uvx``), an interpreter (``python3``/``node``), a module (``python -m pkg``) or a
+    path inside the component (``dist/server.js``); none of those nest multiple hidden
+    dot-directories. The tell is >= 2 path segments that each begin with a dot — a single
+    ``~/.local/bin/x`` or ``~/.config/app/server.py`` (one dot-segment) stays clean.
+    """
+    if not isinstance(value, str) or "/" not in value:
+        return None
+    hidden = 0
+    for seg in value.split("/"):
+        if len(seg) > 1 and seg.startswith(".") and seg not in ("..",):
+            hidden += 1
+    return value if hidden >= 2 else None
+
 # Permission/scope declarations and the over-broad values that violate least privilege (cf. the
 # Postmark mail-full-access lesson). Conservative literal set so narrow scopes are not flagged.
 _SCOPE_KEYS = frozenset({"scopes", "scope", "permissions", "permission", "oauth_scopes",
@@ -460,6 +480,28 @@ class McpScanner(Scanner):
             capability=Capability.MCP_TOOLS_DETECTED,
         ),
         RuleSpec(
+            id="ST-MCP-SERVER-HIDDEN-EXEC",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="MCP server launches a concealed local script",
+            description=(
+                "An mcpServers entry launches a command whose target is a concealed local path "
+                "nesting two or more hidden dot-directories (e.g. "
+                "~/.config/.cache/.sys/.server.py). The server's code lives outside the component "
+                "and in a deliberately hidden location, so a reviewer inspecting the repository "
+                "never sees what the agent will run. This is the delivery shape of the Deadbugz "
+                "MCP supply-chain campaign (Pillar Security, August 2026)."
+            ),
+            recommendation=(
+                "Do not trust this configuration. A legitimate MCP server is launched via a "
+                "package runner (npx/uvx), an interpreter plus a module, or a path inside the "
+                "component — not from a chain of hidden directories. Locate and inspect the "
+                "referenced script before running it."
+            ),
+            capability=Capability.MCP_TOOLS_DETECTED,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
+        RuleSpec(
             id="ST-MCP-TOOL-POISONING",
             category=CATEGORY,
             severity=Severity.HIGH,
@@ -571,6 +613,7 @@ class McpScanner(Scanner):
         detected: list[Evidence] = []
         dangerous: list[Evidence] = []
         server_exec: list[Evidence] = []
+        hidden_exec: list[Evidence] = []
         poisoning: list[Evidence] = []
         shadowing: list[Evidence] = []
         auto_approve: list[Evidence] = []
@@ -594,7 +637,7 @@ class McpScanner(Scanner):
 
             try:
                 self._analyze_json(
-                    f, data, is_manifest_name, detected, dangerous, server_exec,
+                    f, data, is_manifest_name, detected, dangerous, server_exec, hidden_exec,
                     poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
                 )
             except RecursionError as exc:  # a value nested too deep to turn into text
@@ -662,6 +705,8 @@ class McpScanner(Scanner):
             )
         if server_exec:
             findings.append(self._finding("ST-MCP-SERVER-EXEC", server_exec))
+        if hidden_exec:
+            findings.append(self._finding("ST-MCP-SERVER-HIDDEN-EXEC", hidden_exec))
         if poisoning:
             findings.append(self._finding("ST-MCP-TOOL-POISONING", poisoning))
         if sampling:
@@ -762,7 +807,7 @@ class McpScanner(Scanner):
 
     # -------------------------------------------------------------- internals
     def _analyze_json(
-        self, f, data, is_manifest_name, detected, dangerous, server_exec,
+        self, f, data, is_manifest_name, detected, dangerous, server_exec, hidden_exec,
         poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
     ) -> None:
         if not isinstance(data, dict):
@@ -792,6 +837,19 @@ class McpScanner(Scanner):
                     cev = _evidence_for(f, '"command"')
                     if cev:
                         server_exec.append(cev)
+                    # Deadbugz: the launch target is a concealed hidden-dotpath script. Check the
+                    # command itself and every string argument; anchor to the concealed path.
+                    launch_values = [srv.get("command")]
+                    args = srv.get("args")
+                    if isinstance(args, list):
+                        launch_values.extend(args)
+                    for val in launch_values:
+                        concealed = _concealed_launch_path(val)
+                        if concealed and len(hidden_exec) < MAX_EVIDENCE_SCANNED:
+                            hev = _evidence_for(f, concealed) or cev
+                            if hev:
+                                hidden_exec.append(hev)
+                            break
                 _auto_approved(f, srv, auto_approve)
         # VS Code's mcp.json lists its servers under "servers".
         vscode = data.get("servers") if f.relpath.rsplit("/", 1)[-1].lower() == "mcp.json" else None
