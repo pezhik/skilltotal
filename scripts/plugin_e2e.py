@@ -143,7 +143,10 @@ def _run_cases(
             scanned = "npm:is-number" in (cache / "hook-cache.json").read_text(encoding="utf-8")
             ok, why = MARKER in text and scanned, "must run, after a real scan"
         elif expect == "warned":
-            warned = "did not check this install" in json.dumps(events)
+            # The console line the person sees ("SkillTotal did not check this command: ...").
+            # The agent's additionalContext says "this install", but Claude Code 2.1.299 no
+            # longer writes it to the stream-json events.
+            warned = "SkillTotal did not check this" in json.dumps(events)
             ok, why = MARKER in text and warned, "must run, with a warning in the session"
         else:
             ok, why = "st-e2e-plain" in text, "must run"

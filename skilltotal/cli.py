@@ -423,6 +423,21 @@ class _ProgressLine:
             self._width = 0
 
 
+def _own_report(source: str, output: str | None) -> list[str]:
+    """The report file this scan writes, when it lies inside the folder scanned: a pipeline that
+    runs `scan . --sarif --output skilltotal.sarif` on every build would otherwise read the last
+    build's report, whose rule descriptions quote detection patterns, and fail a clean repository.
+    """
+    if not output:
+        return []
+    try:
+        relpath = Path(output).resolve().relative_to(Path(source).expanduser().resolve())
+    except (OSError, ValueError):
+        return []
+    # An exclude is a glob; a literal file name must not act as one.
+    return ["".join(f"[{c}]" if c in "*?[" else c for c in relpath.as_posix())]
+
+
 class StagedError(Exception):
     """``--staged`` could not read git's index for the source."""
 
@@ -483,7 +498,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             print(f"error: cannot read baseline {baseline_path}: {exc}", file=sys.stderr)
             return EXIT_ERROR
 
-    exclude = [*config.exclude, *args.exclude]
+    exclude = [*config.exclude, *args.exclude, *_own_report(args.source, args.output)]
     # A large package takes minutes (thousands of files): on a terminal, say what is happening so
     # the wait does not read as a hang. Never in a pipe or a CI log.
     progress = _ProgressLine(sys.stderr) if sys.stderr.isatty() else None

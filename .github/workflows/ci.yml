@@ -30,6 +30,40 @@ jobs:
       - name: Test
         run: pytest
 
+  journeys:
+    # Customer journeys (tests/journeys) against the wheel a customer installs: built here,
+    # installed with pipx as the README says, and driven as a pipeline, a developer machine and a
+    # security team drive it. Linux is where pipelines run, so it runs everything; Windows runs the
+    # same journeys except the pre-commit one.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Build the wheel and install it with pipx
+        run: |
+          python -m pip install --upgrade pip
+          pip install build pytest pre-commit pipx
+          python -m build --wheel --outdir dist .
+          python -m pipx install "$(ls dist/*.whl)"
+          echo "SKILLTOTAL_JOURNEY_CLI=$(python -m pipx environment --value PIPX_BIN_DIR)/skilltotal" >> "$GITHUB_ENV"
+      - name: Pre-commit journey on Linux
+        if: runner.os == 'Linux'
+        run: echo "SKILLTOTAL_JOURNEY_PRE_COMMIT=1" >> "$GITHUB_ENV"
+      - name: Journeys
+        run: |
+          git config --global user.email ci@example.invalid
+          git config --global user.name ci
+          python -m pytest tests/journeys -rs
+
   npm:
     # The npm package is a thin runner for the Python engine: test its plan, run it end to end
     # against the engine from this checkout, and check exactly which files it would publish.
