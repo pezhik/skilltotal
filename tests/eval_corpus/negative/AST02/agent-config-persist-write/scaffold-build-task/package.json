@@ -1,0 +1,6 @@
+{
+  "name": "fixture-project-generator",
+  "version": "0.0.1",
+  "description": "FIXTURE ONLY - synthetic benign look-alike, a project generator",
+  "bin": { "fixture-init": "init.js" }
+}

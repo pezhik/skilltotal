@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
-from skilltotal.models import Evidence, NeedsReview, Severity, ThreatClass
+from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
     RuleSpec,
@@ -30,6 +30,33 @@ _EVASION_SUFFIXES = (
 _JS_FAMILY = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"})
 
 R_SHELL_EVASION = "ST-SHELL-EVASION"
+R_PS_DOWNLOAD_EXEC = "ST-PS-DOWNLOAD-EXEC"
+
+# PowerShell download-and-execute cradle (tensorlake / Shai-Hulud "hostage token" monitor,
+# Socket 2026-10-08): a web response is fed straight into Invoke-Expression. ST-SHELL-EVASION
+# already catches the one-line `IEX (New-Object Net.WebClient).DownloadString(...)` idiom as a
+# risky construct; this rule is the malicious-indicator reading of the whole cradle family -- it
+# adds the `Invoke-RestMethod` / `irm` (and curl/wget aliases, DownloadData/DownloadFile) verbs
+# that idiom missed, the piped `irm $u | iex` order, and the two-statement form where the download
+# lands in a variable that Invoke-Expression runs on a later line.
+_PS_SUFFIXES = (".ps1", ".psm1")
+# A PowerShell web-download: a cmdlet or its alias (curl/wget alias Invoke-WebRequest), or a
+# .NET WebClient download method.
+_PS_DOWNLOAD = (
+    r"(?:Invoke-RestMethod|Invoke-WebRequest|\birm\b|\biwr\b|\bcurl\b|\bwget\b"
+    r"|DownloadString|DownloadData|DownloadFile|Net\.WebClient)"
+)
+_PS_IEX = r"(?:iex|Invoke-Expression)"
+# Same statement (either order) or piped: `iex (irm $u)`, `iex (...).DownloadString(...)`,
+# `irm $u | iex`. Bounded gaps so a crafted long line cannot backtrack.
+_PS_CRADLE = re.compile(
+    rf"\b{_PS_IEX}\b[^\n;]{{0,200}}?\b{_PS_DOWNLOAD}"
+    rf"|\b{_PS_DOWNLOAD}[^\n|]{{0,400}}?\|\s*{_PS_IEX}\b",
+    re.IGNORECASE,
+)
+# Two-statement form: `Invoke-Expression $x` whose `$x` was assigned a download anywhere in the
+# file. The captured name is checked against an assignment from a download verb.
+_PS_IEX_VAR = re.compile(rf"\b{_PS_IEX}\b\s*\(?\s*\$(\w+)", re.IGNORECASE)
 
 # -EncodedCommand hides the command it runs when the payload arrives as an opaque base64 blob.
 # Node tools also use it to hand PowerShell a multi-line script without quoting problems, encoding
@@ -203,9 +230,50 @@ _RULE = RuleSpec(
 )
 
 
+_PS_RULE = RuleSpec(
+    id=R_PS_DOWNLOAD_EXEC,
+    category="obfuscation",
+    severity=Severity.HIGH,
+    title="PowerShell downloads code and runs it (download-and-execute cradle)",
+    description=(
+        "A PowerShell script feeds a web response straight into Invoke-Expression -- "
+        "`iex (irm $url)`, `irm $url | iex`, or a download stored in a variable that "
+        "Invoke-Expression runs on a later line. The code that executes is fetched at runtime "
+        "and never appears in the file, so review cannot see it. This is the classic dropper / "
+        "second-stage cradle."
+    ),
+    recommendation=(
+        "Download the payload to a file, inspect it, and run a pinned, verified copy instead of "
+        "piping a network response into Invoke-Expression."
+    ),
+    capability=Capability.DYNAMIC_CODE_EXECUTION,
+    threat_class=ThreatClass.MALICIOUS_INDICATOR,
+    suffixes=_PS_SUFFIXES,
+    # A `# iex (irm …) downloads and runs it` comment documents the idiom; demote comment matches.
+    code_context="comments",
+)
+
+
+def _ps_cradle_spans(f: IndexedFile) -> list[tuple[int, int]]:
+    """Spans in ``f`` of a PowerShell download-and-execute cradle: the same-line / piped forms,
+    plus a two-statement form where Invoke-Expression runs a variable assigned from a download."""
+    spans: list[tuple[int, int]] = []
+    for m in _PS_CRADLE.finditer(f.text):
+        if m.end() > m.start():
+            spans.append((m.start(), m.end()))
+    for m in _PS_IEX_VAR.finditer(f.text):
+        var = m.group(1)
+        assign = re.compile(
+            rf"\${re.escape(var)}\s*=\s*[^\n]*?\b{_PS_DOWNLOAD}", re.IGNORECASE
+        )
+        if assign.search(f.text):
+            spans.append((m.start(), m.end()))
+    return spans
+
+
 class ShellEvasionScanner(Scanner):
     name = "shell_evasion"
-    rules = [_RULE]
+    rules = [_RULE, _PS_RULE]
 
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
@@ -229,6 +297,24 @@ class ShellEvasionScanner(Scanner):
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         findings = [_finding_from_rule(_RULE, evidence)] if evidence else []
+
+        # PowerShell download-and-execute cradle (malicious indicator), including the
+        # two-statement variable form a single regex cannot express.
+        ps_evidence: list[Evidence] = []
+        ps_seen: set[tuple[str, int, int]] = set()
+        for f in index.select(suffixes=_PS_SUFFIXES):
+            for s, e in _ps_cradle_spans(f):
+                ev = f.evidence_for_span(s, e)
+                key = (ev.file, ev.line_start, ev.line_end)
+                if key in ps_seen:
+                    continue
+                ps_seen.add(key)
+                ps_evidence.append(ev)
+                if len(ps_evidence) >= MAX_EVIDENCE_SCANNED:
+                    break
+        if ps_evidence:
+            findings.append(_finding_from_rule(_PS_RULE, ps_evidence))
+
         needs_review = []
         if encoded_scripts:
             needs_review.append(NeedsReview(

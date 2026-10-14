@@ -228,7 +228,7 @@ _AGENT_SETTINGS_PATHS = re.compile(
     r"\.claude[/\\](?:settings(?:\.local)?\.json|(?:skills|agents|commands)(?![\w.-]))"
     r"|\.codex[/\\]config\.toml"
     r"|\.gemini[/\\]settings\.json"
-    r"|\.vscode[/\\]settings\.json"
+    r"|\.vscode[/\\](?:settings|tasks)\.json"
     r"|\.cursor[/\\]rules(?![\w.-])"
 )
 _AGENT_INSTRUCTION_PATHS = re.compile(
@@ -246,10 +246,11 @@ _AGENT_TOKENS = (
 )
 _KIND_CLIENT, _KIND_SETTINGS, _KIND_INSTRUCTIONS = "client", "settings", "instructions"
 # A write that adds an auto-run command or an approval: a hook, a permission rule, an MCP
-# server's auto-approve list, a status line or credential helper command.
+# server's auto-approve list, a status line or credential helper command, a VS Code task's
+# `runOn` (`folderOpen` runs it whenever the folder is opened).
 _HOOK_KEYS = re.compile(
     r"[\"']?\b(?:hooks|PreToolUse|PostToolUse|SessionStart|UserPromptSubmit|permissions"
-    r"|autoApprove|alwaysAllow|statusLine|apiKeyHelper)\b[\"']?\s*[:=]"
+    r"|autoApprove|alwaysAllow|statusLine|apiKeyHelper|runOn)\b[\"']?\s*[:=]"
 )
 # The user's home directory (or the per-user application data folder), however it is named.
 _HOME_MARKER = re.compile(

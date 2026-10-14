@@ -60,6 +60,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     # deliberate deserialize-and-execute gadget (AST01) built on unsafe deserialization (AST05).
     "ST-PICKLE-REDUCE": ("AST01", "AST05"),
     "ST-OBF-DECODE-EXEC-SH": ("AST01",),
+    "ST-PS-DOWNLOAD-EXEC": ("AST01",),
     "ST-OBF-DYNAMIC-DECODE-EXEC": ("AST01",),
     "ST-OBF-DECRYPT-EXEC": ("AST01",),
     "ST-MCP-SERVER-HIDDEN-EXEC": ("AST01",),
