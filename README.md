@@ -59,7 +59,7 @@ or runtime context around it. Every score and finding comes from the files insid
 - **Checks packages before your agent installs them.** The Claude Code plugin reads each `npx`,
   `npm install`, `pip install` or `claude mcp add` command the agent is about to run. It blocks
   packages with malicious indicators, and asks you first about high- or critical-risk packages and
-  packages it could not check. [Set it up](#claude-code-plugin).
+  any it could not check. [Set it up](#claude-code-plugin).
 - **Runs on your machine.** It needs no account or API token and uploads nothing. It uses the
   network only to fetch the package or repository you asked it to scan.
 - **Safe to point at untrusted components.** The engine reads them and never runs them.
@@ -546,7 +546,7 @@ Each row names what the engine checks today. The code-behavior rows (dangerous c
 exfiltration, dynamic code execution, decode-and-execute) cover Python, JavaScript/TypeScript and
 shell; code in other languages gets only the secret, sensitive-path and hidden-text checks (see
 [Accuracy notes](#accuracy-notes)). Bidi controls and lone zero-width characters are listed for
-review, not scored, because locale and CJK files use them legitimately.
+review and left out of the score, because locale and CJK files use them legitimately.
 
 ### Typical findings
 
@@ -630,8 +630,8 @@ pytest
 - **Hidden Unicode** (ASCII-smuggling tag characters, variation selectors and invisible math
   operators used as bytes, zero-width characters threaded through words, Hangul filler
   identifiers) is detected; where it encodes text, that text is decoded into the evidence.
-  Trojan-Source bidi overrides and lone zero-width characters go to `needs_review`. Hidden text
-  is a real evasion used to smuggle instructions past human review. See `tests/manual_eval/` for
+  Trojan-Source bidi overrides and lone zero-width characters go to `needs_review`. Attackers
+  use hidden text to smuggle instructions past human review. See `tests/manual_eval/` for
   calibration against real-world attacks.
 - Shell execution covers `subprocess`/`os.system`, `asyncio.create_subprocess_*`, Node
   `child_process`, and common process-spawning libraries (Python `sh`/`plumbum`/`pexpect`/
