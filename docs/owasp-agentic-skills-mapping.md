@@ -22,8 +22,9 @@ AST category are left **unmapped** (empty `owasp`) rather than forced into a lab
 | **AST04 Insecure Metadata** | `ST-MCP-TOOL-POISONING`, `ST-MCP-SAMPLING-INJECTION`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-INJECTION`, `ST-PROMPT-WEAK`, `ST-HIDDEN-UNICODE(-AMBIG)`, `ST-SKILL-CAP-MISMATCH` | misleading/falsified descriptions, hidden/smuggled instructions, falsified capability declarations |
 | **AST05 Unsafe Deserialization** | `ST-DESERIALIZE-PY`, `ST-TAINT-DESERIAL-PY` | unsafe `pickle`/`yaml`/`marshal` loads, incl. taint into a deserialize sink |
 
-`ST-SKILL-CAP-MISMATCH` spans **AST03 + AST04** (code does more than the skill declares: both
-over-privilege and a falsified declaration).
+`ST-SKILL-CAP-MISMATCH` spans **AST03 + AST04** (the bundled code does more than the skill's
+`allowed-tools` list covers: over-privilege, and metadata that understates what the skill does).
+`allowed-tools` pre-approves tools for the agent; it does not limit what the skill's code can do.
 
 ## Honest gaps (intentionally unmapped)
 

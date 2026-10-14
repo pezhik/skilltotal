@@ -59,7 +59,7 @@ or runtime context around it. Every score and finding comes from the files insid
 - **Checks packages before your agent installs them.** The Claude Code plugin reads each `npx`,
   `npm install`, `pip install` or `claude mcp add` command the agent is about to run. It blocks
   packages with malicious indicators, and asks you first about high- or critical-risk packages and
-  anything it could not check. [Set it up](#claude-code-plugin).
+  packages it could not check. [Set it up](#claude-code-plugin).
 - **Runs on your machine.** It needs no account or API token and uploads nothing. It uses the
   network only to fetch the package or repository you asked it to scan.
 - **Safe to point at untrusted components.** The engine reads them and never runs them.
@@ -531,20 +531,22 @@ published npm/PyPI package.
 | Category | MCP | npm | PyPI | AI project |
 |---|---|---|---|---|
 | Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ✅ |
-| Tool poisoning (MCP tool and parameter descriptions) | ✅ | ❌ | ❌ | ⚠️ |
+| Tool poisoning (MCP tool and schema text, prompts, resources, server instructions) | ✅ | ❌ | ❌ | ⚠️ |
 | Dangerous capabilities (shell / fs / network) | ✅ | ✅ | ✅ | ⚠️ |
 | Data exfiltration (secret access + egress) | ✅ | ✅ | ✅ | ⚠️ |
 | Secret theft / sensitive-path access | ✅ | ✅ | ✅ | ⚠️ |
 | Dynamic code execution | ✅ | ✅ | ✅ | ⚠️ |
 | Obfuscation (decode-and-execute) | ✅ | ✅ | ✅ | ✅ |
-| Hidden-Unicode smuggling (tag, bidi control and zero-width characters) | ✅ | ✅ | ✅ | ✅ |
+| Hidden text (tag characters, variation selectors, invisible operators, zero-width characters inside words, ANSI escapes in agent-facing text) | ✅ | ✅ | ✅ | ✅ |
 | Embedded secrets (hardcoded keys/tokens) | ✅ | ✅ | ✅ | ✅ |
 | Install-time / supply-chain hooks | ⚠️ | ✅ | ✅ | ❌ |
-| Overprivileged tools, auto-approve keys in MCP server entries | ✅ | ❌ | ❌ | ⚠️ |
+| Overprivileged tools, auto-approve in MCP server entries and agent settings | ✅ | ❌ | ❌ | ⚠️ |
 
-Each row names what the engine checks today. Not checked yet: nested schema fields, prompts,
-resources and server instructions; Unicode variation selectors and ANSI terminal escape
-sequences; auto-approve settings that agent hosts keep outside MCP server entries.
+Each row names what the engine checks today. The code-behavior rows (dangerous capabilities, data
+exfiltration, dynamic code execution, decode-and-execute) cover Python, JavaScript/TypeScript and
+shell; code in other languages gets only the secret, sensitive-path and hidden-text checks (see
+[Accuracy notes](#accuracy-notes)). Bidi controls and lone zero-width characters are listed for
+review, not scored, because locale and CJK files use them legitimately.
 
 ### Typical findings
 
@@ -625,9 +627,12 @@ pytest
   `needs_review` — it is not executed by consumers, so it does not affect the score.
 - Ambiguous signals (bare `secrets`/`credentials` words, lone base64 blobs, "before
   answering" phrasing, minified files) go to `needs_review`, never to `findings`.
-- **Hidden Unicode** (ASCII-smuggling tag characters, Trojan-Source bidi overrides,
-  zero-width chars) is detected and decoded — a real evasion used to smuggle instructions
-  past human review. See `tests/manual_eval/` for calibration against real-world attacks.
+- **Hidden Unicode** (ASCII-smuggling tag characters, variation selectors and invisible math
+  operators used as bytes, zero-width characters threaded through words, Hangul filler
+  identifiers) is detected; where it encodes text, that text is decoded into the evidence.
+  Trojan-Source bidi overrides and lone zero-width characters go to `needs_review`. Hidden text
+  is a real evasion used to smuggle instructions past human review. See `tests/manual_eval/` for
+  calibration against real-world attacks.
 - Shell execution covers `subprocess`/`os.system`, `asyncio.create_subprocess_*`, Node
   `child_process`, and common process-spawning libraries (Python `sh`/`plumbum`/`pexpect`/
   `invoke`/`fabric`; Node `zx`/`execa`/`cross-spawn`/`shelljs`/`tinyexec`/`node-pty`).
