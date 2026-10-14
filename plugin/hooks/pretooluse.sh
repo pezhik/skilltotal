@@ -88,6 +88,8 @@ older() {
 
 input=$(cat)
 if ! command -v skilltotal >/dev/null 2>&1; then
+  # pipx puts the command in a folder a fresh shell may not have on PATH yet.
+  FIX="$FIX If it is installed, run pipx ensurepath and start Claude Code from a new terminal."
   cannot_check "the skilltotal CLI is not on PATH"
   exit 0
 fi

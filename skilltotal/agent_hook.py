@@ -3276,10 +3276,13 @@ def hook_response(
             continue
         except Exception as exc:  # noqa: BLE001 - our own failure is never a reason to deny
             variable = getattr(exc, "variable", None)
+            reason = getattr(exc, "reason", None)
             if variable in LIMIT_SETTINGS:
                 asked.append(f"{source}: not checked because it is over SkillTotal's size "
                              f"limit. To check it, set {variable} to a higher value and run the "
                              f"same command again.")
+            elif isinstance(reason, str) and reason:
+                asked.append(f"{source}: not checked because {reason}.")
             else:
                 failed.append(source)
             continue

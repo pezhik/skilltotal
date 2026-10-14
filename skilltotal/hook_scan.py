@@ -506,13 +506,37 @@ class RunningScan:
         try:
             report = _read_json(Path(self.tmp, "report.json"))
             limit = _read_limit(Path(self.tmp, "limit"))
+            why = _read_why(Path(self.tmp, "why"))
         finally:
             remove_tree(self.tmp, deadline)
         if not isinstance(report, dict):
             if limit is not None:
                 raise OverSizeLimit(limit)
+            if why is not None:
+                raise ScanFailed(why)
             raise RuntimeError("the scan failed")
         return report
+
+
+class ScanFailed(RuntimeError):
+    """The check could not fetch the source; ``reason`` says why, in fixed words."""
+
+    def __init__(self, category: str) -> None:
+        from skilltotal.collector import FAILURE_CATEGORIES
+
+        self.reason = FAILURE_CATEGORIES[category]
+        super().__init__(self.reason)
+
+
+def _read_why(path: Path) -> str | None:
+    """The failure category a check named in its ``why`` file, if it is one of ours; else None."""
+    from skilltotal.collector import FAILURE_CATEGORIES
+
+    try:
+        value = path.read_text(encoding="ascii").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return value if value in FAILURE_CATEGORIES else None
 
 
 class OverSizeLimit(RuntimeError):
@@ -784,7 +808,7 @@ def scan_into(tmp: Path) -> int:
     normalized, archive entries it left out); the hook's verdict uses neither. Returns 1, having
     touched nothing, when ``tmp`` is no check of a hook's.
     """
-    from skilltotal.collector import SizeLimitError, collect
+    from skilltotal.collector import CollectionError, SizeLimitError, collect, failure_category
     from skilltotal.engine import analyze_directory
 
     spec = _check_spec(tmp, "scan-into")
@@ -808,6 +832,12 @@ def scan_into(tmp: Path) -> int:
     except SizeLimitError as exc:
         # Which limit refused it, so the hook can name the setting instead of "the scan failed".
         write_atomic(tmp / "limit", exc.variable)
+        raise
+    except CollectionError as exc:
+        # Why it could not be fetched (no git, no such package), as a fixed category.
+        category = failure_category(exc)
+        if category is not None:
+            write_atomic(tmp / "why", category)
         raise
     write_atomic(tmp / "report.json", json.dumps(report.to_dict()))
     return 0
