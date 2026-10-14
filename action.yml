@@ -95,8 +95,8 @@ runs:
         if [ -n "$INPUT_BASELINE" ]; then BASE+=(--baseline "$INPUT_BASELINE"); fi
         # The action's own reports are not part of the component. The SARIF file is written into
         # the workspace (the upload step reads it there), and with `source: .` that is inside the
-        # tree being scanned: the second scan read the first one's rule descriptions -- detection
-        # patterns quoted as text -- and failed a clean repository. So the SARIF file is excluded
+        # tree being scanned: the second scan read the first one's rule descriptions (detection
+        # patterns quoted as text) and failed a clean repository. So the SARIF file is excluded
         # from both scans, and the JSON report the gate reads is written outside the workspace.
         BASE+=(--exclude "$INPUT_SARIF_FILE")
         REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"

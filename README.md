@@ -115,8 +115,8 @@ and also works on Debian/Ubuntu and Homebrew Python, where PEP 668 blocks a bare
 pipx install skilltotal
 ```
 
-If `skilltotal` is not found afterwards, run `pipx ensurepath` and open a new terminal: on a fresh
-Linux machine pipx's folder is not on `PATH` yet.
+If `skilltotal` is not found afterwards, run `pipx ensurepath` and open a new terminal. On a fresh
+Linux machine, pipx's folder is not on `PATH` yet.
 
 To install into a virtual environment, or to use it as a library:
 
@@ -390,7 +390,7 @@ baseline = ".skilltotal-baseline.json"
 
 The config is read from the directory you run `skilltotal` in (or the file `--config` names). A
 config it cannot honor (invalid TOML, an unknown key, a value of the wrong kind, an unknown policy
-action, a `--config` path that does not exist) stops the scan with exit code 1: a typo never turns
+action, a `--config` path that does not exist) stops the scan with exit code 1, so a typo can't turn
 a gate off.
 
 **Settings** (environment variables, for the CLI, the plugin and the action):
