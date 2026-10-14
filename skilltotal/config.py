@@ -110,21 +110,34 @@ def _parse(text: str, path: Path) -> dict[str, object]:
         except (tomllib.TOMLDecodeError, ValueError) as exc:
             raise ConfigError(f"{path}: not valid TOML: {exc}") from exc
         return data if isinstance(data, dict) else {}
-    return _fallback_parse(text)  # pragma: no cover - 3.10 path
+    try:
+        return _fallback_parse(text)
+    except ConfigError as exc:
+        raise ConfigError(f"{path}: {exc}") from exc
 
 
-def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 only
-    """Best-effort parse of the handful of supported scalar/array keys (no tomllib)."""
+def _fallback_parse(text: str) -> dict[str, object]:
+    """Parse of the supported keys on Python 3.10, which has no tomllib.
+
+    As strict as tomllib where it matters: what it cannot read is an error, never a key dropped,
+    because a dropped key is a gate switched off. Tested on every Python version.
+    """
     out: dict[str, object] = {}
     # Top-level keys before any [table]: one the parser does not know is reported, not skipped.
     top = re.split(r"^\s*\[", text, maxsplit=1, flags=re.MULTILINE)[0]
     for m in re.finditer(r"^\s*([A-Za-z_][\w-]*)\s*=", top, re.MULTILINE):
         if m.group(1) not in _KEYS:
             out[m.group(1)] = None
+    # A table other than [policy] is a key the config does not have.
+    for m in re.finditer(r"^\s*\[\s*([^\]]*?)\s*\]\s*$", text, re.MULTILINE):
+        if m.group(1) != "policy":
+            out[m.group(1)] = None
     for key in ("fail_on", "baseline"):
         m = re.search(rf'^\s*{key}\s*=\s*(.*?)\s*(?:#.*)?$', text, re.MULTILINE)
         if m:
             raw = m.group(1)
+            if raw.startswith('"') and not (len(raw) >= 2 and raw.endswith('"')):
+                raise ConfigError(f"not valid TOML: unterminated string in {key}")
             out[key] = raw[1:-1] if len(raw) >= 2 and raw[0] == raw[-1] == '"' else raw
     m = re.search(r"^\s*fail_on_score\s*=\s*(.*?)\s*(?:#.*)?$", text, re.MULTILINE)
     if m:
@@ -137,13 +150,21 @@ def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 
         m = re.search(rf"^\s*{key}\s*=\s*\[([^\]]*)\]", text, re.MULTILINE)
         if m:
             out[key] = [v.strip().strip("\"'") for v in m.group(1).split(",") if v.strip()]
+        else:
+            # Not a list (`exclude = "vendor/*"`): kept as written, so the check rejects it.
+            m = re.search(rf"^\s*{key}\s*=\s*(.*?)\s*(?:#.*)?$", text, re.MULTILINE)
+            if m:
+                out[key] = m.group(1)
     m = re.search(r"^\s*\[policy\]\s*$(.*?)(?=^\s*\[|\Z)", text, re.MULTILINE | re.DOTALL)
     if m:
         policy: dict[str, object] = {}
         for line in m.group(1).splitlines():
-            kv = re.match(r"""\s*["']?([\w.-]+)["']?\s*=\s*["']([^"']*)["']""", line)
-            if kv:
-                policy[kv.group(1)] = kv.group(2)
+            if not line.strip() or line.strip().startswith("#"):
+                continue
+            kv = re.match(r"""\s*["']?([\w.-]+)["']?\s*=\s*["']([^"']*)["']\s*(?:#.*)?$""", line)
+            if not kv:
+                raise ConfigError(f"not valid TOML in [policy]: {line.strip()!r}")
+            policy[kv.group(1)] = kv.group(2)
         out["policy"] = policy
     return out
 

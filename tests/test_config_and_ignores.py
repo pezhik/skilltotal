@@ -6,9 +6,44 @@ from pathlib import Path
 
 import pytest
 
+import skilltotal.config as config_module
 from skilltotal.collector import detect_component
 from skilltotal.config import ConfigError, load_config
 from skilltotal.engine import analyze_directory
+
+
+def _use_parser(monkeypatch, parser: str) -> None:
+    """``fallback`` is the parser Python 3.10 (no tomllib) runs; test it on every version."""
+    if parser == "fallback":
+        monkeypatch.setattr(config_module, "tomllib", None)
+    elif config_module.tomllib is None:
+        pytest.skip("no tomllib on this Python")
+
+
+DOCUMENTED = (
+    'fail_on = "high"           # comment\n'
+    "fail_on_score = 50\n"
+    "fail_on_unanalyzed = true\n"
+    'exclude = ["vendor/*", "*.min.js"]\n'
+    'ignore = ["ST-NET-PY"]\n'
+    'baseline = ".skilltotal-baseline.json"\n'
+    "\n"
+    "[policy]\n"
+    "# accepted\n"
+    '"ST-SHELL-PIPE-EXEC" = "block"   # trips\n'
+    '"ST-SENS-WORD" = "ignore"\n'
+)
+
+
+@pytest.mark.parametrize("parser", ["tomllib", "fallback"])
+def test_both_parsers_read_the_documented_config_alike(tmp_path: Path, monkeypatch, parser):
+    _use_parser(monkeypatch, parser)
+    p = tmp_path / ".skilltotal.toml"
+    p.write_text(DOCUMENTED, encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.fail_on_score == 50
+    assert cfg.exclude == ["vendor/*", "*.min.js"]
+    assert cfg.policy == {"ST-SHELL-PIPE-EXEC": "block", "ST-SENS-WORD": "ignore"}
 
 
 def _analyze(root: Path, **kw):
@@ -54,8 +89,14 @@ def test_config_invalid_level_is_an_error_not_a_gate_switched_off(tmp_path: Path
     ('fail_on_score = "abc"\n', "from 0 to 100"),
     ('exclude = "vendor/*"\n', "list of non-empty strings"),
     ('[policy]\n"ST-SHELL-PY" = "blok"\n', "block, warn or ignore"),
+    ('[policy]\n"ST-SHELL-PY" = block\n', "not valid TOML"),
+    ('[polcy]\n"ST-SHELL-PY" = "block"\n', "unknown key"),
 ])
-def test_a_config_that_cannot_be_honored_is_an_error(tmp_path: Path, text, message):
+@pytest.mark.parametrize("parser", ["tomllib", "fallback"])
+def test_a_config_that_cannot_be_honored_is_an_error(tmp_path: Path, monkeypatch, text, message,
+                                                     parser):
+    # The fallback is what Python 3.10 (no tomllib) runs: it must be as strict, on every version.
+    _use_parser(monkeypatch, parser)
     p = tmp_path / ".skilltotal.toml"
     p.write_text(text, encoding="utf-8")
     with pytest.raises(ConfigError, match=message):
