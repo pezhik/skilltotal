@@ -149,10 +149,23 @@ runs:
         echo "gate-exit=$GATE_EXIT" >> "$GITHUB_OUTPUT"
 
     - name: Upload SARIF to Code Scanning
+      id: upload
       if: ${{ always() && inputs.upload-sarif == 'true' }}
+      # The gate decides the job, not the upload. Code Scanning is off in many repositories (a
+      # private repository needs GitHub Advanced Security for it), and the upload then fails:
+      # that failed every such customer's build, clean or not.
+      continue-on-error: true
       uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
       with:
         sarif_file: ${{ inputs.sarif-file }}
+
+    - name: Say why the SARIF upload failed
+      if: ${{ always() && inputs.upload-sarif == 'true' && steps.upload.outcome == 'failure' }}
+      shell: bash
+      env:
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+      run: |
+        echo "::warning::SkillTotal could not upload SARIF to Code Scanning. Code Scanning may be off for this repository (a private repository needs GitHub Advanced Security), or the job lacks 'security-events: write' (and 'actions: read' in a private repository). The scan and the gate ran as usual; the report is in $INPUT_SARIF_FILE. Set 'upload-sarif: false' to skip the upload."
 
     - name: Comment on PR
       if: ${{ always() && github.event_name == 'pull_request' && inputs.comment-on-pr == 'true' }}

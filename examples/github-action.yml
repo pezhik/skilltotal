@@ -6,6 +6,7 @@ on: [push, pull_request]
 permissions:
   contents: read
   security-events: write   # required for the SARIF upload to Code Scanning
+  actions: read            # required for the SARIF upload in a private repository
 
 jobs:
   scan:

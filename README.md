@@ -417,6 +417,7 @@ on: [push, pull_request]
 permissions:
   contents: read
   security-events: write   # required to upload SARIF to Code Scanning
+  actions: read            # required for the SARIF upload in a private repository
   pull-requests: write     # required only for comment-on-pr (optional)
 jobs:
   scan:
@@ -433,6 +434,9 @@ jobs:
 
 The action runs the engine that ships with the tag you pin, so nothing is downloaded from PyPI. It
 scans `source` and uploads SARIF (so findings appear inline on pull requests and in Code Scanning).
+A private repository has Code Scanning only with GitHub Advanced Security. Without it the upload
+fails with a warning, the gate still decides the job, and the report stays in `skilltotal.sarif`;
+set `upload-sarif: 'false'` to skip the upload.
 It fails the job on a finding at or above `fail-on` (`low`, `medium`, `high`, `critical`; `none`
 never fails). The gate semantics above apply: a malicious indicator fails the job at any severity,
 and a capability on its own, such as a shell call or network access, never does. With
