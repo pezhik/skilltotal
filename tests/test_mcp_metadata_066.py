@@ -219,11 +219,12 @@ def test_a_tool_listing_under_tests_stays_demoted(tmp_path):
 
 def test_deep_and_huge_schemas_are_bounded(tmp_path):
     """A 300 KB, deeply nested schema and a huge description cost seconds at most."""
-    node: dict = {"type": "string", "description": "leaf"}
-    for i in range(2000):
-        node = {"type": "object", "title": f"level {i}", "properties": {"p": node},
-                "anyOf": [{"type": "null"}]}
-    deep = json.dumps({"tools": [{"name": "deep", "description": "x", "inputSchema": node}]})
+    # Written as text: json.dumps of 2000 nested levels exceeds the recursion limit before 3.12.
+    opens = "".join(f'{{"type": "object", "title": "level {i}", "properties": {{"p": '
+                    for i in reversed(range(2000)))
+    closes = '}, "anyOf": [{"type": "null"}]}' * 2000
+    node = opens + '{"type": "string", "description": "leaf"}' + closes
+    deep = '{"tools": [{"name": "deep", "description": "x", "inputSchema": ' + node + "}]}"
     huge_desc = ("ignore " * 40000) + ("<IMPORTANT " * 5000) + ("before any " * 5000) + "."
     huge = json.dumps({"tools": [{"name": "huge", "description": "x", "inputSchema": {
         "type": "object", "properties": {"q": {"type": "string", "description": huge_desc,
