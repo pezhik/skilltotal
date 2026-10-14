@@ -239,6 +239,7 @@ def test_without_the_cli_an_install_warns_the_person_and_proceeds(tmp_path, comm
     answer = _warning(_run_wrapper(tmp_path, command, with_cli=False)[0])
     assert "not on PATH" in answer["systemMessage"]
     assert "pipx install skilltotal" in answer["systemMessage"]
+    assert "pipx ensurepath" in answer["systemMessage"]
 
 
 @needs_sh
@@ -278,6 +279,8 @@ def test_without_the_cli_installs_and_downloads_the_parser_knows_are_said(tmp_pa
 # (strict mode, read as the CLI reads it).
 
 FIX = "To fix it, run pipx install skilltotal, or pipx upgrade skilltotal for an existing install."
+# When the command is not found at all, pipx may have installed it in a folder not on PATH yet.
+FIX_PATH = "If it is installed, run pipx ensurepath and start Claude Code from a new terminal."
 
 
 def _denial(done) -> tuple[str, str]:
@@ -296,7 +299,7 @@ def test_in_ci_an_install_without_the_cli_is_denied(tmp_path, command):
     reason, message = _denial(done)
     assert reason == ("(CI rule) SkillTotal blocked this command: the skilltotal CLI is not on "
                       "PATH, so it could not be checked.")
-    assert message == (f"{reason} {FIX} Strict mode is on because CI is set "
+    assert message == (f"{reason} {FIX} {FIX_PATH} Strict mode is on because CI is set "
                        f"(SKILLTOTAL_STRICT=0 turns it off).")
 
 
