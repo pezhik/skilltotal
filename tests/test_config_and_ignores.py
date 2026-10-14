@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from skilltotal.collector import detect_component
-from skilltotal.config import load_config
+from skilltotal.config import ConfigError, load_config
 from skilltotal.engine import analyze_directory
 
 
@@ -37,10 +39,64 @@ def test_config_parses_all_keys(tmp_path: Path):
     assert c.baseline == "bl.json"
 
 
-def test_config_invalid_level_is_dropped(tmp_path: Path):
+def test_config_invalid_level_is_an_error_not_a_gate_switched_off(tmp_path: Path):
+    # Read leniently, `fail_on = "hgih"` was dropped and the CI gate it set was off, exit 0.
     p = tmp_path / ".skilltotal.toml"
     p.write_text('fail_on = "bogus"\n', encoding="utf-8")
-    assert load_config(p).fail_on is None
+    with pytest.raises(ConfigError, match="fail_on must be one of"):
+        load_config(p)
+
+
+@pytest.mark.parametrize(("text", "message"), [
+    ('fail_on = "high\n', "not valid TOML"),
+    ('fail_onn = "high"\n', "unknown key"),
+    ("fail_on_score = 200\n", "from 0 to 100"),
+    ('fail_on_score = "abc"\n', "from 0 to 100"),
+    ('exclude = "vendor/*"\n', "list of non-empty strings"),
+    ('[policy]\n"ST-SHELL-PY" = "blok"\n', "block, warn or ignore"),
+])
+def test_a_config_that_cannot_be_honored_is_an_error(tmp_path: Path, text, message):
+    p = tmp_path / ".skilltotal.toml"
+    p.write_text(text, encoding="utf-8")
+    with pytest.raises(ConfigError, match=message):
+        load_config(p)
+
+
+def test_a_bad_config_fails_the_scan_with_exit_1(tmp_path: Path, monkeypatch, capsys):
+    from skilltotal.cli import main
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / ".skilltotal.toml").write_text('fail_on = "hgih"\n', encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    assert main(["scan", str(tmp_path)]) == 1
+    assert "error:" in capsys.readouterr().err
+
+
+def test_a_missing_config_file_fails_the_scan_with_exit_1(tmp_path: Path, capsys):
+    from skilltotal.cli import main
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    assert main(["scan", str(tmp_path), "--config", str(tmp_path / "nope.toml")]) == 1
+    assert "cannot read config" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("value", ["200", "-5", "abc"])
+def test_a_score_threshold_outside_0_to_100_is_refused(tmp_path: Path, value):
+    from skilltotal.cli import main
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(SystemExit) as exc:
+        main(["scan", str(tmp_path), "--fail-on-score", value])
+    assert exc.value.code != 0
+
+
+def test_an_unwritable_output_is_an_error_not_a_traceback(tmp_path: Path, capsys):
+    from skilltotal.cli import main
+
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    out = tmp_path / "no-such-dir" / "r.json"
+    assert main(["scan", str(tmp_path), "--json", "--output", str(out)]) == 1
+    assert "cannot write the report" in capsys.readouterr().err
 
 
 def test_config_with_utf8_bom_is_parsed(tmp_path: Path):

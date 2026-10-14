@@ -139,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on-score",
         metavar="N",
-        type=int,
+        type=_score_arg,
         help="Exit with code 2 if the risk score is >= N (0-100).",
     )
     scan.add_argument(
@@ -466,7 +466,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     # The file first: whatever happens to the console, the report the caller asked for exists.
     if args.output:
-        Path(args.output).write_text(structured, encoding="utf-8")
+        try:
+            Path(args.output).write_text(structured, encoding="utf-8")
+        except OSError as exc:
+            print(f"error: cannot write the report to {args.output}: {exc.strerror or exc}",
+                  file=sys.stderr)
+            return EXIT_ERROR
         print(f"Report written to {args.output}", file=sys.stderr)
 
     if args.sarif or args.json:
@@ -1096,6 +1101,18 @@ def _cmd_rules(args: argparse.Namespace) -> int:
     return EXIT_ERROR
 
 
+def _score_arg(text: str) -> int:
+    """A risk score threshold: a whole number from 0 to 100 (200 would never trip, -5 always)."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"must be a whole number from 0 to 100, not {text!r}") from None
+    if not 0 <= value <= 100:
+        raise argparse.ArgumentTypeError(f"must be from 0 to 100, not {value}")
+    return value
+
+
 def _load_config(args: argparse.Namespace) -> Config:
     """Load .skilltotal.toml (explicit --config or auto-discovered); empty config if none."""
     from skilltotal.config import Config, find_config, load_config
@@ -1103,11 +1120,9 @@ def _load_config(args: argparse.Namespace) -> Config:
     path = Path(args.config) if args.config else find_config()
     if path is None:
         return Config()
-    try:
-        return load_config(path)
-    except OSError as exc:
-        print(f"warning: cannot read config {path}: {exc}", file=sys.stderr)
-        return Config()
+    # A config that cannot be read is an error (ConfigError, exit 1), never "no config": the gate
+    # it configures would be silently off.
+    return load_config(path)
 
 
 def _fails_gate(
