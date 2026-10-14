@@ -524,7 +524,7 @@ Scan a component on [skilltotal.ai](https://www.skilltotal.ai) and each report o
 links back to the full report. Drop it in your README so visitors see the risk at a glance:
 
 ```markdown
-[![SkillTotal](https://www.skilltotal.ai/…/badge?source=npm:your-package)](https://www.skilltotal.ai)
+[![SkillTotal](https://www.skilltotal.ai/badge?source=npm:your-package)](https://www.skilltotal.ai)
 ```
 
 Copy the exact, ready-to-paste markdown from the report page — it fills in the badge URL for you.
