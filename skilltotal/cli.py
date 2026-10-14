@@ -162,6 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip files matching GLOB (repeatable). Combined with config 'exclude'.",
     )
     scan.add_argument(
+        "--staged",
+        action="store_true",
+        help=(
+            "Scan what the next commit would contain: the files staged in git's index, not the "
+            "working tree (untracked and ignored files are left out). For pre-commit."
+        ),
+    )
+    scan.add_argument(
         "--config",
         metavar="FILE",
         help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
@@ -415,6 +423,43 @@ class _ProgressLine:
             self._width = 0
 
 
+class StagedError(Exception):
+    """``--staged`` could not read git's index for the source."""
+
+
+@contextlib.contextmanager
+def _staged_snapshot(source: str):
+    """A temporary copy of what the next commit would contain under ``source`` (a folder in a git
+    work tree): git's index written out by ``git checkout-index``. The copy keeps the folder's own
+    name, so the component reads as itself; it is removed afterwards."""
+    import shutil
+    import subprocess  # nosec B404 - runs git with fixed arguments, never a shell
+    import tempfile
+
+    folder = Path(source).expanduser()
+    if not folder.is_dir():
+        raise StagedError(f"{source} is not a folder")
+    git = shutil.which("git")
+    if git is None:
+        raise StagedError("git is not installed")
+
+    def run(*argv: str) -> str:
+        done = subprocess.run(  # nosec B603 - fixed git arguments, no shell
+            [git, "-C", str(folder), *argv], capture_output=True, text=True, check=False)
+        if done.returncode != 0:
+            raise StagedError(done.stderr.strip() or f"git {argv[0]} failed")
+        return done.stdout.strip()
+
+    top = Path(run("rev-parse", "--show-toplevel")).resolve()
+    inside = folder.resolve().relative_to(top)
+    with tempfile.TemporaryDirectory(prefix="skilltotal-staged-") as tmp:
+        copy = Path(tmp) / (top.name or "repo")
+        # --prefix writes each staged file under the copy; the trailing slash makes it a folder.
+        run("checkout-index", "--all", "--force", f"--prefix={copy.as_posix()}/")
+        copy.mkdir(exist_ok=True)  # an empty index writes nothing
+        yield copy / inside
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.baseline import build_baseline, load_baseline
     from skilltotal.collector import CollectionError, classify_source
@@ -443,17 +488,25 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # the wait does not read as a hang. Never in a pipe or a CI log.
     progress = _ProgressLine(sys.stderr) if sys.stderr.isatty() else None
     try:
-        if progress is not None:
-            progress("Fetching")
-        report = analyze(
-            args.source, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude,
-            # A `skilltotal:ignore` marker is the code owner's decision. Only a local directory
-            # (a checkout, as in CI) is the person's own code; a fetched package or repository
-            # must not be able to silence its own findings.
-            inline_ignores=(classify_source(args.source) == "local"
-                            and Path(args.source).expanduser().is_dir()),
-            progress=progress,
-        )
+        with contextlib.ExitStack() as stack:
+            target = args.source
+            if args.staged:
+                target = str(stack.enter_context(_staged_snapshot(args.source)))
+            if progress is not None:
+                progress("Fetching")
+            report = analyze(
+                target, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude,
+                # A `skilltotal:ignore` marker is the code owner's decision. Only a local directory
+                # (a checkout, as in CI) is the person's own code; a fetched package or repository
+                # must not be able to silence its own findings.
+                inline_ignores=(classify_source(args.source) == "local"
+                                and Path(args.source).expanduser().is_dir()),
+                progress=progress,
+            )
+            report.component.source = args.source  # not the snapshot's temporary path
+    except StagedError as exc:
+        print(f"error: --staged: {exc}", file=sys.stderr)
+        return EXIT_ERROR
     except CollectionError as exc:
         from skilltotal.collector import failure_category
 
@@ -796,6 +849,17 @@ def _hook_allowed_unchecked(environ) -> frozenset[str]:
     return frozenset(named & set(UNCHECKED_KINDS))
 
 
+_OFF_WORDS = {"", "0", "false", "no", "off"}
+
+
+def _hook_strict_partial(environ) -> bool:
+    """SKILLTOTAL_STRICT_PARTIAL=1 (or true, yes, on): CI also denies a partly analyzed package.
+    A value that is neither on nor off turns it on: a typo must not loosen a gate."""
+    from skilltotal.agent_hook import STRICT_PARTIAL_ENV
+
+    return environ.get(STRICT_PARTIAL_ENV, "").strip().lower() not in _OFF_WORDS
+
+
 def _cmd_hook(args: argparse.Namespace) -> int:
     if args.supervise or args.scan_into:  # one of the processes of a check the hook started
         from skilltotal import hook_scan
@@ -843,7 +907,8 @@ def _hook_answer(strict_by: str = "") -> dict | None:
     budget = max(1.0, min(budget, ceiling))
     answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget,
                            strict=bool(strict_by), strict_by=strict_by,
-                           allow_unchecked=_hook_allowed_unchecked(os.environ))
+                           allow_unchecked=_hook_allowed_unchecked(os.environ),
+                           deny_partial=_hook_strict_partial(os.environ))
     note = _hook_settings_note(os.environ, ceiling)
     if answer is not None and note:
         answer["systemMessage"] = f"{answer.get('systemMessage', '')} {note}".strip()
@@ -852,9 +917,17 @@ def _hook_answer(strict_by: str = "") -> dict | None:
 
 def _hook_settings_note(environ, ceiling: float) -> str:
     """For the console: a hook setting with a value the hook cannot use (it falls back)."""
-    from skilltotal.agent_hook import ALLOW_UNCHECKED_ENV, BUDGET_ENV, UNCHECKED_KINDS
+    from skilltotal.agent_hook import (
+        ALLOW_UNCHECKED_ENV,
+        BUDGET_ENV,
+        STRICT_PARTIAL_ENV,
+        UNCHECKED_KINDS,
+    )
 
     notes = []
+    word = environ.get(STRICT_PARTIAL_ENV, "").strip().lower()
+    if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
+        notes.append(f"{STRICT_PARTIAL_ENV} is {word!r}, read as on; use 1 or 0.")
     named = {p.strip().lower() for p in environ.get(ALLOW_UNCHECKED_ENV, "").split(",")} - {""}
     unknown = sorted(named - set(UNCHECKED_KINDS))
     if unknown:

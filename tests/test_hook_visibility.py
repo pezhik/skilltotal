@@ -499,9 +499,16 @@ def test_a_real_scan_of_a_native_addon_reads_as_partly_analyzed(tmp_path):
     assert f"partly analyzed ({GAP})" in out["systemMessage"]
 
 
-def test_in_ci_a_partly_analyzed_package_is_denied_unless_partial_is_allowed():
+def test_in_ci_a_partly_analyzed_package_passes_and_says_what_was_not_analyzed():
+    out = hook_response(_bash("npm install addon"), scan=lambda s, t: _partial(GAP), strict=True)
+    assert "permissionDecision" not in out["hookSpecificOutput"]
+    assert out["systemMessage"].startswith(
+        f"SkillTotal checked npm:addon: risk 0/100 (low), partly analyzed ({GAP}).")
+
+
+def test_with_strict_partial_ci_denies_a_partly_analyzed_package_unless_partial_is_allowed():
     scan = lambda s, t: _partial(GAP, "Unparseable Python file")  # noqa: E731
-    out = hook_response(_bash("npm install addon"), scan=scan, strict=True)
+    out = hook_response(_bash("npm install addon"), scan=scan, strict=True, deny_partial=True)
     reason = ("(CI rule) SkillTotal blocked this install: npm:addon was only partly analyzed "
               f"({GAP}; Unparseable Python file).")
     assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
@@ -509,14 +516,14 @@ def test_in_ci_a_partly_analyzed_package_is_denied_unless_partial_is_allowed():
     assert out["systemMessage"] == (
         f"{reason} To allow it in CI, set {ALLOW_UNCHECKED_ENV}=partial. {STRICT_ON}")
     allowed = hook_response(_bash("npm install addon"), scan=scan, strict=True,
-                            allow_unchecked=frozenset({"partial"}))
+                            deny_partial=True, allow_unchecked=frozenset({"partial"}))
     assert "permissionDecision" not in allowed["hookSpecificOutput"]
     assert f"partly analyzed ({GAP}; Unparseable Python file)" in allowed["systemMessage"]
 
 
 def test_in_ci_partial_is_named_with_the_other_kinds():
     out = hook_response(_bash("npm ci && npm install addon"), scan=lambda s, t: _partial(GAP),
-                        strict=True)
+                        strict=True, deny_partial=True)
     assert out["hookSpecificOutput"]["permissionDecisionReason"] == (
         f"(CI rule) SkillTotal blocked this install: it installs from package-lock.json, "
         f"{NAMES_ONLY} npm:addon was only partly analyzed ({GAP}).")
@@ -592,6 +599,17 @@ def test_strict_mode_says_in_the_console_what_turned_it_on():
     assert note in out["systemMessage"]
     # How to turn it off is for the pipeline's owner, not for the agent.
     assert "SKILLTOTAL_STRICT" not in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_strict_partial_is_off_unless_set_and_a_typo_reads_as_on():
+    assert cli._hook_strict_partial({}) is False
+    for off in ("0", "false", "No", " off ", ""):
+        assert cli._hook_strict_partial({"SKILLTOTAL_STRICT_PARTIAL": off}) is False
+    for on in ("1", "true", "YES", "on", "ture"):
+        assert cli._hook_strict_partial({"SKILLTOTAL_STRICT_PARTIAL": on}) is True
+    note = cli._hook_settings_note({"SKILLTOTAL_STRICT_PARTIAL": "ture"}, 600)
+    assert "SKILLTOTAL_STRICT_PARTIAL is 'ture', read as on; use 1 or 0." in note
+    assert cli._hook_settings_note({"SKILLTOTAL_STRICT_PARTIAL": "1"}, 600) == ""
 
 
 def test_the_allowance_names_kinds_separated_by_commas():

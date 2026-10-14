@@ -3205,6 +3205,7 @@ class BackgroundFull(TimeoutError):
 def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
     strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
+    deny_partial: bool = False,
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -3219,7 +3220,11 @@ def hook_response(
     unchecked (a lockfile, a local path, a downloaded script). ``strict`` is CI, where nobody is
     there to answer: what would be asked about is denied, and so is an unchecked install whose
     kind ``allow_unchecked`` does not name. ``strict_by`` names the variable that turned it on,
-    for the person's console line.
+    for the person's console line. A package checked only in part (a bundle too large to read,
+    code in a language not analyzed) passes in CI with its gaps on the console line, unless
+    ``deny_partial`` (SKILLTOTAL_STRICT_PARTIAL): what it runs at install was read either way, and
+    the dependencies a command pulls in are not checked at all, so denying the unread rest of the
+    named package by default stopped large packages without making the build much safer.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -3322,7 +3327,7 @@ def hook_response(
     # In CI an unchecked install is denied unless its kind is allowed; elsewhere it is said only.
     blocked = [i for i in unchecked if i.unchecked not in allow_unchecked] if strict else []
     passed = [i for i in unchecked if i not in blocked]
-    held = partial if strict and PARTIAL not in allow_unchecked else []
+    held = partial if strict and deny_partial and PARTIAL not in allow_unchecked else []
 
     if denied:
         reason = "SkillTotal blocked this install: it found malicious indicators. " + " ".join(
@@ -3394,6 +3399,8 @@ def _runs_current_release(command: str, installs: list[Install]) -> str:
 _STRICT = "(CI rule) "
 # The kinds of unchecked install (UNCHECKED_KINDS, comma-separated) that strict mode lets through.
 ALLOW_UNCHECKED_ENV = "SKILLTOTAL_ALLOW_UNCHECKED"
+# Turns on denying a partly analyzed package in CI strict mode (off by default).
+STRICT_PARTIAL_ENV = "SKILLTOTAL_STRICT_PARTIAL"
 
 
 def strict_note(strict_by: str) -> str:
