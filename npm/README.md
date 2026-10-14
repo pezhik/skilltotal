@@ -15,7 +15,7 @@ To use it as a local MCP server in Claude Code, Claude Desktop, Cursor or any ot
 
 ## How it runs
 
-The scanner itself is the `skilltotal` Python package (Python 3.10+). This npm package has no scanner code. It starts the engine with the first of these it finds:
+The scanner itself is the `skilltotal` Python package (Python 3.10+). This npm package (Node.js 18 or later) has no scanner code. It starts the engine with the first of these it finds:
 
 1. `uvx` from [uv](https://docs.astral.sh/uv/), which runs the PyPI release matching this package's version in an isolated environment.
 2. `pipx run`, which runs the same release, also isolated.

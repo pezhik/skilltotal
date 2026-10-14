@@ -115,6 +115,9 @@ and also works on Debian/Ubuntu and Homebrew Python, where PEP 668 blocks a bare
 pipx install skilltotal
 ```
 
+If `skilltotal` is not found afterwards, run `pipx ensurepath` and open a new terminal: on a fresh
+Linux machine pipx's folder is not on `PATH` yet.
+
 To install into a virtual environment, or to use it as a library:
 
 ```bash
@@ -202,10 +205,13 @@ set to anything but empty, `0`, `false`, `no` or `off`. `SKILLTOTAL_STRICT=1` (o
 them in `SKILLTOTAL_ALLOW_UNCHECKED`, for example `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`.
 Allowed kinds still get their console line. Malicious indicators are denied in and out of CI.
 
-Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) are scanned
-at the ref that will be installed. A verdict is reused for the same artifact (an exact npm release
-or PyPI file for a week, a git repository for an hour), so repeated `npx prettier` or `uvx ruff`
-calls don't trigger a rescan. When the engine version changes, everything is scanned again.
+Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) and the
+repositories that `npx skills add` and `gemini extensions install` fetch are scanned at the ref that
+will be installed; checking them needs `git` on `PATH`. A verdict is reused for the same artifact
+(an exact npm release or PyPI file for a week, a git repository for an hour), so repeated
+`npx prettier` or `uvx ruff` calls don't trigger a rescan. When the engine version changes,
+everything is scanned again. The verdicts are kept in `skilltotal/hook-cache.json` under
+`XDG_CACHE_HOME` (default `~/.cache`; `%LOCALAPPDATA%` on Windows); delete it to start over.
 
 A first check takes a second or two for a small package, about 10 seconds for one the size of
 `typescript` or `lodash`, half a minute for `openai` and about a minute for `django` (about 2,000
@@ -245,8 +251,9 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
   `lockfile`.
 - **Scripts and shell-profile definitions.** The hook reads only the command line. It does not
   read a script on disk (`bash install.sh`) or the aliases, functions and variables your shell
-  profile defines. It does not read a script the agent downloads and runs (`curl ... | bash`)
-  either. It says so in the console, and in CI it denies the command unless
+  profile defines, and such a command is not treated as an install: it runs without a console
+  line, in CI too. A script the agent downloads and runs (`curl ... | bash`) is not read either,
+  but that is an install: the hook says so in the console, and in CI it denies the command unless
   `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
 - **Minified bundles.** They are listed in the report but not analyzed. The scripts npm runs at
   install are the exception: they are analyzed even when minified.
@@ -265,8 +272,9 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
 # Human-readable report
 skilltotal scan ./path/to/component
 
-# Scan a remote repository (shallow git clone)
+# Scan a remote repository (shallow git clone), or one folder of it at a ref
 skilltotal scan https://github.com/owner/repo
+skilltotal scan https://github.com/owner/repo/tree/main/src/server
 
 # Scan a project archive or a single file (e.g. an AI-generated project downloaded as a ZIP)
 skilltotal scan ./my-project.zip
@@ -282,7 +290,7 @@ skilltotal scan pypi:requests==2.31.0
 # JSON to stdout
 skilltotal scan ./component --json
 
-# SARIF 2.1.0 (GitHub Code Scanning / IDE)
+# SARIF 2.1.0 (GitHub Code Scanning / IDE) to a file; the console gets the readable summary
 skilltotal scan ./component --sarif --output report.sarif
 
 # Write the report to a file (SARIF if --sarif, else JSON)
@@ -378,6 +386,26 @@ baseline = ".skilltotal-baseline.json"
 "ST-SENS-WORD" = "ignore"        # suppressed entirely (same effect as `ignore`)
 ```
 
+The config is read from the directory you run `skilltotal` in (or the file `--config` names). A
+config it cannot honor (invalid TOML, an unknown key, a value of the wrong kind, an unknown policy
+action, a `--config` path that does not exist) stops the scan with exit code 1: a typo never turns
+a gate off.
+
+**Settings** (environment variables, for the CLI, the plugin and the action):
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `SKILLTOTAL_MAX_ARCHIVE_MB` | 150 | Largest archive downloaded or read |
+| `SKILLTOTAL_MAX_EXTRACT_MB` | 400 | Largest total size an archive may extract to |
+| `SKILLTOTAL_MAX_ARCHIVE_MEMBERS` | 30000 | Most entries an archive may hold |
+| `SKILLTOTAL_MAX_CLONE_MB` | 200 | Largest git working tree cloned |
+| `SKILLTOTAL_MAX_READABLE_MB` | same as clone | Most text a scan reads |
+| `SKILLTOTAL_CLONE_TIMEOUT` | 300 | Seconds a git clone may take |
+| `SKILLTOTAL_WORKERS` | up to 4 | Processes a large scan uses (1 for one) |
+
+A source over a limit is refused with its size and the variable to raise. A value that is not a
+positive whole number is an error.
+
 To suppress a single finding, put a `# skilltotal:ignore` (or `# skilltotal:ignore[ST-ID]`)
 comment on its line. Inline markers count only when you scan a local directory (your own code,
 as in CI). In a package or repository that SkillTotal downloads they are ignored, so a package
@@ -466,7 +494,8 @@ repos:
 ```
 
 Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
-on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`).
+on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`). It scans
+the working tree as it is, untracked files included, not only the staged changes.
 
 ### Use as an MCP server
 

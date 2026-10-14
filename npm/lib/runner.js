@@ -96,10 +96,11 @@ function isAvailable(candidate) {
 function helpText(version) {
   return [
     "skilltotal: no way to run the engine was found.",
-    "The scanner is a Python package (Python 3.10+). Install one of these, then run the same command again:",
+    "The scanner is a Python package. Install one of these, then run the same command again:",
     "  uv    https://docs.astral.sh/uv/   (recommended: npx skilltotal then runs it in isolation)",
     "  pipx  https://pipx.pypa.io",
-    `  pip   python -m pip install skilltotal==${version}   (Python 3.11+)`,
+    `  pip   python -m pip install skilltotal==${version}   (Python 3.11+, in a virtual environment:`,
+    "        Debian, Ubuntu and Homebrew Python refuse a system-wide pip install)",
     "",
   ].join("\n");
 }
