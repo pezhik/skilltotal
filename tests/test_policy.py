@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skilltotal.cli import EXIT_FAIL_ON_HIGH, EXIT_OK, main
 from skilltotal.config import load_config
 
@@ -40,8 +42,7 @@ def test_policy_table_parses_valid_actions(tmp_path: Path):
         '[policy]\n'
         '"ST-SHELL-PIPE-EXEC" = "block"\n'
         '"ST-DYN-PY" = "WARN"\n'          # actions are case-insensitive
-        '"ST-SENS-WORD" = "ignore"\n'
-        '"ST-BOGUS" = "explode"\n',       # unknown action -> dropped, not fatal
+        '"ST-SENS-WORD" = "ignore"\n',
     )
     c = load_config(p)
     assert c.policy == {
@@ -49,6 +50,15 @@ def test_policy_table_parses_valid_actions(tmp_path: Path):
         "ST-DYN-PY": "warn",
         "ST-SENS-WORD": "ignore",
     }
+
+
+def test_an_unknown_policy_action_is_an_error_not_a_dropped_rule(tmp_path: Path):
+    # Dropped, a misspelled `block` left the rule unblocked while the gate looked configured.
+    from skilltotal.config import ConfigError
+
+    p = _config(tmp_path, '[policy]\n"ST-BOGUS" = "explode"\n')
+    with pytest.raises(ConfigError, match="block, warn or ignore"):
+        load_config(p)
 
 
 def test_ignored_rules_merges_ignore_list_and_policy(tmp_path: Path):

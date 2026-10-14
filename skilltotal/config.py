@@ -21,7 +21,12 @@ Per-rule policy (reviewable, lives in the repo — no dashboard or account neede
 `block` overrides severity thresholds (it trips even with no `fail_on` configured, also for a
 capability rule, which the severity gate never counts on its own); `warn`
 is an explicit accept-but-show (the finding stays in the report and still counts toward the
-risk score / `fail_on_score`); unknown actions are dropped, not fatal.
+risk score / `fail_on_score`).
+
+A config that cannot be read as written is an error, never an empty config: invalid TOML, an
+unknown key (a typo such as `fail_onn`), a value of the wrong kind or out of range (`fail_on =
+"hgih"`, `fail_on_score = 200`) and an unknown policy action all raise ``ConfigError``, which
+the CLI reports with exit code 1. Read any other way, a typo would turn a CI gate off.
 """
 
 from __future__ import annotations
@@ -38,11 +43,13 @@ except ModuleNotFoundError:  # pragma: no cover
 CONFIG_NAME = ".skilltotal.toml"
 _LEVELS = frozenset({"low", "medium", "high", "critical"})
 _POLICY_ACTIONS = frozenset({"block", "warn", "ignore"})
+_KEYS = ("fail_on", "fail_on_score", "fail_on_unanalyzed", "exclude", "ignore", "baseline",
+         "policy")
 
 
 class ConfigError(ValueError):
-    """A config value that would switch a gate off by mistake (``fail_on_unanalyzed = "true"``,
-    a string): reported, never read as off."""
+    """A config that would switch a gate off by mistake if read leniently: reported, never read
+    as off."""
 
 
 @dataclass
@@ -70,46 +77,58 @@ def find_config(start: Path | None = None) -> Path | None:
 
 
 def load_config(path: Path) -> Config:
-    """Parse a ``.skilltotal.toml`` file. Unknown/malformed keys are ignored, not fatal."""
+    """Parse a ``.skilltotal.toml`` file; raise ``ConfigError`` for anything it cannot honor."""
     # utf-8-sig strips a leading BOM if present (Windows editors / PowerShell often add one);
     # tomllib rejects a BOM, which would otherwise silently void the whole config (fail-open).
-    text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
-    data = _parse(text)
-    fail_on = _as_level(data.get("fail_on"))
+    try:
+        text = Path(path).read_text(encoding="utf-8-sig", errors="replace")
+    except OSError as exc:
+        raise ConfigError(f"cannot read config {path}: {exc.strerror or exc}") from exc
+    data = _parse(text, path)
+    unknown = sorted(k for k in data if k not in _KEYS)
+    if unknown:
+        raise ConfigError(f"{path}: unknown key(s) {', '.join(unknown)}; "
+                          f"known keys: {', '.join(_KEYS)}")
     unanalyzed = data.get("fail_on_unanalyzed", False)
     if not isinstance(unanalyzed, bool):
         raise ConfigError(f"{path}: fail_on_unanalyzed must be true or false, not {unanalyzed!r}")
     return Config(
-        fail_on=fail_on,
-        fail_on_score=_as_int(data.get("fail_on_score")),
+        fail_on=_level_value(data, path),
+        fail_on_score=_score_value(data, path),
         fail_on_unanalyzed=unanalyzed,
-        exclude=_as_str_list(data.get("exclude")),
-        ignore=_as_str_list(data.get("ignore")),
-        baseline=_as_str(data.get("baseline")),
-        policy=_as_policy(data.get("policy")),
+        exclude=_str_list_value(data, "exclude", path),
+        ignore=_str_list_value(data, "ignore", path),
+        baseline=_str_value(data, "baseline", path),
+        policy=_policy_value(data, path),
     )
 
 
-def _parse(text: str) -> dict[str, object]:
+def _parse(text: str, path: Path) -> dict[str, object]:
     if tomllib is not None:
         try:
             data = tomllib.loads(text)
-            return data if isinstance(data, dict) else {}
-        except (tomllib.TOMLDecodeError, ValueError):  # pragma: no cover - malformed config
-            return {}
+        except (tomllib.TOMLDecodeError, ValueError) as exc:
+            raise ConfigError(f"{path}: not valid TOML: {exc}") from exc
+        return data if isinstance(data, dict) else {}
     return _fallback_parse(text)  # pragma: no cover - 3.10 path
 
 
 def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 only
     """Best-effort parse of the handful of supported scalar/array keys (no tomllib)."""
     out: dict[str, object] = {}
+    # Top-level keys before any [table]: one the parser does not know is reported, not skipped.
+    top = re.split(r"^\s*\[", text, maxsplit=1, flags=re.MULTILINE)[0]
+    for m in re.finditer(r"^\s*([A-Za-z_][\w-]*)\s*=", top, re.MULTILINE):
+        if m.group(1) not in _KEYS:
+            out[m.group(1)] = None
     for key in ("fail_on", "baseline"):
-        m = re.search(rf'^\s*{key}\s*=\s*"([^"]*)"', text, re.MULTILINE)
+        m = re.search(rf'^\s*{key}\s*=\s*(.*?)\s*(?:#.*)?$', text, re.MULTILINE)
         if m:
-            out[key] = m.group(1)
-    m = re.search(r"^\s*fail_on_score\s*=\s*(\d+)", text, re.MULTILINE)
+            raw = m.group(1)
+            out[key] = raw[1:-1] if len(raw) >= 2 and raw[0] == raw[-1] == '"' else raw
+    m = re.search(r"^\s*fail_on_score\s*=\s*(.*?)\s*(?:#.*)?$", text, re.MULTILINE)
     if m:
-        out["fail_on_score"] = int(m.group(1))
+        out["fail_on_score"] = int(m.group(1)) if m.group(1).isdigit() else m.group(1)
     m = re.search(r"^\s*fail_on_unanalyzed\s*=\s*([^#\n]*?)\s*(?:#.*)?$", text, re.MULTILINE)
     if m:
         value = m.group(1)
@@ -129,33 +148,57 @@ def _fallback_parse(text: str) -> dict[str, object]:  # pragma: no cover - 3.10 
     return out
 
 
-def _as_str(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
+def _level_value(data: dict[str, object], path: Path) -> str | None:
+    if "fail_on" not in data:
+        return None
+    value = data["fail_on"]
+    if isinstance(value, str) and value.lower() in _LEVELS:
+        return value.lower()
+    raise ConfigError(f"{path}: fail_on must be one of low, medium, high, critical, "
+                      f"not {value!r}")
 
 
-def _as_level(value: object) -> str | None:
-    return value.lower() if isinstance(value, str) and value.lower() in _LEVELS else None
+def _score_value(data: dict[str, object], path: Path) -> int | None:
+    if "fail_on_score" not in data:
+        return None
+    value = data["fail_on_score"]
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100:
+        return value
+    raise ConfigError(f"{path}: fail_on_score must be a whole number from 0 to 100, "
+                      f"not {value!r}")
 
 
-def _as_int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
+def _str_value(data: dict[str, object], key: str, path: Path) -> str | None:
+    if key not in data:
+        return None
+    value = data[key]
+    if isinstance(value, str) and value:
+        return value
+    raise ConfigError(f"{path}: {key} must be a non-empty string, not {value!r}")
 
 
-def _as_str_list(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(v) for v in value if isinstance(v, str) and v]
-    return []
+def _str_list_value(data: dict[str, object], key: str, path: Path) -> list[str]:
+    if key not in data:
+        return []
+    value = data[key]
+    if isinstance(value, list) and all(isinstance(v, str) and v for v in value):
+        return list(value)
+    raise ConfigError(f"{path}: {key} must be a list of non-empty strings, not {value!r}")
 
 
-def _as_policy(value: object) -> dict[str, str]:
-    """Keep only ``rule id -> valid action`` string pairs; drop anything malformed."""
-    if not isinstance(value, dict):
+def _policy_value(data: dict[str, object], path: Path) -> dict[str, str]:
+    """``rule id -> block | warn | ignore``; anything else is an error, not a dropped entry: a
+    misspelled `block` would leave the rule unblocked."""
+    if "policy" not in data:
         return {}
+    value = data["policy"]
+    if not isinstance(value, dict):
+        raise ConfigError(f"{path}: [policy] must be a table of rule id = action")
     out: dict[str, str] = {}
     for rule_id, action in value.items():
-        if not (isinstance(rule_id, str) and rule_id and isinstance(action, str)):
-            continue
-        normalized = action.lower()
-        if normalized in _POLICY_ACTIONS:
-            out[rule_id] = normalized
+        normalized = action.lower() if isinstance(action, str) else None
+        if not (isinstance(rule_id, str) and rule_id) or normalized not in _POLICY_ACTIONS:
+            raise ConfigError(f"{path}: [policy] {rule_id!r} = {action!r}: the action must be "
+                              f"block, warn or ignore")
+        out[rule_id] = normalized
     return out
