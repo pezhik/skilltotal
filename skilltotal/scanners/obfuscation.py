@@ -274,8 +274,7 @@ class ObfuscationScanner(Scanner):
                 "crypto.createDecipheriv / PyCryptodome / Fernet) and, in the same file, feeds "
                 "code to a dynamic-execution sink (new Function / eval / vm.runInThisContext). "
                 "Decrypting a payload in order to run it keeps the real behavior opaque to static "
-                "review until runtime — the staged-loader shape seen in the August 2026 "
-                "'mini Shai-Hulud' npm compromise."
+                "review until runtime."
             ),
             recommendation=(
                 "Decrypt the payload offline and inspect what it does before trusting this "

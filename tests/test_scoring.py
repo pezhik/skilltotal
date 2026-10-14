@@ -7,6 +7,7 @@ from skilltotal.models import (
     Component,
     Evidence,
     Finding,
+    RiskLevel,
     Severity,
     ThreatClass,
 )
@@ -48,7 +49,8 @@ def test_only_malicious_and_risky_contribute():
         _finding(Severity.HIGH, "m", ThreatClass.MALICIOUS_INDICATOR),
         _finding(Severity.CRITICAL, "cap", ThreatClass.CAPABILITY),
     ]
-    assert compute_score(findings) == 20  # malicious high counts; capability critical does not
+    # Malicious high counts (and lifts the score to the HIGH floor); capability critical does not.
+    assert compute_score(findings) == 50
 
 
 def test_score_capped_at_100():
@@ -147,3 +149,19 @@ def test_exfil_combo_evidence_deduplicated():
     caps = {Capability.NETWORK_EGRESS: [_ev("n.py", 9)]}
     combo = exfiltration_finding([sens], caps)
     assert len([e for e in combo.evidence if e.file == "same.py"]) == 1
+
+
+def test_a_malicious_indicator_scores_at_least_high():
+    """A malicious verdict never reads as a low or medium score."""
+    from skilltotal.scoring import MALICIOUS_SCORE_FLOOR
+
+    ev = [Evidence(file="a.js", line_start=1, line_end=1, snippet="x", match_offset=0)]
+    one_low = [Finding(id="m", severity=Severity.LOW, category="c", title="t", description="d",
+                       evidence=ev, recommendation="r",
+                       threat_class=ThreatClass.MALICIOUS_INDICATOR)]
+    assert compute_score(one_low) == MALICIOUS_SCORE_FLOOR == 50
+    assert risk_level(compute_score(one_low)) == RiskLevel.HIGH
+    risky_only = [Finding(id="r", severity=Severity.MEDIUM, category="c", title="t",
+                          description="d", evidence=ev, recommendation="r",
+                          threat_class=ThreatClass.RISKY_CONSTRUCT)]
+    assert compute_score(risky_only) < MALICIOUS_SCORE_FLOOR  # the floor is for malicious only

@@ -144,5 +144,6 @@ one SARIF result anchored to its file/line.
 2. Every evidence object has all four fields with valid line numbers.
 3. Items that cannot be evidenced appear only in `needs_review[]`.
 4. `risk_score` is the capped sum of the severity weights of `malicious_indicator` and
-   `risky_construct` findings; `risk_level` is derived from it. `exposure` and `capability`
+   `risky_construct` findings, and at least 50 when any `malicious_indicator` is present;
+   `risk_level` is derived from it. `exposure` and `capability`
    findings never change it.

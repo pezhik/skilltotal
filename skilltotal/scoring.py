@@ -254,12 +254,21 @@ def _dedupe(evidence: list[Evidence]) -> list[Evidence]:
     return out
 
 
+# A component with a malicious indicator scores at least this (the HIGH band). A single indicator
+# weighs only its severity, so one HIGH worm hook scored 20/100 (LOW) under a "malicious" verdict:
+# a reader of the score, a --fail-on-score gate or a catalog sort took it for a safe package.
+MALICIOUS_SCORE_FLOOR = 50
+
+
 def compute_score(findings: list[Finding]) -> int:
-    """Sum severity weights of risk-bearing findings (malicious + risky), capped at SCORE_CAP.
+    """Sum severity weights of risk-bearing findings (malicious + risky), capped at SCORE_CAP;
+    at least MALICIOUS_SCORE_FLOOR when any finding is a malicious indicator.
 
     CAPABILITY findings are informational and contribute 0 — capability is not risk.
     """
     total = sum(f.severity.weight for f in findings if f.threat_class in _SCORED_CLASSES)
+    if any(f.threat_class == ThreatClass.MALICIOUS_INDICATOR for f in findings):
+        total = max(total, MALICIOUS_SCORE_FLOOR)
     return min(total, SCORE_CAP)
 
 

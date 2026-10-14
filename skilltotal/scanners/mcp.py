@@ -198,11 +198,22 @@ def _concealed_launch_path(value: str) -> str | None:
     """
     if not isinstance(value, str) or "/" not in value:
         return None
+    # A docker volume (`~/.aws:/root/.aws:ro`) or any other `a:b` mapping is not a launch target;
+    # only a drive letter (`C:/...`) may carry a colon.
+    if ":" in value[2:]:
+        return None
+    segments = value.split("/")
+    # The target is a script the server runs, not a folder or a credential file.
+    if not _LAUNCH_SCRIPT.search(segments[-1]):
+        return None
     hidden = 0
-    for seg in value.split("/"):
+    for seg in segments:
         if len(seg) > 1 and seg.startswith(".") and seg not in ("..",):
             hidden += 1
     return value if hidden >= 2 else None
+
+
+_LAUNCH_SCRIPT = re.compile(r"\.(?:py|pyw|js|mjs|cjs|ts|sh|bash|ps1|rb|pl|exe|bin)$", re.IGNORECASE)
 
 # Permission/scope declarations and the over-broad values that violate least privilege (cf. the
 # Postmark mail-full-access lesson). Conservative literal set so narrow scopes are not flagged.
@@ -488,9 +499,8 @@ class McpScanner(Scanner):
                 "An mcpServers entry launches a command whose target is a concealed local path "
                 "nesting two or more hidden dot-directories (e.g. "
                 "~/.config/.cache/.sys/.server.py). The server's code lives outside the component "
-                "and in a deliberately hidden location, so a reviewer inspecting the repository "
-                "never sees what the agent will run. This is the delivery shape of the Deadbugz "
-                "MCP supply-chain campaign (Pillar Security, August 2026)."
+                "and in a hidden location, so a reviewer inspecting the repository never sees "
+                "what the agent will run."
             ),
             recommendation=(
                 "Do not trust this configuration. A legitimate MCP server is launched via a "
