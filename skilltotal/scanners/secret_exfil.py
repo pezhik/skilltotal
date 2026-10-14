@@ -360,13 +360,23 @@ class _Blocks:
         return (self.opens[i], self.closes[i] + 1) if i >= 0 else (0, self.end)
 
 
-# The `env` option of a process call (`spawn(cmd, args, {env: process.env})`, also as
-# `Object.assign({}, process.env, ...)`): the environment the child runs in, not data it sends.
-_JS_ENV_OPTION = re.compile(r"(?<![\w$.])env\s*:\s*(?:Object\.assign\(\s*\{\s*\}\s*,\s*)?$")
-
-
-def _env_option(text: str, pos: int) -> bool:
-    return bool(_JS_ENV_OPTION.search(text, max(0, pos - 40), pos))
+def _options_start(text: str, start: int, end: int) -> int:
+    """Where the last top-level argument of the call text[start:end] begins, when it is an object
+    literal (a process call's options); ``end`` otherwise."""
+    depth, i, last = 0, start, start
+    while i < end:
+        ch = text[i]
+        if ch in "'\"`":
+            i = _skip_string(text, i, end)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            last = i + 1
+        i += 1
+    return last if text[last:end].lstrip().startswith("{") else end
 
 
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
@@ -420,14 +430,13 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     opens_channel = bool(_JS_OPENS_CHANNEL.search(text))
 
     def carries_env(start: int, end: int) -> bool:
-        if any(start <= p < end and not _env_option(text, p) for p in whole):
+        if any(start <= p < end for p in whole):
             return True
         if names is None:
             return False
         return any(
             _code_offset(f, m.start()) and not _JS_MEMBER_READ.match(text, m.end())
             and any(a <= m.start() < b for a, b in scopes[m.group(0)])
-            and not _env_option(text, m.start())
             for m in names.finditer(text, start, end)
         )
 
@@ -455,7 +464,11 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
                 continue
             if needs_net_cmd and not _SHELL_NET.search(args):
                 continue
-            if carries_env(open_at + 1, close):
+            # A process call's last argument, when it is an object, is its options: `env` there is
+            # the environment the child runs in (pm2: `spawn('wget', [url], {env: process.env})`),
+            # not data it sends. The command and its arguments are what can carry it out.
+            end = _options_start(text, open_at + 1, close) if needs_net_cmd else close
+            if carries_env(open_at + 1, end):
                 found.append(f.evidence_for_span(m.start(), close + 1))
                 if len(found) >= MAX_EVIDENCE_SCANNED:
                     return found

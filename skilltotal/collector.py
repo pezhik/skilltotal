@@ -52,9 +52,24 @@ _HTTP_TIMEOUT = 60  # seconds for a registry/download request
 #   SKILLTOTAL_MAX_ARCHIVE_MB   — max size of the archive itself (downloaded or uploaded)
 #   SKILLTOTAL_MAX_EXTRACT_MB   — max total uncompressed size (decompression-bomb guard)
 #   SKILLTOTAL_MAX_ARCHIVE_MEMBERS — max number of entries (anti "millions of tiny files" DoS)
-_MAX_ARCHIVE_BYTES = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MB", "150")) * 1024 * 1024
-_MAX_EXTRACT_BYTES = int(os.environ.get("SKILLTOTAL_MAX_EXTRACT_MB", "400")) * 1024 * 1024
-_MAX_ARCHIVE_MEMBERS = int(os.environ.get("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", "30000"))
+# The whole-number settings below, with their defaults. A value that is not a positive whole
+# number keeps the default here (a library import never crashes on its environment); the CLI
+# refuses it with an error first (cli.invalid_settings).
+INT_SETTINGS = {
+    "SKILLTOTAL_MAX_ARCHIVE_MB": 150, "SKILLTOTAL_MAX_EXTRACT_MB": 400,
+    "SKILLTOTAL_MAX_ARCHIVE_MEMBERS": 30000, "SKILLTOTAL_CLONE_TIMEOUT": 300,
+    "SKILLTOTAL_MAX_CLONE_MB": 200, "SKILLTOTAL_MAX_READABLE_MB": None,
+}
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    return int(raw) if raw.isdigit() and int(raw) > 0 else default
+
+
+_MAX_ARCHIVE_BYTES = _env_int("SKILLTOTAL_MAX_ARCHIVE_MB", 150) * 1024 * 1024
+_MAX_EXTRACT_BYTES = _env_int("SKILLTOTAL_MAX_EXTRACT_MB", 400) * 1024 * 1024
+_MAX_ARCHIVE_MEMBERS = _env_int("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", 30000)
 # Local archive sources accepted by `scan <path>` (besides a directory and a single file). Zip is
 # also the container of formats that carry their own extension: Claude Desktop extensions (.mcpb,
 # formerly .dxt), Python wheels and VS Code extensions. Any other local file that starts with the
@@ -72,11 +87,11 @@ _TAR_OVERHEAD_PER_MEMBER = 4096
 # Bound a git clone so a slow/huge remote can't hang the caller (a long-lived server holds a
 # request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
 # blocking forever on an interactive credential prompt for a private/typo'd URL.
-_CLONE_TIMEOUT = int(os.environ.get("SKILLTOTAL_CLONE_TIMEOUT", "300"))
+_CLONE_TIMEOUT = _env_int("SKILLTOTAL_CLONE_TIMEOUT", 300)
 # Reject repositories larger than this (MB). Checked before cloning (GitHub API) and again
 # during the clone (a watchdog kills git if the working tree blows past the cap) so a huge repo
 # can neither hang nor fill the disk / OOM the box. Overridable via env.
-_MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
+_MAX_CLONE_MB = _env_int("SKILLTOTAL_MAX_CLONE_MB", 200)
 # The second limit bounds WORK rather than bytes: the readable text an index will actually open.
 # The two are not the same constraint and a single number cannot serve both -- a repository of
 # video is enormous to clone and trivial to scan, while one of pure source is the reverse, and
@@ -84,7 +99,7 @@ _MAX_CLONE_MB = int(os.environ.get("SKILLTOTAL_MAX_CLONE_MB", "200"))
 # fire on its own (readable bytes are a subset of the tree), so the offline CLI is unchanged. A
 # deployment that kills a scan at a wall clock sets it to whatever fits inside that wall; without
 # it, such a host accepts a repository it cannot finish and times out instead of saying no.
-_MAX_READABLE_MB = int(os.environ.get("SKILLTOTAL_MAX_READABLE_MB", str(_MAX_CLONE_MB)))
+_MAX_READABLE_MB = _env_int("SKILLTOTAL_MAX_READABLE_MB", _MAX_CLONE_MB)
 # The index refuses any single file this big, whatever it holds, so a pre-clone estimate of the
 # work ahead must not count those bytes either. Imported rather than repeated: one number.
 _MAX_INDEXED_FILE_BYTES = MAX_FILE_BYTES

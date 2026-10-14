@@ -98,11 +98,15 @@ def build_parser() -> argparse.ArgumentParser:
             "git URL, or npm:<name> / pypi:<name>."
         ),
     )
-    scan.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
-    scan.add_argument(
+    output_format = scan.add_mutually_exclusive_group()
+    output_format.add_argument(
+        "--json", action="store_true",
+        help="Emit JSON (to stdout, or to --output with a summary on the console).",
+    )
+    output_format.add_argument(
         "--sarif",
         action="store_true",
-        help="Emit SARIF 2.1.0 to stdout (and to --output if given).",
+        help="Emit SARIF 2.1.0 (to stdout, or to --output with a summary on the console).",
     )
     scan.add_argument(
         "--output",
@@ -320,6 +324,10 @@ def main(argv: list[str] | None = None) -> int:
                 stream.reconfigure(encoding="utf-8", errors="replace")
     parser = build_parser()
     args = parser.parse_args(argv)
+    bad = invalid_settings(os.environ)
+    if bad:
+        print(f"error: {bad}", file=sys.stderr)
+        return EXIT_ERROR
 
     if args.command == "scan":
         return _cmd_scan(args)
@@ -337,6 +345,30 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_hook(args)
     parser.error("unknown command")  # pragma: no cover
     return EXIT_ERROR
+
+
+def invalid_settings(environ) -> str:
+    """The first whole-number setting in the environment that is not a positive whole number,
+    described; empty when all are fine. Read leniently, `SKILLTOTAL_MAX_ARCHIVE_MB=150mb` crashed
+    the import with a traceback."""
+    from skilltotal.collector import INT_SETTINGS
+
+    for name in (*INT_SETTINGS, "SKILLTOTAL_WORKERS"):
+        raw = environ.get(name, "").strip()
+        if raw and not (raw.isdigit() and int(raw) > 0):
+            return f"{name} must be a positive whole number, not {raw!r}"
+    return ""
+
+
+def _emit(text: str) -> None:
+    """Print to stdout; a reader that went away (`| head`) is not an error of the scan."""
+    try:
+        print(text)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Point stdout at nothing so the interpreter's final flush does not raise again.
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
 
 
 class _ProgressLine:
@@ -484,9 +516,9 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # With --output the structured report is in the file; the console gets the readable summary
     # (a SARIF document printed too ran to thousands of lines in a CI log).
     if (args.sarif or args.json) and not args.output:
-        print(structured)
+        _emit(structured)
     else:
-        print(render_text(report))
+        _emit(render_text(report))
 
     level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
     score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
@@ -809,9 +841,34 @@ def _hook_answer(strict_by: str = "") -> dict | None:
     # Claude Code lets a command through when its hook outlives the hook's timeout (900 s in the
     # plugin's hooks.json), so a budget past it would turn every slow check into a silent pass.
     budget = max(1.0, min(budget, ceiling))
-    return hook_response(event, scan=_hook_scan_cached, budget_s=budget,
-                         strict=bool(strict_by), strict_by=strict_by,
-                         allow_unchecked=_hook_allowed_unchecked(os.environ))
+    answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget,
+                           strict=bool(strict_by), strict_by=strict_by,
+                           allow_unchecked=_hook_allowed_unchecked(os.environ))
+    note = _hook_settings_note(os.environ, ceiling)
+    if answer is not None and note:
+        answer["systemMessage"] = f"{answer.get('systemMessage', '')} {note}".strip()
+    return answer
+
+
+def _hook_settings_note(environ, ceiling: float) -> str:
+    """For the console: a hook setting with a value the hook cannot use (it falls back)."""
+    from skilltotal.agent_hook import ALLOW_UNCHECKED_ENV, BUDGET_ENV, UNCHECKED_KINDS
+
+    notes = []
+    named = {p.strip().lower() for p in environ.get(ALLOW_UNCHECKED_ENV, "").split(",")} - {""}
+    unknown = sorted(named - set(UNCHECKED_KINDS))
+    if unknown:
+        notes.append(f"{ALLOW_UNCHECKED_ENV} names unknown kind(s) {', '.join(unknown)}; the "
+                     f"kinds are {', '.join(UNCHECKED_KINDS)}.")
+    raw = environ.get(BUDGET_ENV, "").strip()
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = None
+        if value is None or not 1 <= value <= ceiling:
+            notes.append(f"{BUDGET_ENV} must be seconds from 1 to {ceiling:g}, not {raw!r}.")
+    return " ".join(notes)
 
 
 # How long the agent waits for the checks of one install command (a check that needs longer goes
