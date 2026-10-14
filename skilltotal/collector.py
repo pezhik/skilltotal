@@ -1075,6 +1075,31 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
     return None
 
 
+# Why a source could not be fetched, as a fixed category: what the hook and the CLI say instead
+# of a raw error (git's "could not read Username" for a repository that does not exist). Only
+# these words cross to the person; the error text, which can quote the source, never does.
+FAILURE_CATEGORIES = {
+    "git-missing": "git is not installed, and checking a git source needs it",
+    "not-found": "the registry has no such package or version",
+    "repo-not-found": "the repository was not found, or it is private",
+}
+
+
+def failure_category(exc: BaseException) -> str | None:
+    """The FAILURE_CATEGORIES key for a CollectionError, or None when it is none of them."""
+    message = str(exc)
+    if "git is required" in message:
+        return "git-missing"
+    if any(m in message for m in ("HTTP Error 404", "has no version", "has no resolvable release",
+                                  "has no downloadable distribution")):
+        return "not-found"
+    if "git clone failed" in message and any(
+            m in message for m in ("Repository not found", "could not read Username",
+                                   "not found", "Authentication failed")):
+        return "repo-not-found"
+    return None
+
+
 def _registry_json(url: str) -> dict:
     """A registry document as a JSON object; anything else is a CollectionError, not a traceback."""
     data = _http_get(url)

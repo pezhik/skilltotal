@@ -423,7 +423,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             progress=progress,
         )
     except CollectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        from skilltotal.collector import failure_category
+
+        # A repository that does not exist reads as git asking for a password.
+        if failure_category(exc) == "repo-not-found":
+            print(f"error: {args.source}: the repository was not found, or it is private "
+                  "(a private repository needs git credentials)", file=sys.stderr)
+        else:
+            print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
     finally:
         if progress is not None:
