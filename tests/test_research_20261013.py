@@ -43,20 +43,20 @@ def _positive(polarity_class: str, technique: str, variant: str) -> Path:
 # --- Gap A: ST-AGENT-CONFIG-PERSIST --------------------------------------------------------
 
 def test_vscode_folderopen_write_flagged():
-    root = _positive("positive/AST02", "agent-config-persist-write", "vscode-folderopen")
+    root = _positive("positive/AST01", "agent-config-persist", "vscode-folderopen")
     report = _report(root)
     assert "ST-AGENT-CONFIG-PERSIST" in {f.id for f in report.findings}
     assert report.verdict.get("has_malicious_indicators") is True
 
 
 def test_claude_sessionstart_write_flagged():
-    root = _positive("positive/AST02", "agent-config-persist-write", "claude-sessionstart")
+    root = _positive("positive/AST01", "agent-config-persist", "claude-sessionstart")
     assert "ST-AGENT-CONFIG-PERSIST" in _ids(root)
 
 
 def test_scaffold_build_task_not_flagged():
     # A generator writing a manually-invoked build task (no folderOpen, no hooks) stays clean.
-    root = _positive("negative/AST02", "agent-config-persist-write", "scaffold-build-task")
+    root = _positive("negative/AST01", "agent-config-persist", "scaffold-build-task")
     report = _report(root)
     assert "ST-AGENT-CONFIG-PERSIST" not in {f.id for f in report.findings}
     assert report.verdict.get("has_malicious_indicators") is not True
@@ -89,8 +89,8 @@ def test_ps_local_iex_and_plain_fetch_not_flagged():
 
 def test_new_findings_carry_evidence():
     for pc, tech, variant in (
-        ("positive/AST02", "agent-config-persist-write", "vscode-folderopen"),
-        ("positive/AST02", "agent-config-persist-write", "claude-sessionstart"),
+        ("positive/AST01", "agent-config-persist", "vscode-folderopen"),
+        ("positive/AST01", "agent-config-persist", "claude-sessionstart"),
         ("positive/AST01", "powershell-download-exec", "irm-variable"),
         ("positive/AST01", "powershell-download-exec", "iex-pipe"),
     ):

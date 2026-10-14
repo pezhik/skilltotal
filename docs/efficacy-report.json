@@ -20,7 +20,6 @@
     "action-run-exec": 1.0,
     "agent-config-autorun": 1.0,
     "agent-config-persist": 1.0,
-    "agent-config-persist-write": 1.0,
     "cli-relay": 1.0,
     "clipboard-swap": 1.0,
     "credential-exfil": 1.0,
@@ -58,14 +57,14 @@
   },
   "coverage_matrix": {
     "AST01": {
+      "node": 24,
       "manifest/text": 17,
-      "node": 22,
       "python": 14,
       "shell": 2
     },
     "AST02": {
       "manifest/text": 16,
-      "node": 13,
+      "node": 11,
       "python": 2
     },
     "AST03": {
