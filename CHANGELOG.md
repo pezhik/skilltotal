@@ -17,14 +17,15 @@ Detection is unchanged (ruleset 71).
 ### CI (plugin strict mode)
 - A partly analyzed package passes in CI, and its console line names what was not read (a bundle
   too large to read, code in a language the engine does not analyze). What a package runs at
-  install is read either way, and the dependencies a command pulls in are not checked at all, so
-  denying the named package for its unread rest stopped large packages without making the build
-  much safer. `SKILLTOTAL_STRICT_PARTIAL=1` denies it as before; a value that is neither on nor off
+  install is read either way, and the dependencies a command pulls in are not checked at all.
+  Denying the named package for its unread rest stopped large packages and made the build little
+  safer. `SKILLTOTAL_STRICT_PARTIAL=1` denies it as before; a value that is neither on nor off
   reads as on.
 
 ### GitHub Action
 - With `source` set to a subfolder, the action still read its own SARIF report and failed a clean
-  repository. The report is now left out relative to `source`.
+  repository. The action now gives the report's path relative to `source`, so the scan leaves it
+  out.
 - A `verdict` output: `malicious` whenever a malicious indicator was found, whatever the risk
   score, else the risk level.
 
@@ -32,13 +33,17 @@ Detection is unchanged (ruleset 71).
 - `scan --output FILE` into the folder being scanned leaves FILE out of the scan. A pipeline
   running `skilltotal scan . --sarif --output skilltotal.sarif` read the previous run's report and
   failed a clean repository on its second run.
+- A config on Python 3.10 is as strict as on later versions. The fallback parser Python 3.10 uses
+  dropped what it could not read, such as a policy action without quotes, an unknown table, or
+  `exclude` given as a string, which switched part of the gate off. It now rejects them as tomllib
+  does.
 
 ### Tests
 - Customer journeys (`tests/journeys`) drive the installed CLI as a pipeline, a developer machine
   and a security team do: the gate, SARIF levels, every documented setting with a bad value, a
   config typo, the README's flags, a baseline, per-rule policy, `diff`, the plugin wrapper without
   the CLI on `PATH`, and a real pre-commit run. CI builds the wheel, installs it with pipx and runs
-  them on Linux and Windows, and runs weekly with no commit.
+  them on Linux and Windows, and also weekly without a commit.
 
 ## [0.67.0]
 

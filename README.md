@@ -199,7 +199,7 @@ it installs from package-lock.json, and SkillTotal checks only the packages a co
 about is denied. So is every install it could not check, by kind: an install from a lockfile,
 manifest or requirements file (`lockfile`), from a local path (`local`) and a downloaded script
 (`script`). A partly analyzed package (a bundle too large to read, code in a language the engine
-does not analyze) passes, and its console line names what was not read: what it runs at install
+does not analyze) passes, and its console line names what was not read. What it runs at install
 is read either way. `SKILLTOTAL_STRICT_PARTIAL=1` denies it too. Strict mode is on when `CI` or one of
 `TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE` and `GITLAB_CI` is
 set to anything but empty, `0`, `false`, `no` or `off`. `SKILLTOTAL_STRICT=1` (or `true`, `yes`,
@@ -500,8 +500,8 @@ repos:
 
 Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
 on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`). It scans
-what the commit will contain (`skilltotal scan --staged`): every file staged in git's index, the
-whole repository and not only the changed files, so the verdict matches what CI sees. Untracked
+what the commit will contain (`skilltotal scan --staged`): every file in git's index across the
+whole repository, not only the changed files, so the verdict matches what CI sees. Untracked
 and ignored files are left out.
 
 ### Use as an MCP server
