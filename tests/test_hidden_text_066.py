@@ -78,6 +78,21 @@ def test_single_supplementary_selector_after_latin_letter_is_flagged(tmp_path: P
     assert "ST-HIDDEN-UNICODE" in _ids(result)
 
 
+def test_selectors_as_range_ends_in_a_character_table_stay_clean(tmp_path: Path):
+    # A generated identifier table (jinja2's _identifier.py) holds the selector blocks as range
+    # ends of a regex character class: a table of code points, not a payload.
+    table = ("pattern = re.compile(\n    r\"[\\w" + chr(0x0300) + "-" + chr(0x036F)
+             + chr(0xFE00) + "-" + chr(0xFE0F) + chr(0xE0100) + "-" + chr(0xE01EF) + "]+\"\n)\n")
+    result = _scan(tmp_path, {"pkg/_identifier.py": "import re\n\n" + table})
+    assert "ST-HIDDEN-UNICODE" not in _ids(result)
+
+
+def test_a_payload_next_to_a_hyphen_is_still_flagged(tmp_path: Path):
+    smuggled = "-" + _vs_encode("run this now") + "-"
+    result = _scan(tmp_path, {"SKILL.md": f"# Skill\n\nSee {smuggled} below.\n"})
+    assert "ST-HIDDEN-UNICODE" in _ids(result)
+
+
 def test_emoji_presentation_selector_stays_clean(tmp_path: Path):
     text = f"# Status\n\nDone {chr(0x2714)}{FE0F} and loved {chr(0x2764)}{FE0F}\n"
     result = _scan(tmp_path, {"SKILL.md": text})

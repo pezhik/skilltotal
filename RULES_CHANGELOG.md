@@ -34,7 +34,8 @@ corpus).
   when only U+2062 (0) and U+2064 (1) are used; and a Hangul filler (U+115F, U+1160, U+3164,
   U+FFA0) used as an identifier in JavaScript/TypeScript code, outside strings and comments. A
   single U+FE0F after an emoji, emoji ZWJ sequences, registered ideographic variation sequences,
-  one invisible operator in math text, and Korean text holding a filler stay clean
+  one invisible operator in math text, Korean text holding a filler, and a selector that ends a
+  range in a character table (`[︀-️]`, as in generated identifier tables) stay clean
   (`tests/test_hidden_text_066.py`, and positive and negative samples in the corpus).
 - **`ST-HIDDEN-ANSI`** (new, malicious indicator): an ANSI escape sequence (raw ESC, or spelled
   `\u001b[` / `\x1b[` / `\033[`) that conceals text (`ESC[8m`), moves the cursor or erases the

@@ -159,6 +159,9 @@ def _hidden_runs(line: str) -> list[str] | None:
         base = line[m.start() - 1] if m.start() else ""
         if len(run) < _VS_PAYLOAD_RUN and not (supplementary and not _is_cjk_ideograph(base)):
             continue  # emoji presentation (U+FE0F), a standardized or an ideographic sequence
+        after = line[m.end():m.end() + 1]
+        if len(run) < _VS_PAYLOAD_RUN and "-" in (base, after):
+            continue  # a range end in a character table (`[︀-️...]`), no payload
         found = True
         decoded.append(_printable(bytes(
             ord(c) - 0xFE00 if ord(c) <= 0xFE0F else ord(c) - 0xE0100 + 16 for c in run
