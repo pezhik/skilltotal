@@ -106,6 +106,35 @@ jobs:
           [ "$SCORE" = "0" ] || { echo "::error::expected score 0, got '$SCORE'"; exit 1; }
           [ -s clean.sarif ] || { echo "::error::no SARIF written"; exit 1; }
 
+      - name: A report written inside the scanned folder is not scanned (first run)
+        # A customer's workflow scans `.` and writes skilltotal.sarif into it. The second scan of
+        # the run, and every later run, must not read that report: its rule descriptions quote
+        # detection patterns and failed a clean repository (found in a customer-path test).
+        id: inside1
+        uses: ./
+        with:
+          source: tests/fixtures/clean_pkg
+          fail-on: high
+          upload-sarif: false
+          sarif-file: tests/fixtures/clean_pkg/skilltotal.sarif
+
+      - name: A report written inside the scanned folder is not scanned (second run)
+        id: inside2
+        uses: ./
+        with:
+          source: tests/fixtures/clean_pkg
+          fail-on: high
+          upload-sarif: false
+          sarif-file: tests/fixtures/clean_pkg/skilltotal.sarif
+
+      - name: Assert both runs stayed clean
+        run: |
+          for LEVEL in '${{ steps.inside1.outputs.risk-level }}' '${{ steps.inside2.outputs.risk-level }}'; do
+            [ "$LEVEL" = "low" ] || { echo "::error::own report was scanned: got '$LEVEL'"; exit 1; }
+          done
+          [ -s tests/fixtures/clean_pkg/skilltotal.sarif ] || { echo "::error::no SARIF written"; exit 1; }
+          [ ! -e skilltotal.json ] || { echo "::error::JSON report written into the workspace"; exit 1; }
+
       - name: Risky component trips the gate
         id: risky
         continue-on-error: true

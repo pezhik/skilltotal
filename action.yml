@@ -93,6 +93,14 @@ runs:
         fi
         BASE=()
         if [ -n "$INPUT_BASELINE" ]; then BASE+=(--baseline "$INPUT_BASELINE"); fi
+        # The action's own reports are not part of the component. The SARIF file is written into
+        # the workspace (the upload step reads it there), and with `source: .` that is inside the
+        # tree being scanned: the second scan read the first one's rule descriptions -- detection
+        # patterns quoted as text -- and failed a clean repository. So the SARIF file is excluded
+        # from both scans, and the JSON report the gate reads is written outside the workspace.
+        BASE+=(--exclude "$INPUT_SARIF_FILE")
+        REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"
+        echo "report-json=$REPORT_JSON" >> "$GITHUB_OUTPUT"
 
         # --fail-on counts what is risk: malicious indicators at any severity, risky constructs
         # and shipped secrets at theirs, and never a capability on its own (a shell call or
@@ -125,13 +133,13 @@ runs:
         # bare failing command aborts the step immediately: the assignment below never ran and the
         # outputs were left empty exactly when a finding had been found. `||` suppresses `-e`.
         GATE_EXIT=0
-        "${ST[@]}" scan "$INPUT_SOURCE" --json --output skilltotal.json "${BASE[@]}" "${GATE[@]}" \
+        "${ST[@]}" scan "$INPUT_SOURCE" --json --output "$REPORT_JSON" "${BASE[@]}" "${GATE[@]}" \
           || GATE_EXIT=$?
 
         # Parse risk via stdlib in one process (never pipe python -> python on any host); `-I` so a
         # `json.py` in the scanned repository is not imported in place of the stdlib.
-        SCORE=$(python -I -c "import json;print(json.load(open('skilltotal.json')).get('risk_score',''))" 2>/dev/null || echo "")
-        LEVEL=$(python -I -c "import json;print(json.load(open('skilltotal.json')).get('risk_level',''))" 2>/dev/null || echo "")
+        SCORE=$(python -I -c "import json,sys;print(json.load(open(sys.argv[1])).get('risk_score',''))" "$REPORT_JSON" 2>/dev/null || echo "")
+        LEVEL=$(python -I -c "import json,sys;print(json.load(open(sys.argv[1])).get('risk_level',''))" "$REPORT_JSON" 2>/dev/null || echo "")
         echo "risk-score=$SCORE" >> "$GITHUB_OUTPUT"
         echo "risk-level=$LEVEL" >> "$GITHUB_OUTPUT"
         echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '$INPUT_SOURCE'"
@@ -149,15 +157,17 @@ runs:
     - name: Comment on PR
       if: ${{ always() && github.event_name == 'pull_request' && inputs.comment-on-pr == 'true' }}
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        REPORT_JSON: ${{ steps.scan.outputs.report-json }}
       with:
         script: |
           const fs = require('fs');
           const MARKER = '<!-- skilltotal-report -->';
           let report;
           try {
-            report = JSON.parse(fs.readFileSync('skilltotal.json', 'utf8'));
+            report = JSON.parse(fs.readFileSync(process.env.REPORT_JSON, 'utf8'));
           } catch (e) {
-            core.info('No skilltotal.json to comment from: ' + e.message);
+            core.info('No SkillTotal report to comment from: ' + e.message);
             return;
           }
           const level = report.risk_level || 'unknown';

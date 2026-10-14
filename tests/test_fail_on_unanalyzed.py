@@ -159,7 +159,7 @@ def test_the_action_input_is_wired_like_fail_on():
     assert "true) GATE+=(--fail-on-unanalyzed) ;;" in text
     assert "fail-on-unanalyzed must be true or false" in text
     # The gate goes on the JSON run, whose exit code becomes gate-exit.
-    json_run = next(line for line in text.splitlines() if "--json --output skilltotal.json" in line)
+    json_run = next(line for line in text.splitlines() if '--json --output "$REPORT_JSON"' in line)
     assert '"${GATE[@]}"' in json_run
 
 
