@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 
 from skilltotal import __version__
-from skilltotal.models import Report, Severity
+from skilltotal.models import Report, Severity, ThreatClass
 from skilltotal.owasp import OWASP_TAXONOMY, owasp_for
 from skilltotal.rules import get_rules
 
@@ -37,6 +37,12 @@ _SECURITY_SEVERITY = {
     Severity.MEDIUM: "4.0",
     Severity.LOW: "2.0",
 }
+
+
+def _level(severity: Severity, threat_class: ThreatClass) -> str:
+    """A capability (what a component can do, such as run a shell) is not a risk: it never moves
+    the score or the gate, so it is a note, never an alert that a clean gate contradicts."""
+    return "note" if threat_class == ThreatClass.CAPABILITY else _LEVEL[severity]
 
 
 def render_sarif(report: Report) -> str:
@@ -117,13 +123,17 @@ def _rule_descriptors() -> list[dict]:
             "shortDescription": {"text": rule.title},
             "fullDescription": {"text": rule.description},
             "helpUri": INFO_URI,
-            "defaultConfiguration": {"level": _LEVEL[rule.severity]},
+            "defaultConfiguration": {"level": _level(rule.severity, rule.threat_class)},
             "properties": {
-                "security-severity": _SECURITY_SEVERITY[rule.severity],
                 "category": rule.category,
                 "tags": [rule.category, *owasp_ids],
             },
         }
+        if rule.threat_class == ThreatClass.CAPABILITY:
+            # No security-severity: GitHub would rank it as a security alert by that number.
+            descriptor["properties"]["tags"].append("capability")
+        else:
+            descriptor["properties"]["security-severity"] = _SECURITY_SEVERITY[rule.severity]
         relationships = _owasp_relationships(rule.id)
         if relationships:
             descriptor["relationships"] = relationships
@@ -138,7 +148,7 @@ def _results(report: Report) -> list[dict]:
             results.append(
                 {
                     "ruleId": finding.id,
-                    "level": _LEVEL[finding.severity],
+                    "level": _level(finding.severity, finding.threat_class),
                     "message": {"text": f"{finding.title}: {finding.description}"},
                     "locations": [
                         {

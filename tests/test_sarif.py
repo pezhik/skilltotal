@@ -45,10 +45,31 @@ def test_sarif_result_fields_and_levels():
 
 
 def test_sarif_rule_descriptor_has_security_severity():
+    # Every rule that is risk (a malicious indicator, a risky construct, an exposure) is ranked
+    # for GitHub; a capability is not risk and is not ranked as a security alert.
+    from skilltotal.models import ThreatClass
+    from skilltotal.rules import get_rules
+
     data = json.loads(render_sarif(_report("malicious_py_pkg")))
-    rules = data["runs"][0]["tool"]["driver"]["rules"]
-    for rule in rules:
-        assert "security-severity" in rule["properties"]
+    rules = {r["id"]: r for r in data["runs"][0]["tool"]["driver"]["rules"]}
+    for spec in get_rules():
+        props = rules[spec.id]["properties"]
+        if spec.threat_class == ThreatClass.CAPABILITY:
+            assert "security-severity" not in props
+            assert rules[spec.id]["defaultConfiguration"]["level"] == "note"
+        else:
+            assert "security-severity" in props
+
+
+def test_a_capability_finding_is_a_note_whatever_its_severity():
+    # six's exec() is a high-severity capability: it never fails the gate, so it must not reach
+    # Code Scanning as an error the green gate contradicts.
+    report = _report("malicious_py_pkg")
+    data = json.loads(render_sarif(report))
+    by_rule = {f.id: f.threat_class for f in report.findings}
+    for r in data["runs"][0]["results"]:
+        if by_rule[r["ruleId"]].value == "capability":
+            assert r["level"] == "note"
 
 
 def test_sarif_clean_has_no_results():
