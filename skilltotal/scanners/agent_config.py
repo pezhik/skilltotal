@@ -651,7 +651,7 @@ class AgentConfigScanner(Scanner):
                 "the checkout in front of it and does not also connect to a remote host."
             ),
             recommendation=(
-                "Do not install this component. A package has no reason to pipe instructions from "
+                "Do not install this component. A package has no need to pipe instructions from "
                 "a remote server into an AI agent running with approvals off; treat a machine that "
                 "already ran it as exposed."
             ),

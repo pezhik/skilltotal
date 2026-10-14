@@ -273,7 +273,7 @@ class ObfuscationScanner(Scanner):
                 "A file decrypts data with a symmetric cipher (e.g. AES via "
                 "crypto.createDecipheriv / PyCryptodome / Fernet) and, in the same file, feeds "
                 "code to a dynamic-execution sink (new Function / eval / vm.runInThisContext). "
-                "Decrypting a payload in order to run it keeps the real behavior opaque to static "
+                "Decrypting a payload to run it keeps the real behavior opaque to static "
                 "review until runtime."
             ),
             recommendation=(

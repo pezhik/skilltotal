@@ -9,8 +9,8 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 Five techniques from AI-tooling attacks of the past weeks, each pinned by a sanitized sample that
 ruleset 71 scored low and by an honest look-alike that must stay clean
 (`tests/test_research_20261006.py`, `..._20261009.py`, `..._20261013.py`). Detection-efficacy
-corpus, now 119 positive / 84 negative: 119/119 flagged, 0 false positives. And a score floor for
-malicious indicators.
+corpus, now 119 positive / 84 negative: 119/119 flagged, 0 false positives. The ruleset also adds a
+score floor for malicious indicators.
 
 - **Score floor.** A component with a malicious indicator scores at least 50 (high). One
   indicator weighed only its severity, so a single high-severity install hook scored 20/100 (low)

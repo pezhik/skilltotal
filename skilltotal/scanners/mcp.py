@@ -505,7 +505,7 @@ class McpScanner(Scanner):
             recommendation=(
                 "Do not trust this configuration. A legitimate MCP server is launched via a "
                 "package runner (npx/uvx), an interpreter plus a module, or a path inside the "
-                "component — not from a chain of hidden directories. Locate and inspect the "
+                "component, not from a chain of hidden directories. Locate and inspect the "
                 "referenced script before running it."
             ),
             capability=Capability.MCP_TOOLS_DETECTED,

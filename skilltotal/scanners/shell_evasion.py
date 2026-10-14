@@ -236,11 +236,11 @@ _PS_RULE = RuleSpec(
     severity=Severity.HIGH,
     title="PowerShell downloads code and runs it (download-and-execute cradle)",
     description=(
-        "A PowerShell script feeds a web response straight into Invoke-Expression -- "
+        "A PowerShell script feeds a web response straight into Invoke-Expression: "
         "`iex (irm $url)`, `irm $url | iex`, or a download stored in a variable that "
         "Invoke-Expression runs on a later line. The code that executes is fetched at runtime "
-        "and never appears in the file, so review cannot see it. This is the classic dropper / "
-        "second-stage cradle."
+        "and never appears in the file, so review cannot see it. This is the usual shape of a "
+        "dropper or second-stage loader."
     ),
     recommendation=(
         "Download the payload to a file, inspect it, and run a pinned, verified copy instead of "

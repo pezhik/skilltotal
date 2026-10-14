@@ -21,9 +21,9 @@ The sum is over **distinct findings** (one finding per rule), so repeated matche
 same rule do not inflate the score — only a new *kind* of risk does. The score is capped at
 100.
 
-**A malicious indicator scores at least 50 (high).** One indicator weighs only its severity, so
-a single high-severity install hook that publishes packages summed to 20 (low) under a
-"malicious indicators found" verdict. Since ruleset 72 a component with any `malicious_indicator`
+**A malicious indicator scores at least 50 (high).** One indicator used to weigh only its
+severity, so a single high-severity install hook that publishes packages summed to 20 (low) under
+a "malicious indicators found" verdict. Since ruleset 72 a component with any `malicious_indicator`
 finding has `risk_score >= 50`, so the score, the level and a `fail_on_score` gate agree with
 the verdict.
 

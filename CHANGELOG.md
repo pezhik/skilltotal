@@ -18,7 +18,7 @@ Ruleset 72: five new malicious-indicator rules and a score floor. See `RULES_CHA
 - New rules for an AI coding CLI driven over a remote connection with its approvals off, a skill
   that hides a dependency-index redirect, an MCP server launched from a hidden dot-path, a
   decrypt-and-execute loader, and a PowerShell download-and-execute cradle. Install code writing a
-  VS Code `folderOpen` task counts as config persistence. Each rule has an honest look-alike in
+  VS Code `folderOpen` task counts as config persistence. Each rule has a benign look-alike in
   the efficacy corpus that stays clean (119 malicious and 84 benign samples, 0 false positives).
 
 ## [0.68.0]

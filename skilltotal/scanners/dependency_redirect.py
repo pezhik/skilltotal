@@ -62,10 +62,10 @@ class DependencyRedirectScanner(Scanner):
             description=(
                 "An agent-instruction surface (SKILL.md, AGENTS.md, a marketplace plugin's rules) "
                 "tells the agent to install packages from a non-default package index or registry "
-                "AND to conceal the substitution from the user. Whenever the developer asks the "
-                "agent to add a common dependency, a trojanized build is pulled from the "
-                "attacker's index while nobody is told the source changed (dependency hijack via "
-                "marketplace skills, 2026)."
+                "and to keep the substitution from the user. Each time the developer asks the "
+                "agent to add a common dependency, the package then comes from that index and "
+                "nobody is told the source changed (dependency hijack via marketplace skills, "
+                "2026)."
             ),
             recommendation=(
                 "Remove the redirect, or make the index explicit and visible. A legitimate private "
