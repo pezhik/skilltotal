@@ -98,7 +98,11 @@ runs:
         # tree being scanned: the second scan read the first one's rule descriptions (detection
         # patterns quoted as text) and failed a clean repository. So the SARIF file is excluded
         # from both scans, and the JSON report the gate reads is written outside the workspace.
-        BASE+=(--exclude "$INPUT_SARIF_FILE")
+        # An exclude matches paths inside the scanned folder, so the SARIF path is given relative
+        # to `source` (`source: repo` with `sarif-file: repo/skilltotal.sarif` is `skilltotal.sarif`),
+        # with glob characters escaped.
+        SARIF_EXCLUDE="$(python -c 'import os, sys; rel = os.path.relpath(os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])).replace(os.sep, "/"); print("".join("[" + c + "]" if c in "*?[" else c for c in rel))' "$INPUT_SARIF_FILE" "$INPUT_SOURCE")"
+        BASE+=(--exclude "$SARIF_EXCLUDE")
         REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"
         echo "report-json=$REPORT_JSON" >> "$GITHUB_OUTPUT"
 
