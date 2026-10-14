@@ -379,6 +379,54 @@ def _options_start(text: str, start: int, end: int) -> int:
     return last if text[last:end].lstrip().startswith("{") else end
 
 
+def _first_arg_end(text: str, start: int, end: int) -> int:
+    """Where the first top-level argument of the call text[start:end] ends."""
+    depth, i = 0, start
+    while i < end:
+        ch = text[i]
+        if ch in "'\"`":
+            i = _skip_string(text, i, end)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            return i
+        i += 1
+    return end
+
+
+# Calls that put their argument into the request as it is: the environment passed through one
+# of these into a URL is sent.
+_JS_ENCODERS = frozenset({
+    "stringify", "btoa", "from", "encodeURIComponent", "encodeURI", "escape", "toString",
+    "URLSearchParams", "String", "entries", "keys", "values", "assign",
+})
+_JS_CALLEE = re.compile(r"([A-Za-z_$][\w$]*)\s*$")
+
+
+def _config_lookup(text: str, start: int, pos: int) -> bool:
+    """True if the environment at ``pos`` is an argument of a call (inside text[start:pos]) to a
+    function of the code's own, such as ``chatCompletionsUrl(process.env)``: the environment is
+    read there to build the address, not put into it. An encoder (``JSON.stringify``, ``btoa``)
+    does put it in."""
+    depth, i = 0, pos - 1
+    while i >= start:
+        ch = text[i]
+        if ch in ")]}":
+            depth += 1
+        elif ch in "([{":
+            if depth == 0:
+                if ch != "(":
+                    return False
+                callee = _JS_CALLEE.search(text, start, i)
+                return bool(callee) and callee.group(1) not in _JS_ENCODERS
+            depth -= 1
+        i -= 1
+    return False
+
+
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     text = f.text
     if "process.env" not in text:
@@ -429,14 +477,20 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     ) if scopes else None
     opens_channel = bool(_JS_OPENS_CHANNEL.search(text))
 
-    def carries_env(start: int, end: int) -> bool:
-        if any(start <= p < end for p in whole):
+    def carries_env(start: int, end: int, url_end: int | None = None) -> bool:
+        def sent(pos: int) -> bool:
+            # In the address argument, the environment handed to the code's own URL builder
+            # configures the request; it is not what the request carries.
+            return url_end is None or pos >= url_end or not _config_lookup(text, start, pos)
+
+        if any(start <= p < end and sent(p) for p in whole):
             return True
         if names is None:
             return False
         return any(
             _code_offset(f, m.start()) and not _JS_MEMBER_READ.match(text, m.end())
             and any(a <= m.start() < b for a, b in scopes[m.group(0)])
+            and sent(m.start())
             for m in names.finditer(text, start, end)
         )
 
@@ -468,7 +522,8 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
             # the environment the child runs in (pm2: `spawn('wget', [url], {env: process.env})`),
             # not data it sends. The command and its arguments are what can carry it out.
             end = _options_start(text, open_at + 1, close) if needs_net_cmd else close
-            if carries_env(open_at + 1, end):
+            url_end = _first_arg_end(text, open_at + 1, close) if pattern is _JS_SINK else None
+            if carries_env(open_at + 1, end, url_end):
                 found.append(f.evidence_for_span(m.start(), close + 1))
                 if len(found) >= MAX_EVIDENCE_SCANNED:
                     return found
@@ -568,11 +623,23 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
             return True  # env["X"] on a name assigned the environment
         return isinstance(parent, ast.Attribute) and parent.attr in _PY_ENV_MEMBER
 
+    def walk(expr: ast.AST):
+        # A child process's `env=` is the environment it runs in, not data it carries: what it
+        # returns (its output, a queue line read from it) holds no secret for that alone.
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            yield node
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.keyword) and child.arg == "env":
+                    continue
+                stack.append(child)
+
     def carries(expr: ast.AST) -> bool:
         return any(
             id(n) in env_nodes
             or (isinstance(n, ast.Name) and n.id in tainted and not one_variable(n))
-            for n in ast.walk(expr)
+            for n in walk(expr)
         )
 
     assignments = [
@@ -586,7 +653,12 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
                 continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
-                while isinstance(target, (ast.Subscript, ast.Attribute)):
+                # `payload["env"] = os.environ` fills the payload; `self.process = Popen(...)`
+                # does not make `self` the environment. Following attributes to their base
+                # marked `self` in a large server and, through it, hundreds of unrelated names.
+                if isinstance(target, ast.Attribute):
+                    continue
+                while isinstance(target, ast.Subscript):
                     target = target.value
                 if isinstance(target, ast.Name) and target.id not in tainted:
                     tainted.add(target.id)

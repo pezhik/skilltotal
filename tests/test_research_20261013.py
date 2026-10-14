@@ -1,13 +1,13 @@
 """Research 2026-10-13: two detection gaps from AI-tooling attack campaigns of the prior ~45 days.
 
-Gap A -- supply-chain worms (Shai-Hulud / tensorlake, Socket/Sonatype 2026-10-08) re-infect every
+Gap A -- supply-chain worms (Socket/Sonatype 2026-10-08) re-infect every
 project a victim opens by WRITING an auto-executing agent/editor config into it: a VS Code task
 gated on ``folderOpen`` or an agent-settings ``hooks`` block. Those files shipped as component
 *content* were already covered (autorun.py); package *code* that writes them at install/import was
 not. ``ST-AGENT-CONFIG-PERSIST`` closes that, gated on the auto-execution marker so a generator
 writing a manually-invoked build task stays clean.
 
-Gap B -- the tensorlake "hostage token" monitor ran a downloaded next stage through
+Gap B -- a "hostage token" monitor ran a downloaded next stage through
 Invoke-Expression. ``ST-SHELL-EVASION`` caught only the one-line ``IEX (New-Object
 Net.WebClient).DownloadString(...)`` idiom, as a risky construct. ``ST-PS-DOWNLOAD-EXEC`` is the
 malicious-indicator reading of the whole cradle family: it adds ``Invoke-RestMethod`` / ``irm``

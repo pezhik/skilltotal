@@ -20,6 +20,11 @@ Ruleset 72: five new malicious-indicator rules and a score floor. See `RULES_CHA
   decrypt-and-execute loader, and a PowerShell download-and-execute cradle. Install code writing a
   VS Code `folderOpen` task counts as config persistence. Each rule has a benign look-alike in
   the efficacy corpus that stays clean (119 malicious and 84 benign samples, 0 false positives).
+- `ST-SECRET-EXFIL` no longer reads the environment as sent when code gives it to its own URL
+  builder (`fetch(chatCompletionsUrl(process.env), ...)`), starts a child process with it
+  (`env=os.environ`) or stores it on an attribute (`self.env = ...`). In large Python servers
+  the last two spread to hundreds of names, so a queue's `.put(...)` read as an upload. Checking
+  the new score floor against the catalog found these on several open-source projects.
 
 ## [0.68.0]
 

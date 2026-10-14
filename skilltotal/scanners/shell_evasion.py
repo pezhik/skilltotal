@@ -32,7 +32,7 @@ _JS_FAMILY = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"})
 R_SHELL_EVASION = "ST-SHELL-EVASION"
 R_PS_DOWNLOAD_EXEC = "ST-PS-DOWNLOAD-EXEC"
 
-# PowerShell download-and-execute cradle (tensorlake / Shai-Hulud "hostage token" monitor,
+# PowerShell download-and-execute cradle (a supply-chain worm's "hostage token" monitor,
 # Socket 2026-10-08): a web response is fed straight into Invoke-Expression. ST-SHELL-EVASION
 # already catches the one-line `IEX (New-Object Net.WebClient).DownloadString(...)` idiom as a
 # risky construct; this rule is the malicious-indicator reading of the whole cradle family -- it

@@ -41,6 +41,13 @@ score floor for malicious indicators.
   on a later line. `ST-SHELL-EVASION` still reports the one-line `IEX (New-Object
   Net.WebClient).DownloadString(...)` idiom as a risky construct. `Invoke-Expression` on a locally
   built string, or a fetch that is parsed and not run, stays clean.
+- **`ST-SECRET-EXFIL`** reads less as sent. The environment handed to the code's own URL
+  builder in a request's address argument configures the request (an encoder such as
+  `JSON.stringify` or `btoa` there still sends it). In Python, a child process's `env=` and an
+  attribute assignment (`self.env = dict(os.environ)`) no longer mark the result or the whole
+  object, which in large servers spread to hundreds of names and made a queue's `.put(...)` an
+  upload. A payload filled with the environment (`payload['env'] = os.environ`) and posted is
+  still found (`tests/test_secret_exfil_config_reads.py`).
 - **`ST-AGENT-CONFIG-PERSIST`** now also covers install or import code writing a VS Code task
   that runs on `folderOpen` into `.vscode/tasks.json`, which runs again each time the project is
   opened. A generator that writes a build task the user runs by hand (no `runOn`) stays clean.

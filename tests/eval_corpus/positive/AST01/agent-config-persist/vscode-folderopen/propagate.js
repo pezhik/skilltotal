@@ -1,6 +1,6 @@
 // FIXTURE ONLY - synthetic detection test sample, not real malware.
 // Package code writes a VS Code task that runs automatically when the folder opens, so opening
-// the project re-runs the (here inert) command (Shai-Hulud / tensorlake worm propagation, 2026-10).
+// the project re-runs the (here inert) command (supply-chain worm propagation, 2026-10).
 const { writeFileSync, mkdirSync } = require("node:fs");
 
 const CMD = "node -e \"console.log('echo fixture-only')\"";
