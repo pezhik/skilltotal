@@ -4,6 +4,60 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.67.0]
+
+Fixes from following the documentation as a DevOps engineer would, on a clean Linux machine and in
+a fresh GitHub repository. Ruleset 71.
+
+### GitHub Action
+- With `source: .` the action scanned the SARIF file it had just written into the repository. Its
+  rule descriptions quote detection patterns, so a clean repository failed on its first run. The
+  action now leaves its own SARIF report out of the scan and writes the JSON report the gate reads
+  outside the workspace.
+- A failed SARIF upload no longer fails the job. A private repository has Code Scanning only with
+  GitHub Advanced Security, so every build there failed, clean or not. The upload failure is now a
+  warning that says why, and the gate decides the job.
+- The scan step lists the findings in its log. When Code Scanning is off, the pull request comment
+  and the gate's error point to that log.
+- The README workflow adds `actions: read`, which the SARIF upload needs in a private repository.
+
+### Detection (ruleset 71)
+- Install scripts in nested `package.json` files now count. npm runs them for workspace members and
+  vendored packages when they are installed from the repository. Before, a publishing
+  `postinstall` in `vendor-helper/` scored 0/100. Test, example, documentation, corpus and CI paths
+  keep their folder's rules.
+- `ST-SECRET-EXFIL` (JavaScript) leaves out a process call's options object: `spawn('wget', [url],
+  {env: process.env})` hands the child its environment and sends nothing. pm2 7.0.4 was denied by
+  the hook for it.
+
+### SARIF
+- A capability (what a component can do, such as run a shell) is a SARIF note without
+  `security-severity`. A capability never moves the score or the gate, but it used to reach Code
+  Scanning as a high error.
+
+### CLI
+- A config that cannot be honored is an error with exit code 1: invalid TOML, an unknown key, a
+  value of the wrong kind or out of range, an unknown policy action, a `--config` path that does
+  not exist. Each of these used to give an empty config, exit 0 and a gate that was silently off.
+- `--fail-on-score` accepts 0-100 only. `--json` and `--sarif` together are refused. A
+  `SKILLTOTAL_MAX_*` or `SKILLTOTAL_WORKERS` value that is not a positive whole number is an error,
+  not a traceback. An unwritable `--output` is an error. A reader that closes the pipe is not.
+- With `--output`, the JSON or SARIF report goes to the file and the console gets the readable
+  summary. Printing the SARIF document as well ran to thousands of lines in a CI log.
+- A git repository that does not exist is reported as "not found, or private" instead of git's
+  "could not read Username".
+
+### Plugin
+- The hook says why a source could not be checked (git is not installed, no such package or
+  version, no such repository) instead of "the scan failed".
+- A CLI that is not on `PATH` gets the `pipx ensurepath` hint, and the console line names an
+  unknown `SKILLTOTAL_ALLOW_UNCHECKED` kind or an unusable `SKILLTOTAL_HOOK_BUDGET`.
+
+### Docs
+- README: a table of the environment settings, `pipx ensurepath`, scanning one folder of a GitHub
+  repository, what pre-commit scans, where the hook keeps its verdicts, and that a script on disk
+  is not read as an install. The README used to say such a command was reported and denied in CI.
+
 ## [0.66.0]
 
 Detection reads every place an agent takes instructions, settings or MCP metadata from, and a

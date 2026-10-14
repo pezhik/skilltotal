@@ -4,6 +4,19 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 71 (engine 0.67.0)
+
+- **Install scripts of nested packages.** The files a `preinstall`/`install`/`postinstall`
+  script runs, and the modules they load, are now found through every `package.json` in the
+  component, not only the root one. Workspace members and vendored packages run their install
+  scripts when they are installed from the repository. Before, a publishing `postinstall` in
+  `vendor-helper/` scored 0/100. Packages under test, example, documentation, corpus and CI paths
+  keep their folder's rules. The walk stops at depth 6 and 100 manifests.
+- **`ST-SECRET-EXFIL` (JavaScript) leaves out a process call's options object.**
+  `spawn('wget', [url], {env: process.env})` hands the child process its environment and sends
+  nothing. The rule used to read it as environment data sent to a URL. A request body or header
+  that carries `process.env` still matches (the `node-postinstall-env` sample stays flagged).
+
 ## ruleset 70 (engine 0.66.0)
 
 Two constructs left from the blind red-team (2026-10-10). Each is pinned by sanitized samples
