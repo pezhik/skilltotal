@@ -143,6 +143,18 @@ runs:
         echo "risk-score=$SCORE" >> "$GITHUB_OUTPUT"
         echo "risk-level=$LEVEL" >> "$GITHUB_OUTPUT"
         echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '$INPUT_SOURCE'"
+        # The findings, in the log too: Code Scanning is off in many repositories, and the log is
+        # then the only place a failed gate can be read. One line each, first evidence only.
+        python -I -c "
+        import json, sys
+        r = json.load(open(sys.argv[1]))
+        for f in r.get('findings', []):
+            if f.get('threat_class') == 'capability':
+                continue
+            ev = (f.get('evidence') or [{}])[0]
+            where = ev.get('file', '') + (':' + str(ev['line_start']) if ev.get('line_start') else '')
+            print('  ' + f.get('severity', '').upper() + ' ' + f.get('id', '') + ' ' + f.get('title', '') + (' (' + where + ')' if where else ''))
+        " "$REPORT_JSON" 2>/dev/null || true
 
         # 2 = the gate tripped; 1 = collection error. Both should fail the build, but only after
         # the SARIF upload step runs (which is why we defer the failure).
@@ -172,6 +184,7 @@ runs:
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
       env:
         REPORT_JSON: ${{ steps.scan.outputs.report-json }}
+        UPLOADED: ${{ steps.upload.outcome }}
       with:
         script: |
           const fs = require('fs');
@@ -199,7 +212,9 @@ runs:
             '**Risk:** ' + level.toUpperCase() + ' (' + score + '/100) · **Findings:** ' + findings,
             caps.length ? '**Capabilities:** ' + caps.join(', ') : '_No notable capabilities detected._',
             '',
-            'Detailed results are in the **Security → Code scanning** tab (SARIF). ' +
+            (process.env.UPLOADED === 'success'
+              ? 'Detailed results are in the **Security → Code scanning** tab (SARIF). '
+              : 'The findings are listed in the log of the SkillTotal step. ') +
               'Deterministic static analysis — [SkillTotal](https://www.skilltotal.ai).',
           ].join('\n');
           const { owner, repo } = context.repo;
@@ -234,6 +249,6 @@ runs:
           exit 1
         fi
         if [ "$EXIT" != "0" ]; then
-          echo "::error::SkillTotal gate failed (exit $EXIT). See the Code Scanning results."
+          echo "::error::SkillTotal gate failed (exit $EXIT). The findings are listed in the Scan step's log, and in Code Scanning when it is on."
           exit "$EXIT"
         fi
