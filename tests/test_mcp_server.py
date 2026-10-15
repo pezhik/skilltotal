@@ -87,20 +87,25 @@ def test_tools_list_declares_all_tools():
 
 
 def test_scan_component_returns_report(tmp_path: Path):
-    payload = _tool_payload(_call("scan_component", {"source": str(_component(tmp_path))}))
+    root = str(_component(tmp_path))
+    payload = _tool_payload(_call("scan_component", {"source": root}))
     assert payload["risk_score"] > 0
-    assert "ST-SHELL-PIPE-EXEC" in {f["id"] for f in payload["findings"]}
+    assert "ST-SHELL-PIPE-EXEC" in {f["rule"] for f in payload["why"]}
+    full = _tool_payload(_call("scan_component", {"source": root, "detail": "full"}))
+    assert "ST-SHELL-PIPE-EXEC" in {f["id"] for f in full["findings"]}
 
 
 def test_diff_components_returns_delta(tmp_path: Path):
     old = tmp_path / "old"
     old.mkdir()
     (old / "index.js").write_text('console.log("hi");\n', encoding="utf-8")
-    payload = _tool_payload(
-        _call("diff_components", {"old": str(old), "new": str(_component(tmp_path))})
-    )
+    new = str(_component(tmp_path))
+    payload = _tool_payload(_call("diff_components", {"old": str(old), "new": new}))
     assert payload["risk_score_delta"] > 0
-    assert "ST-SHELL-PIPE-EXEC" in {f["id"] for f in payload["new_findings"]}
+    assert "ST-SHELL-PIPE-EXEC" in {f["rule"] for f in payload["new_risk_findings"]}
+    full = _tool_payload(
+        _call("diff_components", {"old": str(old), "new": new, "detail": "full"}))
+    assert "ST-SHELL-PIPE-EXEC" in {f["id"] for f in full["new_findings"]}
 
 
 def test_list_rules_returns_registry():
@@ -143,7 +148,10 @@ def test_collection_error_is_tool_error_not_crash(tmp_path: Path):
 
 def test_unknown_tool_and_missing_argument():
     assert _call("bogus_tool", {})["error"]["code"] == -32602
-    assert _call("scan_component", {})["error"]["code"] == -32602
+    # A missing argument is the tool's error, which the model reads and can correct.
+    result = _call("scan_component", {})["result"]
+    assert result["isError"] is True
+    assert '"source" is required' in result["content"][0]["text"]
 
 
 # --- stdio loop -----------------------------------------------------------------------
