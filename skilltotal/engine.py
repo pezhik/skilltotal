@@ -956,9 +956,9 @@ def _split_own_provider_reads(
                 category=finding.category,
                 title=f"{finding.title} (the provider SDK's own credentials)",
                 reason=(
-                    f"{finding.id} matched where this package, an SDK of the provider those "
-                    f"credentials belong to, reads them ({', '.join(files[:5])}); reading them is "
-                    "what it is for, so it is not scored."
+                    f"{finding.id} matched where this package, an SDK or client of the provider "
+                    f"those credentials belong to, reads them ({', '.join(files[:5])}); reading "
+                    "them is what it is for, so it is not scored."
                 ),
                 file=files[0],
                 line=next((e.line_start for e in own if e.file == files[0]), None),

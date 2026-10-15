@@ -125,6 +125,12 @@ _SDK_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
     # The Azure CLI keeps its configuration and login under ~/.azure. Named exactly: the `azure-`
     # prefix below is anyone's to publish under, so it does not clear a credential read itself.
     "azure-cli": frozenset({"azure"}), "azure-cli-core": frozenset({"azure"}),
+    # Package-index clients and upload tools read the index's upload configuration, ~/.pypirc:
+    # twine and distlib (its PyPIRCFile), pip and pipenv (both ship distlib vendored), setuptools'
+    # bundled distutils upload command, flit and pdm (publish).
+    "twine": frozenset({"pypi"}), "distlib": frozenset({"pypi"}), "pip": frozenset({"pypi"}),
+    "pipenv": frozenset({"pypi"}), "setuptools": frozenset({"pypi"}), "flit": frozenset({"pypi"}),
+    "pdm": frozenset({"pypi"}),
 }
 _AZURE_SDK_PREFIX = "azure-"  # the azure-* SDK family (azure-identity, azure-storage-blob, …)
 # npm scopes belong to one organization, so a scope names its owner as surely as an exact name:

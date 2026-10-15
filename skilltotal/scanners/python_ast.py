@@ -101,6 +101,13 @@ UNSAFE_DESERIALIZE_CALLS = frozenset(
         "shelve.open",
     }
 )
+# Their serializing counterparts: bytes made by one of these in the same module are the
+# module's own state, not outside input (see _CallVisitor._loads_own_state).
+_SERIALIZE_CALLS = frozenset(
+    {
+        "pickle.dumps", "cPickle.dumps", "_pickle.dumps", "marshal.dumps", "dill.dumps",
+    }
+)
 
 # What a pickle __reduce__/__reduce_ex__ may hand back as the callable to run on load. Pickle
 # calls whatever comes first in the returned tuple, so a shell or code-execution function there
@@ -720,6 +727,10 @@ class _CallVisitor(ast.NodeVisitor):
         # and outside an `if __name__ == "__main__":` block. A .pth import runs exactly these.
         self.module_spawns: list[Evidence] = []
         self._deferred = 0  # > 0 while visiting code an import does not run
+        # Attributes every assignment of which (in this module) is this module's own serialized
+        # state: computed on the first deserialize call, see _loads_own_state.
+        self._module: ast.Module | None = None
+        self._own_state_attrs: frozenset[str] | None = None
 
     def visit_Module(self, node: ast.Module) -> None:
         for sub in ast.walk(node):
@@ -737,6 +748,7 @@ class _CallVisitor(ast.NodeVisitor):
                     self._module_from[local] = f"{sub.module}.{alias.name}"
                     self.from_imports.setdefault(local, f"{sub.module}.{alias.name}")
         self._home_names = self._home_variables(node)
+        self._module = node
         # Module-scope bindings apply everywhere (module globals are visible in functions), so they
         # are merged in without being popped.
         self.aliases, self.from_imports = _with_bindings(
@@ -947,8 +959,9 @@ class _CallVisitor(ast.NodeVisitor):
                 self._add(R_PIPE_EXEC_PY, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:
             # Skip if this call is the payload of an enclosing exec/eval/compile — that's the
-            # malicious decode-and-execute, already raised as ST-OBF-DECODE-EXEC-PY.
-            if id(node) not in self._decode_exec_inner:
+            # malicious decode-and-execute, already raised as ST-OBF-DECODE-EXEC-PY. Skip too an
+            # attribute that only ever holds what this module serialized itself.
+            if id(node) not in self._decode_exec_inner and not self._loads_own_state(node):
                 self._add(R_DESERIAL, node)
         elif name in ("yaml.load", "yaml.load_all") and _yaml_load_is_unsafe(node):
             self._add(R_DESERIAL, node)
@@ -1124,6 +1137,68 @@ class _CallVisitor(ast.NodeVisitor):
         if not _has_nonliteral_arg(arg):
             return None  # a constant payload is not a dropper (false-positive guard)
         return arg
+
+    def _loads_own_state(self, node: ast.Call) -> bool:
+        """True for ``loads(x.attr)`` where every assignment to ``.attr`` in this module stores
+        this module's own serialization (``self._meta = dumps(meta)``), ``None`` or the same
+        attribute of another object, and at least one stores a ``dumps``: an object reading back
+        bytes it pickled itself (rich's ``Style.meta``). An attribute filled anywhere from
+        anything else (a socket, a file) keeps the finding, as does any other argument."""
+        arg = node.args[0] if node.args else None
+        if not isinstance(arg, ast.Attribute) or self._module is None:
+            return False
+        if self._own_state_attrs is None:
+            self._own_state_attrs = self._own_state_attributes(self._module)
+        return arg.attr in self._own_state_attrs
+
+    def _own_state_attributes(self, tree: ast.Module) -> frozenset[str]:
+        values: dict[str, list[ast.expr | None]] = {}
+        for sub in ast.walk(tree):
+            if isinstance(sub, ast.Assign):
+                targets, value = sub.targets, sub.value
+            elif isinstance(sub, (ast.AnnAssign, ast.AugAssign)):
+                targets = [sub.target]
+                value = None if isinstance(sub, ast.AugAssign) else sub.value
+                if value is None and isinstance(sub, ast.AnnAssign):
+                    continue  # a bare annotation assigns nothing
+            elif (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name)
+                  and sub.func.id == "setattr" and len(sub.args) >= 2):
+                attr = _const_str(sub.args[1])
+                if attr is None:
+                    return frozenset()  # sets an attribute it does not name: could be any
+                values.setdefault(attr, []).append(None)
+                continue
+            else:
+                continue
+            for target in targets:
+                for element in ast.walk(target):
+                    if isinstance(element, ast.Attribute) and isinstance(element.ctx, ast.Store):
+                        direct = element is target
+                        values.setdefault(element.attr, []).append(value if direct else None)
+        return frozenset(
+            attr for attr, assigned in values.items()
+            if all(v is not None and self._own_state_value(v, attr) for v in assigned)
+            and any(self._is_serializer_call(v) for v in assigned)
+        )
+
+    def _own_state_value(self, value: ast.expr, attr: str) -> bool:
+        if isinstance(value, ast.Constant) and value.value is None:
+            return True
+        if isinstance(value, ast.Attribute) and value.attr == attr:
+            return True
+        if isinstance(value, ast.IfExp):
+            return (self._own_state_value(value.body, attr)
+                    and self._own_state_value(value.orelse, attr))
+        if isinstance(value, ast.BoolOp):
+            return all(self._own_state_value(v, attr) for v in value.values)
+        return self._is_serializer_call(value)
+
+    def _is_serializer_call(self, value: ast.expr | None) -> bool:
+        if isinstance(value, ast.IfExp):
+            return self._is_serializer_call(value.body) or self._is_serializer_call(value.orelse)
+        if not isinstance(value, ast.Call):
+            return False
+        return self._dotted(value.func) in _SERIALIZE_CALLS
 
     # -- internals ---------------------------------------------------------
     def _dotted(self, func: ast.expr) -> str | None:

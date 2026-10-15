@@ -139,7 +139,9 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   where a Python docstring that shows `host="0.0.0.0"` is an example, not a bind).
 - **A provider SDK reading its own provider's credentials** — botocore, boto3, awscli and the
   AWS JavaScript SDK (`@aws-sdk/*`, `@smithy/*`) reading `~/.aws`, the Kubernetes client reading
-  `~/.kube/config`, and the other curated, exactly named packages in `scoring.py`: a
+  `~/.kube/config`, package-index tooling (pip, twine, distlib, pipenv, setuptools, flit, pdm)
+  reading the PyPI upload configuration `~/.pypirc`, and the other curated, exactly named
+  registry packages in `scoring.py`: a
   `ST-SENS-PATH`/`ST-SENS-PATH-PY` match in the package's own credential domain is what the package
   is for, so it goes to `needs_review` and cannot feed `ST-COMBO-EXFIL`. Another domain (an AWS SDK
   reading `~/.ssh`), and the same read in any other package, still score.
