@@ -20,6 +20,11 @@ _INDENT = "  "
 # package, so a text report printed to a terminal must not carry escape sequences that move the
 # cursor, rewrite earlier lines (a BLOCK turned into an ALLOW) or set the clipboard.
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+# Bidirectional embeddings, overrides and isolates: they make a line display in another order
+# than it reads (`ALLOW` drawn over a `BLOCK`).
+# Built from numbers, so this source file holds no bidi characters itself.
+_BIDI_CONTROLS = re.compile(f"[{chr(0x202A)}-{chr(0x202E)}{chr(0x2066)}-{chr(0x2069)}]")
+_WORKFLOW_COMMAND_START = re.compile(r"(?m)^([ \t]*)::")
 # The text report shows a few locations per finding; --json carries every one.
 _TEXT_EVIDENCE_SHOWN = 3
 _CLASS_ORDER = {"malicious_indicator": 0, "risky_construct": 1, "exposure": 2, "capability": 3}
@@ -30,8 +35,15 @@ _CLASS_LABEL = {
 
 
 def _terminal_safe(text: str) -> str:
-    """Show control characters as ``\\x1b`` instead of sending them to the terminal."""
-    return _CONTROL_CHARS.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    """Show control characters as ``\\x1b`` instead of sending them to the terminal, and the
+    bidirectional controls (which reorder what a line shows) as ``<U+202E>``."""
+    text = _CONTROL_CHARS.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+    text = _BIDI_CONTROLS.sub(lambda m: f"<U+{ord(m.group()):04X}>", text)
+    # A GitHub runner reads `::command::` at the start of a line, leading blanks skipped, and
+    # `##[command]` anywhere in one: a snippet printed by `skilltotal scan` in a CI step must not
+    # set an output, add a path or stop the log. Shown with a visible break instead.
+    text = _WORKFLOW_COMMAND_START.sub(r"\1:<U+200B>:", text)
+    return text.replace("##[", "#<U+200B>#[")
 
 
 def one_line(text: str) -> str:
@@ -322,7 +334,10 @@ def render_inventory_text(items: list[dict]) -> str:
             else "risky" if it.get("risky") else "not scanned"))
         risk = it.get("risk_level") or ""
         where = it.get("source") or it.get("note", "")
-        rows.append((it["host"], it["name"], it["kind"], where, verdict, risk))
+        # Names, paths and notes come from config files anyone can write (a repository's
+        # `.mcp.json`): a newline in one would forge a row or a workflow command.
+        rows.append(tuple(one_line(str(v)) for v in
+                          (it["host"], it["name"], it["kind"], where, verdict, risk)))
     headers = ("HOST", "NAME", "KIND", "SOURCE", "VERDICT", "RISK")
     widths = [max(len(headers[i]), *(len(str(r[i])) for r in rows)) for i in range(len(headers))]
     lines = [f"SkillTotal inventory ({len(items)} component(s))", ""]
@@ -339,11 +354,13 @@ def render_inventory_text(items: list[dict]) -> str:
         lines.append(f"{len(flagged)} component(s) need attention (high risk, malicious, blocked "
                      f"by `skilltotal guard`, or a launch command that runs a downloaded script).")
     for it in items:
+        name = one_line(str(it["name"]))
         if it.get("risky") and it.get("note"):
-            lines.append(f"  {it['name']}: {it['note']}")
+            lines.append(f"  {name}: {one_line(str(it['note']))}")
         if it.get("guard") == "block":
-            lines.extend(f"  {it['name']}: {reason}" for reason in it.get("guard_reasons") or [])
-        lines.extend(f"  {it['name']}: inline secret in its config: {secret}"
+            lines.extend(f"  {name}: {one_line(str(reason))}"
+                         for reason in it.get("guard_reasons") or [])
+        lines.extend(f"  {name}: inline secret in its config: {one_line(str(secret))}"
                      for secret in it.get("secrets") or [])
     return _terminal_safe("\n".join(lines) + "\n")
 

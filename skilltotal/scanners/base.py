@@ -178,6 +178,10 @@ class ScanResult:
 
     findings: list[Finding] = field(default_factory=list)
     needs_review: list[NeedsReview] = field(default_factory=list)
+    # Files whose structure the scanner could not analyze (Python nested too deeply to parse or
+    # walk), read by regex alone. A match in a string literal there is all the evidence there is,
+    # so the engine does not set such matches aside as text.
+    regex_only_files: list[str] = field(default_factory=list)
 
 
 class Scanner(ABC):

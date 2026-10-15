@@ -168,6 +168,9 @@ def _parse(text: str, path: Path) -> dict[str, object]:
             data = tomllib.loads(text)
         except (tomllib.TOMLDecodeError, ValueError) as exc:
             raise ConfigError(f"{path}: not valid TOML: {exc}") from exc
+        # tomllib recurses: a value nested a few thousand levels deep exhausts the stack.
+        except RecursionError as exc:
+            raise ConfigError(f"{path}: not valid TOML: nested too deeply") from exc
         return data if isinstance(data, dict) else {}
     try:
         return _fallback_parse(text)

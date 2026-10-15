@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import TypeVar
 
 from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
@@ -31,6 +35,55 @@ from skilltotal.scanners.sensitive_paths import (  # reuse the credential-path s
 from skilltotal.scanners.shell_script import REMOTE_EXEC
 
 PY_SUFFIXES = (".py", ".pyw")
+
+# --- deep nesting ----------------------------------------------------------------------------
+# The visitors recurse once per level of the tree, and a file can nest an expression deeper than
+# the default recursion limit lets them go: `x = 1+1+...+1` with a thousand terms compiles and
+# runs, and was read only by the regex fallback (security review, 2026-10-15). Such a tree is
+# walked again in a thread with a large stack under a raised limit. Python frames have used no C
+# stack since 3.11, and since 3.12 the C code's own recursion has a limit of its own, so raising
+# the Python limit there cannot let another thread overflow its stack; before 3.12 the walk is
+# not retried.
+_DEEP_STACK_BYTES = 64 * 1024 * 1024
+_DEEP_RECURSION_LIMIT = 100_000
+_deep_lock = threading.Lock()
+_T = TypeVar("_T")
+
+
+def walk_deep(walk: Callable[[], _T]) -> _T:
+    """``walk()``; when it runs out of recursion, ``walk()`` again with room for a deep tree.
+    Raises RecursionError when even that is not enough."""
+    try:
+        return walk()
+    except RecursionError:
+        if sys.version_info < (3, 12):
+            raise
+    result: list[_T] = []
+    error: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            result.append(walk())
+        except BaseException as exc:  # handed to the caller's thread
+            error.append(exc)
+
+    with _deep_lock:
+        limit = sys.getrecursionlimit()
+        try:
+            stack = threading.stack_size(_DEEP_STACK_BYTES)
+        except (ValueError, RuntimeError):  # a platform that cannot size thread stacks
+            raise RecursionError("nested too deeply to walk") from None
+        try:
+            thread = threading.Thread(target=run, name="skilltotal-deep-ast", daemon=True)
+            sys.setrecursionlimit(max(limit, _DEEP_RECURSION_LIMIT))
+            thread.start()
+            thread.join()
+        finally:
+            sys.setrecursionlimit(limit)
+            threading.stack_size(stack)
+    if error:
+        raise error[0]
+    return result[0]
 
 # --- call-target classification ------------------------------------------------------
 # Process creation without subprocess: the exec*/spawn* families replace or fork the interpreter
@@ -545,25 +598,29 @@ class PythonAstScanner(Scanner):
         # Shipped modules whose top level spawns a process, by path (see ST-PTH-IMPORT-EXEC).
         module_spawns: dict[str, list[Evidence]] = {}
 
+        too_deep: list[tuple[str, int | None]] = []
+
         for f in index.select(suffixes=PY_SUFFIXES):
             try:
                 tree = ast.parse(f.text, filename=f.relpath)
-            # ValueError: a NUL byte on older Pythons. RecursionError / MemoryError: nesting
-            # deeper than the parser's own stack (`x = 1+1+...`), which a file can force.
-            except (SyntaxError, ValueError, RecursionError, MemoryError) as exc:
+            # RecursionError / MemoryError: nesting deeper than the parser's own stack
+            # (`x = 1+1+...`), which a file can force.
+            except (RecursionError, MemoryError):
+                self._regex_fallback(f, acc)
+                too_deep.append((f.relpath, None))
+                continue
+            # ValueError: a NUL byte on older Pythons.
+            except (SyntaxError, ValueError) as exc:
                 self._regex_fallback(f, acc)
                 unparseable.append((f.relpath, getattr(exc, "lineno", None)))
                 continue
             try:
-                visitor = _CallVisitor(f)
-                visitor.visit(tree)
-                taint = _TaintVisitor(f)
-                taint.analyze(tree)
+                visitor, taint = walk_deep(lambda f=f, tree=tree: _walk(f, tree))
             except RecursionError:
-                # Parsed, but nested deeper than the visitors can walk: read like unparseable
-                # source, so nothing half-visited is reported.
+                # Parsed, but nested deeper than the visitors can walk even with a raised limit:
+                # read like unparseable source, so nothing half-visited is reported.
                 self._regex_fallback(f, acc)
-                unparseable.append((f.relpath, None))
+                too_deep.append((f.relpath, None))
                 continue
             for rid, evidence in visitor.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
@@ -583,6 +640,17 @@ class PythonAstScanner(Scanner):
                 advice="They were analyzed with the regex fallback, so results for them may "
                        "be incomplete.",
             ))
+        if too_deep:
+            needs_review.append(aggregated_review(
+                category="python",
+                title="Python file too deeply nested to analyze",
+                places=too_deep,
+                what="Python file(s) nest an expression or statement deeper than the analysis "
+                     "can follow",
+                advice="They were analyzed with the regex fallback, matches inside strings "
+                       "included, so results for them may be incomplete. Deep nesting is rare "
+                       "in hand-written code; read the file.",
+            ))
         if dynamic_imports:
             needs_review.append(aggregated_review(
                 category="dynamic_code_execution",
@@ -597,7 +665,8 @@ class PythonAstScanner(Scanner):
             for evidence in _pth_import_chains(index, module_spawns):
                 acc.setdefault(R_PTH_IMPORT_EXEC, []).extend(evidence)
         _suppress_cmdi_covered_by_taint(acc)
-        return ScanResult(findings=self._build_findings(acc), needs_review=needs_review)
+        return ScanResult(findings=self._build_findings(acc), needs_review=needs_review,
+                          regex_only_files=[path for path, _ in too_deep])
 
     # ------------------------------------------------------------------ helpers
     def _rules_by_id(self) -> dict[str, RuleSpec]:
@@ -633,6 +702,14 @@ class PythonAstScanner(Scanner):
                 continue
             for _m, ev in f.finditer(rule.pattern):
                 acc.setdefault(rule.id, []).append(ev)
+
+
+def _walk(f: IndexedFile, tree: ast.Module) -> tuple[_CallVisitor, _TaintVisitor]:
+    visitor = _CallVisitor(f)
+    visitor.visit(tree)
+    taint = _TaintVisitor(f)
+    taint.analyze(tree)
+    return visitor, taint
 
 
 def _is_main_guard(test: ast.expr) -> bool:
@@ -1233,14 +1310,22 @@ class _CallVisitor(ast.NodeVisitor):
         return self.file.evidence_for_lines(line_start, line_end)
 
 
+# How many attributes and calls deep a target is resolved. Every rule names a short path
+# (`os.system`, `getattr(os, "system")`); a chain thousands of links long resolved again from
+# each link took time cubic in its length.
+_MAX_RESOLVE_DEPTH = 64
+
+
 def _resolve_dotted(
-    func: ast.expr, aliases: dict[str, str], from_imports: dict[str, str]
+    func: ast.expr, aliases: dict[str, str], from_imports: dict[str, str], depth: int = 0
 ) -> str | None:
     """Resolve a call/attribute target to a canonical dotted name, applying import aliases."""
     if isinstance(func, ast.Name):
         return from_imports.get(func.id, func.id)
+    if depth >= _MAX_RESOLVE_DEPTH:
+        return None
     if isinstance(func, ast.Attribute):
-        base = _resolve_dotted(func.value, aliases, from_imports)
+        base = _resolve_dotted(func.value, aliases, from_imports, depth + 1)
         if base is None:
             return func.attr
         parts = base.split(".")
@@ -1249,19 +1334,19 @@ def _resolve_dotted(
             base = ".".join(parts)
         return f"{base}.{func.attr}"
     if isinstance(func, ast.Call):
-        return _resolve_lookup_call(func, aliases, from_imports)
+        return _resolve_lookup_call(func, aliases, from_imports, depth + 1)
     return None
 
 
 def _resolve_lookup_call(
-    call: ast.Call, aliases: dict[str, str], from_imports: dict[str, str]
+    call: ast.Call, aliases: dict[str, str], from_imports: dict[str, str], depth: int = 0
 ) -> str | None:
     """``__import__("os")`` -> ``os``; ``getattr(os, "sys" + "tem")`` -> ``os.system``.
 
     Only for a constant name looked up on a module (imported, or imported right there by name), so
     ``getattr(self, name)`` and ``getattr(obj, "x")`` stay unresolved.
     """
-    name = _resolve_dotted(call.func, aliases, from_imports)
+    name = _resolve_dotted(call.func, aliases, from_imports, depth)
     if name in _IMPORT_BY_NAME and call.args:
         return _const_str(call.args[0])
     if name not in _GETATTR or len(call.args) < 2:
@@ -1274,7 +1359,7 @@ def _resolve_lookup_call(
         isinstance(owner, (ast.Name, ast.Attribute))
         and _root_name(owner) in aliases.keys() | from_imports.keys()
     )
-    base = _resolve_dotted(owner, aliases, from_imports) if is_module else None
+    base = _resolve_dotted(owner, aliases, from_imports, depth) if is_module else None
     if not base:
         return None
     parts = base.split(".")
@@ -1852,12 +1937,15 @@ def python_path_writes(f: IndexedFile) -> list[PathWrite]:
         tree = ast.parse(f.text, filename=f.relpath)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
         return []
-    visitor = _WriteVisitor(f)
-    try:
+    def walk() -> list[PathWrite]:
+        visitor = _WriteVisitor(f)
         visitor.visit(tree)
+        return visitor.writes
+
+    try:
+        return walk_deep(walk)
     except RecursionError:
         return []
-    return visitor.writes
 
 
 class _WriteVisitor(_CallVisitor):

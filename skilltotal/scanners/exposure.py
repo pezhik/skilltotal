@@ -349,7 +349,9 @@ class ExposureScanner(Scanner):
             code_context="comments_and_docstrings",
             suffixes=CODE_SUFFIXES,
             pattern=alternation(
-                r"\.run\([^)]*\bdebug\s*=\s*True",          # Flask app.run(debug=True)
+                # Flask app.run(debug=True); bounded, as from every `.run(` of a crafted line
+                # with no `)` an unbounded `[^)]*` ran to the end of the file (quadratic).
+                r"\.run\([^)]{0,1000}\bdebug\s*=\s*True",
                 r"app\.debug\s*=\s*True",
                 flags=re.IGNORECASE,
             ),

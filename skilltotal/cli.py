@@ -641,6 +641,43 @@ def _write_blobs(base: list[str], env: dict[str, str], listing: bytes, root: Pat
             proc.wait()
 
 
+# Once a day at most, a scan removes the temporary folders of scans that were killed (a CI job
+# cancelled mid-clone, a hook check timed out): the MCP server does it when it starts, and a
+# machine that only runs the CLI or the hook would otherwise keep them.
+_TEMP_SWEEP_STAMP = "skilltotal-temp-sweep"
+_TEMP_SWEEP_INTERVAL = 24 * 3600
+
+
+def _sweep_stale_temp_dirs_daily(tmp: str | None = None) -> threading.Thread | None:
+    """Start removing stale temporary folders (of ``tmp``, by default the temp directory) in the
+    background, if no sweep ran in the last day; returns the thread doing it. Best effort: it
+    never delays or fails the scan."""
+    import stat
+    import tempfile
+
+    try:
+        tmp = tmp or tempfile.gettempdir()
+        stamp = os.path.join(tmp, _TEMP_SWEEP_STAMP)
+        try:
+            info = os.lstat(stamp)
+        except FileNotFoundError:
+            pass
+        else:
+            if not stat.S_ISREG(info.st_mode) or time.time() - info.st_mtime < _TEMP_SWEEP_INTERVAL:
+                return None  # swept recently, or something else holds the name: leave it alone
+            os.remove(stamp)  # removes a link itself, never what it points at
+        # O_EXCL: created here, never opened through a link someone put in its place.
+        os.close(os.open(stamp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        from skilltotal.mcp_server import remove_stale_temp_dirs
+
+        sweep = threading.Thread(target=remove_stale_temp_dirs, args=(tmp,),
+                                 name="skilltotal-temp-sweep", daemon=True)
+        sweep.start()
+        return sweep
+    except Exception:  # noqa: BLE001  # nosec B110 - housekeeping must never fail a scan
+        return None
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.baseline import build_baseline, load_baseline
     from skilltotal.collector import CollectionError, classify_source
@@ -648,6 +685,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.engine import analyze
     from skilltotal.report import render_json, render_summary_text, render_text
     from skilltotal.sarif import render_sarif
+
+    _sweep_stale_temp_dirs_daily()
 
     try:
         config = _load_config(args)
@@ -1000,7 +1039,7 @@ def _guard_installed(args: argparse.Namespace) -> int:
     reported as passed: a sweep where every scan failed used to say "ALLOW"."""
     from skilltotal import engine
     from skilltotal.inventory import discover
-    from skilltotal.report import _terminal_safe, render_inventory_json
+    from skilltotal.report import _terminal_safe, one_line, render_inventory_json
 
     if _project_missing(args.project):
         return EXIT_ERROR
@@ -1047,12 +1086,16 @@ def _guard_installed(args: argparse.Namespace) -> int:
             marker = {"allow": "ok", "block": "BLOCK", "risky": "RISKY"}.get(
                 it["decision"], it["decision"])
             risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
-            lines.append(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
-            lines.extend(f"      - {reason}" for reason in it.get("reasons", []))
+            # Names and notes come from config files anyone can write (a repository's
+            # `.mcp.json`): one_line keeps a newline or a bidi control in one from forging an
+            # "ALLOW:" line or a workflow command.
+            lines.append(f"[{marker}] {one_line(str(it['name']))} ({one_line(str(it['host']))}, "
+                         f"{one_line(str(it['kind']))}){risk}")
+            lines.extend(f"      - {one_line(str(reason))}" for reason in it.get("reasons", []))
             if it.get("note") and (it["decision"] in unchecked
                                    or it["decision"] == "this scanner"):
-                lines.append(f"      - {it['note']}")
-            lines.extend(f"      - inline secret in its config: {secret}"
+                lines.append(f"      - {one_line(str(it['note']))}")
+            lines.extend(f"      - inline secret in its config: {one_line(str(secret))}"
                          for secret in it.get("secrets", []))
         lines.append("")
         labels = {"remote": "remote (not scannable)"}
@@ -1063,7 +1106,7 @@ def _guard_installed(args: argparse.Namespace) -> int:
                        f"({counts}).")
         if blocked:
             lines.append(f"BLOCK: {len(blocked)} component(s) failed the guard: "
-                         f"{', '.join(blocked)}")
+                         f"{', '.join(one_line(str(name)) for name in blocked)}")
             if missing:
                 lines.append(not_checked)
         elif not items:
@@ -1284,6 +1327,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         from skilltotal import hook_scan
 
         if args.scan_into:
+            _sweep_stale_temp_dirs_daily()
             return hook_scan.scan_into(Path(args.scan_into))
         return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
     if args.protocol > HOOK_PROTOCOL:

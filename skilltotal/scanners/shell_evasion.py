@@ -9,6 +9,7 @@ co-occur with other malicious indicators).
 
 from __future__ import annotations
 
+import bisect
 import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
@@ -56,7 +57,7 @@ _PS_CRADLE = re.compile(
 )
 # Two-statement form: `Invoke-Expression $x` whose `$x` was assigned a download anywhere in the
 # file. The captured name is checked against an assignment from a download verb.
-_PS_IEX_VAR = re.compile(rf"\b{_PS_IEX}\b\s*\(?\s*\$(\w+)", re.IGNORECASE)
+_PS_IEX_VAR = re.compile(rf"\b{_PS_IEX}\b\s*(?:\(\s*)?\$(\w+)", re.IGNORECASE)
 
 # -EncodedCommand hides the command it runs when the payload arrives as an opaque base64 blob.
 # Node tools also use it to hand PowerShell a multi-line script without quoting problems, encoding
@@ -86,6 +87,13 @@ _BUILDER_IO = re.compile(
 )
 # The builder must carry the script itself, not only wrap its arguments (`` `${x}` ``).
 _INTERPOLATION = re.compile(r"\$\{[^}]*\}")
+
+
+def _without_interpolations(text: str) -> str:
+    """``text`` with its `${…}` parts removed. No `${` after the last `}` can close, so the rest is
+    kept as it is: tried from each `${` of a long unclosed run, the match was quadratic."""
+    last = text.rfind("}") + 1
+    return _INTERPOLATION.sub("", text[:last]) + text[last:]
 _MIN_BUILDER_SCRIPT = 40
 # Encoded-command exemption checks per file (each one may re-read the file).
 _MAX_CHECKS = 8
@@ -119,7 +127,7 @@ def _builder_code(f: IndexedFile, name: str) -> tuple[str, int] | None:
     while i < stop:
         span = f.string_span_at(i)
         if span is not None and span[0] == i:
-            literal += len(_INTERPOLATION.sub("", f.text[span[0] + 1 : span[1] - 1]).strip())
+            literal += len(_without_interpolations(f.text[span[0] + 1 : span[1] - 1]).strip())
             code.append(" ")
             i = span[1]
             continue
@@ -215,15 +223,17 @@ _RULE = RuleSpec(
     suffixes=_EVASION_SUFFIXES,
     # A behaviour detector matches its own pattern literals in .py source; demote those.
     code_context="strings_and_comments",
+    # Bounded gaps: an unbounded `[^\n]*` rescanned the rest of a crafted line from every `iex`,
+    # `nohup`, `chmod +x` or `codesign` on it (quadratic).
     pattern=alternation(
         r"(?:-ep|-executionpolicy)\s+bypass",
         r"-encodedcommand\b",
         r"(?:powershell|pwsh)\b[^\n]{0,80}-enc\b",
         r"-windowstyle\s+hidden\b",
-        r"codesign\b[^\n]*--force[^\n]*--deep",
-        r"\bnohup\b(?:[^\n>]|>(?!\s*/tmp/))*\s/tmp/\S",
-        r"\bchmod\s+\+x\b[^\n]*(?:/tmp/|/dev/shm/)",
-        r"(?:iex|invoke-expression)\b[^\n]*"
+        r"codesign\b[^\n]{0,1000}--force[^\n]{0,1000}--deep",
+        r"\bnohup\b(?:[^\n>]|>(?!\s*/tmp/)){0,1000}\s/tmp/\S",
+        r"\bchmod\s+\+x\b[^\n]{0,1000}(?:/tmp/|/dev/shm/)",
+        r"(?:iex|invoke-expression)\b[^\n]{0,1000}"
         r"(?:downloadstring|invoke-webrequest|\biwr\b|net\.webclient)",
         flags=re.IGNORECASE,
     ),
@@ -261,14 +271,36 @@ def _ps_cradle_spans(f: IndexedFile) -> list[tuple[int, int]]:
     for m in _PS_CRADLE.finditer(f.text):
         if m.end() > m.start():
             spans.append((m.start(), m.end()))
+    assigned: set[str] | None = None
     for m in _PS_IEX_VAR.finditer(f.text):
-        var = m.group(1)
-        assign = re.compile(
-            rf"\${re.escape(var)}\s*=\s*[^\n]*?\b{_PS_DOWNLOAD}", re.IGNORECASE
-        )
-        if assign.search(f.text):
+        if assigned is None:
+            assigned = _download_assigned(f.text)
+        if m.group(1).casefold() in assigned:
             spans.append((m.start(), m.end()))
     return spans
+
+
+_PS_ASSIGN = re.compile(r"\$(\w+)\s*=\s*")
+_PS_DOWNLOAD_WORD = re.compile(rf"\b{_PS_DOWNLOAD}", re.IGNORECASE)
+
+
+def _download_assigned(text: str) -> set[str]:
+    """Names (casefolded: PowerShell names ignore case) of the variables ``text`` assigns a value
+    with a download verb later on the same line: `$x = (New-Object Net.WebClient).Download...`.
+
+    The same as searching `\\$name\\s*=\\s*[^\\n]*?\\b<download>` for each name, in one pass: that
+    search, once for each of thousands of `iex $name` lines, was quadratic.
+    """
+    downloads = [m.start() for m in _PS_DOWNLOAD_WORD.finditer(text)]
+    names: set[str] = set()
+    if not downloads:
+        return names
+    for m in _PS_ASSIGN.finditer(text):
+        line_end = text.find("\n", m.end())
+        k = bisect.bisect_left(downloads, m.end())
+        if k < len(downloads) and (line_end == -1 or downloads[k] < line_end):
+            names.add(m.group(1).casefold())
+    return names
 
 
 class ShellEvasionScanner(Scanner):

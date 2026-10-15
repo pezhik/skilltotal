@@ -132,8 +132,12 @@ _PY_FROM = re.compile(
     re.MULTILINE,
 )
 _PY_IMPORT = re.compile(r"^[ \t]*import[ \t]+([\w.]+(?:[ \t]*,[ \t]*[\w.]+)*)", re.MULTILINE)
-# Console scripts in pyproject (`name = "pkg.mod:func"`) and setup.py / setup.cfg.
-_PY_ENTRY_POINT = re.compile(r"""["']?[\w.-]+["']?[ \t]*=[ \t]*["']?([A-Za-z_][\w.]*):[\w.]+""")
+# Console scripts in pyproject (`name = "pkg.mod:func"`) and setup.py / setup.cfg. Unquoted, the
+# name starts where its run of name characters does: tried from each character of a long run, the
+# same failing match was repeated (quadratic).
+_PY_ENTRY_POINT = re.compile(
+    r"""(?:["']|(?<![\w.-]))[\w.-]+["']?[ \t]*=[ \t]*["']?([A-Za-z_][\w.]*):[\w.]+"""
+)
 
 
 def _module_paths(prefix: str, parts: list[str]) -> list[str]:

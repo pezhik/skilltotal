@@ -18,6 +18,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 import zipfile
@@ -882,6 +883,83 @@ def _within(dest_resolved: Path, name: str, dest: Path) -> bool:
         return False
 
 
+# Names Windows opens as a device whatever the extension (`NUL.py` is NUL), so the file is never
+# written there. The superscript digits are devices too.
+_WINDOWS_DEVICES = frozenset({
+    "con", "prn", "aux", "nul", "conin$", "conout$",
+    *(f"{port}{n}" for port in ("com", "lpt")
+      for n in [*"0123456789", chr(0xB9), chr(0xB2), chr(0xB3)]),
+})
+# Characters a Windows file name cannot hold. In a tar name, `a.txt:x.py` writes an alternate data
+# stream of `a.txt`; zipfile replaces them with `_` on Windows instead.
+_WINDOWS_ILLEGAL = frozenset('<>:"|?*')
+_ZIP_WINDOWS_NAME = str.maketrans({c: "_" for c in _WINDOWS_ILLEGAL})
+
+
+class _PortableNames:
+    """The member names of an archive, held to what extracts to the same files on every system.
+
+    Windows folds case, drops trailing dots and spaces, reads `::$DATA` as the file itself, opens
+    device names as devices and writes `a:b` to a hidden stream; macOS folds case and Unicode
+    composition. An archive that holds `setup.py` and `SETUP.py` (or `setup.py.`) extracts both on
+    Linux but one over the other on Windows, so a harmless file could replace the one that runs
+    and the report would depend on the system that made it. Such an archive is refused
+    everywhere. Only the system's rule is named in the error, never a member name (a member name
+    is its author's text).
+    """
+
+    def __init__(self, *, zip_names: bool) -> None:
+        self._zip_names = zip_names
+        self._seen: dict[tuple[str, ...], tuple[tuple[str, ...], bool]] = {}
+        self._files: set[tuple[str, ...]] = set()
+        self._folders: set[tuple[str, ...]] = set()
+
+    def add(self, name: str, is_dir: bool) -> None:
+        exact = tuple(p for p in name.split("/") if p not in ("", "."))
+        parts = [p for p in re.split(r"[\\/]", name) if p not in ("", ".")]
+        if not parts:
+            return
+        if not self._zip_names and any(c in _WINDOWS_ILLEGAL or ord(c) < 32 for c in name):
+            raise CollectionError(
+                "archive contains a file name with a character Windows cannot store "
+                "(one of < > : \" | ? * or a control character)")
+        key_parts = []
+        for part in parts:
+            if part.casefold().endswith("::$data"):
+                part = part[: -len("::$data")]
+            if self._zip_names:
+                part = part.translate(_ZIP_WINDOWS_NAME)
+            part = part.rstrip(". ")
+            if part.split(".", 1)[0].rstrip(" ").casefold() in _WINDOWS_DEVICES:
+                raise CollectionError(
+                    "archive contains a file named after a Windows device (CON, PRN, AUX, NUL, "
+                    "COM1, LPT1, ...), which Windows cannot store")
+            # macOS stores names composed (NFC), so `café` spelled two ways is one file there.
+            key_parts.append(unicodedata.normalize("NFC", part).casefold())
+        key = tuple(key_parts)
+        prior = self._seen.get(key)
+        if prior is not None and prior[0] != exact and not (prior[1] and is_dir):
+            raise _windows_collision()
+        self._seen[key] = (exact, is_dir)
+        folders = {key[:i] for i in range(1, len(key))}
+        if is_dir:
+            folders.add(key)
+        else:
+            if key in self._folders:
+                raise _windows_collision()
+            self._files.add(key)
+        if folders & self._files:
+            raise _windows_collision()
+        self._folders |= folders
+
+
+def _windows_collision() -> CollectionError:
+    return CollectionError(
+        "archive contains entries that are the same file on Windows or macOS (their names differ "
+        "only in case, Unicode composition, trailing dots or spaces, or a ::$DATA suffix), so "
+        "what it holds would depend on the system it is extracted on")
+
+
 def _unextractable(kind: str, exc: Exception) -> CollectionError:
     """The error for an archive that cannot be extracted. Nothing from inside the archive is
     quoted (a member name is its author's text): only the system's reason or the error type."""
@@ -963,6 +1041,7 @@ def _safe_extract_tar(data: bytes, dest: Path) -> int:
     dest_resolved = dest.resolve()
     limit = _MAX_EXTRACT_BYTES + _MAX_ARCHIVE_MEMBERS * _TAR_OVERHEAD_PER_MEMBER
     skipped = entries = total = 0
+    names = _PortableNames(zip_names=False)
     try:
         with _tar_stream(data) as stream, tarfile.open(
             fileobj=_BoundedReader(stream, limit), mode="r:"
@@ -978,6 +1057,7 @@ def _safe_extract_tar(data: bytes, dest: Path) -> int:
                     continue
                 if not _within(dest_resolved, member.name, dest):
                     raise CollectionError("archive contains an unsafe path")
+                names.add(member.name, member.isdir())
                 if member.type not in tarfile.SUPPORTED_TYPES:
                     # tarfile (and pip with it) writes an entry of unknown type as a regular file,
                     # so its content is installed; the data filter would refuse it instead.
@@ -1016,6 +1096,7 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
                     f"archive has too many entries: more than {_MAX_ARCHIVE_MEMBERS:,}.",
                     variable="SKILLTOTAL_MAX_ARCHIVE_MEMBERS")
             safe, total, skipped = [], 0, 0
+            names = _PortableNames(zip_names=True)
             for info in infos:
                 # zipfile.extractall can create symlinks from the stored unix mode on some
                 # platforms.
@@ -1027,6 +1108,8 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
                         "archive is password-protected, so its contents cannot be read")
                 if not _within(dest_resolved, info.filename, dest):
                     raise CollectionError("archive contains an unsafe path")
+                # The name as stored: on Windows zipfile has already turned `\` into `/`.
+                names.add(info.orig_filename, info.is_dir())
                 total += info.file_size
                 if total > _MAX_EXTRACT_BYTES:
                     raise SizeLimitError(
@@ -1422,14 +1505,37 @@ def _read_package_json(path: Path) -> dict[str, str]:
     }
 
 
+# tomllib takes time quadratic in some crafted inputs (a 200 KB run of dotted keys parsed for
+# 46 s), so it reads at most this much: the whole file when it is small, else only the
+# `[project]` table, which is all the identity needs.
+_MAX_TOML_PARSE = 16 * 1024
+
+
+def _project_table(text: str) -> str:
+    """The `[project]` table of a TOML document, found by a line scan: from its header to the
+    next table header. Empty when there is none."""
+    lines: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            if inside:
+                break
+            inside = stripped.split("#", 1)[0].strip() == "[project]"
+        if inside:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def _read_pyproject(path: Path) -> dict[str, str]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return {}
-    if tomllib is not None:
+    toml_text = text if len(text) <= _MAX_TOML_PARSE else _project_table(text)
+    if tomllib is not None and len(toml_text) <= _MAX_TOML_PARSE:
         try:
-            data = tomllib.loads(text)
+            data = tomllib.loads(toml_text)
             project = data.get("project", {}) if isinstance(data, dict) else {}
             return {
                 "name": str(project.get("name", "")),
@@ -1445,7 +1551,9 @@ def _read_pyproject(path: Path) -> dict[str, str]:
 
 
 def _toml_value(text: str, key: str) -> str:
-    m = re.search(rf'^\s*{key}\s*=\s*"([^"]*)"', text, re.MULTILINE)
+    # `[^\S\n]*`, not `\s*`: from each of many blank lines `^\s*` ran over all the rest
+    # (quadratic).
+    m = re.search(rf'^[^\S\n]*{key}\s*=\s*"([^"]*)"', text, re.MULTILINE)
     return m.group(1) if m else ""
 
 
