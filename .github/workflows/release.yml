@@ -11,17 +11,15 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  # Tests run with the dev dependencies in their own job; the build job below installs nothing but
+  # hash-pinned build tools, so a compromised dev or test dependency cannot touch dist/.
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install build tooling
-        run: |
-          python -m pip install --upgrade pip
-          pip install build twine
       - name: Verify the tag matches the package version
         run: |
           PKG=$(python -c "import skilltotal; print(skilltotal.__version__)")
@@ -29,24 +27,51 @@ jobs:
           test "$PKG" = "$TAG" || { echo "tag $TAG != version $PKG"; exit 1; }
       - name: Run tests before releasing
         run: |
+          python -m pip install --upgrade pip
           pip install -e ".[dev]"
           ruff check .
           pytest
           bandit -r skilltotal
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install the hash-pinned build tools
+        run: python -m pip install --require-hashes --no-deps -r .github/requirements/build.txt
       - name: Build sdist + wheel
-        run: python -m build
-      - name: Check artifacts
-        run: |
-          twine check dist/*
-          # The test suite stays in the repository (MANIFEST.in prunes it from the sdist).
-          if tar -tzf dist/*.tar.gz | grep -q '^[^/]*/tests/'; then echo "the sdist ships tests/"; exit 1; fi
+        # No isolation: an isolated build would fetch setuptools again, unpinned.
+        run: python -m build --no-isolation
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist
           path: dist/
 
-  publish:
+  # Reads the built files only; twine and its many dependencies never run in the build job.
+  check:
     needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - name: Check artifacts
+        run: |
+          python -m pip install twine
+          twine check dist/*
+          # The test suite stays in the repository (MANIFEST.in prunes it from the sdist).
+          if tar -tzf dist/*.tar.gz | grep -q '^[^/]*/tests/'; then echo "the sdist ships tests/"; exit 1; fi
+
+  publish:
+    needs: [build, check]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

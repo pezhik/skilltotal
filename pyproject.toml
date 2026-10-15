@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -10,7 +10,8 @@ dynamic = ["version"]
 description = "Scan npm/PyPI packages, MCP servers and agent skills before Claude Code installs them. Static, deterministic, no LLM."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [{ name = "SkillTotal" }]
 keywords = [
     "security", "ai", "mcp", "supply-chain", "static-analysis", "prompt-injection",
@@ -22,7 +23,6 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",

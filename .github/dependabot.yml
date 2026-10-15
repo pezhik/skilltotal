@@ -13,3 +13,13 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+  # The hash-pinned tools the release build installs (.github/requirements/build.txt).
+  - package-ecosystem: "pip"
+    directory: "/.github/requirements"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "build"
+    groups:
+      build-tools:
+        patterns: ["*"]

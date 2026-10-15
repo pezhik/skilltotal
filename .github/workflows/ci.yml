@@ -259,8 +259,12 @@ jobs:
         # initial commit has no parent).
         run: |
           GL=8.24.3
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" \
-            | tar -xz -C /tmp gitleaks
+          # The archive is checked against its published SHA-256 before anything in it runs.
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz"
+          echo "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c  /tmp/gitleaks.tar.gz" \
+            | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           # -c .gitleaks.toml allowlists this scanner's own fake-secret test fixtures
           # (production paths stay fully scanned).
           /tmp/gitleaks detect --source . --config .gitleaks.toml --redact -v --exit-code 1
