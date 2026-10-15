@@ -295,7 +295,7 @@ def _dist(kind, filename):
         ([_dist("sdist", "x-1.0.tar.gz"), _dist("bdist_wheel", "x-1.0-py3-none-any.whl")],
          "x-1.0-py3-none-any.whl"),
         # A wheel, not the sdist, whenever there is one: pip installs a wheel where one matches
-        # (a wheel that fits no host here is the first one; see the host test below).
+        # (a wheel of an unlisted platform is still a wheel).
         ([_dist("bdist_wheel", "x-1.0-cp27-cp27m-solaris_sparc.whl"),
           _dist("sdist", "x-1.0.tar.gz")], "x-1.0-cp27-cp27m-solaris_sparc.whl"),
         ([_dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl")],
@@ -314,31 +314,24 @@ def test_pypi_scans_the_file_pip_installs(files, expected):
     assert (chosen or {}).get("filename") == expected
 
 
-@pytest.mark.parametrize(
-    ("host", "machine", "expected"),
-    [
-        ("win32", "AMD64", "x-1.0-{cp}-{cp}-win_amd64.whl"),
-        ("linux", "x86_64", "x-1.0-{cp}-{cp}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"),
-        ("linux", "aarch64", "x-1.0-cp38-abi3-musllinux_1_2_aarch64.whl"),
-        ("darwin", "arm64", "x-1.0-{cp}-{cp}-macosx_11_0_universal2.whl"),
-        # Nothing fits a host of another kind: the first wheel.
-        ("sunos5", "sparc", "x-1.0-cp27-cp27m-win32.whl"),
-    ],
-)
-def test_pypi_scans_the_platform_wheel_of_this_host(monkeypatch, host, machine, expected):
+def test_the_platform_wheel_picked_does_not_depend_on_the_machine(monkeypatch):
+    """Same release, same choice on every host: Linux x86-64, then Windows x64, then macOS."""
     import platform
     import sys
 
-    cp = f"cp{sys.version_info[0]}{sys.version_info[1]}"
-    names = ["x-1.0-cp27-cp27m-win32.whl", "x-1.0-{cp}-{cp}-win_amd64.whl",
-             "x-1.0-{cp}-{cp}-macosx_11_0_universal2.whl",
+    names = ["x-1.0-cp27-cp27m-win32.whl", "x-1.0-cp312-cp312-win_amd64.whl",
+             "x-1.0-cp312-cp312-macosx_11_0_universal2.whl",
              "x-1.0-cp38-abi3-musllinux_1_2_aarch64.whl",
-             "x-1.0-{cp}-{cp}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"]
-    files = [_dist("sdist", "x-1.0.tar.gz")] + [
-        _dist("bdist_wheel", n.format(cp=cp)) for n in names]
-    monkeypatch.setattr(sys, "platform", host)
-    monkeypatch.setattr(platform, "machine", lambda: machine)
-    assert collector._pick_distribution(files)["filename"] == expected.format(cp=cp)
+             "x-1.0-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+             "x-1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"]
+    files = [_dist("sdist", "x-1.0.tar.gz")] + [_dist("bdist_wheel", n) for n in names]
+    expected = "x-1.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"
+    for host, machine in [("win32", "AMD64"), ("linux", "aarch64"), ("darwin", "arm64")]:
+        monkeypatch.setattr(sys, "platform", host)
+        monkeypatch.setattr(platform, "machine", lambda m=machine: m)
+        assert collector._pick_distribution(list(reversed(files)))["filename"] == expected
+    windows_mac = [_dist("bdist_wheel", n) for n in names[1:3]]
+    assert collector._pick_distribution(windows_mac)["filename"] == names[1]
 
 
 def test_the_report_names_the_distribution_scanned_and_the_ones_not_read(monkeypatch):

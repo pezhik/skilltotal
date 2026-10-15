@@ -14,7 +14,6 @@ import re
 import shutil
 import stat
 import subprocess  # nosec B404
-import sys
 import tarfile
 import tempfile
 import threading
@@ -1282,56 +1281,46 @@ def _pick_distribution(urls: list[dict]) -> dict | None:
     """The file to scan for a PyPI release: a wheel whenever the release has one, since pip
     installs a wheel over building the sdist wherever one matches.
 
-    A pure-Python wheel (``*-none-any.whl``) first: pip installs it wherever no platform wheel
-    matches, and its code is exactly what gets imported. Else the wheel built for this
-    interpreter and platform, what pip here would install; else the first wheel. The sdist only
-    when the release has no wheel. The other files are not read: the report says so
-    (``distribution_note``), since a platform wheel can carry code the scanned one does not.
+    The choice depends on the release alone, never on the machine running the scan, so the same
+    `pypi:x` gives the same report on a laptop, in CI and on the hosted scanner (analysis is
+    component-only). A pure-Python wheel (``*-none-any.whl``) first: pip installs it wherever no
+    platform wheel matches, and its code is exactly what gets imported. Else a platform wheel in a
+    fixed order: Linux x86-64 (where CI and servers run), then Windows x64, then macOS, then the
+    rest, newest CPython first within each. The sdist only when the release has no wheel. The
+    other files are not read: the report says so (``distribution_note``), since a platform wheel
+    can carry code the scanned one does not.
     """
     wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
     if not wheels:
         return next((u for u in urls if u.get("packagetype") == "sdist"), None)
-    def name(u: dict) -> str:
-        return str(u.get("filename") or "").lower()
-
-    pure = next((u for u in wheels if name(u).endswith("-none-any.whl")), None)
-    host = next((u for u in wheels if _wheel_fits_host(name(u))), None)
-    return pure or host or wheels[0]
+    return min(wheels, key=lambda u: _wheel_rank(str(u.get("filename") or "").lower()))
 
 
-def _wheel_fits_host(filename: str) -> bool:
-    """Whether a wheel's tags (``name-ver[-build]-py-abi-platform.whl``) fit this interpreter and
-    platform, by a plain reading of the tags (no `packaging`): the Python tag is this CPython
-    (``cp312``, or an older ``cp3x`` with ``abi3``) or ``py3``, and the platform tag names this
-    operating system and machine."""
-    import platform
+# Platform families in the order a platform wheel is picked; anything else comes after them.
+_PLATFORM_ORDER = (
+    ("manylinux", "x86_64"), ("musllinux", "x86_64"), ("linux", "x86_64"),
+    ("win", "amd64"),
+    ("macosx", "universal2"), ("macosx", "x86_64"), ("macosx", "arm64"),
+)
 
+
+def _wheel_rank(filename: str) -> tuple[int, int, int, str]:
+    """Sort key for a wheel: pure first, then by platform family (``_PLATFORM_ORDER``), then the
+    newest CPython tag, then the name (so ties never depend on the order PyPI lists files)."""
     parts = filename[: -len(".whl")].split("-") if filename.endswith(".whl") else []
     if len(parts) not in (5, 6):
-        return False
-    pythons, abis, platforms = (part.split(".") for part in parts[-3:])
-    major, minor = sys.version_info[:2]
-    own = f"cp{major}{minor}"
-
-    def python_fits(tag: str) -> bool:
-        if tag in (own, f"py{major}", f"py{major}{minor}"):
-            return True
-        older = tag.startswith(f"cp{major}") and tag[len(f"cp{major}"):].isdigit()
-        return "abi3" in abis and older and int(tag[len(f"cp{major}"):]) <= minor
-
-    machine = platform.machine().lower()
-
-    def platform_fits(tag: str) -> bool:
-        if sys.platform == "win32":
-            return tag == {"amd64": "win_amd64", "arm64": "win_arm64", "x86": "win32"}.get(machine)
-        if sys.platform.startswith("linux"):
-            return tag.startswith(("manylinux", "musllinux", "linux_")) and tag.endswith(
-                "_" + machine)
-        if sys.platform == "darwin":
-            return tag.startswith("macosx_") and tag.endswith(("_" + machine, "_universal2"))
-        return False
-
-    return any(python_fits(t) for t in pythons) and any(platform_fits(t) for t in platforms)
+        return (2, len(_PLATFORM_ORDER), 0, filename)
+    pythons, _abis, platforms = (part.split(".") for part in parts[-3:])
+    if "any" in platforms:
+        return (0, 0, 0, filename)
+    family = min(
+        (i for i, (os_name, arch) in enumerate(_PLATFORM_ORDER)
+         for tag in platforms if tag.startswith(os_name) and tag.endswith(arch)),
+        default=len(_PLATFORM_ORDER),
+    )
+    newest = max((int(t[3:]) for t in pythons if t.startswith("cp3") and t[3:].isdigit()),
+                 default=0)
+    return (1, family, -newest, filename)
 
 
 def _distribution_note(urls: list[dict], chosen: dict) -> str | None:
