@@ -4,6 +4,124 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.73.0]
+
+Ruleset 75 is unchanged: no detection rule changed. Report schema 1.9. Fixes from a review of
+the CLI, the GitHub Action, the plugin and the MCP server in daily use.
+
+Behaviour changes to know about:
+- With `--output FILE`, the console now gets a short summary and the full report goes only to the
+  file.
+- Abbreviated options are refused: `--out` no longer means `--output`.
+- An inline `skilltotal:ignore` marker no longer hides a malicious indicator.
+- The MCP tools `scan_component` and `diff_components` answer with a summary unless you pass
+  `detail: "full"`, and a local path must be absolute.
+- The plugin has three new `SKILLTOTAL_ALLOW_UNCHECKED` kinds (`remote`, `container`,
+  `registry`). In CI, an MCP server added by URL or from a container image is now denied unless
+  its kind is allowed.
+
+### Performance
+- Evidence lookups use a binary search, so a package with a 1.4 MB JavaScript bundle scans in
+  about 25 seconds instead of 60, with the same report. A first-time hook check of such a package
+  now fits the plugin's 60-second limit.
+
+### CLI
+- `--output FILE`: the console gets the verdict, the risk, the counts, any gate lines and
+  `Full report: FILE`. The folder is checked before the scan starts; if it is missing, the scan
+  stops with "does not exist; create it first" instead of failing after a long scan. The same
+  check applies to `--write-baseline` and `diff --output`.
+- Abbreviated options are refused on every command.
+- The summary counts risk and capability findings apart: "2 risk finding(s), 1 capability
+  finding(s) (not scored)". The text report heads its list "Findings (2 risk, 1 capability, not
+  scored):".
+- `inventory --project DIR` and `guard --installed --project DIR` exit 1 when `DIR` does not
+  exist. Before, they checked nothing there and exited 0.
+- `inventory` flags every component `guard --installed` would block, such as a look-alike name,
+  an install script it could not read or a scan that read nothing. Its JSON adds `guard`,
+  `guard_reasons`, `remote` and `this_tool` to each item.
+- SkillTotal's own MCP server (`skilltotal mcp`, `python -m skilltotal mcp`, or run through uvx,
+  npx or pipx) counts as checked ("this scanner"). A server reached at a URL is listed as
+  "remote (not scannable)" instead of as a failure, and is still unchecked: `guard --installed`
+  exits 1 without `--allow-unchecked`.
+- On PowerShell, a trailing backslash before a closing quote (`'.\my dir\'`) joins the next
+  arguments into the path. A failed scan now says so.
+- Rule titles, descriptions and recommendations are plain ASCII.
+
+### Suppression and baselines
+- An inline `skilltotal:ignore` marker never hides a malicious indicator. The finding stays, and a
+  `needs_review` note, "Inline ignore does not apply to malicious indicators", says how to accept
+  it: a baseline, or `warn` under `[policy]` in `.skilltotal.toml`.
+- A marker that names an unknown rule id gets a `needs_review` note that suggests the closest id.
+- For an `npm:`, `pypi:`, git or archive source, the hint on accepting a false positive suggests
+  a baseline or `[policy]`, since markers count only in a local folder.
+- `--write-baseline` warns on stderr when the baseline accepts a malicious indicator.
+- The text report has a `Baseline  :` line with the number of occurrences the baseline
+  suppressed. A baseline set in `.skilltotal.toml` is also named on the `Config    :` line.
+
+### Report schema 1.9
+- New optional fields: `metadata.baseline` (the baseline file applied),
+  `metadata.baseline_suppressed_count` (how many suppressed occurrences it accounts for) and
+  `metadata.config_applied.baseline`. See `docs/report-schema.md`.
+
+### GitHub Action
+- Each run writes a job summary: the verdict, the risk score and the gate result, the gate lines
+  that tripped, a table of risk findings (severity, rule, file:line and title; up to 20, then a
+  count), the capabilities, and how many findings a baseline or inline marker suppressed. A
+  tripped gate also shows as an error annotation.
+- With `comment-on-pr: 'true'`, the pull request comment has the same content in short: the top
+  five risk findings with file:line, and a link to the workflow run. It is updated in place.
+- With `fail-on` empty and no gate in `.skilltotal.toml`, the log names the gate
+  `fail-on high (action default)`.
+- A usage, config or fetch error fails the job as "SkillTotal could not run the scan (exit 1):
+  ...", not as a tripped gate.
+- `sarif-file`: a missing folder is created. If the SARIF report cannot be written, the action
+  warns and skips the upload; the gate still decides the job.
+- For an `npm:` or `pypi:` source, the SARIF report is made from the same release the gate
+  scanned, even if a new one is published in between.
+- A `version` older than the action's own engine gives a warning.
+
+### Claude Code plugin
+- New `SKILLTOTAL_ALLOW_UNCHECKED` kinds: `remote` (an MCP server reached at a URL), `container`
+  (an MCP server run from a container image) and `registry` (a named package from a configured
+  registry or mirror). A CI job behind a company mirror can allow `registry` without setting
+  `SKILLTOTAL_STRICT=0`.
+- Custom registries are found in the project's and the user's `.npmrc`, in pip's config files and
+  in more environment variables (`npm_config_*registry`, `YARN_REGISTRY`, `BUN_CONFIG_REGISTRY`,
+  `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `UV_DEFAULT_INDEX`, `UV_INDEX` and others). A scoped
+  registry counts only for its scope. The console line shows only the registry's host.
+- Remote and container MCP servers get a console line, and CI denies them unless their kind is
+  allowed.
+- A CLI older than the plugin that cannot judge a command now says so in the console, and CI
+  denies the command. Without the CLI, decoded commands (`base64 -d | sh`,
+  `powershell -EncodedCommand`, `FromBase64String`, `certutil -decode`) also get the "not on
+  PATH" line.
+- `skilltotal hook claude-code --help` describes the event, `--protocol`, the settings and the
+  exit codes.
+
+### MCP server
+- `scan_component` and `diff_components` take `detail`: `"summary"` (the default) or `"full"`.
+  The summary holds the verdict, the decision, the risk, why (each finding with up to three
+  locations and a short snippet, risk findings first), the capability names, counts, up to five
+  notes to check by hand, what the scan does not cover and the engine version. For a package
+  with a 1.4 MB bundle it is about 4 KB instead of 27 KB.
+- `list_rules` takes `ids` and `query` filters.
+- A local path must be absolute. The home folder, any folder above it and a filesystem root are
+  refused, and `~` is not expanded.
+- Two requests run at a time, and `ping` is answered at once. A cancelled request gets no answer;
+  a scan already running finishes in the background. A line that is not valid UTF-8 gets a parse
+  error.
+- MCP protocol version 2025-11-25 is supported, and the tools have titles.
+- A size-limit error says to set the variable in the `env` of the server's entry in the MCP client
+  config, and suggests scanning a subfolder URL.
+- On start, the server removes its own temporary folders older than six hours, left by a scan
+  that was killed.
+
+### Release build
+- Tests and `twine check` run in their own jobs. The build job installs only hash-pinned build
+  tools (`.github/requirements/build.txt`) and builds without isolation. The gitleaks download is
+  checked against its SHA-256. The package metadata uses PEP 639 (`License-Expression:
+  Apache-2.0`).
+
 ## [0.72.0]
 
 Ruleset 75. See `RULES_CHANGELOG.md`.

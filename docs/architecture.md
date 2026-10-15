@@ -61,7 +61,7 @@ Everything under `skilltotal/` is a pure library — no `print`, no `sys.exit` �
    obfuscation, prompt surface) add custom parsing. One finding per rule aggregates all
    matches as capped evidence.
 4. **Normalize** (`engine`): baseline suppression and inline `skilltotal:ignore` markers drop
-   accepted evidence; evidence that is not executed or agent-facing behavior is demoted to
+   accepted evidence (a marker never drops a malicious indicator); evidence that is not executed or agent-facing behavior is demoted to
    `needs_review` by the `_split_*` layers (see [Evidence-context demotion](#evidence-context-demotion)).
    Both happen *before* capabilities and scoring, so neither affects the result.
 5. **Capabilities** (`capabilities.py`): a pure projection over findings — each `RuleSpec`

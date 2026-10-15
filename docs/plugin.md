@@ -2,7 +2,8 @@
 
 The [README](../README.md#claude-code-plugin) covers installing the plugin and what it decides.
 This page is the reference: which commands the hook reads, what it does when it cannot check an
-install, how CI strict mode works, the settings it reads, its cache and its timing.
+install, how CI strict mode works, the settings it reads, its cache and its timing, how to roll
+it out to a team, and what to do when it does not work.
 
 Coding agents install packages in the middle of a task, and the permission prompt, if there is
 one, shows only the command. The plugin checks each package on your machine, with the same engine
@@ -34,8 +35,8 @@ the hook does not check it.
 - **High or critical risk:** Claude Code asks you to approve the install and shows the top
   finding.
 - **Anything SkillTotal could not check:** Claude Code asks you. This covers:
-  - a package from a custom registry or index, set by an option (`--registry`, `--index-url`,
-    `--extra-index-url`) or an environment variable (`npm_config_registry`, `PIP_INDEX_URL`)
+  - a package from a custom registry, index or mirror (see
+    [Custom registries](#custom-registries-and-mirrors))
   - a package name or an install command the shell builds when it runs (`npm i $PKG`)
   - a command hidden from the hook: decoded or assembled when it runs and then run
     (`eval "$(echo ... | base64 -d)"`, `... | base64 -d | sh`, `X=$(printf '\x6e...'); $X i x`,
@@ -62,6 +63,40 @@ the hook does not check it.
   `npm update`, and `uv run` in a project), from a local path (`pip install -e .`,
   `npm install ./dir`), or a script downloaded and run (`curl ... | bash`,
   `curl -o i.sh ... && bash i.sh`, `iex (irm ...)`). Outside CI they run as usual.
+- **MCP servers with no package:** a server reached at a URL (`claude mcp add --transport http`
+  or `--transport sse`, `codex mcp add --url`, `claude mcp add-json` with a `url`) or run from a
+  container image (`claude mcp add x -- docker run ... image`, `podman run`). Nothing is
+  downloaded where SkillTotal could read it. Outside CI they are added as usual, with a console
+  line.
+
+### Custom registries and mirrors
+
+SkillTotal scans the package from the public npm registry or PyPI. When the installer is set to
+fetch from somewhere else, that public copy may not be what gets installed, so the package
+counts as not checked: Claude Code asks you, and CI denies it unless `registry` is allowed. The
+hook looks for another registry in:
+
+- options on the command line: `--registry`, `--index-url`, `--extra-index-url` and similar
+  (pnpm's `--config.registry`, `--userconfig`)
+- the environment: `npm_config_registry` and any other `npm_config_*registry` (any letter case),
+  `YARN_REGISTRY`, `YARN_NPM_REGISTRY_SERVER`, `BUN_CONFIG_REGISTRY`, `PIP_INDEX_URL`,
+  `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `UV_INDEX_URL`, `UV_DEFAULT_INDEX`,
+  `UV_EXTRA_INDEX_URL`, `UV_INDEX` and `UV_FIND_LINKS`, whether set for the agent or in the
+  command itself (`PIP_INDEX_URL=... pip install x`)
+- npm's config files: the `.npmrc` of the project (the nearest folder up from where the command
+  runs that holds `package.json` or `node_modules`) and of the user (`NPM_CONFIG_USERCONFIG`, else
+  `~/.npmrc`)
+- pip's config files: `PIP_CONFIG_FILE`, the virtual environment's, the user's and the machine's
+  `pip.conf` or `pip.ini`
+
+A scoped registry (`@corp:registry=...`) counts only for packages of that scope. An extra index
+or find-links location counts wherever it is set, since it can serve a newer version than the
+public one. The console line and the reason show only the registry's scheme and host, never a
+token or a path. A command that changes the installer's config before it installs
+(`npm config set registry ...`, `echo registry=... > .npmrc`, `pip config set ...`) counts too.
+The hook does not read `uv.toml`, `.yarnrc.yml` or `bunfig.toml` files already on disk.
+
+### The console line
 
 Every install command gets one line in the Claude Code console: what was checked and its score,
 the decision and why, or what was not checked (for example "SkillTotal did not check this install:
@@ -72,11 +107,25 @@ that, in CI either).
 ## CI (strict mode)
 
 In CI nobody is there to answer a question, so everything SkillTotal would ask about is denied.
-So is every install it could not check, by kind: an install from a lockfile, manifest or
-requirements file (`lockfile`), from a local path (`local`) and a downloaded script (`script`). A
-partly analyzed package (a bundle too large to read, code in a language the engine does not
+So is every install it could not check, unless `SKILLTOTAL_ALLOW_UNCHECKED` lists its kind:
+
+| Kind | What it covers |
+|---|---|
+| `lockfile` | An install from a lockfile, manifest or requirements file (`npm ci`, `pip install -r`, `uv sync`) |
+| `local` | An install from a local path (`pip install -e .`, `npm install ./dir`) |
+| `script` | A script downloaded and run (`curl ... \| bash`, `iex (irm ...)`) |
+| `partial` | A package that was checked but not all of it (see below) |
+| `remote` | An MCP server reached at a URL (`claude mcp add --transport http\|sse`, `codex mcp add --url`, `claude mcp add-json` with a `url`) |
+| `container` | An MCP server run from a container image (`claude mcp add x -- docker run ... image`, `podman run`) |
+| `registry` | A named package from a configured registry or mirror (see [Custom registries](#custom-registries-and-mirrors)) |
+
+`registry` lets a CI job behind a company mirror install named packages without turning strict
+mode off (`SKILLTOTAL_STRICT=0`), which would also let through everything else it asks about.
+Outside CI, a package from such a registry is still asked about.
+
+A partly analyzed package (a bundle too large to read, code in a language the engine does not
 analyze) passes, and its console line names what was not read. What it runs at install is read
-either way. `SKILLTOTAL_STRICT_PARTIAL=1` denies it too.
+either way. `SKILLTOTAL_STRICT_PARTIAL=1` denies it unless `partial` is allowed.
 
 Strict mode is on when `CI` or one of `TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`,
 `CODEBUILD_BUILD_ID`, `BUILDKITE` and `GITLAB_CI` is set to anything but empty, `0`, `false`, `no`
@@ -99,8 +148,9 @@ will be installed; checking them needs `git` on `PATH`.
 A verdict is reused for the same artifact (an exact npm release or PyPI file for a week, a git
 repository for an hour), so repeated `npx prettier` or `uvx ruff` calls don't trigger a rescan.
 When the engine or ruleset version changes, everything is scanned again. The verdicts are kept in
-`skilltotal/hook-cache.json` under `XDG_CACHE_HOME` (default `~/.cache`; `%LOCALAPPDATA%` on
-Windows); delete it to start over.
+`hook-cache.json` in `SKILLTOTAL_CACHE_DIR` when it is set, else in `skilltotal/` under
+`XDG_CACHE_HOME`, `%LOCALAPPDATA%` or `~/.cache`, the first that is set; delete the file to start
+over.
 
 A first check takes a second or two for a small package, about 10 seconds for one the size of
 `typescript` or `lodash`, half a minute for `openai` and about a minute for `django` (about 2,000
@@ -118,13 +168,18 @@ command, run again once it is done, gets that verdict at once.
 
 The plugin calls the CLI, so install the CLI where Claude Code can find it: `skilltotal --version`
 should work in the terminal you start Claude Code from. Outside CI, if the CLI is missing or fails
-to start, install commands run unchecked; if it is too old to speak the plugin's hook protocol,
-it still checks what it knows. Either way, Claude Code shows a warning on each install command, so
-you can tell a broken setup from a clean check. A CLI that speaks the protocol but is older than
-the plugin still decides, and each install command gets a line saying so ("SkillTotal CLI 0.66.0
-is older than the plugin 0.69.0; update the skilltotal CLI ..."). Update both together
-(`pipx upgrade skilltotal` or `pip install -U skilltotal`) to get the newest checks. In CI, every
-command is denied until the CLI works, and the console line says how to fix it.
+to start, install commands run unchecked, and Claude Code shows a warning on each one, so you can
+tell a broken setup from a clean check. Commands that decode something and run it
+(`base64 -d | sh`, `powershell -EncodedCommand`, `FromBase64String`, `certutil -decode`) get
+that warning too.
+
+A CLI older than the plugin still answers, with a warning, but it misses what newer releases
+read. Each install command gets a line such as "SkillTotal CLI 0.66.0 is older than the plugin
+0.69.0; update the skilltotal CLI ...". When such a CLI cannot judge a command the plugin could
+not rule out, the line says it "could not judge this command", and CI denies the command. Update
+both together (`pipx upgrade skilltotal` or `pip install -U skilltotal`) to get the newest
+checks. In CI, every command is denied until the CLI works, and the console line says how to fix
+it.
 
 Outside CI, a command that cannot install anything (no installer, interpreter, shell, download or
 decoder named in it, and nothing the shell fills in, such as `$`, globs or escapes) skips the CLI,
@@ -137,6 +192,29 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
 
 The plugin also adds a `/skilltotal:scan <target>` command and registers the SkillTotal MCP server
 (`skilltotal mcp`), so you do not need to add that server yourself.
+
+`skilltotal hook claude-code --help` describes what the hook reads and answers: the event format,
+`--protocol`, the settings and the exit codes.
+
+## Settings
+
+The hook reads these environment variables from the environment Claude Code runs in.
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `SKILLTOTAL_STRICT` | unset | `1` (or `true`, `yes`, `on`) turns CI strict mode on anywhere, `0` (or `false`, `no`, `off`) turns it off. Unset, strict mode follows the CI variables (see [CI](#ci-strict-mode)) |
+| `SKILLTOTAL_ALLOW_UNCHECKED` | empty | Comma-separated kinds of unchecked install that strict mode lets through: `lockfile`, `local`, `script`, `partial`, `remote`, `container`, `registry` |
+| `SKILLTOTAL_STRICT_PARTIAL` | off | `1`: strict mode also denies a partly analyzed package |
+| `SKILLTOTAL_HOOK_BUDGET` | 60 (600 in strict mode) | Seconds all checks of one command share; at most 100 (840 in strict mode) |
+| `SKILLTOTAL_WORKERS` | up to 4 | Processes one large check may use; `1` turns this off |
+| `SKILLTOTAL_CACHE_DIR` | see [the verdict cache](#git-sources-the-verdict-cache-and-timing) | Folder for the verdict cache |
+
+The scan limits in the README's
+[settings table](https://github.com/pezhik/skilltotal#environment-variables)
+(`SKILLTOTAL_MAX_ARCHIVE_MB` and the others) apply to the hook's checks too. If one of the
+variables above has a value the hook cannot use, the console line says so. An unknown
+`SKILLTOTAL_STRICT` or `SKILLTOTAL_STRICT_PARTIAL` value is read as on, so a typo cannot loosen
+CI.
 
 ## What the plugin does not check
 
@@ -173,3 +251,54 @@ The plugin also adds a `/skilltotal:scan <target>` command and registers the Ski
   analyzed.
 
 It is a static guardrail, not a sandbox. For code you don't trust, run the agent in a container.
+
+## Rolling out to a team
+
+1. **Install the CLI at a pinned version** on each machine, for example
+   `pipx install skilltotal==0.73.0`, with the same version as the plugin.
+2. **Enable the plugin for everyone** with Claude Code's managed settings file,
+   `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
+   `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
+   marketplace under `extraKnownMarketplaces` and turn the plugin on under `enabledPlugins`:
+
+   ```json
+   {
+     "extraKnownMarketplaces": {
+       "skilltotal": {
+         "source": { "source": "github", "repo": "pezhik/skilltotal", "ref": "v0.73.0" }
+       }
+     },
+     "enabledPlugins": { "skilltotal@skilltotal": true }
+   }
+   ```
+
+3. **Pin the plugin to a release.** Without `ref`, the marketplace follows the repository's
+   default branch, so the plugin can change before you update the CLI. With `ref` set to a
+   release tag, the plugin and the CLI move together when you change both. To control every
+   change, fork or mirror the marketplace and point `repo` at your copy. See Claude Code's
+   [plugin marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference)
+   and [managed settings](https://code.claude.com/docs/en/managed-settings) for the details.
+4. **Allow internal packages.** Packages from a company registry or mirror are asked about on a
+   workstation. In CI, allow them with `SKILLTOTAL_ALLOW_UNCHECKED=registry`, together with the
+   other kinds your jobs need (`lockfile` for `npm ci`, for example).
+5. **Know where decisions show.** Every install command gets a console line in Claude Code. The
+   verdicts are kept in the cache file (see
+   [the verdict cache](#git-sources-the-verdict-cache-and-timing)); `SKILLTOTAL_CACHE_DIR` moves it.
+
+## Troubleshooting
+
+- **"the skilltotal CLI is not on PATH".** The plugin could not find the CLI. Install it
+  (`pipx install skilltotal`), run `pipx ensurepath`, and start Claude Code from a new terminal.
+  `skilltotal --version` must work in that terminal.
+- **"SkillTotal CLI X is older than the plugin Y".** The CLI still checks, but misses what newer
+  releases read. Run `pipx upgrade skilltotal` or `pip install -U skilltotal`.
+- **"not checked within SkillTotal's 60-second time limit".** A first check of a large package
+  can take longer than the 60 seconds all checks of one command share. The check goes on in the
+  background; run the same command again once it is done, or raise `SKILLTOTAL_HOOK_BUDGET`
+  (up to 100 seconds, 840 in CI).
+- **No console lines at all on Windows.** The hook command is
+  `sh ".../hooks/pretooluse.sh"`, so it needs the `sh` that comes with
+  [Git for Windows](https://gitforwindows.org). Run `/reload-plugins` or restart Claude Code
+  after installing it.
+- **Nothing happens after `/plugin install`.** Run `/reload-plugins` or restart Claude Code. To
+  test it without touching a real package, see [The CLI the plugin calls](#the-cli-the-plugin-calls).
