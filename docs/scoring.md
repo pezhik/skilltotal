@@ -114,8 +114,7 @@ argument) to a dangerous sink, as `risky_construct` (high):
 These turn an already-reported capability (`ST-DYN-PY` / `ST-SHELL-PY`, weight 0) into a scored
 risk; the capability finding still appears. `ST-DESERIALIZE-PY` is already a scored
 `risky_construct` (high) on its own, so `ST-TAINT-DESERIAL-PY` adds a second, distinct finding when
-the loaded data provably comes from an untrusted source. This is
-stronger than `ST-CMDI-PY` (which flags any non-constant shell command): when taint proves an
+the loaded data provably comes from an untrusted source. This is stronger than `ST-CMDI-PY` (which flags any non-constant shell command): when taint proves an
 untrusted source reaches the shell, `ST-TAINT-SHELL-PY` supersedes `ST-CMDI-PY` on that node so the
 injection is scored once. The analysis is conservative (default-deny propagation, sanitizers clear
 taint, no inter-procedural tracking) to keep benign false positives at zero.
@@ -206,5 +205,6 @@ preserving the rule that the score reflects only evidence-confirmed risk.
 | **Sum** | | | **70** |
 
 Result: `risk_score = 70`, `risk_level = high`. The credential-exfiltration pattern (read
-secrets + reach the network, run from an install hook) drives the score; the raw capabilities are reported but do not.
+secrets + reach the network, run from an install hook) drives the score; the raw capabilities are
+reported but add nothing.
 A *benign* tool with the same capabilities but no sensitive-data access scores **0 / low**.

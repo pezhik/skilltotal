@@ -212,7 +212,8 @@ skilltotal rules list --json
 **Baseline** suppresses findings by a stable fingerprint of
 `(rule id, file, code snippet)`, independent of line numbers, so it survives edits.
 Suppressed findings are removed before scoring and do not affect the risk score. Writing a baseline
-is an adoption step: `--write-baseline` writes the file and exits 0, whatever it found.
+is how you adopt the tool on existing code: `--write-baseline` writes the file and exits 0,
+whatever it found.
 
 **Diff** reports new / resolved / changed findings, evidence-level additions and removals
 (matched by the same line-independent fingerprint as the baseline, so pure line shifts are
@@ -398,8 +399,8 @@ How it behaves:
   The Scan step's log says which gate tripped.
 - **The log lists the findings.** It prints a count of risk findings and, separately, capability
   findings (not scored, never gated), then every location of each risk finding: up to 10 per rule,
-  then "and N more", all of which are in the SARIF and JSON reports. The log is the place to read a
-  failed gate when Code Scanning is off. Text from the scanned files cannot issue workflow commands
+  then "and N more" (the SARIF and JSON reports have them all). When Code Scanning is off, this is
+  where you read why the gate failed. Text from the scanned files cannot issue workflow commands
   in the log.
 - **SARIF paths.** For a `source` in a subfolder, SARIF locations are made relative to the
   repository root, so alerts point at real files. SARIF for an `npm:`, `pypi:` or git-URL source is
@@ -503,11 +504,11 @@ twice: once with `--fail-on none` for the report, once with the gate.
    convenient after a review but easy to misuse. A `[policy]` `warn` or `ignore` applies to a rule
    everywhere. [Report false positives](https://github.com/pezhik/skilltotal/issues) too: they are
    fixed in the open.
-5. **Decide on `--fail-on-unanalyzed`.** Off by default, the gate passes code it could not read
-   (files over 2 MiB, minified bundles, code in languages whose behavior is not analyzed). On, it
-   fails closed on them, which also fails a repository that commits bundles or Go code. Exclude
-   such paths you trust, or turn it on for the third-party components you scan rather than for
-   your own repository.
+5. **Decide on `--fail-on-unanalyzed`.** It is off by default, so the gate passes code it could
+   not read (files over 2 MiB, minified bundles, code in languages whose behavior is not
+   analyzed). Turned on, it fails closed on that code, which also fails a repository that commits
+   bundles or Go code. Exclude such paths if you trust them, or turn the flag on for the
+   third-party components you scan rather than for your own repository.
 
 ## Claude Code plugin
 
@@ -669,16 +670,16 @@ review and left out of the score, because locale and CJK files use them legitima
 
 ### Verdict
 
-Every report has a one-line verdict next to the score. `Malicious indicators found` whenever a
+Every report has a one-line verdict next to the score: `Malicious indicators found` whenever a
 malicious indicator fired, whatever the score; `High risk - review before installing` or
 `Critical risk - review before installing` for a high or critical score without one;
-`Some risk - review before installing` for a medium score; and, for a
-low score, wording that says what was found ("No significant risks found", "No malicious
+`Some risk - review before installing` for a medium score; and, for a low score, wording that
+says what was found ("No significant risks found", "No malicious
 indicators - review capabilities before installing", ...). A low verdict never sounds clean over
 code that was not read: it reads `Partially analyzed - ...` when the component ships code in a
 language whose behavior is not analyzed, or code files that were not read
 (`Partially analyzed - 2 code files not read (2 minified)`), and `Not analyzed - nothing in this
-component could be read` when nothing could be read. The score is unchanged by that wording.
+component could be read` when nothing could be read. That wording does not change the score.
 
 ### Limitations
 
@@ -698,8 +699,8 @@ component could be read` when nothing could be read. The score is unchanged by t
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
   download-and-run, decode-and-run and evasion idioms. Go, Rust, Java, Ruby, PHP, C/C++, C#, Swift,
   Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy, Haskell, Clojure, Erlang, R and Zig files get only
-  the secret, sensitive-path and hidden-Unicode checks; the report adds a `needs_review` note and a
-  low verdict reads "Partially analyzed". See
+  the secret, sensitive-path and hidden-Unicode checks; the report adds a `needs_review` note, and
+  a low verdict reads "Partially analyzed". See
   [docs/language-scope.md](https://github.com/pezhik/skilltotal/blob/main/docs/language-scope.md).
 - **Symbolic links and junctions** in a scanned folder are not followed, and links inside an
   archive are not extracted.

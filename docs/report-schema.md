@@ -148,12 +148,12 @@ result anchored to its file/line; `needs_review` items are not included.
 | any other threat class, `medium` | `warning` | 4.0 |
 | any other threat class, `low` | `note` | 2.0 |
 
-So a malicious indicator keeps its own severity's level: a medium one (such as
+A malicious indicator keeps its own severity's level, so a medium one (such as
 `ST-PROMPT-INJECTION`) is a `warning`. Rules carry their OWASP Agentic Skills ids as tags and
-`relationships`. A location's `uri` is the evidence path,
-percent-encoded as a relative URI reference; `--sarif-uri-prefix PATH` puts the scanned folder
-in front of it (repository-root-relative paths for Code Scanning), and `--sarif-category NAME`
-sets `runs[0].automationDetails.id` to `NAME/`.
+`relationships`. A location's `uri` is the evidence path, percent-encoded as a relative URI
+reference. `--sarif-uri-prefix PATH` puts the scanned folder in front of it (paths relative to
+the repository root, for Code Scanning), and `--sarif-category NAME` sets
+`runs[0].automationDetails.id` to `NAME/`.
 
 ## Invariants (guaranteed by the engine)
 
