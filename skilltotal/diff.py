@@ -128,6 +128,7 @@ def _evidence_delta(
         "id": rule_id,
         "severity": new_f.get("severity", old_f.get("severity")),
         "title": new_f.get("title", old_f.get("title", "")),
+        "threat_class": new_f.get("threat_class", old_f.get("threat_class")),
         "added_evidence": added,
         "removed_evidence": removed,
     }

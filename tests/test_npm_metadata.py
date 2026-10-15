@@ -98,11 +98,14 @@ def test_what_the_registry_does_not_have_fails_exactly_as_before(monkeypatch):
     with pytest.raises(CollectionError, match="has no version '9.9.9'"):
         with collector.collect("npm:x@9.9.9"):
             pass
-    # A range is resolved by the installer, not the registry: it never was a scannable version.
-    with pytest.raises(CollectionError, match=r"has no version '\^2\.0\.0'"):
+    assert seen[-1] == f"{REGISTRY}/x"
+    # A range is resolved by the installer, not the registry: it never was a scannable version,
+    # and the message says to pin one, without asking the registry.
+    asked = len(seen)
+    with pytest.raises(CollectionError, match=r"ranges are not supported.*pin an exact version"):
         with collector.collect("npm:x@^2.0.0"):
             pass
-    assert seen[-1] == f"{REGISTRY}/x"
+    assert len(seen) == asked
 
 
 def test_a_package_the_registry_does_not_have_fails_exactly_as_before(monkeypatch):
@@ -112,7 +115,10 @@ def test_a_package_the_registry_does_not_have_fails_exactly_as_before(monkeypatc
     with pytest.raises(CollectionError) as caught:
         with collector.collect("npm:nope"):
             pass
-    assert caught.value is missing
+    # Said in words, not as "HTTP Error 404"; the registry's answer stays the cause.
+    assert str(caught.value) == "package 'nope' was not found on npm"
+    assert caught.value.__cause__ is missing
+    assert collector.failure_category(caught.value) == "not-found"
 
 
 def test_a_manifest_that_disagrees_with_the_pin_is_not_trusted(monkeypatch):

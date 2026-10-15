@@ -2,18 +2,20 @@
 
 Commands:
     skilltotal scan <source> [--json|--sarif] [--output FILE]
-                             [--fail-on LEVEL | --fail-on-high] [--fail-on-score N]
-                             [--fail-on-unanalyzed]
-                             [--exclude GLOB ...] [--config FILE]
+                             [--fail-on LEVEL|none | --fail-on-high] [--fail-on-score N]
+                             [--fail-on-unanalyzed] [--fail-on-default LEVEL]
+                             [--exclude GLOB ...] [--config FILE | --no-config] [--staged]
                              [--baseline FILE | --write-baseline FILE]
+                             [--sarif-uri-prefix PATH] [--sarif-category NAME]
         <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
         file, a git URL, or an npm:<name> / pypi:<name> package spec.
         Optional project config: .skilltotal.toml (fail_on, fail_on_score, fail_on_unanalyzed,
         exclude, ignore, baseline, and a per-rule [policy] table with block/warn/ignore
-        actions). CLI flags override config. Inline `# skilltotal:ignore[ST-ID]` suppresses a
-        finding on its line when the source is a local directory (never in a fetched package
-        or repository).
-    skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
+        actions), read from the current directory (or --config FILE; --no-config ignores it).
+        A config that was applied is named on the console. CLI flags override config. Inline
+        `# skilltotal:ignore[ST-ID]` on a finding's line, or on the line above it, suppresses it
+        when the source is a local directory (never in a fetched package or repository).
+    skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL] [--no-config]
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
         evidence-level changes, and capability changes.
@@ -53,7 +55,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from skilltotal import __version__, parallel
 from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
@@ -111,7 +113,26 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--output",
         metavar="FILE",
-        help="Write the report to FILE (SARIF if --sarif, else JSON).",
+        help=(
+            "Write the report to FILE (SARIF if --sarif, else JSON). A FILE that is a symbolic "
+            "link is refused."
+        ),
+    )
+    scan.add_argument(
+        "--sarif-uri-prefix",
+        metavar="PATH",
+        help=(
+            "Prefix every SARIF file location with PATH (e.g. the scanned folder relative to the "
+            "repository root), so Code Scanning alerts point at real files."
+        ),
+    )
+    scan.add_argument(
+        "--sarif-category",
+        metavar="NAME",
+        help=(
+            "Set the SARIF run's automationDetails.id (the Code Scanning category), so two scans "
+            "uploaded from one job do not replace each other's alerts."
+        ),
     )
     scan.add_argument(
         "--baseline",
@@ -121,7 +142,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--write-baseline",
         metavar="FILE",
-        help="Write a baseline file covering the current findings, then exit normally.",
+        help=(
+            "Write a baseline file covering the current findings, then exit 0: writing a baseline "
+            "is an adoption step, so no gate is applied."
+        ),
     )
     scan.add_argument(
         "--fail-on-high",
@@ -134,10 +158,20 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "--fail-on",
         metavar="LEVEL",
+        choices=["low", "medium", "high", "critical", "none"],
+        help=(
+            "Exit with code 2 on a finding at or above LEVEL severity: low, medium, high or "
+            "critical. Malicious indicators trip it at any severity; capabilities (what a "
+            "component can do) never do. 'none' turns off every gate the config sets."
+        ),
+    )
+    scan.add_argument(
+        "--fail-on-default",
+        metavar="LEVEL",
         choices=["low", "medium", "high", "critical"],
         help=(
-            "Exit with code 2 on a finding at or above LEVEL severity. Malicious indicators "
-            "trip it at any severity; capabilities (what a component can do) never do."
+            "The --fail-on LEVEL to use only when no --fail-on flag is given and the config sets "
+            "no fail_on or fail_on_score (for wrappers such as the GitHub Action)."
         ),
     )
     scan.add_argument(
@@ -169,11 +203,7 @@ def build_parser() -> argparse.ArgumentParser:
             "working tree (untracked and ignored files are left out). For pre-commit."
         ),
     )
-    scan.add_argument(
-        "--config",
-        metavar="FILE",
-        help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
-    )
+    _config_arguments(scan)
     scan.add_argument(
         "--provenance",
         action="store_true",
@@ -211,7 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["low", "medium", "high", "critical"],
         help=(
             "Exit with code 2 if the new version introduces a finding (or new evidence "
-            "on an existing finding) at or above LEVEL severity."
+            "on an existing finding) at or above LEVEL severity (low, medium, high, critical). "
+            "As with scan --fail-on, malicious indicators trip it at any severity and "
+            "capabilities never do."
         ),
     )
     diff.add_argument(
@@ -221,11 +253,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Skip files matching GLOB on both sides (repeatable).",
     )
-    diff.add_argument(
-        "--config",
-        metavar="FILE",
-        help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
-    )
+    _config_arguments(diff)
 
     guard = sub.add_parser(
         "guard",
@@ -309,6 +337,35 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _config_arguments(sub: argparse.ArgumentParser) -> None:
+    config = sub.add_mutually_exclusive_group()
+    config.add_argument(
+        "--config",
+        metavar="FILE",
+        help="Path to a .skilltotal.toml config (default: auto-discover in the current dir).",
+    )
+    config.add_argument(
+        "--no-config",
+        action="store_true",
+        help="Ignore any .skilltotal.toml, including one in the current dir.",
+    )
+
+
+def _exit_on_sigterm() -> None:
+    """Make SIGTERM (a cancelled CI job) end the scan like Ctrl-C does: by an exception, so the
+    context managers that remove a cloned repository or an unpacked package still run. The
+    default action kills the process on the spot and leaves them in the temp folder."""
+    import signal
+
+    if threading.current_thread() is not threading.main_thread():
+        return  # signal handlers can only be set from the main thread
+
+    def _terminate(signum, _frame):
+        raise SystemExit(128 + signum)
+
+    signal.signal(signal.SIGTERM, _terminate)
+
+
 def _no_lookup_in_current_directory(environ=os.environ, os_name: str = os.name) -> None:
     """Windows runs a bare program name from the current directory before PATH, so a scan run
     inside a cloned repository would start a ``git.exe`` committed to it. This variable turns that
@@ -337,6 +394,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {bad}", file=sys.stderr)
         return EXIT_ERROR
 
+    if args.command in ("scan", "diff", "guard", "inventory"):
+        _exit_on_sigterm()
     if args.command == "scan":
         return _cmd_scan(args)
     if args.command == "diff":
@@ -447,14 +506,16 @@ def _staged_snapshot(source: str):
     """A temporary copy of what the next commit would contain under ``source`` (a folder in a git
     work tree): git's index written out by ``git checkout-index``. The copy keeps the folder's own
     name, so the component reads as itself; it is removed afterwards."""
-    import shutil
     import subprocess  # nosec B404 - runs git with fixed arguments, never a shell
     import tempfile
+
+    from skilltotal.collector import find_program
 
     folder = Path(source).expanduser()
     if not folder.is_dir():
         raise StagedError(f"{source} is not a folder")
-    git = shutil.which("git")
+    # Never a git from the current directory: the hook runs inside the repository being committed.
+    git = find_program("git")
     if git is None:
         raise StagedError("git is not installed")
 
@@ -489,7 +550,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
 
-    baseline_path = args.baseline or config.baseline
+    baseline_path = args.baseline or config.baseline_path()
     suppress: set[str] = set()
     if baseline_path:
         try:
@@ -536,6 +597,19 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         if progress is not None:
             progress.close()
 
+    if config.path is not None:
+        # The scanned repository's own config can relax the gate (exclude, ignore, a lower
+        # fail_on): the report and the log always say that one was applied, and what it changes.
+        report.metadata["config_applied"] = {
+            "path": str(config.path),
+            "exclude": len(config.exclude),
+            "ignore": len(config.ignore),
+            "policy": len(config.policy),
+            **({"fail_on": config.fail_on} if config.fail_on else {}),
+            **({"fail_on_score": config.fail_on_score}
+               if config.fail_on_score is not None else {}),
+        }
+
     if args.provenance:
         # Provenance is deliberately a CLI-layer add-on: the engine stays component-only,
         # and registry metadata lands in needs_review, which never affects the score.
@@ -556,9 +630,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     if args.write_baseline:
         doc = build_baseline(report.findings)
-        Path(args.write_baseline).write_text(
-            json.dumps(doc, indent=2), encoding="utf-8"
-        )
+        try:
+            _write_file(args.write_baseline, json.dumps(doc, indent=2))
+        except OSError as exc:
+            print(f"error: cannot write the baseline to {args.write_baseline}: "
+                  f"{exc.strerror or exc}", file=sys.stderr)
+            return EXIT_ERROR
         print(
             f"Baseline with {len(doc['suppressed'])} fingerprint(s) written to "
             f"{args.write_baseline}",
@@ -567,14 +644,15 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
     # Choose the structured renderer once; reuse for stdout and --output.
     if args.sarif:
-        structured = render_sarif(report)
+        structured = render_sarif(
+            report, uri_prefix=args.sarif_uri_prefix or "", category=args.sarif_category or "")
     else:
         structured = render_json(report)
 
     # The file first: whatever happens to the console, the report the caller asked for exists.
     if args.output:
         try:
-            Path(args.output).write_text(structured, encoding="utf-8")
+            _write_file(args.output, structured)
         except OSError as exc:
             print(f"error: cannot write the report to {args.output}: {exc.strerror or exc}",
                   file=sys.stderr)
@@ -584,20 +662,74 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # With --output the structured report is in the file; the console gets the readable summary
     # (a SARIF document printed too ran to thousands of lines in a CI log).
     if (args.sarif or args.json) and not args.output:
+        if config.path is not None:
+            # The text summary names the config; with a structured report on stdout, the log does.
+            print(f"config applied: {_one_line(config.describe())}", file=sys.stderr)
         _emit(structured)
     else:
         _emit(render_text(report))
 
-    level = args.fail_on or ("high" if args.fail_on_high else None) or config.fail_on
-    score = args.fail_on_score if args.fail_on_score is not None else config.fail_on_score
-    gaps = _unanalyzed(report) if args.fail_on_unanalyzed or config.fail_on_unanalyzed else []
+    if args.write_baseline:
+        # An adoption step: the findings it records are the ones being accepted.
+        return EXIT_OK
+
+    gate = _scan_gate(args, config)
+    gaps = _unanalyzed(report) if gate.unanalyzed else []
     if gaps:
         # With --json or --sarif the report is all stdout carries (SARIF has no needs_review):
         # say in the log what was not analyzed.
         print(f"Not everything was analyzed: {'; '.join(gaps)}.", file=sys.stderr)
-    if gaps or _fails_gate(report, level, score, config.policy):
-        return EXIT_FAIL_ON_HIGH
-    return EXIT_OK
+    failures = _gate_failures(report, gate.level, gate.score, gate.policy,
+                              level_label=gate.level_label, score_label=gate.score_label)
+    if gaps:
+        failures.insert(0, f"{gate.unanalyzed_label} tripped")
+    for failure in failures:
+        print(f"gate: {failure}", file=sys.stderr)
+    return EXIT_FAIL_ON_HIGH if failures else EXIT_OK
+
+
+class _Gate(NamedTuple):
+    level: str | None
+    level_label: str
+    score: int | None
+    score_label: str
+    unanalyzed: bool
+    unanalyzed_label: str
+    policy: dict[str, str]
+
+
+def _scan_gate(args: argparse.Namespace, config: Config) -> _Gate:
+    """Which gates apply, and how to name each in the log. Flags override the config;
+    `--fail-on none` turns every gate the config sets off (a flag set alongside still counts);
+    `--fail-on-default` applies only when nothing else sets a severity or score gate."""
+    off = args.fail_on == "none"
+    in_config = f"in {config.path}"
+    level, level_label = None, ""
+    if args.fail_on and not off:
+        level, level_label = args.fail_on, f"--fail-on {args.fail_on}"
+    elif args.fail_on_high:
+        level, level_label = "high", "--fail-on-high"
+    elif config.fail_on and not off:
+        level, level_label = config.fail_on, f'fail_on = "{config.fail_on}" {in_config}'
+    elif (args.fail_on_default and not off and not config.sets_gate()
+          and args.fail_on_score is None):
+        level, level_label = args.fail_on_default, f"--fail-on-default {args.fail_on_default}"
+    if args.fail_on_score is not None:
+        score, score_label = args.fail_on_score, f"--fail-on-score {args.fail_on_score}"
+    elif config.fail_on_score is not None and not off:
+        score = config.fail_on_score
+        score_label = f"fail_on_score = {config.fail_on_score} {in_config}"
+    else:
+        score, score_label = None, ""
+    if args.fail_on_unanalyzed:
+        unanalyzed, unanalyzed_label = True, "--fail-on-unanalyzed"
+    else:
+        unanalyzed = config.fail_on_unanalyzed and not off
+        unanalyzed_label = f"fail_on_unanalyzed = true {in_config}"
+    policy = dict(config.policy)
+    if off:  # a `block` is a gate; `warn` and `ignore` are not
+        policy = {rule: action for rule, action in policy.items() if action != "block"}
+    return _Gate(level, level_label, score, score_label, unanalyzed, unanalyzed_label, policy)
 
 
 def _unanalyzed(report) -> list[str]:
@@ -610,8 +742,7 @@ def _unanalyzed(report) -> list[str]:
 def _cmd_diff(args: argparse.Namespace) -> int:
     from skilltotal.collector import CollectionError
     from skilltotal.config import ConfigError
-    from skilltotal.diff import diff_reports, max_new_severity
-    from skilltotal.models import Severity
+    from skilltotal.diff import diff_reports
     from skilltotal.report import render_diff_json, render_diff_text
 
     try:
@@ -632,9 +763,16 @@ def _cmd_diff(args: argparse.Namespace) -> int:
         return EXIT_ERROR
 
     diff = diff_reports(old_report, new_report)
+    if config.path is not None:
+        print(f"config applied: {_one_line(config.describe())}", file=sys.stderr)
 
     if args.output:
-        Path(args.output).write_text(render_diff_json(diff), encoding="utf-8")
+        try:
+            _write_file(args.output, render_diff_json(diff))
+        except OSError as exc:
+            print(f"error: cannot write the diff report to {args.output}: "
+                  f"{exc.strerror or exc}", file=sys.stderr)
+            return EXIT_ERROR
         print(f"Diff report written to {args.output}", file=sys.stderr)
 
     if args.json:
@@ -643,10 +781,33 @@ def _cmd_diff(args: argparse.Namespace) -> int:
         print(render_diff_text(diff))
 
     if args.fail_on_new:
-        worst = max_new_severity(diff)
-        if worst is not None and worst.rank >= Severity[args.fail_on_new.upper()].rank:
+        tripping = _new_risk(diff, args.fail_on_new)
+        if tripping:
+            first = tripping[0]
+            more = f" and {len(tripping) - 1} more" if len(tripping) > 1 else ""
+            print(f"gate: --fail-on-new {args.fail_on_new} tripped by {first['id']} "
+                  f"({first['severity']}){more}", file=sys.stderr)
             return EXIT_FAIL_ON_HIGH
     return EXIT_OK
+
+
+def _new_risk(diff, level: str) -> list[dict]:
+    """The new findings, and findings with new evidence, that trip `--fail-on-new LEVEL`: the same
+    risk `scan --fail-on` counts. A malicious indicator trips any level; a risky construct or a
+    shipped secret trips at its severity; a capability (what the component can do) never does.
+    A saved report from before threat classes existed has none, and every finding in it counts."""
+    from skilltotal.models import Severity
+
+    threshold = Severity[level.upper()].rank
+    changed = [c for c in diff.changed_findings if c["added_evidence"]]
+    tripping = []
+    for f in [*diff.new_findings, *changed]:
+        threat_class = f.get("threat_class")
+        if threat_class == "capability":
+            continue
+        if threat_class == "malicious_indicator" or Severity(f["severity"]).rank >= threshold:
+            tripping.append(f)
+    return tripping
 
 
 def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
@@ -1268,9 +1429,12 @@ def _score_arg(text: str) -> int:
 
 
 def _load_config(args: argparse.Namespace) -> Config:
-    """Load .skilltotal.toml (explicit --config or auto-discovered); empty config if none."""
+    """Load .skilltotal.toml (explicit --config or auto-discovered); empty config if none, or
+    with --no-config."""
     from skilltotal.config import Config, find_config, load_config
 
+    if getattr(args, "no_config", False):
+        return Config()
     path = Path(args.config) if args.config else find_config()
     if path is None:
         return Config()
@@ -1279,10 +1443,74 @@ def _load_config(args: argparse.Namespace) -> Config:
     return load_config(path)
 
 
+def _one_line(text: str) -> str:
+    from skilltotal.report import one_line
+
+    return one_line(text)
+
+
+class UnsafeOutputPath(OSError):
+    """The output path is a link: writing through it would overwrite whatever it points to."""
+
+
+def _is_link(path: Path) -> bool:
+    """A symbolic link, or on Windows any reparse point (a junction)."""
+    import stat
+
+    try:
+        st = os.lstat(path)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return bool(getattr(st, "st_file_attributes", 0) & reparse)
+
+
+def _write_file(path: str, text: str) -> None:
+    """Write ``text`` to ``path`` (UTF-8) without following a link at ``path``.
+
+    A repository can commit `skilltotal.sarif` as a link to a file outside the checkout; the
+    action writing its report there would overwrite that file. So a link is refused, and the text
+    goes to a temporary file in the same folder that then replaces ``path`` (an atomic rename,
+    which replaces a name and never writes through it).
+    """
+    import tempfile
+
+    target = Path(path)
+    if _is_link(target):
+        raise UnsafeOutputPath(f"{path} is a symbolic link or junction; refusing to write "
+                               "through it")
+    fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        if os.name != "nt":
+            # mkstemp creates the file readable by its owner only; a report is an ordinary file.
+            umask = os.umask(0)
+            os.umask(umask)
+            os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def _fails_gate(
     report, level: str | None, score: int | None, policy: dict[str, str] | None = None
 ) -> bool:
-    """True if the report trips the configured CI gate (severity level and/or risk score).
+    """True if the report trips the configured CI gate (see :func:`_gate_failures`)."""
+    return bool(_gate_failures(report, level, score, policy))
+
+
+def _gate_failures(
+    report, level: str | None, score: int | None, policy: dict[str, str] | None = None,
+    *, level_label: str = "", score_label: str = "",
+) -> list[str]:
+    """Why the report trips the configured CI gate (severity level, risk score, policy), one line
+    per gate that tripped; empty when it passes. A failed gate that does not say why sends the
+    engineer looking through the whole report.
 
     The severity gate counts what the score counts as risk. A malicious indicator trips any
     level (a prompt-injection hit is medium severity, and its verdict is still malicious); a
@@ -1304,17 +1532,36 @@ def _fails_gate(
     from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT, Severity, ThreatClass
 
     policy = policy or {}
-    if any(policy.get(f.id) == "block" for f in report.findings):
-        return True
+    failures: list[str] = []
+    for f in report.findings:
+        if policy.get(f.id) == "block":
+            failures.append(f'[policy] "{f.id}" = "block" tripped by {f.id}{_where(f)}')
     if level:
-        if any(n.title in (UNANALYZED_INSTALL_SCRIPT, NOTHING_READ) for n in report.needs_review):
-            return True
+        label = level_label or f"--fail-on {level}"
+        for n in report.needs_review:
+            if n.title in (UNANALYZED_INSTALL_SCRIPT, NOTHING_READ):
+                failures.append(f"{label} fails closed: {_one_line(n.title)}"
+                                + (f" ({_one_line(n.file)})" if n.file else ""))
+                break
         threshold = Severity[level.upper()].rank
-        for f in report.findings:
-            if policy.get(f.id) == "warn" or f.threat_class is ThreatClass.CAPABILITY:
-                continue
-            if f.threat_class is ThreatClass.MALICIOUS_INDICATOR or f.severity.rank >= threshold:
-                return True
+        tripping = [
+            f for f in report.findings
+            if policy.get(f.id) != "warn" and f.threat_class is not ThreatClass.CAPABILITY
+            and (f.threat_class is ThreatClass.MALICIOUS_INDICATOR or f.severity.rank >= threshold)
+        ]
+        if tripping:
+            first = tripping[0]
+            more = f" and {len(tripping) - 1} more" if len(tripping) > 1 else ""
+            failures.append(f"{label} tripped by {first.id}{_where(first)}{more}")
     if score is not None and report.risk_score >= score:
-        return True
-    return False
+        label = score_label or f"--fail-on-score {score}"
+        failures.append(f"{label} tripped: risk score {report.risk_score} >= {score}")
+    return failures
+
+
+def _where(finding) -> str:
+    """`` (file:line)`` of a finding's first evidence, safe to print on one line."""
+    if not finding.evidence:
+        return ""
+    e = finding.evidence[0]
+    return f" ({_one_line(e.file)}:{e.line_start})"

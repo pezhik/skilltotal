@@ -10,8 +10,9 @@ import json
 import re
 
 from skilltotal.diff import DiffReport
+from skilltotal.file_index import neutralize_hidden
 from skilltotal.guard import GuardDecision
-from skilltotal.models import Report
+from skilltotal.models import Report, ThreatClass
 from skilltotal.scanners.base import RuleSpec
 
 _INDENT = "  "
@@ -33,6 +34,14 @@ def _terminal_safe(text: str) -> str:
     return _CONTROL_CHARS.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
 
 
+def one_line(text: str) -> str:
+    """``text`` safe to print as (part of) one line: hidden and control characters, newlines and
+    tabs included, shown as ``<U+XXXX>``. A file name comes from the scanned package and may hold
+    a newline: printed raw, it forges a line of the report, or a workflow command in a GitHub
+    Actions log."""
+    return neutralize_hidden(text).replace("\n", "<U+000A>").replace("\t", "<U+0009>")
+
+
 def render_json(report: Report) -> str:
     return json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
 
@@ -43,13 +52,27 @@ def render_text(report: Report) -> str:
     lines.append("SkillTotal Security Report")
     lines.append("=" * 26)
     version = f" {c.version}" if c.version else ""
-    lines.append(f"Component : {c.name}{version} ({c.type})")
-    lines.append(f"Source    : {c.source}")
+    lines.append(f"Component : {one_line(c.name)}{one_line(version)} ({c.type})")
+    lines.append(f"Source    : {one_line(c.source)}")
+    config = report.metadata.get("config_applied")
+    if config:
+        # A config committed to the scanned repository can relax the gate: never silently.
+        gates = "".join(
+            f", {key} = {config[key]}" for key in ("fail_on", "fail_on_score") if key in config)
+        lines.append(
+            f"Config    : {one_line(str(config.get('path', '')))} ({config.get('exclude', 0)} "
+            f"exclude(s), {config.get('ignore', 0)} ignored rule(s), {config.get('policy', 0)} "
+            f"policy override(s){gates})"
+        )
     # The verdict is the top-line answer and comes first: a malicious indicator is reported here,
     # not by the score, so a dropper whose score reads "medium" must not look medium.
     verdict = report.verdict or {}
     if verdict.get("headline"):
-        reasons = verdict.get("reasons") or []
+        # Under "Malicious indicators found", only what is one: a risky construct listed there
+        # reads as malice the scan did not find.
+        malicious = {f.title for f in report.findings
+                     if f.threat_class is ThreatClass.MALICIOUS_INDICATOR}
+        reasons = [r for r in verdict.get("reasons") or [] if r in malicious]
         lines.append(
             f"Verdict   : {str(verdict.get('level', '')).upper()} - {verdict['headline']}"
             + (f" ({'; '.join(reasons)})" if verdict.get("has_malicious_indicators") and reasons
@@ -72,6 +95,7 @@ def render_text(report: Report) -> str:
     lines.append(f"Findings ({len(report.findings)}):")
     if not report.findings:
         lines.append(f"{_INDENT}(none)")
+        lines.append("")
     for f in sorted(report.findings, key=lambda f: _CLASS_ORDER.get(f.threat_class.value, 4)):
         label = _CLASS_LABEL.get(f.threat_class.value, "")
         lines.append(f"{_INDENT}[{f.severity.value.upper()}{label}] {f.id}  {f.title}")
@@ -81,21 +105,30 @@ def render_text(report: Report) -> str:
         for e in f.evidence[:_TEXT_EVIDENCE_SHOWN]:
             lines_span = (f"{e.line_start}" if e.line_end == e.line_start
                           else f"{e.line_start}-{e.line_end}")
-            lines.append(f"{_INDENT*3}- {e.file}:{lines_span}")
+            lines.append(f"{_INDENT*3}- {one_line(e.file)}:{lines_span}")
             for snippet_line in e.snippet.splitlines() or [e.snippet]:
                 lines.append(f"{_INDENT*4}{snippet_line}")
         hidden = len(f.evidence) - _TEXT_EVIDENCE_SHOWN
         if hidden > 0:
             lines.append(f"{_INDENT*3}... and {hidden} more (all of them in --json)")
         lines.append("")
+    suppressed = report.metadata.get("suppressed_count") or 0
+    if suppressed:
+        lines.append(f"{suppressed} finding occurrence(s) suppressed by a baseline or an inline "
+                     "skilltotal:ignore marker.")
+    if report.findings:
+        lines.append("To accept a false positive: put `# skilltotal:ignore[RULE-ID]` on its line, "
+                     "or record the current findings with --write-baseline FILE.")
+    if suppressed or report.findings:
+        lines.append("")
 
     # Needs review
     if report.needs_review:
         lines.append(f"Needs review ({len(report.needs_review)}):")
         for n in report.needs_review:
-            where = f" ({n.file})" if n.file else ""
-            lines.append(f"{_INDENT}- [{n.category}] {n.title}{where}")
-            lines.append(f"{_INDENT*2}{n.reason}")
+            where = f" ({one_line(n.file)})" if n.file else ""
+            lines.append(f"{_INDENT}- [{n.category}] {one_line(n.title)}{where}")
+            lines.append(f"{_INDENT*2}{one_line(n.reason)}")
         lines.append("")
 
     return _terminal_safe("\n".join(lines).rstrip() + "\n")
@@ -127,9 +160,9 @@ def render_diff_text(diff: DiffReport) -> str:
     if not diff.new_findings:
         lines.append(f"{_INDENT}(none)")
     for f in diff.new_findings:
-        lines.append(f"{_INDENT}[{f['severity'].upper()}] {f['id']}  {f['title']}")
+        lines.append(f"{_INDENT}[{f['severity'].upper()}{_diff_label(f)}] {f['id']}  {f['title']}")
         for e in f.get("evidence", []):
-            lines.append(f"{_INDENT*2}+ {e['file']}:{e['line_start']}-{e['line_end']}")
+            lines.append(f"{_INDENT*2}+ {one_line(e['file'])}:{e['line_start']}-{e['line_end']}")
             for snippet_line in e.get("snippet", "").splitlines():
                 lines.append(f"{_INDENT*3}{snippet_line}")
     lines.append("")
@@ -137,20 +170,23 @@ def render_diff_text(diff: DiffReport) -> str:
     if diff.resolved_findings:
         lines.append(f"Resolved findings ({len(diff.resolved_findings)}):")
         for f in diff.resolved_findings:
-            lines.append(f"{_INDENT}[{f['severity'].upper()}] {f['id']}  {f['title']}")
+            lines.append(
+                f"{_INDENT}[{f['severity'].upper()}{_diff_label(f)}] {f['id']}  {f['title']}")
         lines.append("")
 
     if diff.changed_findings:
         lines.append(f"Changed findings ({len(diff.changed_findings)}):")
         for c in diff.changed_findings:
             lines.append(
-                f"{_INDENT}[{c['severity'].upper()}] {c['id']}  {c['title']}  "
+                f"{_INDENT}[{c['severity'].upper()}{_diff_label(c)}] {c['id']}  {c['title']}  "
                 f"(+{len(c['added_evidence'])} / -{len(c['removed_evidence'])} evidence)"
             )
             for e in c["added_evidence"]:
-                lines.append(f"{_INDENT*2}+ {e['file']}:{e['line_start']}-{e['line_end']}")
+                lines.append(
+                    f"{_INDENT*2}+ {one_line(e['file'])}:{e['line_start']}-{e['line_end']}")
             for e in c["removed_evidence"]:
-                lines.append(f"{_INDENT*2}- {e['file']}:{e['line_start']}-{e['line_end']}")
+                lines.append(
+                    f"{_INDENT*2}- {one_line(e['file'])}:{e['line_start']}-{e['line_end']}")
         lines.append("")
 
     if diff.capabilities_added or diff.capabilities_removed:
@@ -162,6 +198,12 @@ def render_diff_text(diff: DiffReport) -> str:
         lines.append("")
 
     return _terminal_safe("\n".join(lines).rstrip() + "\n")
+
+
+def _diff_label(finding: dict) -> str:
+    """The threat-class label a scan report shows, so a capability in a diff does not read as
+    new risk (``--fail-on-new`` never counts one)."""
+    return _CLASS_LABEL.get(str(finding.get("threat_class", "")), "")
 
 
 def _diff_side(side: dict) -> str:

@@ -89,6 +89,42 @@ def test_a_config_typo_stops_the_scan_instead_of_switching_the_gate_off(skilltot
     assert "error" in run.err.lower()
 
 
+@pytest.mark.parametrize("config", [
+    'ignore = ["ST-COMBO-EXFLI"]\n',
+    '[policy]\n"ST-SHELL-PIPE-EXC" = "block"\n',
+])
+def test_a_rule_id_typo_in_the_config_stops_the_scan(skilltotal, fixture_copy, config):
+    repo = fixture_copy("malicious_npm_pkg")
+    (repo / ".skilltotal.toml").write_text(config, encoding="utf-8")
+    run = skilltotal("scan", ".", "--fail-on-high", cwd=repo)
+    assert run.code == 1, run.out
+    assert "unknown rule id" in run.err
+
+
+def test_a_failed_gate_says_why_and_the_repository_config_is_named(skilltotal, fixture_copy):
+    # A pull request can commit a config that relaxes the gate: the log always names it, and a
+    # failed gate names the gate and the finding that tripped it.
+    repo = fixture_copy("malicious_npm_pkg")
+    (repo / ".skilltotal.toml").write_text('fail_on = "critical"\n', encoding="utf-8")
+    run = skilltotal("scan", ".", "--json", "--output", "r.json", cwd=repo)
+    assert "Config    : .skilltotal.toml" in run.out
+    assert run.code == 2  # ST-COMBO-EXFIL is a critical risky construct
+    assert 'gate: fail_on = "critical" in .skilltotal.toml tripped by ST-COMBO-EXFIL (' in run.err
+    run = skilltotal("scan", ".", "--json", cwd=repo)
+    assert "config applied: .skilltotal.toml" in run.err
+    ignored = skilltotal("scan", ".", "--json", "--no-config", "--fail-on", "high", cwd=repo)
+    assert ignored.code == 2
+    assert "config applied" not in ignored.err
+    assert "gate: --fail-on high tripped by " in ignored.err
+
+
+def test_writing_a_baseline_is_an_adoption_step_that_exits_zero(skilltotal, fixture_copy):
+    repo = fixture_copy("malicious_npm_pkg")
+    run = skilltotal("scan", ".", "--fail-on-high", "--write-baseline", "bl.json", cwd=repo)
+    assert run.code == 0, run.err
+    assert skilltotal("scan", ".", "--fail-on-high", "--baseline", "bl.json", cwd=repo).code == 0
+
+
 def test_every_scan_flag_in_the_readme_exists(skilltotal):
     """A flag the README shows and the CLI rejects is a pipeline that fails on day one."""
     help_text = skilltotal("scan", "--help").out
