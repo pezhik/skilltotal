@@ -166,7 +166,7 @@ def package_name_typosquatting(component: Component, index: FileIndex) -> Findin
             f"The {eco} package name '{raw}' is within {best_d} character edit(s) of the "
             f"widely-used package '{best}'. Name confusion (typosquatting) is a common "
             "supply-chain attack where a malicious package impersonates a trusted one. This flags "
-            "the resemblance only — confirm the publisher and source are who you expect."
+            "the resemblance only - confirm the publisher and source are who you expect."
         ),
         evidence=[ev],
         recommendation=(

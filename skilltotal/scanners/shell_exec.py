@@ -141,7 +141,7 @@ PIPE_EXEC_RULE = RuleSpec(
     description=(
         "A child_process call (exec / execSync, or spawn of `sh -c`) is given a command that "
         "downloads code and pipes it into a shell or interpreter, e.g. "
-        "`execSync(\"curl … | bash\")`. The component runs whatever the host serves at that "
+        "`execSync(\"curl ... | bash\")`. The component runs whatever the host serves at that "
         "moment, which no review of the component can see."
     ),
     recommendation=(

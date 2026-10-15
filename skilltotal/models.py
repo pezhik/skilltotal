@@ -215,6 +215,13 @@ UNANALYZED_TITLES = frozenset({
 })
 
 
+def finding_counts(findings: list[Finding]) -> tuple[int, int]:
+    """(risk findings, capability findings). A capability is what a component can do; it is never
+    scored and never gates, so "5 finding(s)" for five of them read as risk that is not there."""
+    capability = sum(f.threat_class is ThreatClass.CAPABILITY for f in findings)
+    return len(findings) - capability, capability
+
+
 @dataclass
 class NeedsReview:
     """A low-confidence or un-evidenced signal that must NOT affect the score.

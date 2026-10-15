@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.8.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.9.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.8 (1.7 + verdict.unanalyzed_files and metadata.config_applied); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.9 (1.8 + metadata.baseline, metadata.baseline_suppressed_count and metadata.config_applied.baseline); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -108,9 +108,18 @@
         "scanners_run": { "type": "array", "items": { "type": "string" } },
         "findings_by_severity": { "type": "object" },
         "suppressed_count": { "type": "integer" },
+        "baseline_suppressed_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Added in 1.9. Present only when a baseline was applied: how many of the suppressed evidence occurrences it suppressed (the rest were inline skilltotal:ignore markers)."
+        },
+        "baseline": {
+          "type": "string",
+          "description": "Added in 1.9. Present only when scan applied a baseline file (--baseline, or baseline in .skilltotal.toml): its path."
+        },
         "config_applied": {
           "type": "object",
-          "description": "Present only when scan applied a .skilltotal.toml: its path and how many excludes, ignored rules and policy entries it set, plus the gates it sets (optional, backward compatible).",
+          "description": "Present only when scan applied a .skilltotal.toml: its path and how many excludes, ignored rules and policy entries it set, plus the gates it sets and (added in 1.9) the baseline it names (optional, backward compatible).",
           "required": ["path", "exclude", "ignore", "policy"],
           "additionalProperties": false,
           "properties": {
@@ -119,7 +128,8 @@
             "ignore": { "type": "integer", "minimum": 0 },
             "policy": { "type": "integer", "minimum": 0 },
             "fail_on": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
-            "fail_on_score": { "type": "integer", "minimum": 0, "maximum": 100 }
+            "fail_on_score": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "baseline": { "type": "string" }
           }
         }
       },

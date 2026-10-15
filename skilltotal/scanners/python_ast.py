@@ -265,7 +265,7 @@ class PythonAstScanner(Scanner):
             description=(
                 "A Python shell call (os.system / os.popen, subprocess with shell=True, or an "
                 "argv list that runs `sh -c`) is given a command that downloads code and pipes it "
-                "into a shell or interpreter, e.g. `os.system(\"curl … | bash\")`. The component "
+                "into a shell or interpreter, e.g. `os.system(\"curl ... | bash\")`. The component "
                 "runs whatever the host serves at that moment, which no review of the component "
                 "can see."
             ),
@@ -442,7 +442,7 @@ class PythonAstScanner(Scanner):
             title="Sensitive path / secret-location access",
             description=(
                 "A credential/secret location (e.g. ~/.ssh, ~/.aws/credentials, id_rsa) is "
-                "passed to a filesystem, process, or network call — the code reads or ships a "
+                "passed to a filesystem, process, or network call - the code reads or ships a "
                 "secret location, not merely mentions it."
             ),
             recommendation=(

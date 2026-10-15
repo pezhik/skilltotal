@@ -35,7 +35,7 @@ class ScopedIdentityScanner(PatternScanner):
             severity=Severity.LOW,
             title="Scoped / least-privilege identity",
             description=(
-                "A short-lived, scoped, assumed identity was detected — an STS AssumeRole / "
+                "A short-lived, scoped, assumed identity was detected - an STS AssumeRole / "
                 "session token, a cloud managed or workload identity, an impersonated service "
                 "account, a projected Kubernetes service-account token, or a dynamic-secret "
                 "broker. Tools authenticate with a narrowly-scoped credential that expires, "

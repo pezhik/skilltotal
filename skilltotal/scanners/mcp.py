@@ -735,7 +735,7 @@ class McpScanner(Scanner):
                     reason=(
                         f"{len(shadowing)} description(s) steer the agent toward/away from other "
                         f"tools (e.g. 'use this instead', 'do not use the X tool'). Often "
-                        f"legitimate routing — review intent: {shown}."
+                        f"legitimate routing - review intent: {shown}."
                     ),
                     file=shadowing[0].file,
                     line=shadowing[0].line_start,
@@ -806,7 +806,7 @@ class McpScanner(Scanner):
                     f"({', '.join(channels)}) with {', '.join(data)} access. An agent exposed "
                     "to untrusted content could be steered to move data off-host (a 'toxic "
                     "agent flow' / lethal-trifecta surface). This is not proof of malicious "
-                    "behavior — the risk depends on the agent's runtime permissions; restrict "
+                    "behavior - the risk depends on the agent's runtime permissions; restrict "
                     "which resources the server may reach and treat external content as "
                     "untrusted."
                 ),

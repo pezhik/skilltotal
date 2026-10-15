@@ -442,7 +442,7 @@ class ShellScriptScanner(Scanner):
             title="Shell decode-and-execute (obfuscated execution)",
             description=(
                 "A shell command decodes data and immediately executes it "
-                "(e.g. `… base64 -d | bash` or `eval \"$(… base64 -d)\"`). Decoding then "
+                "(e.g. `... base64 -d | bash` or `eval \"$(... base64 -d)\"`). Decoding then "
                 "executing hides behaviour from review and is a common dropper idiom."
             ),
             recommendation=(
@@ -461,7 +461,7 @@ class ShellScriptScanner(Scanner):
             title="Remote pipe-to-shell execution",
             description=(
                 "A remotely fetched payload is piped straight into a shell "
-                "(e.g. `curl … | bash`). The component runs code downloaded at runtime, which "
+                "(e.g. `curl ... | bash`). The component runs code downloaded at runtime, which "
                 "is unreviewable and a common second-stage delivery vector."
             ),
             recommendation=(
@@ -485,7 +485,7 @@ class ShellScriptScanner(Scanner):
             title="Downloaded archive extracted with a password",
             description=(
                 "A script or setup instruction downloads an archive and extracts it with a "
-                "password (`unzip -P …`, `7z x -p…`). The password exists to keep the contents "
+                "password (`unzip -P ...`, `7z x -p...`). The password exists to keep the contents "
                 "away from scanners on the way in; malicious agent skills (ToxicSkills, 2026) "
                 "delivered their binaries this way."
             ),

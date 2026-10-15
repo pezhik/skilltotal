@@ -212,6 +212,35 @@ def test_guard_installed_with_nothing_checked_fails(capsys, monkeypatch):
     assert "3 of 3 component(s) could not be checked (1 error, 2 not scanned)" in out
 
 
+def test_guard_installed_knows_its_own_server_and_names_remote_ones(tmp_path: Path, capsys,
+                                                                    monkeypatch):
+    ok = _component(tmp_path, "ok", {"index.js": 'console.log("hi");\n'})
+    own = DiscoveredComponent(host="Claude Code", name="skilltotal", kind="mcp_server",
+                              source=None, scannable=False, this_tool=True,
+                              note="this scanner (skilltotal mcp)")
+    fine = DiscoveredComponent(host="Cursor", name="fine", kind="mcp_server", source=str(ok),
+                               scannable=True)
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: [own, fine])
+    # SkillTotal's own MCP server is the tool doing the check: it is not "unchecked".
+    assert main(["guard", "--installed"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "[this scanner] skilltotal" in out
+    assert "      - this scanner (skilltotal mcp)" in out
+    assert "ALLOW: all 2 component(s) passed the guard." in out
+
+    remote = DiscoveredComponent(host="Cursor", name="web", kind="mcp_server", source=None,
+                                 scannable=False, remote=True,
+                                 note="remote server (not scannable)")
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: [fine, remote])
+    # A remote server is named apart from a failure, and is still not checked: CI fails closed.
+    assert main(["guard", "--installed"]) == EXIT_ERROR
+    out = capsys.readouterr().out
+    assert "[remote] web" in out
+    assert "UNCHECKED: 1 of 2 component(s) could not be checked (1 remote (not scannable))." in out
+    assert main(["guard", "--installed", "--allow-unchecked"]) == EXIT_OK
+    capsys.readouterr()
+
+
 def test_guard_installed_with_nothing_found_fails(capsys, monkeypatch):
     monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: [])
     assert main(["guard", "--installed"]) == EXIT_ERROR

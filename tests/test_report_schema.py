@@ -40,6 +40,24 @@ def test_report_validates_against_schema(name):
     jsonschema.validate(instance=report, schema=_schema())
 
 
+def test_a_report_with_a_baseline_from_a_config_validates(tmp_path, capsys):
+    # Schema 1.9: metadata.baseline, metadata.baseline_suppressed_count and
+    # metadata.config_applied.baseline.
+    from skilltotal.cli import main
+
+    root = Path(__file__).resolve().parent / "fixtures" / "malicious_npm_pkg"
+    main(["scan", str(root), "--write-baseline", str(tmp_path / "bl.json"), "--no-config"])
+    config = tmp_path / ".skilltotal.toml"
+    config.write_text('baseline = "bl.json"\n', encoding="utf-8")
+    capsys.readouterr()
+    main(["scan", str(root), "--json", "--config", str(config)])
+    report = json.loads(capsys.readouterr().out)
+    assert report["metadata"]["config_applied"]["baseline"] == "bl.json"
+    assert report["metadata"]["baseline_suppressed_count"] > 0
+    assert report["metadata"]["baseline"] == str(tmp_path / "bl.json")
+    jsonschema.validate(instance=report, schema=_schema())
+
+
 def test_metadata_carries_contract_versions():
     meta = analyze_fixture("malicious_npm_pkg").to_dict()["metadata"]
     assert meta["schema_version"] == REPORT_SCHEMA_VERSION

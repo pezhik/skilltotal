@@ -12,7 +12,7 @@ import re
 from skilltotal.diff import DiffReport
 from skilltotal.file_index import neutralize_hidden
 from skilltotal.guard import GuardDecision
-from skilltotal.models import Report, ThreatClass
+from skilltotal.models import Report, ThreatClass, finding_counts
 from skilltotal.scanners.base import RuleSpec
 
 _INDENT = "  "
@@ -46,42 +46,11 @@ def render_json(report: Report) -> str:
     return json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
 
 
-def render_text(report: Report) -> str:
-    c = report.component
-    lines: list[str] = []
-    lines.append("SkillTotal Security Report")
-    lines.append("=" * 26)
-    version = f" {c.version}" if c.version else ""
-    lines.append(f"Component : {one_line(c.name)}{one_line(version)} ({c.type})")
-    lines.append(f"Source    : {one_line(c.source)}")
-    config = report.metadata.get("config_applied")
-    if config:
-        # A config committed to the scanned repository can relax the gate: never silently.
-        gates = "".join(
-            f", {key} = {config[key]}" for key in ("fail_on", "fail_on_score") if key in config)
-        lines.append(
-            f"Config    : {one_line(str(config.get('path', '')))} ({config.get('exclude', 0)} "
-            f"exclude(s), {config.get('ignore', 0)} ignored rule(s), {config.get('policy', 0)} "
-            f"policy override(s){gates})"
-        )
-    # The verdict is the top-line answer and comes first: a malicious indicator is reported here,
-    # not by the score, so a dropper whose score reads "medium" must not look medium.
-    verdict = report.verdict or {}
-    if verdict.get("headline"):
-        # Under "Malicious indicators found", only what is one: a risky construct listed there
-        # reads as malice the scan did not find.
-        malicious = {f.title for f in report.findings
-                     if f.threat_class is ThreatClass.MALICIOUS_INDICATOR}
-        reasons = [r for r in verdict.get("reasons") or [] if r in malicious]
-        lines.append(
-            f"Verdict   : {str(verdict.get('level', '')).upper()} - {verdict['headline']}"
-            + (f" ({'; '.join(reasons)})" if verdict.get("has_malicious_indicators") and reasons
-               else "")
-        )
-    lines.append(f"Risk      : {report.risk_level.value.upper()}  (score {report.risk_score}/100)")
-    lines.append("")
-    lines.append(report.summary)
-    lines.append("")
+def render_text(report: Report, *, markers_apply: bool = True) -> str:
+    """The full text report. ``markers_apply`` says whether inline ``skilltotal:ignore`` markers
+    are honored for this source (only a local folder): the hint on how to accept a false positive
+    must not point a person at a marker that would do nothing."""
+    lines = _header_lines(report)
 
     # Capabilities
     if report.capabilities:
@@ -92,7 +61,9 @@ def render_text(report: Report) -> str:
 
     # Findings: what drives the verdict first. A capability is what the code can do, and it is
     # labeled as such, so "[HIGH]" next to a 0/100 score does not read as a contradiction.
-    lines.append(f"Findings ({len(report.findings)}):")
+    risk, capability = finding_counts(report.findings)
+    counts = f"{risk} risk, {capability} capability, not scored" if capability else str(risk)
+    lines.append(f"Findings ({counts}):")
     if not report.findings:
         lines.append(f"{_INDENT}(none)")
         lines.append("")
@@ -112,14 +83,23 @@ def render_text(report: Report) -> str:
         if hidden > 0:
             lines.append(f"{_INDENT*3}... and {hidden} more (all of them in --json)")
         lines.append("")
-    suppressed = report.metadata.get("suppressed_count") or 0
-    if suppressed:
-        lines.append(f"{suppressed} finding occurrence(s) suppressed by a baseline or an inline "
+    # The baseline's share is on the Baseline line above; what is left here is the markers'.
+    suppressed = ((report.metadata.get("suppressed_count") or 0)
+                  - (report.metadata.get("baseline_suppressed_count") or 0))
+    if suppressed > 0:
+        lines.append(f"{suppressed} finding occurrence(s) suppressed by an inline "
                      "skilltotal:ignore marker.")
     if report.findings:
-        lines.append("To accept a false positive: put `# skilltotal:ignore[RULE-ID]` on its line, "
-                     "or record the current findings with --write-baseline FILE.")
-    if suppressed or report.findings:
+        if markers_apply:
+            lines.append("To accept a false positive: put `# skilltotal:ignore[RULE-ID]` on its "
+                         "line, or record the current findings with --write-baseline FILE.")
+        else:
+            # A marker in a fetched package or repository is never honored: it is the author's.
+            lines.append("To accept a false positive: record the current findings with "
+                         "--write-baseline FILE and scan with --baseline FILE, or set the rule "
+                         "to \"warn\" or \"ignore\" under [policy] in .skilltotal.toml "
+                         "(skilltotal:ignore markers apply only to a local folder).")
+    if suppressed > 0 or report.findings:
         lines.append("")
 
     # Needs review
@@ -132,6 +112,62 @@ def render_text(report: Report) -> str:
         lines.append("")
 
     return _terminal_safe("\n".join(lines).rstrip() + "\n")
+
+
+def render_summary_text(report: Report, output: str) -> str:
+    """The console summary of a scan whose full report went to the file ``output``: the header
+    and verdict, the counts, and where the rest is."""
+    lines = _header_lines(report)
+    lines.append(f"Full report: {one_line(output)}")
+    return _terminal_safe("\n".join(lines).rstrip() + "\n")
+
+
+def _header_lines(report: Report) -> list[str]:
+    """Title, component, config, verdict, baseline, risk and the summary line."""
+    c = report.component
+    lines: list[str] = []
+    lines.append("SkillTotal Security Report")
+    lines.append("=" * 26)
+    version = f" {c.version}" if c.version else ""
+    lines.append(f"Component : {one_line(c.name)}{one_line(version)} ({c.type})")
+    lines.append(f"Source    : {one_line(c.source)}")
+    config = report.metadata.get("config_applied")
+    if config:
+        # A config committed to the scanned repository can relax the gate: never silently.
+        gates = "".join(
+            f", {key} = {config[key]}" for key in ("fail_on", "fail_on_score") if key in config)
+        if config.get("baseline"):
+            gates += f", baseline = {one_line(str(config['baseline']))}"
+        lines.append(
+            f"Config    : {one_line(str(config.get('path', '')))} ({config.get('exclude', 0)} "
+            f"exclude(s), {config.get('ignore', 0)} ignored rule(s), {config.get('policy', 0)} "
+            f"policy override(s){gates})"
+        )
+    # The verdict is the top-line answer and comes first: a malicious indicator is reported here,
+    # not by the score, so a dropper whose score reads "medium" must not look medium.
+    verdict = report.verdict or {}
+    if verdict.get("headline"):
+        # Under "Malicious indicators found", only what is one: a risky construct listed there
+        # reads as malice the scan did not find.
+        malicious = {f.title for f in report.findings
+                     if f.threat_class is ThreatClass.MALICIOUS_INDICATOR}
+        reasons = [r for r in verdict.get("reasons") or [] if r in malicious]
+        lines.append(
+            f"Verdict   : {str(verdict.get('level', '')).upper()} - {verdict['headline']}"
+            + (f" ({'; '.join(reasons)})" if verdict.get("has_malicious_indicators") and reasons
+               else "")
+        )
+    hidden = report.metadata.get("baseline_suppressed_count")
+    if hidden is not None:
+        # Next to the verdict: a clean verdict after a baseline is clean of what it did not hide.
+        baseline = report.metadata.get("baseline")
+        by = f"baseline {one_line(str(baseline))}" if baseline else "the baseline"
+        lines.append(f"Baseline  : {hidden} finding occurrence(s) suppressed by {by}")
+    lines.append(f"Risk      : {report.risk_level.value.upper()}  (score {report.risk_score}/100)")
+    lines.append("")
+    lines.append(report.summary)
+    lines.append("")
+    return lines
 
 
 def render_diff_json(diff: DiffReport) -> str:
@@ -268,7 +304,8 @@ def render_inventory_text(items: list[dict]) -> str:
     rows = []
     for it in items:
         verdict = it.get("verdict") or ("-" if it.get("scannable") else (
-            "risky" if it.get("risky") else "not scanned"))
+            "this scanner" if it.get("this_tool") else "remote" if it.get("remote")
+            else "risky" if it.get("risky") else "not scanned"))
         risk = it.get("risk_level") or ""
         where = it.get("source") or it.get("note", "")
         rows.append((it["host"], it["name"], it["kind"], where, verdict, risk))
@@ -279,15 +316,19 @@ def render_inventory_text(items: list[dict]) -> str:
     lines.append("-" * (sum(widths) + 2 * (len(headers) - 1)))
     for r in rows:
         lines.append("  ".join(str(r[i]).ljust(widths[i]) for i in range(len(headers))))
+    # Whatever `guard --installed` blocks needs attention here too: a typosquatted name blocks the
+    # guard with a low score, and the two commands must not disagree about one component.
     flagged = [it for it in items if it.get("verdict") in ("malicious", "critical", "high")
-               or it.get("risky")]
+               or it.get("risky") or it.get("guard") == "block"]
     if flagged:
         lines.append("")
-        lines.append(f"{len(flagged)} component(s) need attention (high risk, malicious, or a "
-                     f"launch command that runs a downloaded script).")
+        lines.append(f"{len(flagged)} component(s) need attention (high risk, malicious, blocked "
+                     f"by `skilltotal guard`, or a launch command that runs a downloaded script).")
     for it in items:
         if it.get("risky") and it.get("note"):
             lines.append(f"  {it['name']}: {it['note']}")
+        if it.get("guard") == "block":
+            lines.extend(f"  {it['name']}: {reason}" for reason in it.get("guard_reasons") or [])
         lines.extend(f"  {it['name']}: inline secret in its config: {secret}"
                      for secret in it.get("secrets") or [])
     return _terminal_safe("\n".join(lines) + "\n")

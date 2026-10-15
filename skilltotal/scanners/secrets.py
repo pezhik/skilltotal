@@ -587,7 +587,7 @@ class SecretsScanner(Scanner):
                         "A GOCSPX- Google OAuth client secret in a file with installed-app flow "
                         "markers (loopback redirect / device code / PKCE / oob). For native "
                         "apps Google documents this value as not confidential (gcloud ships "
-                        "one), so it is flagged for review, not scored — verify it is not a "
+                        "one), so it is flagged for review, not scored - verify it is not a "
                         f"web-application secret: {shown}."
                     ),
                     file=installed_oauth_files[0],
@@ -602,8 +602,8 @@ class SecretsScanner(Scanner):
                     reason=(
                         "A secret next to a client-telemetry ingestion endpoint "
                         "(e.g. *.client-telemetry.<vendor>/enqueue). Client-side telemetry keys "
-                        "are publishable by design (like a Sentry DSN) — they can only write to "
-                        "the vendor's telemetry firehose — so it is flagged for review, not "
+                        "are publishable by design (like a Sentry DSN) - they can only write to "
+                        "the vendor's telemetry firehose - so it is flagged for review, not "
                         f"scored: {shown}."
                     ),
                     file=telemetry_files[0],

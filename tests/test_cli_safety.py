@@ -401,7 +401,8 @@ def test_the_text_report_says_what_was_suppressed_and_how_to_suppress(tmp_path, 
     root = _component(tmp_path, {"m.py": IGNORED_ONE_OF_TWO})
     assert main(["scan", str(root)]) == EXIT_OK
     out = capsys.readouterr().out
-    assert "1 finding occurrence(s) suppressed by a baseline or an inline skilltotal:ignore" in out
+    # A baseline's share has a line of its own next to the verdict (see test_baseline.py).
+    assert "1 finding occurrence(s) suppressed by an inline skilltotal:ignore marker" in out
     assert "To accept a false positive: put `# skilltotal:ignore[RULE-ID]` on its line" in out
 
 
