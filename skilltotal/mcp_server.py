@@ -52,6 +52,9 @@ TOOLS: list[dict[str, Any]] = [
             },
             "required": ["source"],
         },
+        # Reads the component (downloads a registry package or clones a repository into a temp
+        # folder that is removed afterwards) and changes nothing.
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True},
     },
     {
         "name": "diff_components",
@@ -69,15 +72,28 @@ TOOLS: list[dict[str, Any]] = [
             },
             "required": ["old", "new"],
         },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True},
     },
     {
         "name": "list_rules",
         "description": (
-            "List every SkillTotal detection rule: id, severity, category, and title."
+            "List every SkillTotal detection rule: id, severity, category, title, threat class "
+            "and capability. Pass verbose=true for each rule's description and recommendation."
         ),
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "verbose": {
+                    "type": "boolean",
+                    "description": "Also return each rule's description and recommendation.",
+                },
+            },
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     },
 ]
+# What list_rules returns per rule unless asked for everything (the texts are most of its size).
+_RULE_SUMMARY = ("id", "severity", "category", "title", "threat_class", "capability")
 
 
 def serve(stdin: TextIO, stdout: TextIO) -> None:
@@ -165,7 +181,9 @@ def _tools_call(msg_id: Any, params: dict[str, Any]) -> dict[str, Any]:
             new = analyze(str(args["new"])).to_dict()
             payload = diff_reports(old, new).to_dict()
         elif name == "list_rules":
-            payload = [r.to_dict() for r in get_rules()]
+            rules = [r.to_dict() for r in get_rules()]
+            payload = rules if args.get("verbose") is True else [
+                {key: rule.get(key) for key in _RULE_SUMMARY} for rule in rules]
         else:
             return _error(msg_id, -32602, f"unknown tool: {name}")
     except KeyError as exc:

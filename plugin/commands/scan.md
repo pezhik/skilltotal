@@ -12,4 +12,4 @@ Then tell me, briefly:
 3. The capabilities it has (shell, network, filesystem, credentials) as a short list. Capabilities are what the code can do, not a verdict.
 4. A recommendation: install, install with the listed permissions only, or don't install.
 
-If `skilltotal` is not installed, say so and suggest `pipx install skilltotal`.
+If `skilltotal` is not installed, say so and suggest `pipx install skilltotal` or `pip install skilltotal`.

@@ -143,6 +143,10 @@ needs_sh = pytest.mark.skipif(SH is None, reason="no POSIX sh on this machine")
 # A stand-in CLI. With ST_STUB_OLD set it is one older than the plugin: it fails on --protocol, as
 # an argparse CLI that does not know the option does, and answers without it.
 STUB = """#!/bin/sh
+if [ "$1" = "--version" ]; then
+  printf 'skilltotal %s\\n' "$ST_STUB_VERSION"
+  exit 0
+fi
 printf '%s' "$*" > "$ST_STUB_ARGS"
 if [ -n "${ST_STUB_OLD:-}" ]; then
   case " $* " in
@@ -158,11 +162,12 @@ exit "${ST_STUB_RC:-0}"
 def _run_wrapper(
     tmp_path: Path, command: str, *, with_cli: bool = True, cli_rc: int = 0,
     cli_out: str = '{"answer": "from the cli"}', extra_env: dict[str, str] | None = None,
-    old_cli: bool = False,
+    old_cli: bool = False, cli_version: str | None = None, tool: str = "Bash",
 ):
     """Run hooks/pretooluse.sh the way Claude Code does, with a stand-in `skilltotal` on PATH.
     ``extra_env`` adds variables (CI, SKILLTOTAL_STRICT) to its otherwise bare environment;
-    ``old_cli`` makes the stand-in one older than the plugin."""
+    ``old_cli`` makes the stand-in one older than the plugin; ``cli_version`` is what its
+    ``--version`` says (the plugin's own version by default)."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     if with_cli:
@@ -179,13 +184,16 @@ def _run_wrapper(
         "ST_STUB_STDIN": str(tmp_path / "stdin"),
         "ST_STUB_OUT": cli_out,
         "ST_STUB_RC": str(cli_rc),
+        "ST_STUB_VERSION": cli_version or PLUGIN["version"],
     }
     if old_cli:
         env["ST_STUB_OLD"] = "1"
     if "SYSTEMROOT" in os.environ:  # Windows processes need it to start
         env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     env.update(extra_env or {})
-    event = json.dumps({"tool_name": "Bash", "tool_input": {"command": command}})
+    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo",
+                        "hook_event_name": "PreToolUse", "tool_name": tool,
+                        "tool_input": {"command": command, "description": "Run it"}})
     done = subprocess.run(  # noqa: S603 - fixed argv: the shell and our own script
         [SH, str(WRAPPER)],
         input=event.encode(),
@@ -238,7 +246,7 @@ def test_without_the_cli_an_install_warns_the_person_and_proceeds(tmp_path, comm
     """A missing CLI must not look like protection that found nothing."""
     answer = _warning(_run_wrapper(tmp_path, command, with_cli=False)[0])
     assert "not on PATH" in answer["systemMessage"]
-    assert "pipx install skilltotal" in answer["systemMessage"]
+    assert "pipx install skilltotal or pip install skilltotal" in answer["systemMessage"]
     assert "pipx ensurepath" in answer["systemMessage"]
 
 
@@ -278,7 +286,10 @@ def test_without_the_cli_installs_and_downloads_the_parser_knows_are_said(tmp_pa
 # with no working CLI every command is denied, since a text match cannot rule an install out
 # (strict mode, read as the CLI reads it).
 
-FIX = "To fix it, run pipx install skilltotal, or pipx upgrade skilltotal for an existing install."
+FIX = ("To fix it, update the skilltotal CLI (pipx upgrade skilltotal or pip install -U "
+       "skilltotal).")
+FIX_INSTALL = ("To fix it, install the skilltotal CLI (pipx install skilltotal or pip install "
+               "skilltotal).")
 # When the command is not found at all, pipx may have installed it in a folder not on PATH yet.
 FIX_PATH = "If it is installed, run pipx ensurepath and start Claude Code from a new terminal."
 
@@ -299,7 +310,7 @@ def test_in_ci_an_install_without_the_cli_is_denied(tmp_path, command):
     reason, message = _denial(done)
     assert reason == ("(CI rule) SkillTotal blocked this command: the skilltotal CLI is not on "
                       "PATH, so it could not be checked.")
-    assert message == (f"{reason} {FIX} {FIX_PATH} Strict mode is on because CI is set "
+    assert message == (f"{reason} {FIX_INSTALL} {FIX_PATH} Strict mode is on because CI is set "
                        f"(SKILLTOTAL_STRICT=0 turns it off).")
 
 
@@ -330,7 +341,7 @@ def test_in_ci_without_a_working_cli_every_command_is_denied(tmp_path, command, 
                            extra_env={"CI": "true"})
     reason, message = _denial(done)
     assert "so it could not be checked" in reason
-    assert "pipx upgrade skilltotal" in message
+    assert "pipx" in message and "pip install" in message
 
 
 @needs_sh
@@ -441,3 +452,72 @@ def test_outside_ci_the_wait_is_unchanged(monkeypatch):
     monkeypatch.setattr(sys, "stdin", io.StringIO('{"tool_name": "Bash"}'))
     assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
     assert seen == [cli.HOOK_BUDGET_S]
+
+
+# --- A CLI older than the plugin is said, never blocked ------------------------------------------
+# Seen in the audit (2026-10-15): CLI 0.66.0 under plugin 0.69.0 speaks the hook protocol, checks
+# what it knows, and nothing said it was missing three releases of checks.
+
+
+def _older_line(cli_version: str) -> str:
+    return (f"SkillTotal CLI {cli_version} is older than the plugin {PLUGIN['version']}; update "
+            f"the skilltotal CLI (pipx upgrade skilltotal or pip install -U skilltotal).")
+
+
+@needs_sh
+@pytest.mark.parametrize("strict", [False, True])
+def test_an_older_cli_answer_gets_a_line_in_front(tmp_path, strict):
+    answer = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "ask",
+                                     "permissionDecisionReason": "Why."},
+              "systemMessage": "SkillTotal needs your approval."}
+    done, _ = _run_wrapper(tmp_path, "npm install lodash", cli_out=json.dumps(answer),
+                           cli_version="0.66.0", extra_env={"CI": "true"} if strict else None)
+    out = json.loads(done.stdout.decode())
+    assert out["hookSpecificOutput"] == answer["hookSpecificOutput"]  # the decision stands
+    assert out["systemMessage"] == f"{_older_line('0.66.0')} SkillTotal needs your approval."
+
+
+@needs_sh
+def test_an_older_cli_answer_without_a_line_gets_one(tmp_path):
+    answer = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "ok"}}
+    done, _ = _run_wrapper(tmp_path, "npm install lodash", cli_out=json.dumps(answer),
+                           cli_version="0.9.12")
+    out = json.loads(done.stdout.decode())
+    assert out["hookSpecificOutput"] == answer["hookSpecificOutput"]
+    assert out["systemMessage"] == _older_line("0.9.12")
+
+
+@needs_sh
+@pytest.mark.parametrize("cli_version", [None, "999.0.0", "garbage"])
+def test_a_cli_as_new_as_the_plugin_gets_no_line(tmp_path, cli_version):
+    done, _ = _run_wrapper(tmp_path, "npm install lodash", cli_version=cli_version)
+    assert done.stdout.decode().strip() == '{"answer": "from the cli"}'
+
+
+@needs_sh
+def test_a_silent_answer_from_an_older_cli_stays_silent(tmp_path):
+    """The version is asked only for an answer: other commands pay nothing for it."""
+    done, _ = _run_wrapper(tmp_path, "npm test", cli_out="", cli_version="0.1.0")
+    assert done.stdout == b""
+
+
+@needs_sh
+@pytest.mark.parametrize(("older", "newer"), [
+    ("0.66.0", "0.69.0"), ("0.9.0", "0.10.0"), ("1.2", "1.2.1"), ("0.69.0", "1.0.0"),
+])
+def test_versions_compare_by_number(tmp_path, older, newer):
+    script = WRAPPER.read_text(encoding="utf-8")
+    start = script.index("lower() {")
+    lower = script[start:script.index("\n}\n", start) + 3]
+    test = tmp_path / "t.sh"
+    test.write_text(f'{lower}\nlower "$1" "$2" && echo yes || echo no\n', encoding="utf-8",
+                    newline="\n")
+
+    def compare(a: str, b: str) -> str:
+        done = subprocess.run([SH, str(test), a, b], capture_output=True,  # noqa: S603
+                              text=True, check=True)
+        return done.stdout.strip()
+
+    assert compare(older, newer) == "yes"
+    assert compare(newer, older) == "no"
+    assert compare(older, older) == "no"

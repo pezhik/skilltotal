@@ -170,7 +170,12 @@ What happens to the install:
   - a package from a custom registry or index, set by an option (`--registry`, `--index-url`,
     `--extra-index-url`) or an environment variable (`npm_config_registry`, `PIP_INDEX_URL`)
   - a package name or an install command the shell builds when it runs (`npm i $PKG`)
-  - an install inside a `node -e` or `python -c` one-liner
+  - a command hidden from the hook: decoded or assembled when it runs and then run
+    (`eval "$(echo ... | base64 -d)"`, `... | base64 -d | sh`, `X=$(printf '\x6e...'); $X i x`,
+    `iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))`,
+    `$c = "np" + "m"; & $c i x`)
+  - an install inside a `node -e` or `python -c` one-liner, or one that decodes something and runs
+    it
   - a direct archive URL
   - a git ref the scan cannot reproduce exactly
   - a check that failed
@@ -194,6 +199,8 @@ What happens to the install:
 Every install command gets one line in the Claude Code console: what was checked and its score,
 the decision and why, or what was not checked (for example "SkillTotal did not check this install:
 it installs from package-lock.json, and SkillTotal checks only the packages a command names.").
+A `git clone` gets a line too: the repository it fetches is not checked (it is not denied for
+that, in CI either).
 
 **In CI (strict mode)** nobody is there to answer a question, so everything SkillTotal would ask
 about is denied. So is every install it could not check, by kind: an install from a lockfile,
@@ -203,7 +210,8 @@ does not analyze) passes, and its console line names what was not read. What it 
 is read either way. `SKILLTOTAL_STRICT_PARTIAL=1` denies it too. Strict mode is on when `CI` or one of
 `TF_BUILD`, `JENKINS_URL`, `TEAMCITY_VERSION`, `CODEBUILD_BUILD_ID`, `BUILDKITE` and `GITLAB_CI` is
 set to anything but empty, `0`, `false`, `no` or `off`. `SKILLTOTAL_STRICT=1` (or `true`, `yes`,
-`on`) turns it on anywhere, and `SKILLTOTAL_STRICT=0` turns it off. To let some kinds through, list
+`on`) turns it on anywhere, and `SKILLTOTAL_STRICT=0` turns it off. Any other value also turns it
+on, and the console line says so. To let some kinds through, list
 them in `SKILLTOTAL_ALLOW_UNCHECKED`, for example `SKILLTOTAL_ALLOW_UNCHECKED=lockfile,local`.
 Allowed kinds still get their console line. Malicious indicators are denied in and out of CI.
 
@@ -211,8 +219,8 @@ Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@re
 repositories that `npx skills add` and `gemini extensions install` fetch are scanned at the ref that
 will be installed; checking them needs `git` on `PATH`. A verdict is reused for the same artifact
 (an exact npm release or PyPI file for a week, a git repository for an hour), so repeated
-`npx prettier` or `uvx ruff` calls don't trigger a rescan. When the engine version changes,
-everything is scanned again. The verdicts are kept in `skilltotal/hook-cache.json` under
+`npx prettier` or `uvx ruff` calls don't trigger a rescan. When the engine or ruleset version
+changes, everything is scanned again. The verdicts are kept in `skilltotal/hook-cache.json` under
 `XDG_CACHE_HOME` (default `~/.cache`; `%LOCALAPPDATA%` on Windows); delete it to start over.
 
 A first check takes a second or two for a small package, about 10 seconds for one the size of
@@ -237,9 +245,14 @@ should work in the terminal you start Claude Code from. Outside CI, if the CLI i
 to start, install commands run unchecked; if it is too old to speak the plugin's hook protocol,
 it still checks what it knows. Either way, Claude Code shows a warning on each install command, so
 you can tell a broken setup from a clean check. A CLI that speaks the protocol but is older than
-the plugin gets no warning; update both together (`pipx upgrade skilltotal`) to get the newest
-checks. In CI, every command is denied until the CLI works, and the console line
-says how to fix it.
+the plugin still decides, and each install command gets a line saying so ("SkillTotal CLI 0.66.0
+is older than the plugin 0.69.0; update the skilltotal CLI ..."). Update both together
+(`pipx upgrade skilltotal` or `pip install -U skilltotal`) to get the newest checks. In CI, every
+command is denied until the CLI works, and the console line says how to fix it.
+
+Outside CI, a command that cannot install anything (no installer, interpreter, shell, download or
+decoder named in it, and nothing the shell fills in, such as `$`, globs or escapes) skips the CLI,
+so `git status` or `ls` costs no Python start. In CI every command goes to the CLI.
 
 The hook loads along with the plugins, so run `/reload-plugins` (or restart Claude Code) after
 `/plugin install`. To see it work without touching a real package, ask the agent to run
@@ -254,11 +267,19 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
   says so in the console. In CI it denies them unless `SKILLTOTAL_ALLOW_UNCHECKED` includes
   `lockfile`.
 - **Scripts and shell-profile definitions.** The hook reads only the command line. It does not
-  read a script on disk (`bash install.sh`) or the aliases, functions and variables your shell
-  profile defines, and such a command is not treated as an install: it runs without a console
-  line, in CI too. A script the agent downloads and runs (`curl ... | bash`) is not read either,
-  but that is an install: the hook says so in the console, and in CI it denies the command unless
-  `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
+  read a script on disk (`bash install.sh`, `cat install.sh | bash`) or the aliases, functions and
+  variables your shell profile defines, and such a command is not treated as an install: it runs
+  without a console line, in CI too. Shell setup lines such as `eval "$(pyenv init -)"` or
+  `eval "$(ssh-agent -s)"` run what another program prints and are let through the same way,
+  unless the line decodes something or names an installer. A script the agent downloads and runs
+  (`curl ... | bash`) is not read either, but that is an install: the hook says so in the console,
+  and in CI it denies the command unless `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
+- **Repositories it clones.** `git clone` gets a console line saying the repository was not
+  checked; scan it with `skilltotal scan <url>`.
+- **A tampered verdict cache.** Verdicts are reused from `skilltotal/hook-cache.json`, a file any
+  program running as you can write. An entry without the engine and ruleset version that produced
+  it is ignored, but a program that can write that file can also replace the CLI itself: the hook
+  does not defend against code already running on your account.
 - **Minified bundles.** They are listed in the report but not analyzed. The scripts npm runs at
   install are the exception: they are analyzed even when minified.
 - **Platform-specific wheels.** For a PyPI release that ships them, SkillTotal scans the source
@@ -519,7 +540,8 @@ instead. This needs uv, pipx, or Python 3.11+ with `skilltotal`.
 
 Tools exposed: `scan_component` (full report for a path / git URL / `npm:` / `pypi:`
 source), `diff_components` (upgrade review: what changed between two versions), and
-`list_rules`. Scans run locally with the same never-execute static engine — the component's
+`list_rules` (pass `verbose: true` for each rule's description and recommendation). All three are
+annotated read-only. Scans run locally with the same never-execute static engine — the component's
 code is not uploaded anywhere.
 
 ### Add a status badge

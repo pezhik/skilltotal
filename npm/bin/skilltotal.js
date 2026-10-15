@@ -8,6 +8,7 @@ const {
   helpText,
   noCurrentDirectoryLookup,
   resolveCommand,
+  versionWarning,
 } = require("../lib/runner");
 const { version } = require("../package.json");
 
@@ -20,6 +21,8 @@ if (!runner) {
   process.stderr.write(helpText(version));
   process.exit(127);
 }
+// stderr only: in MCP mode stdout carries JSON-RPC and nothing else.
+process.stderr.write(versionWarning(version, runner));
 
 // stdio is inherited untouched, so `npx -y skilltotal mcp` speaks MCP over this process's
 // stdin/stdout and the exit code (e.g. --fail-on-high in CI) passes through.

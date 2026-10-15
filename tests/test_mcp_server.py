@@ -108,6 +108,33 @@ def test_list_rules_returns_registry():
     assert any(r["id"] == "ST-PROMPT-INJECTION" for r in payload)
 
 
+def test_list_rules_is_compact_unless_asked_for_the_texts():
+    """Every rule's description and recommendation made the answer about 54 KB of an agent's
+    context; the fields the tool's description names (and the class each rule scores as) stay."""
+    from skilltotal.rules import get_rules
+
+    compact = _tool_payload(_call("list_rules", {}))
+    assert len(compact) == len(get_rules())
+    assert set(compact[0]) == {"id", "severity", "category", "title", "threat_class",
+                               "capability"}
+    assert len(json.dumps(compact)) < 25_000
+    full = _tool_payload(_call("list_rules", {"verbose": True}))
+    assert full == [r.to_dict() for r in get_rules()]
+
+
+def test_every_tool_says_it_only_reads():
+    """Clients use the annotations to decide what needs a confirmation: a scan reads, downloads
+    into a temp folder at most, and changes nothing."""
+    from skilltotal.mcp_server import TOOLS
+
+    for tool in TOOLS:
+        assert tool["annotations"]["readOnlyHint"] is True, tool["name"]
+        assert tool["annotations"]["destructiveHint"] is False, tool["name"]
+    by_name = {t["name"]: t for t in TOOLS}
+    assert by_name["list_rules"]["annotations"]["openWorldHint"] is False
+    assert by_name["scan_component"]["annotations"]["openWorldHint"] is True
+
+
 def test_collection_error_is_tool_error_not_crash(tmp_path: Path):
     resp = _call("scan_component", {"source": str(tmp_path / "missing_xyz")})
     assert resp["result"]["isError"] is True

@@ -68,7 +68,9 @@ function candidates(version, platform = process.platform) {
       args: [...pre, "-P", "-m", PACKAGE],
       // Only a Python that already has the engine counts: never pip-install on the user's behalf.
       // The probe keeps the directory off sys.path too; a Python without -P (3.10) is passed over.
-      probe: [...pre, "-P", "-c", `import ${PACKAGE}`],
+      // It prints the installed version, which may not be this package's (versionWarning).
+      probe: [...pre, "-P", "-c", `import ${PACKAGE}; print(${PACKAGE}.__version__)`],
+      reportsVersion: true,
     })),
   ];
 }
@@ -81,16 +83,40 @@ function choose(version, available, platform = process.platform) {
   return null;
 }
 
-/** True when the candidate's probe command runs and exits 0. */
+/**
+ * True when the candidate's probe command runs and exits 0. A probe that prints the engine's
+ * version leaves it on the candidate as `installed`.
+ */
 function isAvailable(candidate) {
   const cmd = resolveCommand(candidate.cmd);
   if (!cmd) return false;
   const r = spawnSync(cmd, candidate.probe, {
-    stdio: "ignore",
+    stdio: ["ignore", candidate.reportsVersion ? "pipe" : "ignore", "ignore"],
+    encoding: "utf8",
     windowsHide: true,
     timeout: 20000,
   });
-  return !r.error && r.status === 0;
+  if (r.error || r.status !== 0) return false;
+  if (candidate.reportsVersion) {
+    const first = String(r.stdout || "").trim().split(/\r?\n/)[0];
+    candidate.installed = /^[0-9][0-9A-Za-z.+-]{0,40}$/.test(first) ? first : "";
+  }
+  return true;
+}
+
+/**
+ * For stderr (stdout may be an MCP session): an installed Python skilltotal runs whatever release
+ * it is, which can differ from this npm package's. Empty when it is the same or unknown, and for
+ * uvx and pipx, which run the matching release.
+ */
+function versionWarning(version, candidate) {
+  if (!candidate || !candidate.reportsVersion || !candidate.installed) return "";
+  if (candidate.installed === version) return "";
+  return (
+    `skilltotal: npm package ${version} is running the installed Python skilltotal ` +
+    `${candidate.installed}, a different release. Update it (pipx upgrade skilltotal or ` +
+    `pip install -U skilltotal==${version}), or install uv so the matching release runs.\n`
+  );
 }
 
 function helpText(version) {
@@ -113,4 +139,5 @@ module.exports = {
   helpText,
   noCurrentDirectoryLookup,
   resolveCommand,
+  versionWarning,
 };

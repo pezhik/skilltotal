@@ -225,7 +225,8 @@ def render_inventory_text(items: list[dict]) -> str:
         return "No installed AI components (MCP servers or skills) found.\n"
     rows = []
     for it in items:
-        verdict = it.get("verdict") or ("-" if it.get("scannable") else "not scanned")
+        verdict = it.get("verdict") or ("-" if it.get("scannable") else (
+            "risky" if it.get("risky") else "not scanned"))
         risk = it.get("risk_level") or ""
         where = it.get("source") or it.get("note", "")
         rows.append((it["host"], it["name"], it["kind"], where, verdict, risk))
@@ -236,10 +237,17 @@ def render_inventory_text(items: list[dict]) -> str:
     lines.append("-" * (sum(widths) + 2 * (len(headers) - 1)))
     for r in rows:
         lines.append("  ".join(str(r[i]).ljust(widths[i]) for i in range(len(headers))))
-    flagged = [it for it in items if it.get("verdict") in ("malicious", "critical", "high")]
+    flagged = [it for it in items if it.get("verdict") in ("malicious", "critical", "high")
+               or it.get("risky")]
     if flagged:
         lines.append("")
-        lines.append(f"{len(flagged)} component(s) need attention (high risk or malicious).")
+        lines.append(f"{len(flagged)} component(s) need attention (high risk, malicious, or a "
+                     f"launch command that runs a downloaded script).")
+    for it in items:
+        if it.get("risky") and it.get("note"):
+            lines.append(f"  {it['name']}: {it['note']}")
+        lines.extend(f"  {it['name']}: inline secret in its config: {secret}"
+                     for secret in it.get("secrets") or [])
     return _terminal_safe("\n".join(lines) + "\n")
 
 

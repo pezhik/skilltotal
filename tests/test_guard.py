@@ -162,11 +162,96 @@ def test_cli_guard_installed_sweep(tmp_path: Path, capsys, monkeypatch):
     assert "[BLOCK] bad-skill" in out
     assert "[ok] fine-mcp" in out
     assert "[not scanned] opaque" in out
+    assert "      - docker launcher" in out  # why it was not scanned
     assert "BLOCK: 1 component(s) failed the guard: bad-skill" in out
+    assert "1 of 3 component(s) could not be checked (1 not scanned)" in out
 
-    # The sweep allows when nothing blocks.
-    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake[1:])
+    # The sweep allows when everything was checked and nothing blocks.
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake[1:2])
     code = main(["guard", "--installed"])
     out = capsys.readouterr().out
     assert code == EXIT_OK
-    assert "ALLOW: all 2 component(s) passed the guard." in out
+    assert "ALLOW: all 1 component(s) passed the guard." in out
+
+
+# --- What could not be checked is never a pass (audit 2026-10-15) --------------------------------
+# `guard --installed` said "ALLOW: all 3 component(s) passed" with exit 0 when every component had
+# errored or was not scanned, and "ALLOW: all 0 component(s)" on an empty home, in CI too.
+
+
+def _unscannable(name: str, note: str = "remote server (not scanned)") -> DiscoveredComponent:
+    return DiscoveredComponent(host="Cursor", name=name, kind="mcp_server", source=None,
+                               scannable=False, note=note)
+
+
+def test_guard_installed_with_nothing_checked_fails(capsys, monkeypatch):
+    def broken(source):
+        raise RuntimeError("registry unreachable")
+
+    fake = [
+        DiscoveredComponent(host="Cursor", name="errs", kind="mcp_server", source="npm:x",
+                            scannable=True),
+        _unscannable("remote"),
+        _unscannable("docker", "unsupported launcher 'docker'"),
+    ]
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
+    monkeypatch.setattr("skilltotal.engine.analyze", broken)
+    code = main(["guard", "--installed"])
+    out = capsys.readouterr().out
+    assert code == EXIT_ERROR
+    assert "ALLOW" not in out
+    assert "[error] errs" in out and "      - registry unreachable" in out
+    assert "      - unsupported launcher 'docker'" in out
+    assert ("UNCHECKED: 3 of 3 component(s) could not be checked (1 error, 2 not scanned)"
+            in out)
+
+    # An explicit opt-out lets it pass, and still says what was not checked.
+    code = main(["guard", "--installed", "--allow-unchecked"])
+    out = capsys.readouterr().out
+    assert code == EXIT_OK
+    assert "3 of 3 component(s) could not be checked (1 error, 2 not scanned)" in out
+
+
+def test_guard_installed_with_nothing_found_fails(capsys, monkeypatch):
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: [])
+    assert main(["guard", "--installed"]) == EXIT_ERROR
+    out = capsys.readouterr().out
+    assert "UNCHECKED: no installed AI components were found" in out
+    assert "ALLOW" not in out
+    assert main(["guard", "--installed", "--allow-unchecked"]) == EXIT_OK
+
+
+def test_guard_installed_on_an_empty_home_fails_in_ci(tmp_path: Path, capsys, monkeypatch):
+    from skilltotal.inventory import discover
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr("skilltotal.inventory.discover",
+                        lambda project=None: discover(home=home, project=project, environ={}))
+    monkeypatch.setenv("SKILLTOTAL_STRICT", "1")
+    assert main(["guard", "--installed"]) == EXIT_ERROR
+    capsys.readouterr()
+    assert main(["guard", "--installed", "--json"]) == EXIT_ERROR
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_guard_installed_marks_a_risky_launch_command(capsys, monkeypatch):
+    fake = [DiscoveredComponent(
+        host="Cursor", name="dl", kind="mcp_server", source=None, scannable=False, risky=True,
+        note="risky: runs a script downloaded from https://get.example.invalid/s.sh each time "
+             "it starts (not scanned)")]
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
+    assert main(["guard", "--installed"]) == EXIT_ERROR
+    out = capsys.readouterr().out
+    assert "[RISKY] dl" in out
+    assert "(1 risky)" in out
+
+
+def test_guard_installed_says_an_inline_secret_redacted(tmp_path: Path, capsys, monkeypatch):
+    ok = _component(tmp_path, "ok", {"index.js": 'console.log("hi");\n'})
+    fake = [DiscoveredComponent(host="Cursor", name="gh", kind="mcp_server", source=str(ok),
+                                scannable=True, secrets=['TOKEN="ghp_…[redacted, 40 chars]"'])]
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
+    assert main(["guard", "--installed"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert 'inline secret in its config: TOKEN="ghp_…[redacted, 40 chars]"' in out
