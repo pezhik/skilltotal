@@ -4,6 +4,84 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.70.0]
+
+Ruleset 73 and report schema 1.8. Fixes from a review that used SkillTotal the way a DevSecOps
+engineer would: on a workstation, in CI and behind an AI coding agent. See `RULES_CHANGELOG.md`.
+
+### Detection
+- An npm install script that downloads code and pipes it into a shell, or decodes data and runs
+  it, is a malicious indicator (`ST-INSTALL-NPM-REMOTE-EXEC`). It used to show only as the
+  `ST-INSTALL-NPM` capability and scored 0. The same download-and-run passed to a shell call in
+  Python or Node is a risky construct.
+- Package-index tooling that reads `~/.pypirc`, the index's own upload config, no longer gets a
+  critical credential-exfiltration finding for combining that read with its network code. This
+  false positive made pip score critical, through its vendored `distlib`.
+- Fewer false positives: a skill's visible install command is no longer called hidden, a shell
+  command kept in a variable that a script only prints is not read as executed, and a
+  `marshal.loads` of data the module itself wrote is not deserialization of untrusted input.
+- SkillTotal's own SARIF report, JSON report and baseline in the scanned folder are recognised
+  by their content and skipped, so a report left behind by an earlier run can no longer turn a
+  clean repository malicious.
+- Several regular expressions took quadratic or exponential time on crafted input, so a file
+  under the 2 MiB cap could stall a scan for hours. They are bounded now.
+
+### Reports
+- A code file that was not read (over 2 MiB, or a minified bundle) makes a low verdict read
+  "Partially analyzed" instead of "No significant risks found"; `verdict.unanalyzed_files` counts
+  them (schema 1.8). Scores do not change.
+- A high or critical score without a malicious indicator is headed "High risk" / "Critical risk"
+  instead of "High-risk capabilities", since capabilities never score.
+- When a `.skilltotal.toml` was applied, the report says so (`Config :` line, stderr with
+  `--json`/`--sarif`, `metadata.config_applied`).
+- The text report counts suppressed findings and says how to accept a false positive.
+- File names are printed with control characters made visible, so a crafted name cannot forge
+  report lines.
+
+### CLI
+- `scan --staged` runs git from an absolute `PATH` entry only. On Windows with Python 3.10 and
+  3.11, it could run a `git.bat` from the scanned folder.
+- `--output`, `--write-baseline` and `diff --output` refuse to write through a symlink or
+  junction.
+- `--no-config` ignores any `.skilltotal.toml`. An unknown rule id in `ignore` or `[policy]` is
+  an error; it used to switch the gate off silently. `baseline` in a config resolves relative to
+  the config file.
+- `--fail-on none` turns off every gate a config sets; `--fail-on-default LEVEL` applies only
+  when nothing else sets a gate.
+- A tripped gate prints why on stderr (`gate: --fail-on high tripped by ST-X (file:line)`).
+- `--write-baseline` exits 0 after writing.
+- `diff --fail-on-new` counts risk the way `scan --fail-on` does: capabilities never trip it.
+- New `--sarif-uri-prefix` and `--sarif-category` options for SARIF uploaded from a subfolder.
+- SIGTERM (a cancelled CI job) removes temporary folders, as Ctrl-C does.
+- Clearer errors for a missing npm or PyPI package, an npm version range and a missing archive.
+
+### GitHub Action
+- `fail-on` defaults to the config's gate when `.skilltotal.toml` sets one, else `high`; it used
+  to override the config. `fail-on: none` also turns off the config's gates.
+- New inputs `config`, `exclude`, `fail-on-score` and `sarif-category`.
+- With a subfolder `source`, SARIF paths are relative to the repository root, so Code Scanning
+  alerts point at real files. npm, PyPI and git-URL sources are not uploaded.
+- The log lists every location of each risk finding, and the PR comment states whether the gate
+  passed and counts risk findings and capabilities separately.
+- Scanned text can no longer inject workflow commands into the log.
+
+### Claude Code plugin and agent tools
+- An install command hidden behind decoding, `eval`, a variable used as the command name or a
+  pipe into a shell is reported as a command SkillTotal could not read: the agent is asked, and
+  CI denies it.
+- `git clone` gets a console line saying the repository was not checked.
+- The plugin warns when the CLI is older than the plugin, and skips the CLI for commands that
+  cannot install anything outside CI.
+- `guard --installed` exits 1 when a component could not be checked or none was found
+  (`--allow-unchecked` exits 0) and names what it could not check.
+- `inventory` finds Claude Code servers in `~/.claude.json`, VS Code `servers` and installed
+  Claude Code plugins, keeps pinned versions, marks a curl-to-shell launcher risky and reports
+  secrets written into an MCP config, redacted.
+- Verdict-cache entries are tied to the engine and ruleset that produced them; echoed names are
+  capped; network failures are named.
+- The npm wrapper warns on stderr when it runs an installed Python engine of another version.
+- MCP tools are annotated read-only; `list_rules` is compact unless `verbose` is set.
+
 ## [0.69.0]
 
 Ruleset 72: five new malicious-indicator rules and a score floor. See `RULES_CHANGELOG.md`.

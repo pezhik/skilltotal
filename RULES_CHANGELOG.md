@@ -4,6 +4,41 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 73 (engine 0.70.0)
+
+Gaps and false positives found by a review that used SkillTotal the way a DevSecOps engineer
+would.
+Detection-efficacy corpus, now 124 positive / 87 negative: 124/124 flagged, 0 false positives.
+
+- **`ST-INSTALL-NPM-REMOTE-EXEC`** (new, malicious indicator): a `preinstall`, `install`,
+  `postinstall` or `prepare` script downloads code and pipes it into a shell (`curl ... | sh`,
+  `wget -qO- ... | sh`, `sh -c "$(curl ...)"`) or decodes data and runs it (`base64 -d | sh`,
+  `node -e "eval(Buffer.from(..., 'base64') ...)"`). npm runs these scripts on install, with no
+  one reviewing what they fetch, which is why `ST-INSTALL-GYP` treats the same in `binding.gyp` as
+  malicious. Script values are read JSON-decoded, so an escaped pipe does not hide the command.
+  It counts as an install hook for `ST-INSTALL-DROPPER`.
+- **`ST-SHELL-PIPE-EXEC-PY`** and **`ST-SHELL-PIPE-EXEC-NODE`** (new, risky construct): the same
+  download-and-run passed to a shell call, `os.system`, `subprocess` with `shell=True`,
+  `["bash", "-c", ...]`, `exec`/`execSync` or `spawn` of `sh -c`. Risky rather than malicious,
+  like `ST-SHELL-PIPE-EXEC`, because honest bootstrap code does it too.
+- **`ST-SHELL-PIPE-EXEC`**: a command kept in a shell variable that the script only prints (an
+  install hint) goes to `needs_review`. Passed to `eval` or `sh -c`, it is still a finding.
+- **`ST-SKILL-FETCH-EXEC-HIDDEN`**: "hidden" now means concealed. A concealment phrase counts
+  only in the command's own sentence, list item or the lead-in line of its code block, not
+  anywhere in the paragraph or above a heading. A command inside an HTML comment or an element
+  styled `display:none`, `visibility:hidden` or with the `hidden` attribute is new to the rule.
+- **Own-provider reads of `~/.pypirc`**: package-index and upload tooling (pip, twine, distlib,
+  pipenv, setuptools, flit, pdm) reading it no longer feeds `ST-COMBO-EXFIL`, by exact registry
+  name only. Any other package that reads `~/.pypirc` and has network egress is still flagged.
+- **`ST-DESERIALIZE-PY`**: `loads(x.attr)` is not flagged when every assignment to that attribute
+  in the module is the module's own `dumps()`, `None` or a copy of the same attribute.
+- **Own outputs skipped**: a file that parses as a SkillTotal SARIF report, JSON report or
+  baseline, in exactly that shape, is not scanned and is listed in `needs_review`. Its rule
+  descriptions quote detection patterns.
+- **Bounded patterns**: regular expressions in the secret-exfiltration, agent-config, exposure,
+  npm-supply, sensitive-path and secrets scanners backtracked quadratically or exponentially on
+  crafted input. They are bounded now.
+
 ## ruleset 72 (engine 0.69.0)
 
 Five techniques from AI-tooling attacks of the past weeks, each pinned by a sanitized sample that
