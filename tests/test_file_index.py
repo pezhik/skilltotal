@@ -110,3 +110,33 @@ def test_snippet_truncation(tmp_path: Path):
     _f, _m, ev = next(iter(index.search(pat)))
     assert ev.snippet.endswith("…")
     assert len(ev.snippet) <= 242
+
+
+def test_span_lookup_matches_a_plain_walk_on_unsorted_and_overlapping_spans():
+    """The span lookup bisects a sorted, merged copy (a linear walk took 23 s of a 50 s scan of a
+    1.4 MB bundle); it must answer exactly what walking the original list answers."""
+    import random
+
+    from skilltotal.file_index import _offset_in_spans
+
+    rng = random.Random(7)
+    for _ in range(300):
+        spans = []
+        for _ in range(rng.randrange(0, 40)):
+            start = rng.randrange(0, 500)
+            spans.append((start, start + rng.randrange(-3, 30)))  # some empty or inverted
+        for offset in range(-2, 540, 3):
+            expected = any(start <= offset < end for start, end in spans)
+            assert _offset_in_spans(spans, offset) is expected, (spans, offset)
+
+
+def test_a_string_span_lookup_returns_the_literal(tmp_path):
+    from skilltotal.file_index import FileIndex
+
+    (tmp_path / "a.js").write_text(
+        "".join(f'const s{i} = "value {i}";\n' for i in range(50)), encoding="utf-8")
+    f = next(x for x in FileIndex.build(tmp_path).files if x.relpath == "a.js")
+    at = f.text.index("value 37")
+    start, end = f.string_span_at(at)
+    assert f.text[start:end].strip("\"'") == "value 37"
+    assert f.string_span_at(f.text.index("const s37")) is None

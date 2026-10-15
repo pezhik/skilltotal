@@ -809,11 +809,42 @@ for _fstr_name in ("FSTRING_START", "FSTRING_MIDDLE", "FSTRING_END"):
         _STRING_TOKEN_TYPES.add(_fstr_type)
 
 
+# Sorted, merged copies of span lists, keyed by the list's id (the list is kept alongside so a
+# reused id is never mistaken for it). A linear walk per lookup was quadratic on a minified
+# bundle: 45,758 lookups over a 1.4 MB file took 23 of a 50-second scan (2026-10-15).
+_MERGED_SPANS: dict[int, tuple[list[tuple[int, int]], int, list[int], list[int]]] = {}
+_MERGED_SPANS_MAX = 256
+
+
+def _merged_spans(spans: list[tuple[int, int]]) -> tuple[list[int], list[int]]:
+    """``spans`` sorted and with overlaps merged, as parallel start and end lists (same union)."""
+    hit = _MERGED_SPANS.get(id(spans))
+    if hit is not None and hit[0] is spans and hit[1] == len(spans):
+        return hit[2], hit[3]
+    starts: list[int] = []
+    ends: list[int] = []
+    for start, end in sorted(spans):
+        if start >= end:
+            continue
+        if ends and start <= ends[-1]:
+            ends[-1] = max(ends[-1], end)
+        else:
+            starts.append(start)
+            ends.append(end)
+    if len(_MERGED_SPANS) >= _MERGED_SPANS_MAX:
+        _MERGED_SPANS.clear()
+    _MERGED_SPANS[id(spans)] = (spans, len(spans), starts, ends)
+    return starts, ends
+
+
 def _offset_in_spans(spans: list[tuple[int, int]] | None, offset: int) -> bool:
-    for start, end in spans or ():
-        if start <= offset < end:
-            return True
-    return False
+    if not spans:
+        return False
+    if len(spans) < 8:  # not worth sorting
+        return any(start <= offset < end for start, end in spans)
+    starts, ends = _merged_spans(spans)
+    i = bisect.bisect_right(starts, offset) - 1
+    return i >= 0 and offset < ends[i]
 
 
 # C-family languages whose `//` and `/* */` comments are demotable code-context (a pattern that
@@ -1896,10 +1927,12 @@ class IndexedFile:
             spans = self._c_string_spans_cache
         else:
             return None
-        for start, end in spans or ():
-            if start <= offset < end:
-                return start, end
-        return None
+        if not spans:
+            return None
+        # String literals never overlap, so the merged spans are the literals themselves.
+        starts, ends = _merged_spans(spans)
+        i = bisect.bisect_right(starts, offset) - 1
+        return (starts[i], ends[i]) if i >= 0 and offset < ends[i] else None
 
     def in_printed_command(self, offset: int) -> bool:
         """True if ``offset`` sits in a quoted string that an output command prints.

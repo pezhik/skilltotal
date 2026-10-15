@@ -169,11 +169,27 @@ def test_inline_ignore_bare_marker(tmp_path: Path):
 
 
 def test_inline_ignore_targeted_id(tmp_path: Path):
-    code = "import marshal\nexec(marshal.loads(d))  # skilltotal:ignore[ST-OBF-DECODE-EXEC-PY]\n"
+    code = "import pickle\nexec(pickle.loads(d))  # skilltotal:ignore[ST-DESERIALIZE-PY]\n"
     (tmp_path / "m.py").write_text(code, encoding="utf-8", newline="")
     ids = _ids(_analyze(tmp_path, inline_ignores=True))
-    assert "ST-OBF-DECODE-EXEC-PY" not in ids
+    assert "ST-DESERIALIZE-PY" not in ids
     assert "ST-DYN-PY" in ids  # a targeted ignore leaves other rules on the line intact
+
+
+@pytest.mark.parametrize(
+    "marker", ["# skilltotal:ignore", "# skilltotal:ignore[ST-OBF-DECODE-EXEC-PY]"]
+)
+def test_an_inline_marker_never_hides_a_malicious_indicator(tmp_path: Path, marker: str):
+    """A folder scanned as local is not always the reader's own code (an unpacked package or
+    skill), so a marker its author wrote must not silence a malicious indicator (2026-10-15)."""
+    code = f"import marshal\nexec(marshal.loads(d))  {marker}\n"
+    (tmp_path / "m.py").write_text(code, encoding="utf-8", newline="")
+    report = _analyze(tmp_path, inline_ignores=True)
+    assert "ST-OBF-DECODE-EXEC-PY" in _ids(report)
+    assert report.verdict["has_malicious_indicators"]
+    notes = [n for n in report.needs_review if n.category == "suppression"]
+    assert notes and "ST-OBF-DECODE-EXEC-PY" in notes[0].reason
+    assert "baseline" in notes[0].reason
 
 
 def test_inline_ignore_on_line_above(tmp_path: Path):

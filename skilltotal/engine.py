@@ -207,8 +207,20 @@ def analyze_directory(
         # Drop early so ignored base findings don't feed the synthesized rules below.
         findings = [f for f in findings if f.id not in ignore_set]
     if inline_ignores:
-        findings, inline_count = _apply_inline_ignores(findings, index)
+        findings, inline_count, refused = _apply_inline_ignores(findings, index)
         suppressed_count += inline_count
+        if refused:
+            needs_review.append(NeedsReview(
+                category="suppression",
+                title="Inline ignore does not apply to malicious indicators",
+                reason=(
+                    "A skilltotal:ignore marker sits on the evidence of "
+                    + ", ".join(sorted(refused)) + ". A marker is written into the component, so "
+                    "whoever wrote the component could use it to hide its own malicious "
+                    "indicator; these findings stay. To accept one, record it in a baseline "
+                    "(--write-baseline) or set it to warn under [policy] in .skilltotal.toml."
+                ),
+            ))
 
     # Demote evidence that does not represent executed/agent-facing behavior to needs_review
     # (never scored). Sibling gates, applied in order:
@@ -809,21 +821,32 @@ _INLINE_IGNORE_RE = re.compile(r"skilltotal:\s*ignore(?:\[([^\]]*)\])?", re.IGNO
 
 def _apply_inline_ignores(
     findings: list[Finding], index: FileIndex
-) -> tuple[list[Finding], int]:
+) -> tuple[list[Finding], int, set[str]]:
     """Drop evidence whose source line (or the line above) carries a skilltotal:ignore marker.
 
-    Returns the kept findings and how many evidence occurrences were dropped, which the report
-    counts as suppressed: an ignored finding is the owner's decision, not something never seen.
+    Returns the kept findings, how many evidence occurrences were dropped (the report counts them
+    as suppressed: an ignored finding is the owner's decision, not something never seen), and the
+    malicious-indicator rules a marker tried to silence. Those are never dropped: the marker is in
+    the component, and a component scanned as a local folder is not always the reader's own code
+    (a downloaded package, an unpacked skill), so its author could hide what it does (2026-10-15).
     """
     by_path = {f.relpath: f for f in index.files}
     kept: list[Finding] = []
     dropped = 0
+    refused: set[str] = set()
     for finding in findings:
-        remaining = [e for e in finding.evidence if not _line_ignores(e, finding.id, by_path)]
+        malicious = _THREAT_CLASS_BY_ID.get(finding.id) is ThreatClass.MALICIOUS_INDICATOR
+        remaining = []
+        for e in finding.evidence:
+            if not _line_ignores(e, finding.id, by_path):
+                remaining.append(e)
+            elif malicious:
+                remaining.append(e)
+                refused.add(finding.id)
         dropped += len(finding.evidence) - len(remaining)
         if remaining:
             kept.append(_finding_with_evidence(finding, remaining))
-    return kept, dropped
+    return kept, dropped, refused
 
 
 def _line_ignores(evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFile]) -> bool:
