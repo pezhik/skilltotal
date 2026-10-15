@@ -42,8 +42,9 @@ import functools
 import math
 import os
 import re
+import stat
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -100,7 +101,10 @@ LOCKFILE, LOCAL, SCRIPT = "lockfile", "local", "script"
 # A package that was checked, but not all of it: code in a language not analyzed, a file it could
 # not read or parse. Allowed in strict mode under this name too.
 PARTIAL = "partial"
-UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL)
+# An MCP server an agent CLI registers that is no package: a remote server reached at a URL, or a
+# container image the server runs in. Neither is downloaded where the hook could read it.
+REMOTE, CONTAINER = "remote", "container"
+UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER)
 # A git clone fetches code the hook does not check, and runs none of it by itself: said in the
 # console, never denied for that alone (in CI too), so it is not one of UNCHECKED_KINDS.
 GIT_CLONE = "clone"
@@ -642,6 +646,207 @@ def _registry_from_env(found: list[Install], words: list[str]) -> list[Install]:
             item = Install(None, f"{name} from a registry the command sets in its environment")
         out[item] = None
     return list(out)
+
+
+# Where an installer finds its registry or index outside the command line: the agent's own
+# environment and the installer's configuration files. npm reads `npm_config_*` (any case) and the
+# `.npmrc` of the project (the nearest folder up from where it runs that holds package.json or
+# node_modules) and of the user (NPM_CONFIG_USERCONFIG, else ~/.npmrc), the first that sets a key
+# winning; `@scope:registry` wins over `registry` for that scope's packages. pip reads PIP_* and
+# its pip.conf/pip.ini files (PIP_CONFIG_FILE, the virtualenv's, the user's, the machine's); uv
+# reads UV_*. A configured extra index or find-links counts wherever it is set: the extra source
+# can serve the higher version. A file is read only when it is a regular file, and only its first
+# _CONFIG_MAX_BYTES.
+_CONFIG_MAX_BYTES = 64 * 1024
+_NPM_PROJECT_LEVELS = 32  # folders walked up from where the command runs, at most
+_NPMRC_KEY = re.compile(r"^[ \t]*((?:@[^\s=:]{1,100}:)?registry)[ \t]*=[ \t]*([^\r\n]*)",
+                        re.IGNORECASE | re.MULTILINE)
+_PIP_CONF_KEY = re.compile(
+    r"^[ \t]*(index[-_]url|extra[-_]index[-_]url|find[-_]links)[ \t]*[=:][ \t]*([^\r\n]*)",
+    re.IGNORECASE | re.MULTILINE)
+# The variables that set the npm registry for one installer only, besides npm_config_*.
+_NODE_TOOL_REGISTRY_ENV = ("YARN_REGISTRY", "YARN_NPM_REGISTRY_SERVER", "BUN_CONFIG_REGISTRY")
+_PY_INDEX_VARS = ("PIP_INDEX_URL", "UV_INDEX_URL", "UV_DEFAULT_INDEX")
+_PY_EXTRA_VARS = ("PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "UV_EXTRA_INDEX_URL", "UV_INDEX",
+                  "UV_FIND_LINKS")
+# A configuration file's path, quoted in the reason when it holds nothing but these.
+_PLAIN_FILE = re.compile(r"[A-Za-z0-9._/@+:~ -]{1,200}")
+_PLAIN_VARIABLE = re.compile(r"[A-Za-z0-9_@:./-]{1,100}")
+
+
+def _read_config(path: Path) -> str:
+    """The start of a configuration file, or "" when it is missing or not a regular file (a FIFO
+    or device could block or never end)."""
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags)
+    except (OSError, ValueError):
+        return ""
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return ""
+        return os.read(fd, _CONFIG_MAX_BYTES).decode("utf-8", "replace")
+    except OSError:
+        return ""
+    finally:
+        os.close(fd)
+
+
+def _public(value: str) -> bool:
+    return value.strip().strip("\"'").rstrip("/").lower() in _PUBLIC_SOURCES
+
+
+def _registry_where(value: str, origin: str) -> str:
+    """How the reason names a configured registry: its host (never a credential or a token in
+    its path) and where it is set."""
+    host = _shown_host(value.strip().strip("\"'"))
+    return f"{host or 'a registry'} ({origin})"
+
+
+def _file_origin(path: Path) -> str:
+    shown = path.as_posix()
+    return f"set in {shown}" if _PLAIN_FILE.fullmatch(shown) else f"set in a {path.name} file"
+
+
+def _env_get(environ: Mapping[str, str], name: str) -> str:
+    """A variable by name in any letter case, as npm and pip read them on every system."""
+    value = environ.get(name)
+    if value is None:
+        lowered = name.lower()
+        value = next((v for k, v in environ.items() if k.lower() == lowered), None)
+    return value or ""
+
+
+def _npm_project_dir(cwd: Path) -> Path:
+    """npm's project folder: the nearest one up from ``cwd`` that holds package.json or
+    node_modules, else ``cwd`` itself."""
+    folder = cwd
+    for _ in range(_NPM_PROJECT_LEVELS):
+        try:
+            if (folder / "package.json").exists() or (folder / "node_modules").exists():
+                return folder
+        except OSError:
+            return cwd
+        if folder.parent == folder:
+            break
+        folder = folder.parent
+    return cwd
+
+
+def _npm_layers(cwd: Path | None, environ: Mapping[str, str],
+                home: Path | None) -> list[tuple[str, dict[str, str]]]:
+    """npm's configuration, highest precedence first: (where it is set, key -> value)."""
+    layers: list[tuple[str, dict[str, str]]] = []
+    for name, value in environ.items():
+        key = name.lower().removeprefix("npm_config_")
+        if key != name.lower() and (key == "registry" or key.endswith(":registry")):
+            plain = _PLAIN_VARIABLE.fullmatch(name)
+            layers.append((f"set by {name}" if plain else "set in the environment", {key: value}))
+    files: list[Path] = []
+    if cwd is not None:
+        files.append(_npm_project_dir(cwd) / ".npmrc")
+    user = _env_get(environ, "npm_config_userconfig")
+    if user:
+        files.append(Path(user))
+    elif home is not None:
+        files.append(home / ".npmrc")
+    for path in files:
+        found: dict[str, str] = {}
+        for match in _NPMRC_KEY.finditer(_read_config(path)):
+            found.setdefault(match.group(1).lower(), match.group(2))
+        if found:
+            layers.append((_file_origin(path), found))
+    return layers
+
+
+def _npm_configured(scope: str, layers: list[tuple[str, dict[str, str]]],
+                    environ: Mapping[str, str]) -> str | None:
+    """Where a package of ``scope`` ("" for none) comes from, when that is not the public
+    registry."""
+    for key in ([f"{scope}:registry"] if scope else []) + ["registry"]:
+        for origin, values in layers:
+            if key in values:
+                value = values[key]
+                return None if _public(value) else _registry_where(value, origin)
+    if not scope:
+        for name in _NODE_TOOL_REGISTRY_ENV:
+            value = _env_get(environ, name)
+            if value and not _public(value):
+                return _registry_where(value, f"set by {name}")
+    return None
+
+
+def _pip_config_files(environ: Mapping[str, str], home: Path | None) -> list[Path]:
+    """pip's configuration files, highest precedence first."""
+    files: list[Path] = []
+    named = _env_get(environ, "PIP_CONFIG_FILE")
+    if named:
+        files.append(Path(named))
+    venv = _env_get(environ, "VIRTUAL_ENV")
+    if venv:
+        files += [Path(venv) / "pip.conf", Path(venv) / "pip.ini"]
+    xdg = _env_get(environ, "XDG_CONFIG_HOME")
+    if xdg:
+        files.append(Path(xdg) / "pip" / "pip.conf")
+    appdata = _env_get(environ, "APPDATA")
+    if appdata:
+        files.append(Path(appdata) / "pip" / "pip.ini")
+    if home is not None:
+        files += [home / ".config" / "pip" / "pip.conf", home / ".pip" / "pip.conf",
+                  home / "pip" / "pip.ini",
+                  home / "Library" / "Application Support" / "pip" / "pip.conf"]
+    programdata = _env_get(environ, "PROGRAMDATA")
+    if programdata:
+        files.append(Path(programdata) / "pip" / "pip.ini")
+    if os.name != "nt":
+        files += [Path("/etc/xdg/pip/pip.conf"), Path("/etc/pip.conf")]
+    return list(dict.fromkeys(files))
+
+
+def _py_configured(environ: Mapping[str, str], home: Path | None) -> str | None:
+    """Where Python packages come from, when an index other than PyPI is configured."""
+    for name in (*_PY_INDEX_VARS, *_PY_EXTRA_VARS):
+        value = _env_get(environ, name)
+        if value and not all(_public(part) for part in value.split()):
+            return _registry_where(value.split()[0], f"set by {name}")
+    index_decided = bool(_env_get(environ, "PIP_INDEX_URL"))
+    for path in _pip_config_files(environ, home):
+        for match in _PIP_CONF_KEY.finditer(_read_config(path)):
+            key = match.group(1).lower().replace("_", "-")
+            if key == "index-url":
+                if index_decided:
+                    continue
+                index_decided = True  # the file with the highest precedence decides
+            value = match.group(2).strip()
+            if not value or not _public(value.split()[0]):
+                return _registry_where(value.split()[0] if value else "", _file_origin(path))
+    return None
+
+
+def _registry_from_config(found: list[Install], cwd: str | None, environ: Mapping[str, str],
+                          home: Path | None) -> list[Install]:
+    """A package an installer would fetch from a registry or index configured outside the
+    command line (see above), which the public copy the scan reads may not match: asked about,
+    like ``--registry``."""
+    npm = [i for i in found if (i.source or "").startswith("npm:")]
+    py = [i for i in found if (i.source or "").startswith("pypi:")]
+    if not npm and not py:
+        return found
+    folder = Path(cwd) if cwd and Path(cwd).is_absolute() else None
+    layers = _npm_layers(folder, environ, home) if npm else []
+    py_where = _py_configured(environ, home) if py else None
+    out: list[Install] = []
+    for item in found:
+        source = item.source or ""
+        name = source.split(":", 1)[1] if ":" in source else source
+        where = None
+        if source.startswith("npm:"):
+            scope = name.split("/", 1)[0].lower() if name.startswith("@") and "/" in name else ""
+            where = _npm_configured(scope, layers, environ)
+        elif source.startswith("pypi:"):
+            where = py_where
+        out.append(Install(None, f"{name} from {where}") if where else item)
+    return list(dict.fromkeys(out))
 
 
 # Commands that change the directory the rest of the line runs in.
@@ -1873,12 +2078,10 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         if started is None:
             return _net(" ".join(rest))
         return _installs_in(started, shell, depth + 1, level) if started else []
-    if head == "claude" and rest[:2] == ["mcp", "add"]:
-        return _launched(rest[2:], shell, depth, level)
+    if head in ("claude", "codex", "gemini") and rest[:2] == ["mcp", "add"]:
+        return _mcp_add(rest[2:], shell, depth, level)
     if head == "claude" and rest[:2] == ["mcp", "add-json"]:
         return _add_json(rest[2:], shell, depth, level)
-    if head in ("codex", "gemini") and rest[:2] == ["mcp", "add"]:
-        return _launched(rest[2:], shell, depth, level)
     if head == "claude" and rest[:1] == ["plugin"] and rest[1:2] in (["install"], ["i"]):
         return _plugin_install(rest[2:])
     if head == "gemini" and rest[:1] in (["extensions"], ["extension"]) \
@@ -2054,8 +2257,7 @@ def _launched(args: list[str], shell: str, depth: int, level: _Level) -> list[In
     word misread there is a package never checked. So every place a launcher could start (``npx``,
     ``uvx``, ``npm``, ``pip``, a shell or a wrapper) is read as a command, and everything any of
     them would install is checked. One quoted word holding a whole command line (``"npx evil"``)
-    is read as one: a program started through a shell runs it as such. A remote MCP server (a URL)
-    installs nothing.
+    is read as one: a program started through a shell runs it as such.
     """
     found: dict[Install, None] = {}
     tried = 0
@@ -2090,6 +2292,126 @@ def _could_launch(word: str) -> bool:
     )
 
 
+def _mcp_add(args: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    """``claude|codex|gemini mcp add``: every package the server's command could install, and
+    what the hook cannot check at all: a remote server (``--transport http|sse URL``, codex's
+    ``--url URL``) or a server that runs in a container (``-- docker run ... image``)."""
+    found = dict.fromkeys(_launched(args, shell, depth, level))
+    own = args[:args.index("--")] if "--" in args else args
+    url = _mcp_remote_url(own)
+    if url is not None:
+        found[_remote_server(url)] = None
+    for i, word in enumerate(args):
+        if _base(word) in _CONTAINER_TOOLS:
+            image = _container_image(args[i + 1:])
+            if image is not None:
+                found[_container_server(image)] = None
+    return list(found)
+
+
+# The transports of an MCP server reached over the network rather than started as a command.
+_REMOTE_TRANSPORTS = frozenset({"http", "sse", "streamable-http", "streamable_http", "ws"})
+_REMOTE_URL = re.compile(r"(?:https?|wss?)://\S+", re.IGNORECASE)
+
+
+def _mcp_remote_url(args: list[str]) -> str | None:
+    """The URL of the remote server an ``mcp add`` registers ("" when there is one but its URL is
+    not found), or None for a server started as a command."""
+    remote = False
+    url = ""
+    for i, arg in enumerate(args):
+        name, eq, value = arg.partition("=")
+        if name in ("-t", "--transport", "--url"):
+            if not eq:
+                value = args[i + 1] if i + 1 < len(args) else ""
+            if name == "--url" or value.lower() in _REMOTE_TRANSPORTS:
+                remote = True
+            if name == "--url" and _REMOTE_URL.fullmatch(value):
+                url = url or value
+        elif _REMOTE_URL.fullmatch(arg):
+            url = url or arg
+    return url if remote else None
+
+
+def _remote_server(url: str) -> Install:
+    shown = _shown_host(url)
+    does = f"adds the remote MCP server at {shown}" if shown else "adds a remote MCP server"
+    return Install(None, unchecked=REMOTE, does=does)
+
+
+def _shown_host(url: str) -> str:
+    """``https://user:token@mcp.example.com/path?key=...`` -> ``https://mcp.example.com``: only the
+    scheme and host, so no credential or token in the URL reaches the console or the agent."""
+    match = re.match(r"([A-Za-z][A-Za-z0-9+.-]{0,20})://(?:[^/@\s]*@)?([A-Za-z0-9.-]{1,200})"
+                     r"(?::\d{1,5})?(?:[/?#]|$)", url.strip())
+    return f"{match.group(1).lower()}://{match.group(2).lower()}" if match else ""
+
+
+# Container engines whose `run` starts a server from an image, with their options that take a
+# value (`docker run --help`): the image is the first word after them.
+_CONTAINER_TOOLS = frozenset({"docker", "podman", "nerdctl"})
+_CONTAINER_GLOBAL_VALUE_FLAGS = frozenset({"-c", "--context", "--config", "-H", "--host", "-l",
+                                           "--log-level", "--connection", "--url", "--root",
+                                           "--runroot"})
+_CONTAINER_RUN_VALUE_FLAGS = frozenset({
+    "-a", "--attach", "--add-host", "--annotation", "--blkio-weight", "--blkio-weight-device",
+    "--cap-add", "--cap-drop", "--cgroup-parent", "--cgroupns", "--cidfile", "--cpu-period",
+    "--cpu-quota", "--cpu-rt-period", "--cpu-rt-runtime", "-c", "--cpu-shares", "--cpus",
+    "--cpuset-cpus", "--cpuset-mems", "--detach-keys", "--device", "--device-cgroup-rule",
+    "--device-read-bps", "--device-read-iops", "--device-write-bps", "--device-write-iops",
+    "--dns", "--dns-option", "--dns-search", "--domainname", "--entrypoint", "-e", "--env",
+    "--env-file", "--expose", "--gpus", "--group-add", "--health-cmd", "--health-interval",
+    "--health-retries", "--health-start-period", "--health-timeout", "-h", "--hostname", "--ip",
+    "--ip6", "--ipc", "--isolation", "--kernel-memory", "-l", "--label", "--label-file", "--link",
+    "--link-local-ip", "--log-driver", "--log-opt", "--mac-address", "-m", "--memory",
+    "--memory-reservation", "--memory-swap", "--memory-swappiness", "--mount", "--name",
+    "--network", "--net", "--network-alias", "--oom-score-adj", "--pid", "--pids-limit",
+    "--platform", "-p", "--publish", "--pull", "--restart", "--runtime", "--security-opt",
+    "--shm-size", "--stop-signal", "--stop-timeout", "--storage-opt", "--sysctl", "--tmpfs",
+    "--ulimit", "-u", "--user", "--userns", "--uts", "-v", "--volume", "--volume-driver",
+    "--volumes-from", "-w", "--workdir", "--arch", "--os", "--variant", "--secret", "--pod",
+    "--env-host", "--hooks-dir", "--cgroups", "--rootfs", "--sdnotify", "--seccomp-policy",
+    "--timeout", "--tz", "--umask", "--uidmap", "--gidmap", "--subuidname", "--subgidname",
+})
+_CONTAINER_SHORT_VALUES = frozenset("acehlmpuvw")
+_PLAIN_IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/:@-]{0,199}")
+
+
+def _container_image(args: list[str]) -> str | None:
+    """The image ``docker|podman run`` starts ("" when it cannot be told), or None when the
+    words after the engine are not a ``run``."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in _CONTAINER_GLOBAL_VALUE_FLAGS else 1
+    if args[i:i + 2] == ["container", "run"]:
+        i += 2
+    elif args[i:i + 1] == ["run"]:
+        i += 1
+    else:
+        return None
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            i += 1
+            break
+        if not arg.startswith("-") or arg == "-":
+            break
+        if arg.startswith("--"):
+            i += 2 if arg in _CONTAINER_RUN_VALUE_FLAGS else 1
+        else:  # `-it`, `-e`, `-p8080:80`: a value-taking letter takes the rest or the next word
+            cluster = arg[1:]
+            k = next((k for k, letter in enumerate(cluster) if letter in _CONTAINER_SHORT_VALUES),
+                     None)
+            i += 2 if k is not None and k == len(cluster) - 1 else 1
+    image = args[i] if i < len(args) else ""
+    return image if _PLAIN_IMAGE.fullmatch(image) else ""
+
+
+def _container_server(image: str) -> Install:
+    does = f"runs the container image {image}" if image else "runs a container image"
+    return Install(None, unchecked=CONTAINER, does=does)
+
+
 def _add_json(args: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
     """``claude mcp add-json <name> '{"command": "npx", "args": ["-y", "pkg"]}'`` starts the server
     with that command.
@@ -2112,10 +2434,13 @@ def _add_json(args: list[str], shell: str, depth: int, level: _Level) -> list[In
         configs += 1
         command, extra = config.get("command"), config.get("args")
         if not isinstance(command, str):
-            continue  # a remote server: nothing is installed
+            url = config.get("url") or config.get("httpUrl")
+            if isinstance(url, str) or str(config.get("type", "")).lower() in _REMOTE_TRANSPORTS:
+                found[_remote_server(url if isinstance(url, str) else "")] = None
+            continue
         words = [command, *(str(a) for a in extra if isinstance(a, (str, int, float)))] if (
             isinstance(extra, list)) else [command]
-        items = _launched(["<name>", *words], shell, depth, level)
+        items = _mcp_add(["<name>", "--", *words], shell, depth, level)
         env = config.get("env")
         if isinstance(env, dict):  # the server's environment, after JSON escapes are decoded
             items = _registry_from_env(items, [f"{key}={value}" for key, value in env.items()])
@@ -3352,7 +3677,8 @@ class BackgroundFull(TimeoutError):
 def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
     strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
-    deny_partial: bool = False,
+    deny_partial: bool = False, environ: Mapping[str, str] | None = None,
+    home: Path | None = None,
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -3372,15 +3698,23 @@ def hook_response(
     ``deny_partial`` (SKILLTOTAL_STRICT_PARTIAL): what it runs at install was read either way, and
     the dependencies a command pulls in are not checked at all, so denying the unread rest of the
     named package by default stopped large packages without making the build much safer.
+
+    ``environ`` and ``home`` are the agent's environment and home folder: a registry or index
+    they configure (``NPM_CONFIG_REGISTRY``, an ``.npmrc``, ``PIP_INDEX_URL``, a ``pip.conf``)
+    is where the installer fetches from, so its packages are asked about like ``--registry``.
+    Without ``environ`` nothing outside the command line is read.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
         return None
     command = str((event.get("tool_input") or {}).get("command", ""))
     cwd = event.get("cwd")
-    installs = parse_installs(command, shell, cwd=cwd if isinstance(cwd, str) else None)
+    cwd = cwd if isinstance(cwd, str) else None
+    installs = parse_installs(command, shell, cwd=cwd)
     if not installs:
         return None
+    if environ is not None:
+        installs = _registry_from_config(installs, cwd, environ, home)
 
     denied: list[str] = []
     asked: list[str] = []

@@ -55,7 +55,8 @@ def _corpus() -> list[str]:
     parser has been taught, evasions, and ordinary commands."""
     names = ["test_agent_hook.py", "test_hook_visibility.py", "test_hook_conformance.py",
              "test_shell_evasion.py", "test_hook_hidden_commands.py", "test_agent_approval_066.py",
-             "test_agent_config_write_066.py", "test_plugin_package.py", "test_hook_background.py"]
+             "test_agent_config_write_066.py", "test_plugin_package.py", "test_hook_background.py",
+             "test_hook_unchecked_sources.py"]
     found: dict[str, None] = {}
     for name in names:
         tree = ast.parse((ROOT / "tests" / name).read_text(encoding="utf-8"))

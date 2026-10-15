@@ -41,6 +41,13 @@ def _outside_ci(monkeypatch):
 
     for name in (*HOOK_CI_MARKERS, "SKILLTOTAL_STRICT", "SKILLTOTAL_ALLOW_UNCHECKED"):
         monkeypatch.delenv(name, raising=False)
+    # A registry or index the machine configures would turn every install the CLI checks into a
+    # question (setup-node in CI sets NPM_CONFIG_USERCONFIG): each test starts without one.
+    for name in ("NPM_CONFIG_REGISTRY", "NPM_CONFIG_USERCONFIG", "YARN_REGISTRY",
+                 "YARN_NPM_REGISTRY_SERVER", "BUN_CONFIG_REGISTRY", "PIP_INDEX_URL",
+                 "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "PIP_CONFIG_FILE", "UV_INDEX_URL",
+                 "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_INDEX", "UV_FIND_LINKS"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def analyze_fixture(name: str) -> Report:
