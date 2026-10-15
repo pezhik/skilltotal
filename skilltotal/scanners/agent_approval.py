@@ -68,7 +68,7 @@ class AgentApprovalScanner(Scanner):
     rules = [
         RuleSpec(
             id=R_AUTO_APPROVE,
-            category="agent_configuration",
+            category="agent_config",
             severity=Severity.HIGH,
             title="Agent settings that turn approvals off",
             description=(
@@ -88,7 +88,7 @@ class AgentApprovalScanner(Scanner):
         ),
         RuleSpec(
             id=R_API_REDIRECT,
-            category="agent_configuration",
+            category="agent_config",
             severity=Severity.HIGH,
             title="Agent settings send model traffic to another host",
             description=(
