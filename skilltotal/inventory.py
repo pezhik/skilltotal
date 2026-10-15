@@ -1,10 +1,11 @@
 """Discover AI agent components already installed on this machine.
 
-Reads the configuration files of common agent hosts (Claude Desktop, Claude Code and its plugins,
-Cursor, Windsurf, VS Code, Gemini CLI) and the local skills directories, enumerates the MCP servers,
-plugins and skills they reference, and derives a *scannable source* (an ``npm:`` / ``pypi:`` spec,
-a git URL or a local path) for each, which the CLI then runs through the normal engine. This is
-pure discovery: it only reads config files, never launches anything.
+Reads the configuration files of common agent hosts (Claude Desktop, Claude Code with its plugins
+and an organization's managed-mcp.json, Cursor, Windsurf, VS Code, Gemini CLI) and the local
+skills directories, enumerates the MCP servers, plugins and skills they reference, and derives a
+*scannable source* (an ``npm:`` / ``pypi:`` spec, a git URL or a local path) for each, which the
+CLI then runs through the normal engine. This is pure discovery: it only reads config files,
+never launches anything.
 
 What a server's launch command installs is read by the same parser the Claude Code hook uses
 (``agent_hook.parse_installs``), so ``cmd /c npx -y pkg``, a pinned ``pkg@1.2.3`` and ``uvx --from
@@ -82,6 +83,18 @@ def _config_locations(home: Path, project: Path | None,
             _Location("VS Code (project)", project / ".vscode" / "mcp.json", vscode),
         ]
     return locs
+
+
+def _managed_mcp_files(env: Mapping[str, str]) -> list[Path]:
+    """Claude Code's organization-wide ``managed-mcp.json`` (same format as ``.mcp.json``), which
+    an administrator deploys to a system path; its servers load for every user of the machine."""
+    program_files = Path(env.get("ProgramFiles") or env.get("PROGRAMFILES")
+                         or r"C:\Program Files")
+    return [
+        Path("/Library/Application Support/ClaudeCode/managed-mcp.json"),
+        Path("/etc/claude-code/managed-mcp.json"),
+        program_files / "ClaudeCode" / "managed-mcp.json",
+    ]
 
 
 def _claude_dir(home: Path, env: Mapping[str, str]) -> Path:
@@ -442,15 +455,20 @@ def discover(
     project: Path | None = None,
     extra_configs: list[Path] | None = None,
     environ: Mapping[str, str] | None = None,
+    managed_configs: list[Path] | None = None,
 ) -> list[DiscoveredComponent]:
     """Find installed MCP servers, plugins and skills. Parameters override defaults for testing.
 
     ``environ`` supplies APPDATA and CLAUDE_CONFIG_DIR. It defaults to the process environment
     only when ``home`` is not given either: a home passed in (a test's fake one) means every
-    location comes from it, never from the machine running the code.
+    location comes from it, never from the machine running the code. For the same reason the
+    system-wide ``managed-mcp.json`` paths are read only when ``home`` is not given;
+    ``managed_configs`` names them explicitly.
     """
     env: Mapping[str, str] = environ if environ is not None else (
         os.environ if home is None else {})
+    if managed_configs is None:
+        managed_configs = _managed_mcp_files(env) if home is None else []
     home = home or Path.home()
     found: list[DiscoveredComponent] = []
     seen_cfg: set[Path] = set()
@@ -459,7 +477,8 @@ def discover(
         if path not in seen_cfg and path.is_file():
             seen_cfg.add(path)
             found.extend(_parse_claude_json(path))
-    candidates = _config_locations(home, project, env)
+    candidates = [_Location("Claude Code (managed)", p) for p in managed_configs]
+    candidates += _config_locations(home, project, env)
     candidates += [_Location("config", p) for p in (extra_configs or [])]
     for location in candidates:
         if location.path in seen_cfg or not location.path.is_file():

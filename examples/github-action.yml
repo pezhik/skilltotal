@@ -14,12 +14,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pezhik/skilltotal@v0.70.0
+      - uses: pezhik/skilltotal@v0.70.1
         with:
           source: .            # a path in the repo, a git URL, or an npm:/pypi:<name> spec
           fail-on: high        # fail on a high/critical risk finding; use 'none' to report only
           # fail-on empty (the default) uses the gate of the repository's .skilltotal.toml, else high
-          # version: 0.70.0    # the tag above already pins the engine; this runs another PyPI release (optional)
+          # version: 0.70.1    # the tag above already pins the engine; this runs another PyPI release (optional)
           # baseline: .skilltotal-baseline.json   # suppress accepted findings (optional)
           # fail-on-score: 50  # also fail at or above this risk score (optional)
           # exclude: |         # skip paths, one glob per line (optional)

@@ -234,3 +234,28 @@ def test_an_inline_secret_in_an_entry_is_flagged_redacted(home):
     assert "redacted" in remote and BEARER not in remote
     assert found["clean"].secrets == []
     assert TOKEN not in json.dumps([c.__dict__ for c in found.values()])
+
+
+# --- Claude Code managed-mcp.json ----------------------------------------------------------------
+
+
+def test_an_organizations_managed_mcp_json_is_found(home, tmp_path):
+    managed = _write(tmp_path / "system" / "managed-mcp.json", {"mcpServers": {
+        "company-fs": {"command": "npx", "args": ["-y", "company-fs-mcp"]},
+        "docs": {"type": "http", "url": "https://mcp.example.invalid/mcp"},
+    }})
+    found = _by_name(discover(home=home, environ={}, managed_configs=[managed]))
+    assert found["company-fs"].host == "Claude Code (managed)"
+    assert found["company-fs"].source == "npm:company-fs-mcp"
+    assert found["company-fs"].config == str(managed)
+    assert not found["docs"].scannable
+
+
+def test_the_system_managed_paths_are_read_only_on_a_real_run():
+    """A home passed in (a test's) never reads the machine's system paths; a real run does."""
+    from skilltotal import inventory
+
+    real = inventory._managed_mcp_files({"ProgramFiles": r"D:\Apps"})
+    assert Path("/etc/claude-code/managed-mcp.json") in real
+    assert Path("/Library/Application Support/ClaudeCode/managed-mcp.json") in real
+    assert Path(r"D:\Apps") / "ClaudeCode" / "managed-mcp.json" in real

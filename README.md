@@ -231,7 +231,9 @@ a secret it ships: that puts the publisher at risk, not the person installing th
 
 **Inventory and `guard --installed`** read agent configuration files and never start a server:
 `~/.claude.json` (Claude Code's user-scope servers and its local-scope servers per project), the
-Claude Code plugins you installed, Claude Desktop, Cursor (`~/.cursor/mcp.json`), Windsurf, VS Code
+Claude Code plugins you installed, an organization's Claude Code `managed-mcp.json` (in
+`/etc/claude-code`, `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`),
+Claude Desktop, Cursor (`~/.cursor/mcp.json`), Windsurf, VS Code
 (the user `mcp.json` and `settings.json` `mcp.servers`) and Gemini CLI configs, and the skills in
 `~/.claude/skills`. With `--project DIR` they also read that project's `.mcp.json`,
 `.cursor/mcp.json`, `.vscode/mcp.json` and `.claude/skills`. Claude Code's `~/.claude/settings.json`
@@ -324,10 +326,11 @@ positive whole number is an error. The plugin's own settings are listed in
 | 1 | Usage, config or collection error (for example an unknown flag value, an invalid `.skilltotal.toml` or an unknown rule id in it, a missing path, a failed clone, a source over a size limit). `guard --installed` also exits 1 when a component could not be checked or none was found, unless `--allow-unchecked` is given |
 | 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score`, `--fail-on-unanalyzed`, a `block` policy or `diff --fail-on-new`), or `guard` blocked a component |
 
-When a gate trips, stderr gets one `gate:` line per gate, naming the gate and the finding that
-tripped it, for example
-`gate: --fail-on high tripped by ST-COMBO-EXFIL (index.js:7) and 1 more` or
-`gate: fail_on = "critical" in .skilltotal.toml tripped by ...`.
+When a gate trips, stderr gets one `gate:` line per gate, naming the gate, the finding that
+tripped it and why it counts, for example
+`gate: --fail-on high tripped by ST-COMBO-EXFIL (index.js:7), severity critical and 1 more` or
+`gate: fail_on = "critical" in .skilltotal.toml tripped by ST-INSTALL-NPM-REMOTE-EXEC
+(package.json:1), a malicious indicator`.
 
 > **Gate semantics:** `--fail-on`/`--fail-on-high` trip on the **severity of a single finding**,
 > not the aggregate `risk_score`. They count risk findings: a malicious indicator at any severity,
@@ -360,7 +363,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pezhik/skilltotal@v0.70.0
+      - uses: pezhik/skilltotal@v0.70.1
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail on a high/critical risk finding (or 'none')
@@ -425,7 +428,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.70.0
+    rev: v0.70.1
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -449,7 +452,7 @@ create folders, so create the report folder first.
 A shell step:
 
 ```bash
-pipx install skilltotal==0.70.0
+pipx install skilltotal==0.70.1
 OUT="$(mktemp -d)"
 skilltotal scan . --sarif --output "$OUT/skilltotal.sarif" --fail-on high
 ```
@@ -460,7 +463,7 @@ GitLab CI (`allow_failure: exit_codes: [2]` would turn the gate into a warning):
 skilltotal:
   image: python:3.12-slim
   script:
-    - pip install skilltotal==0.70.0
+    - pip install skilltotal==0.70.1
     - mkdir -p skilltotal-reports
     - skilltotal scan . --exclude "skilltotal-reports/*" --sarif --output skilltotal-reports/skilltotal.sarif --fail-on high
   artifacts:
@@ -476,7 +479,7 @@ stage('SkillTotal') {
   steps {
     sh '''
       python -m venv .skilltotal-venv    # a virtual environment is not scanned
-      .skilltotal-venv/bin/pip install skilltotal==0.70.0
+      .skilltotal-venv/bin/pip install skilltotal==0.70.1
       mkdir -p skilltotal-reports
       .skilltotal-venv/bin/skilltotal scan . --exclude "skilltotal-reports/*" --sarif --output skilltotal-reports/skilltotal.sarif --fail-on high
     '''

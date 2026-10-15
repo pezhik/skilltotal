@@ -4,6 +4,29 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.70.1]
+
+Ruleset 73 and report schema 1.8 are unchanged. No detection changes in this release.
+
+### CLI and GitHub Action
+- When a severity gate trips, the gate line now says why the finding counts. For example:
+  `gate: --fail-on high tripped by ST-DESERIALIZE-PY (app.py:2), severity high`. If a finding
+  trips any level, the line ends in `..., a malicious indicator`. The gate checks the severity of
+  each finding and ignores the headline score, so a report headed "low risk (20/100)" can still
+  trip `--fail-on high`. Earlier versions did not explain this in the gate line.
+
+### Inventory
+- `inventory` and `guard --installed` now read the `managed-mcp.json` file that an organization
+  deploys for Claude Code. It lives in `/etc/claude-code`,
+  `/Library/Application Support/ClaudeCode` or `C:\Program Files\ClaudeCode`. The file uses the
+  same format as `.mcp.json`, and its servers load for every user on the machine. These system
+  paths are read only on a real run. A test that passes its own home folder never reads them.
+
+### Tests
+- The GitHub Action step test is skipped when the `python` on PATH is older than 3.11, because
+  the step runs `python -P` and Python 3.10 does not support that flag. The action itself always
+  sets up Python 3.12.
+
 ## [0.70.0]
 
 Ruleset 73 and report schema 1.8. Fixes from a review that used SkillTotal the way a DevSecOps

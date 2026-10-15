@@ -1610,7 +1610,11 @@ def _gate_failures(
         if tripping:
             first = tripping[0]
             more = f" and {len(tripping) - 1} more" if len(tripping) > 1 else ""
-            failures.append(f"{label} tripped by {first.id}{_where(first)}{more}")
+            # The gate reads each finding, not the headline score, so "low risk (20/100)" can sit
+            # next to a tripped high gate; naming the finding's severity says which one fired.
+            why = ("a malicious indicator" if first.threat_class is ThreatClass.MALICIOUS_INDICATOR
+                   else f"severity {first.severity.value}")
+            failures.append(f"{label} tripped by {first.id}{_where(first)}, {why}{more}")
     if score is not None and report.risk_score >= score:
         label = score_label or f"--fail-on-score {score}"
         failures.append(f"{label} tripped: risk score {report.risk_score} >= {score}")
