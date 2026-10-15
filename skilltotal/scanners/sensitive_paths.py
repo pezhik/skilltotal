@@ -713,7 +713,7 @@ class SensitivePathScanner(Scanner):
             ),
             recommendation=(
                 "If its values are real, rotate them, then exclude the file from the release (a "
-                "`files` allowlist or .npmignore for npm, MANIFEST.in for a Python sdist — "
+                "`files` allowlist or .npmignore for npm, MANIFEST.in for a Python sdist - "
                 ".gitignore alone excludes it from neither)."
             ),
             capability=None,

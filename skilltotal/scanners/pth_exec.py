@@ -32,7 +32,7 @@ class PthExecScanner(PatternScanner):
             description=(
                 "A .pth file decodes, deserializes, spawns a process, or reaches the network "
                 "(base64/hex/codecs decode, marshal/pickle, subprocess/os.system, or a network "
-                "client) — a malicious-payload signature. Python executes .pth 'import' lines at "
+                "client) - a malicious-payload signature. Python executes .pth 'import' lines at "
                 "every interpreter startup, so this runs automatically and unreviewed (a known "
                 "supply-chain persistence vector)."
             ),

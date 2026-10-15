@@ -147,9 +147,8 @@ def load_config(path: Path) -> Config:
 def _check_rule_ids(config: Config, path: Path) -> None:
     """A rule id no rule has is an error: `ignore = ["ST-SHEL-PY"]` or a `block` on a typo would
     silently do nothing, and the gate the person meant to set would be off."""
-    import difflib
-
-    from skilltotal.rules import get_rules  # the scanners load only when a config names rules
+    # The scanners load only when a config names rules.
+    from skilltotal.rules import get_rules, unknown_rule_hint
 
     if not (config.ignore or config.policy):
         return
@@ -159,9 +158,8 @@ def _check_rule_ids(config: Config, path: Path) -> None:
         for rule_id in ids:
             if rule_id in known_set:
                 continue
-            close = difflib.get_close_matches(rule_id.upper(), known, n=1)
-            hint = f"; did you mean {close[0]}?" if close else "; see `skilltotal rules list`"
-            raise ConfigError(f"{path}: {where}: unknown rule id {rule_id!r}{hint}")
+            hint = unknown_rule_hint(rule_id, known)
+            raise ConfigError(f"{path}: {where}: unknown rule id {rule_id!r}; {hint}")
 
 
 def _parse(text: str, path: Path) -> dict[str, object]:

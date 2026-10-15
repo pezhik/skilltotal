@@ -74,7 +74,15 @@ EXIT_FAIL_ON_HIGH = 2
 
 class _Parser(argparse.ArgumentParser):
     """argparse, except that a usage error exits 1 rather than 2: exit code 2 means a gate tripped,
-    and a CI job must be able to tell a mistyped flag from a component that failed its check."""
+    and a CI job must be able to tell a mistyped flag from a component that failed its check.
+
+    Abbreviated options are refused: `--out` taken for `--output` today becomes ambiguous, or
+    another option, the day a flag that starts the same way is added. Subparsers are built by
+    this class too, so the rule covers every command."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        kwargs.setdefault("allow_abbrev", False)
+        super().__init__(*args, **kwargs)
 
     def error(self, message: str):  # type: ignore[override]
         self.print_usage(sys.stderr)
@@ -84,7 +92,7 @@ class _Parser(argparse.ArgumentParser):
 def build_parser() -> argparse.ArgumentParser:
     parser = _Parser(
         prog="skilltotal",
-        description="AI Component Security Platform — static analysis of AI components.",
+        description="AI Component Security Platform - static analysis of AI components.",
     )
     parser.add_argument("--version", action="version", version=f"skilltotal {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -114,8 +122,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         metavar="FILE",
         help=(
-            "Write the report to FILE (SARIF if --sarif, else JSON). A FILE that is a symbolic "
-            "link is refused."
+            "Write the report to FILE (SARIF if --sarif, else JSON); the console then shows only "
+            "a short summary (verdict, risk, counts). A FILE that is a symbolic link is refused."
         ),
     )
     scan.add_argument(
@@ -549,7 +557,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     from skilltotal.collector import CollectionError, classify_source
     from skilltotal.config import ConfigError
     from skilltotal.engine import analyze
-    from skilltotal.report import render_json, render_text
+    from skilltotal.report import render_json, render_summary_text, render_text
     from skilltotal.sarif import render_sarif
 
     try:
@@ -557,6 +565,14 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     except ConfigError as exc:  # a gate that would silently be off
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
+
+    # A report the scan cannot write is known before the scan, which can take minutes.
+    for what, path in (("report", args.output), ("baseline", args.write_baseline)):
+        problem = _output_problem(path) if path else ""
+        if problem:
+            print(f"error: cannot write the {what} to {_one_line(path)}: {problem}",
+                  file=sys.stderr)
+            return EXIT_ERROR
 
     baseline_path = args.baseline or config.baseline_path()
     suppress: set[str] = set()
@@ -571,6 +587,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     # A large package takes minutes (thousands of files): on a terminal, say what is happening so
     # the wait does not read as a hang. Never in a pipe or a CI log.
     progress = _ProgressLine(sys.stderr) if sys.stderr.isatty() else None
+    # A `skilltotal:ignore` marker is the code owner's decision. Only a local directory (a
+    # checkout, as in CI) is the person's own code; a fetched package or repository must not be
+    # able to silence its own findings.
+    markers_apply = (classify_source(args.source) == "local"
+                     and Path(args.source).expanduser().is_dir())
     try:
         with contextlib.ExitStack() as stack:
             target = args.source
@@ -580,12 +601,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                 progress("Fetching")
             report = analyze(
                 target, suppress=suppress, ignore_rules=config.ignored_rules(), exclude=exclude,
-                # A `skilltotal:ignore` marker is the code owner's decision. Only a local directory
-                # (a checkout, as in CI) is the person's own code; a fetched package or repository
-                # must not be able to silence its own findings.
-                inline_ignores=(classify_source(args.source) == "local"
-                                and Path(args.source).expanduser().is_dir()),
-                progress=progress,
+                inline_ignores=markers_apply, progress=progress,
             )
             report.component.source = args.source  # not the snapshot's temporary path
     except StagedError as exc:
@@ -600,6 +616,10 @@ def _cmd_scan(args: argparse.Namespace) -> int:
                   "(a private repository needs git credentials)", file=sys.stderr)
         else:
             print(f"error: {exc}", file=sys.stderr)
+        if _joined_by_trailing_backslash(args.source):
+            print("hint: a trailing backslash before the closing quote joined your arguments; "
+                  "drop the trailing \\ (write '.\\my folder', not '.\\my folder\\')",
+                  file=sys.stderr)
         return EXIT_ERROR
     finally:
         if progress is not None:
@@ -616,7 +636,11 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             **({"fail_on": config.fail_on} if config.fail_on else {}),
             **({"fail_on_score": config.fail_on_score}
                if config.fail_on_score is not None else {}),
+            # A baseline hides findings from the gate: one the config brings is named with it.
+            **({"baseline": config.baseline} if config.baseline else {}),
         }
+    if baseline_path:
+        report.metadata["baseline"] = str(baseline_path)
 
     if args.provenance:
         # Provenance is deliberately a CLI-layer add-on: the engine stays component-only,
@@ -649,6 +673,15 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             f"{args.write_baseline}",
             file=sys.stderr,
         )
+        from skilltotal.models import ThreatClass
+
+        malicious = sorted({f.id for f in report.findings
+                            if f.threat_class is ThreatClass.MALICIOUS_INDICATOR})
+        if malicious:
+            # A baseline is meant for accepted noise; one that accepts a malicious indicator
+            # silences the finding that should stop a merge, from now on.
+            print(f"warning: the baseline accepts malicious indicator(s): {', '.join(malicious)}; "
+                  "check each one is a false positive before you commit it", file=sys.stderr)
 
     # Choose the structured renderer once; reuse for stdout and --output.
     if args.sarif:
@@ -667,15 +700,19 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             return EXIT_ERROR
         print(f"Report written to {args.output}", file=sys.stderr)
 
-    # With --output the structured report is in the file; the console gets the readable summary
-    # (a SARIF document printed too ran to thousands of lines in a CI log).
-    if (args.sarif or args.json) and not args.output:
+    # With --output the report is in the file; the console gets a short summary: the verdict, the
+    # risk and the counts (the gate lines follow on stderr). A SARIF document printed too ran to
+    # thousands of lines in a CI log, and so did the full text report next to the file.
+    if args.output:
+        _emit(render_summary_text(report, args.output))
+    elif args.sarif or args.json:
         if config.path is not None:
             # The text summary names the config; with a structured report on stdout, the log does.
             print(f"config applied: {_one_line(config.describe())}", file=sys.stderr)
         _emit(structured)
     else:
-        _emit(render_text(report))
+        # Inline markers are honored only for a local folder (see `inline_ignores` above).
+        _emit(render_text(report, markers_apply=markers_apply))
 
     if args.write_baseline:
         # An adoption step: the findings it records are the ones being accepted.
@@ -759,6 +796,11 @@ def _cmd_diff(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
     exclude = [*config.exclude, *args.exclude]
+    problem = _output_problem(args.output) if args.output else ""
+    if problem:  # known before two scans, not after them
+        print(f"error: cannot write the diff report to {_one_line(args.output)}: {problem}",
+              file=sys.stderr)
+        return EXIT_ERROR
 
     try:
         old_report = _resolve_diff_side(args.old, config, exclude)
@@ -865,7 +907,9 @@ def _guard_installed(args: argparse.Namespace) -> int:
     from skilltotal.inventory import discover
     from skilltotal.report import _terminal_safe, render_inventory_json
 
-    components = discover(project=Path(args.project) if args.project else None)
+    if _project_missing(args.project):
+        return EXIT_ERROR
+    components = discover(project=Path(args.project).expanduser() if args.project else None)
     items: list[dict] = []
     blocked: list[str] = []
     for c in components:
@@ -873,7 +917,12 @@ def _guard_installed(args: argparse.Namespace) -> int:
         if c.secrets:
             item["secrets"] = c.secrets
         if not (c.scannable and c.source):
-            item["decision"] = "risky" if c.risky else "not scanned"
+            # SkillTotal's own MCP server is the tool doing this check: it counts as checked. A
+            # remote server has no code here to scan: it is named apart from a failure, but it is
+            # still not checked, so it fails the sweep like one unless --allow-unchecked (a CI
+            # gate must not read "nothing could be scanned" as "everything passed").
+            item["decision"] = ("this scanner" if c.this_tool else "remote" if c.remote
+                                else "risky" if c.risky else "not scanned")
             item["note"] = c.note
             items.append(item)
             continue
@@ -893,7 +942,7 @@ def _guard_installed(args: argparse.Namespace) -> int:
         items.append(item)
 
     unchecked = {kind: sum(it["decision"] == kind for it in items)
-                 for kind in ("error", "not scanned", "risky")}
+                 for kind in ("error", "not scanned", "remote", "risky")}
     missing = sum(unchecked.values())
     if args.json:
         print(render_inventory_json(items))
@@ -905,12 +954,15 @@ def _guard_installed(args: argparse.Namespace) -> int:
             risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
             lines.append(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
             lines.extend(f"      - {reason}" for reason in it.get("reasons", []))
-            if it.get("note") and it["decision"] in unchecked:
+            if it.get("note") and (it["decision"] in unchecked
+                                   or it["decision"] == "this scanner"):
                 lines.append(f"      - {it['note']}")
             lines.extend(f"      - inline secret in its config: {secret}"
                          for secret in it.get("secrets", []))
         lines.append("")
-        counts = ", ".join(f"{n} {kind}" + ("s" if kind == "error" and n > 1 else "")
+        labels = {"remote": "remote (not scannable)"}
+        counts = ", ".join(f"{n} {labels.get(kind, kind)}"
+                           + ("s" if kind == "error" and n > 1 else "")
                            for kind, n in unchecked.items() if n)
         not_checked = (f"{missing} of {len(items)} component(s) could not be checked "
                        f"({counts}).")
@@ -944,8 +996,9 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
     from skilltotal.inventory import discover
     from skilltotal.report import render_inventory_json, render_inventory_text
 
-    project = Path(args.project) if args.project else None
-    components = discover(project=project)
+    if _project_missing(args.project):
+        return EXIT_ERROR
+    components = discover(project=Path(args.project).expanduser() if args.project else None)
 
     items: list[dict] = []
     for c in components:
@@ -953,6 +1006,7 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
             "host": c.host, "name": c.name, "kind": c.kind,
             "source": c.source, "scannable": c.scannable, "note": c.note,
             "config": c.config, "risky": c.risky, "secrets": c.secrets,
+            "remote": c.remote, "this_tool": c.this_tool,
         }
         if c.scannable and not args.no_scan and c.source is not None:
             try:
@@ -961,6 +1015,12 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
                 item["risk_level"] = report.risk_level.value
                 item["risk_score"] = report.risk_score
                 item["has_malicious_indicators"] = report.verdict.get("has_malicious_indicators")
+                # What `guard --installed` would decide, at its default level: a component it
+                # blocks (a typosquatted name, an unread install script) needs attention here
+                # too, whatever its score says.
+                decision = evaluate(report.to_dict())
+                item["guard"] = "allow" if decision.allow else "block"
+                item["guard_reasons"] = decision.reasons
             except CollectionError as exc:
                 item["error"] = str(exc)
             except Exception as exc:  # noqa: BLE001 - one bad item must not abort the sweep
@@ -1505,6 +1565,37 @@ def _one_line(text: str) -> str:
     from skilltotal.report import one_line
 
     return one_line(text)
+
+
+# A quote inside one argument, then the end of it or what reads as a flag: on Windows, `\"` in a
+# command line is a literal quote, so PowerShell's `'.\my comp\' --json` reaches the program as the
+# single argument `.\my comp" --json`.
+_JOINED_ARGS = re.compile(r'"(?:\s*$|\s+--?[A-Za-z])')
+
+
+def _joined_by_trailing_backslash(source: str) -> bool:
+    return bool(_JOINED_ARGS.search(source))
+
+
+def _project_missing(project: str | None) -> bool:
+    """Say so and return True when ``--project DIR`` names no folder: a mistyped DIR used to
+    check nothing in it and exit 0, as if its agent configs had passed."""
+    if project and not Path(project).expanduser().is_dir():
+        print(f"error: project directory not found: {_one_line(project)}", file=sys.stderr)
+        return True
+    return False
+
+
+def _output_problem(path: str) -> str:
+    """Why a report cannot be written to ``path``, checked before a scan that may take minutes;
+    "" when it can be tried. The write itself still reports what this cannot foresee."""
+    parent = Path(path).expanduser().parent
+    if not parent.is_dir():
+        return (f"the folder {_one_line(str(parent))} does not exist; create it first "
+                "(the report file is created, its folder is not)")
+    if not os.access(parent, os.W_OK):
+        return f"the folder {_one_line(str(parent))} is not writable"
+    return ""
 
 
 class UnsafeOutputPath(OSError):

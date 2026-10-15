@@ -276,7 +276,7 @@ class InvisibleUnicodeScanner(Scanner):
             description=(
                 "Bidirectional overrides or zero-width characters were detected. These can be "
                 "used to hide text (Trojan Source), but also appear legitimately in RTL-locale "
-                "files, CJK text, HTML-entity tables, and emoji — so they are flagged for "
+                "files, CJK text, HTML-entity tables, and emoji - so they are flagged for "
                 "review rather than scored."
             ),
             recommendation="Confirm the characters are part of legitimate text (locale/script).",

@@ -199,6 +199,27 @@ def test_inline_ignore_on_line_above(tmp_path: Path):
     assert "ST-DYN-PY" not in _ids(_analyze(tmp_path, inline_ignores=True))
 
 
+def test_a_marker_with_an_unknown_rule_id_is_noted(tmp_path: Path):
+    # A misspelt id silences nothing, and its owner believes it does.
+    (tmp_path / "m.py").write_text(
+        "import pickle\npickle.loads(d)  # skilltotal:ignore[ST-DESERIALISE-PY]\n",
+        encoding="utf-8", newline="",
+    )
+    report = _analyze(tmp_path, inline_ignores=True)
+    notes = [n for n in report.needs_review if "skilltotal:ignore marker" in n.title]
+    assert [n.title for n in notes] == [
+        "Unknown rule id in skilltotal:ignore marker: ST-DESERIALISE-PY"]
+    assert "did you mean ST-DESERIALIZE-PY?" in notes[0].reason
+    assert (notes[0].file, notes[0].line) == ("m.py", 2)
+    # Known ids, and markers that are not honored (a fetched package), give no note.
+    (tmp_path / "m.py").write_text(
+        "import pickle\npickle.loads(d)  # skilltotal:ignore[ST-DESERIALIZE-PY]\n",
+        encoding="utf-8", newline="",
+    )
+    assert not [n for n in _analyze(tmp_path, inline_ignores=True).needs_review
+                if "skilltotal:ignore marker" in n.title]
+
+
 def test_a_package_cannot_silence_its_own_findings(tmp_path: Path):
     # Found by a pre-launch audit: a dropper with the marker on the same line scanned as clean.
     (tmp_path / "index.js").write_text(

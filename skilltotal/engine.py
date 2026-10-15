@@ -61,10 +61,11 @@ from skilltotal.models import (
     RiskLevel,
     Severity,
     ThreatClass,
+    finding_counts,
 )
 from skilltotal.owasp import owasp_for
 from skilltotal.parallel import run_scanners
-from skilltotal.rules import get_rules
+from skilltotal.rules import get_rules, unknown_rule_hint
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
 from skilltotal.scanners.mcp import is_mcp_listing
@@ -202,13 +203,16 @@ def analyze_directory(
         needs_review.extend(result.needs_review)
 
     findings, suppressed_count = apply_suppressions(findings, suppress or set())
+    # Reported apart from the inline markers' share, so the report can say what the baseline hid.
+    baseline_count = suppressed_count if suppress else None
     ignore_set = {r for r in ignore_rules} if ignore_rules else set()
     if ignore_set:
         # Drop early so ignored base findings don't feed the synthesized rules below.
         findings = [f for f in findings if f.id not in ignore_set]
     if inline_ignores:
-        findings, inline_count, refused = _apply_inline_ignores(findings, index)
+        findings, inline_count, refused, unknown_ids = _apply_inline_ignores(findings, index)
         suppressed_count += inline_count
+        needs_review.extend(_unknown_marker_ids_notes(unknown_ids))
         if refused:
             needs_review.append(NeedsReview(
                 category="suppression",
@@ -337,7 +341,7 @@ def analyze_directory(
         traits=traits,
         findings=_sort_findings(findings),
         needs_review=needs_review,
-        metadata=_metadata(index, findings, suppressed_count),
+        metadata=_metadata(index, findings, suppressed_count, baseline_count),
     )
     return report
 
@@ -821,16 +825,20 @@ _INLINE_IGNORE_RE = re.compile(r"skilltotal:\s*ignore(?:\[([^\]]*)\])?", re.IGNO
 
 def _apply_inline_ignores(
     findings: list[Finding], index: FileIndex
-) -> tuple[list[Finding], int, set[str]]:
+) -> tuple[list[Finding], int, set[str], dict[str, tuple[str, int]]]:
     """Drop evidence whose source line (or the line above) carries a skilltotal:ignore marker.
 
-    Returns the kept findings, how many evidence occurrences were dropped (the report counts them
-    as suppressed: an ignored finding is the owner's decision, not something never seen), and the
-    malicious-indicator rules a marker tried to silence. Those are never dropped: the marker is in
-    the component, and a component scanned as a local folder is not always the reader's own code
-    (a downloaded package, an unpacked skill), so its author could hide what it does (2026-10-15).
+    Returns the kept findings; how many evidence occurrences were dropped (the report counts them
+    as suppressed: an ignored finding is the owner's decision, not something never seen); the
+    malicious-indicator rules a marker tried to silence, which are never dropped (the marker is in
+    the component, and a component scanned as a local folder is not always the reader's own code,
+    so its author could hide what it does, 2026-10-15); and the rule ids markers name that no rule
+    has, each with where it was first seen (a misspelt id silences nothing, and the owner believes
+    it does).
     """
     by_path = {f.relpath: f for f in index.files}
+    known = frozenset(r.id for r in get_rules())
+    unknown: dict[str, tuple[str, int]] = {}
     kept: list[Finding] = []
     dropped = 0
     refused: set[str] = set()
@@ -838,7 +846,7 @@ def _apply_inline_ignores(
         malicious = _THREAT_CLASS_BY_ID.get(finding.id) is ThreatClass.MALICIOUS_INDICATOR
         remaining = []
         for e in finding.evidence:
-            if not _line_ignores(e, finding.id, by_path):
+            if not _line_ignores(e, finding.id, by_path, known, unknown):
                 remaining.append(e)
             elif malicious:
                 remaining.append(e)
@@ -846,10 +854,15 @@ def _apply_inline_ignores(
         dropped += len(finding.evidence) - len(remaining)
         if remaining:
             kept.append(_finding_with_evidence(finding, remaining))
-    return kept, dropped, refused
+    return kept, dropped, refused, unknown
 
 
-def _line_ignores(evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFile]) -> bool:
+def _line_ignores(
+    evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFile],
+    known: frozenset[str] = frozenset(), unknown: dict[str, tuple[str, int]] | None = None,
+) -> bool:
+    """True when a marker on the evidence's line or the line above covers ``rule_id``. Ids a
+    marker there names that are not in ``known`` are recorded in ``unknown``."""
     f = by_path.get(evidence.file)
     if f is None:
         return False
@@ -861,9 +874,28 @@ def _line_ignores(evidence: Evidence, rule_id: str, by_path: dict[str, IndexedFi
         if not ids:  # bare marker -> ignore whatever rule matched here
             return True
         wanted = {x.strip().upper() for x in ids.replace(";", ",").split(",") if x.strip()}
+        if unknown is not None and known:
+            for bad in sorted(wanted - known):
+                unknown.setdefault(bad, (evidence.file, line_no))
         if rule_id.upper() in wanted:
             return True
     return False
+
+
+def _unknown_marker_ids_notes(unknown: dict[str, tuple[str, int]]) -> list[NeedsReview]:
+    """A note for each rule id a skilltotal:ignore marker names that no rule has."""
+    known = sorted(r.id for r in get_rules())
+    return [
+        NeedsReview(
+            category="config",
+            title=f"Unknown rule id in skilltotal:ignore marker: {rule_id}",
+            reason=(f"The marker names {rule_id}, which no rule has, so it suppresses nothing; "
+                    f"{unknown_rule_hint(rule_id, known)}"),
+            file=file,
+            line=line,
+        )
+        for rule_id, (file, line) in sorted(unknown.items())
+    ]
 
 
 def _is_test_evidence(evidence: Evidence, by_path: dict[str, IndexedFile]) -> bool:
@@ -1456,19 +1488,26 @@ def _sort_findings(findings: list[Finding]) -> list[Finding]:
 
 def _summary(level, score, findings, capabilities, needs_review) -> str:
     caps = ", ".join(sorted(c.value for c in capabilities)) or "none"
+    risk, capability = finding_counts(findings)
     parts = [
         f"Risk level {level.value.upper()} (score {score}/100).",
-        f"{len(findings)} finding(s); capabilities: {caps}.",
+        f"{risk} risk finding(s), {capability} capability finding(s) (not scored); "
+        f"capabilities: {caps}.",
     ]
     if needs_review:
         parts.append(f"{len(needs_review)} item(s) require manual review.")
     return " ".join(parts)
 
 
-def _metadata(index: FileIndex, findings: list[Finding], suppressed_count: int) -> dict:
+def _metadata(
+    index: FileIndex, findings: list[Finding], suppressed_count: int,
+    baseline_count: int | None = None,
+) -> dict:
     by_severity = {s.value: 0 for s in Severity}
     for f in findings:
         by_severity[f.severity.value] += 1
+    # Only when a baseline was given: how many of the suppressed occurrences it accounted for.
+    baseline = {} if baseline_count is None else {"baseline_suppressed_count": baseline_count}
     return {
         "skilltotal_version": __version__,
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -1480,4 +1519,5 @@ def _metadata(index: FileIndex, findings: list[Finding], suppressed_count: int) 
         "scanners_run": [s.name for s in SCANNERS],
         "findings_by_severity": by_severity,
         "suppressed_count": suppressed_count,
+        **baseline,
     }

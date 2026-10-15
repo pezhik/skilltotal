@@ -48,6 +48,39 @@ class DiscoveredComponent:
     risky: bool = False  # its launch command itself is risky (runs a downloaded script)
     # Inline secrets in its config entry, redacted (the secrets scanner's evidence snippets).
     secrets: list[str] = field(default_factory=list)
+    remote: bool = False  # served from a URL: no code on this machine to scan
+    this_tool: bool = False  # SkillTotal's own MCP server (`skilltotal mcp`)
+
+
+# The notes for a remote server and for SkillTotal's own MCP server (see DiscoveredComponent).
+REMOTE_NOTE = "remote server (not scannable)"
+THIS_TOOL_NOTE = "this scanner (skilltotal mcp)"
+# How SkillTotal's own MCP server is started: the console script, `python -m`, or the published
+# package run by a launcher (`uvx skilltotal mcp`, `npx -y skilltotal@1.2.3 mcp`).
+_OWN_PACKAGE = re.compile(r"(?:npm|pypi):skilltotal(?:@[\w.+-]+)?", re.IGNORECASE)
+_PYTHONS = {"python", "python3", "py"}
+
+
+def _is_this_tool(command: str, args: list[str]) -> bool:
+    """Whether a server entry starts SkillTotal's own MCP server. A program named by a path (a
+    `./skilltotal` committed to a repository) is not this tool, nor is a package from another index
+    or a git URL: the parser names those differently, and they are scanned or reported as usual."""
+    if "/" in command or "\\" in command:
+        name = ""  # a launcher by path (`C:\\...\\npx.cmd`) still goes through the parser below
+    else:
+        name = command.lower()
+        name = name[:-4] if name.endswith(".exe") else name
+    if name == "skilltotal" and args[:1] == ["mcp"]:
+        return True
+    if name in _PYTHONS and args[:3] == ["-m", "skilltotal", "mcp"]:
+        return True
+    if "mcp" not in args:
+        return False
+    from skilltotal.agent_hook import parse_installs
+
+    installs = parse_installs(" ".join(_quote(w) for w in [command, *args]), "bash")
+    return len(installs) == 1 and bool(installs[0].source) and bool(
+        _OWN_PACKAGE.fullmatch(installs[0].source or ""))
 
 
 @dataclass(frozen=True)
@@ -161,7 +194,7 @@ def _derive(server: object, config_dir: Path, plugin_root: Path | None = None
     # Remote transports (SSE/HTTP) — nothing local to scan.
     url = server.get("url") or server.get("httpUrl") or server.get("serverUrl")
     if url:
-        return None, "remote server (not scanned)", False
+        return None, REMOTE_NOTE, False
 
     def expand(text: str) -> str:
         return text.replace("${CLAUDE_PLUGIN_ROOT}", str(plugin_root)) if plugin_root else text
@@ -172,6 +205,8 @@ def _derive(server: object, config_dir: Path, plugin_root: Path | None = None
         raw_args, list) else []
     if not command:
         return None, "no command", False
+    if _is_this_tool(command, args):
+        return None, THIS_TOOL_NOTE, False
 
     parsed = _from_parser(command, args)
     if parsed is not None:
@@ -336,6 +371,8 @@ def _servers(host: str, servers: dict, config: Path, *, label: str = "",
             host=host, name=str(name), kind="mcp_server", source=source,
             scannable=source is not None, note=note, config=label or str(config), risky=risky,
             secrets=_inline_secrets(server, config),
+            remote=source is None and note == REMOTE_NOTE,
+            this_tool=source is None and note == THIS_TOOL_NOTE,
         ))
     return out
 

@@ -213,6 +213,106 @@ def test_the_output_file_is_written_even_if_the_console_cannot_print(tmp_path, m
     assert legacy.encoding.lower().replace("-", "") == "utf8"  # reconfigured for redirection
 
 
+# --- CLI usability audit 2026-10-15 (B1-B12) ------------------------------------------------------
+
+
+@pytest.mark.parametrize("command", [["inventory", "--no-scan"], ["guard", "--installed"]])
+def test_a_missing_project_directory_is_an_error(tmp_path: Path, capsys, command):
+    # A mistyped --project DIR checked nothing there and exited 0.
+    missing = tmp_path / "no-such-project"
+    assert main([*command, "--project", str(missing)]) == EXIT_ERROR
+    assert f"project directory not found: {missing}" in capsys.readouterr().err
+    a_file = tmp_path / "file.txt"
+    a_file.write_text("x", encoding="utf-8")
+    assert main([*command, "--project", str(a_file)]) == EXIT_ERROR
+    assert "project directory not found" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", ["--output", "--write-baseline"])
+def test_an_output_into_a_missing_folder_fails_before_the_scan(tmp_path: Path, capsys,
+                                                               monkeypatch, flag):
+    def no_scan(*args, **kwargs):
+        raise AssertionError("the scan ran before the output folder was checked")
+
+    monkeypatch.setattr("skilltotal.engine.analyze", no_scan)
+    target = tmp_path / "no-such-dir" / "r.json"
+    assert main(["scan", str(FIXTURES / "clean_pkg"), flag, str(target)]) == EXIT_ERROR
+    err = capsys.readouterr().err
+    assert "does not exist; create it first" in err
+
+
+def test_a_diff_output_into_a_missing_folder_fails_before_the_scans(tmp_path: Path, capsys):
+    target = tmp_path / "no-such-dir" / "d.json"
+    code = main(["diff", str(FIXTURES / "clean_pkg"), str(FIXTURES / "clean_pkg"),
+                 "--output", str(target)])
+    assert code == EXIT_ERROR
+    assert "cannot write the diff report" in capsys.readouterr().err
+
+
+def test_abbreviated_options_are_refused(tmp_path: Path, capsys):
+    # `--out` was taken for `--output`; a future `--outline` would make it mean something else.
+    with pytest.raises(SystemExit) as exc:
+        main(["scan", str(FIXTURES / "clean_pkg"), "--out", str(tmp_path / "r.json")])
+    assert exc.value.code == EXIT_ERROR
+    assert "unrecognized arguments: --out" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        main(["rules", "list", "--js"])
+    capsys.readouterr()
+
+
+def test_the_false_positive_hint_fits_the_source(tmp_path: Path, capsys):
+    import io
+    import tarfile
+
+    code = b"eval(x)\n"
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "m.py").write_bytes(code)
+    archive = tmp_path / "pkg.tgz"
+    with tarfile.open(archive, "w:gz") as tf:
+        info = tarfile.TarInfo("package/m.py")
+        info.size = len(code)
+        tf.addfile(info, io.BytesIO(code))
+
+    main(["scan", str(project)])
+    own = capsys.readouterr().out
+    assert "put `# skilltotal:ignore[RULE-ID]` on its line" in own
+    # A marker in a fetched package or archive is never honored: the hint must not suggest one.
+    main(["scan", str(archive)])
+    fetched = capsys.readouterr().out
+    assert "put `# skilltotal:ignore" not in fetched
+    assert "--write-baseline FILE and scan with --baseline FILE" in fetched
+    assert "[policy] in .skilltotal.toml" in fetched
+
+
+def test_a_joined_argument_gets_a_trailing_backslash_hint(capsys):
+    # PowerShell: `skilltotal scan '.\my comp\' --json` reaches the program as one argument.
+    code = main(["scan", '.\\no such comp" --json'])
+    err = capsys.readouterr().err
+    assert code == EXIT_ERROR
+    assert "trailing backslash before the closing quote joined your arguments" in err
+    main(["scan", str(FIXTURES / "does_not_exist_xyz")])
+    assert "trailing backslash" not in capsys.readouterr().err
+
+
+def test_with_output_the_console_gets_a_short_summary(tmp_path: Path, capsys):
+    target = tmp_path / "r.json"
+    code = main(["scan", str(FIXTURES / "malicious_npm_pkg"), "--json", "--output", str(target),
+                 "--fail-on-high"])
+    captured = capsys.readouterr()
+    assert code == EXIT_FAIL_ON_HIGH
+    assert json.loads(target.read_text(encoding="utf-8"))["findings"]
+    out = captured.out
+    assert "Verdict   :" in out and "Risk      :" in out
+    assert "risk finding(s)" in out  # the counts
+    assert f"Full report: {target}" in out
+    assert "Evidence:" not in out and "Recommendation:" not in out  # not the full report
+    assert "gate: --fail-on-high tripped by" in captured.err
+    # Without --output the full text report is printed, as before.
+    main(["scan", str(FIXTURES / "malicious_npm_pkg")])
+    assert "Evidence:" in capsys.readouterr().out
+
+
 def test_text_reports_never_carry_terminal_escapes():
     from skilltotal.report import _terminal_safe
 

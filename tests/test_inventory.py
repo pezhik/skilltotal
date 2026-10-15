@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from skilltotal.inventory import DiscoveredComponent, derive_source, discover
 
 
@@ -81,6 +83,67 @@ def test_cli_inventory_json_no_scan(tmp_path, capsys, monkeypatch):
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert any(i["source"] == "pypi:mcp-server-git" and i["host"] == "Cursor" for i in out)
+
+
+@pytest.mark.parametrize("server", [
+    {"command": "skilltotal", "args": ["mcp"]},
+    {"command": "skilltotal.exe", "args": ["mcp"]},
+    {"command": "uvx", "args": ["skilltotal", "mcp"]},
+    {"command": "uvx", "args": ["skilltotal@0.72.0", "mcp"]},
+    {"command": "npx", "args": ["-y", "skilltotal", "mcp"]},
+    {"command": "python", "args": ["-m", "skilltotal", "mcp"]},
+])
+def test_skilltotals_own_mcp_server_is_recognised(tmp_path, server):
+    home = tmp_path / "home"
+    _write(home / ".cursor" / "mcp.json", {"mcpServers": {"st": server}})
+    (found,) = discover(home=home)
+    assert found.this_tool and not found.scannable and not found.remote
+    assert found.note == "this scanner (skilltotal mcp)"
+
+
+@pytest.mark.parametrize("server", [
+    {"command": "./skilltotal", "args": ["mcp"]},  # a program committed to a repository
+    {"command": "uvx", "args": ["--from", "git+https://example.invalid/st", "skilltotal", "mcp"]},
+    {"command": "uvx", "args": ["--index-url", "https://example.invalid", "skilltotal", "mcp"]},
+    {"command": "npx", "args": ["-y", "skilltotal-mcp"]},
+    {"command": "skilltotal", "args": ["scan", "x"]},
+])
+def test_a_lookalike_of_the_own_server_is_not_trusted(tmp_path, server):
+    home = tmp_path / "home"
+    _write(home / ".cursor" / "mcp.json", {"mcpServers": {"st": server}})
+    (found,) = discover(home=home)
+    assert not found.this_tool
+
+
+def test_a_remote_server_is_marked_remote(tmp_path):
+    home = tmp_path / "home"
+    _write(home / ".cursor" / "mcp.json", {"mcpServers": {"r": {"url": "https://example.com/sse"}}})
+    (found,) = discover(home=home)
+    assert found.remote and not found.this_tool
+    assert found.note == "remote server (not scannable)"
+
+
+def test_inventory_flags_what_guard_blocks(tmp_path, capsys, monkeypatch):
+    # A typosquatted name scores low, and `guard --installed` blocks it: inventory said nothing.
+    from skilltotal import cli
+
+    pkg = tmp_path / "loddash"  # one edit from "lodash"
+    pkg.mkdir()
+    (pkg / "package.json").write_text('{"name": "loddash", "version": "1.0.0"}', encoding="utf-8")
+    (pkg / "index.js").write_text("module.exports = {}\n", encoding="utf-8")
+    fake = [DiscoveredComponent(host="Cursor", name="loddash", kind="mcp_server",
+                                source=str(pkg), scannable=True)]
+    monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
+
+    assert cli.main(["inventory"]) == 0
+    out = capsys.readouterr().out
+    assert "1 component(s) need attention" in out
+    assert "loddash: its name is a letter or two away from a popular package" in out
+    assert cli.main(["inventory", "--json"]) == 0
+    (item,) = json.loads(capsys.readouterr().out)
+    assert item["guard"] == "block" and item["guard_reasons"]
+    assert cli.main(["guard", "--installed"]) == cli.EXIT_FAIL_ON_HIGH  # the two agree
+    capsys.readouterr()
 
 
 def test_discovered_component_dataclass():

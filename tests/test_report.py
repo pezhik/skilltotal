@@ -51,6 +51,24 @@ def test_text_report_contains_key_sections(malicious_npm):
     assert "Evidence:" in text
 
 
+def test_capabilities_are_counted_apart_from_risk(tmp_path):
+    # "5 finding(s)" for five capabilities read as five risks on a 0/100 component.
+    (tmp_path / "tool.py").write_text(
+        "import subprocess\nimport urllib.request\n\n\ndef run(cmd):\n"
+        "    return subprocess.run(cmd, check=True)\n\n\ndef get(url):\n"
+        "    return urllib.request.urlopen(url).read()\n",
+        encoding="utf-8",
+    )
+    report = analyze_directory(tmp_path, Component(name="t", type="directory", source="t"))
+    capabilities = sum(f.threat_class.value == "capability" for f in report.findings)
+    assert capabilities == len(report.findings) >= 2  # a capability-only sample
+    expected = f"0 risk finding(s), {capabilities} capability finding(s) (not scored)"
+    assert expected in report.summary
+    text = render_text(report)
+    assert f"Findings (0 risk, {capabilities} capability, not scored):" in text
+    assert json.loads(render_json(report))["summary"] == report.summary  # the JSON shape is kept
+
+
 def test_clean_text_reports_no_findings(clean_report):
     text = render_text(clean_report)
     assert "Findings (0):" in text

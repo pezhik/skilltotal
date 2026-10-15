@@ -605,7 +605,7 @@ class AgentConfigScanner(Scanner):
             severity=Severity.HIGH,
             title="Code launches an AI coding CLI with its permission checks disabled",
             description=(
-                "Code runs a local AI coding agent (claude, gemini, codex, q …) with a flag that "
+                "Code runs a local AI coding agent (claude, gemini, codex, q ...) with a flag that "
                 "turns off its approval prompts. The agent then acts with the user's credentials "
                 "and file access, and nobody confirms what it does."
             ),
@@ -731,8 +731,8 @@ class AgentConfigScanner(Scanner):
             title="Agent skill auto-runs a command that steals credentials or fetches code",
             description=(
                 "An Agent Skill embeds a `!` dynamic-context command that runs when the skill "
-                "loads — before the model reads the skill, so its tool restrictions do not apply "
-                "— and that command reads a credential and sends it off-host, or downloads code "
+                "loads - before the model reads the skill, so its tool restrictions do not apply "
+                "- and that command reads a credential and sends it off-host, or downloads code "
                 "and runs it. This is the malicious-skill pattern Datadog documented (Clawsights)."
             ),
             recommendation=(

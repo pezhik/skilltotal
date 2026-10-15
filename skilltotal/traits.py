@@ -168,7 +168,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         title="Delegated authentication",
         description=(
             "Authenticates tool/API calls with the end user's delegated OAuth/OIDC credentials "
-            "rather than a long-lived embedded service credential — a smaller blast radius."
+            "rather than a long-lived embedded service credential - a smaller blast radius."
         ),
         csa_trait="Tool Execution Context / User Delegated Credentials",
         csa_risk="Access-control boundary confusion (agent-level vs user-level operations)",
@@ -180,7 +180,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
         description=(
             "Authenticates with a short-lived, scoped, assumed identity (STS assumed role, cloud "
             "managed/workload identity, impersonated service account, projected K8s token, or a "
-            "dynamic-secret broker) — the smallest blast radius of the execution-context patterns."
+            "dynamic-secret broker) - the smallest blast radius of the execution-context patterns."
         ),
         csa_trait="Tool Execution Context / Least-Privilege Service Identity",
         csa_risk="Agent proliferation / permission sprawl if scopes are not curated",
@@ -239,7 +239,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
     ComponentTrait.EXFIL_CORRELATION: TraitCrosswalk(
         title="Sensitive-access + egress correlation",
         description=(
-            "Reads credential/sensitive data AND can reach the network — a "
+            "Reads credential/sensitive data AND can reach the network - a "
             "credential-exfiltration path when the two behaviors correlate."
         ),
         csa_trait="Tool Access Control / Broker-Mediated Access",
@@ -251,7 +251,7 @@ TRAIT_CROSSWALK: dict[ComponentTrait, TraitCrosswalk] = {
     ComponentTrait.INSTRUCTION_EXFIL_FLOW: TraitCrosswalk(
         title="Instruction-driven exfiltration flow",
         description=(
-            "An untrusted-instruction surface combined with file access and network egress — "
+            "An untrusted-instruction surface combined with file access and network egress - "
             "the 'lethal trifecta' for instruction-driven exfiltration."
         ),
         csa_trait="Perception & Context + Tool Access Control",

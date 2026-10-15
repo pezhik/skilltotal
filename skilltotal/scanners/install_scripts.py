@@ -89,7 +89,8 @@ class InstallScriptsScanner(PatternScanner):
                 "postinstall, or prepare on a git or local install), or a shell script one of them "
                 "runs (`\"postinstall\": \"bash install.sh\"`), downloads code and pipes it "
                 "into a shell, or decodes data and executes it, for example "
-                "`curl -fsSL https://… | bash` or `node -e \"eval(Buffer.from(…, 'base64')…)\"`. "
+                "`curl -fsSL https://... | bash` or "
+                "`node -e \"eval(Buffer.from(..., 'base64')...)\"`. "
                 "What runs is whatever the host serves, or the decoded text, on every install; "
                 "neither is in the package for review."
             ),
@@ -109,7 +110,7 @@ class InstallScriptsScanner(PatternScanner):
             severity=Severity.HIGH,
             title="binding.gyp runs a hidden command at install time",
             description=(
-                "binding.gyp uses node-gyp command substitution (`<!(…)`) to run a script with "
+                "binding.gyp uses node-gyp command substitution (`<!(...)`) to run a script with "
                 "its output discarded, fetch from the network, pipe into a shell, or decode "
                 "data. node-gyp evaluates it during `npm install` even when package.json "
                 "declares no install script, so install-script checks never see it, for example "

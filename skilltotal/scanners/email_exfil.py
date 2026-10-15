@@ -48,7 +48,7 @@ class EmailExfilScanner(Scanner):
             title="Hardcoded BCC/CC recipient in email-sending code",
             description=(
                 "Email-sending code assigns a hardcoded string-literal address to a bcc/cc field. "
-                "A constant BCC silently copies outgoing mail to a fixed recipient — the email "
+                "A constant BCC silently copies outgoing mail to a fixed recipient - the email "
                 "exfiltration pattern used by mail backdoors."
             ),
             recommendation=(

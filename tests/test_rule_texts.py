@@ -28,3 +28,16 @@ def test_no_rule_text_names_a_malware_campaign():
             if match:
                 offenders.append(f"{rule.id}.{field}: {match.group(0)!r}")
     assert not offenders, "rule texts name a campaign: " + "; ".join(offenders)
+
+
+def test_rule_texts_are_ascii():
+    """The CLI prints these to consoles in a legacy code page (cp437, cp866), where an ellipsis or
+    an em dash came out as mojibake or "?"."""
+    offenders = []
+    for rule in get_rules():
+        for field in ("title", "description", "recommendation"):
+            text = getattr(rule, field, "") or ""
+            odd = sorted({c for c in text if ord(c) > 127})
+            if odd:
+                offenders.append(f"{rule.id}.{field}: {' '.join(f'U+{ord(c):04X}' for c in odd)}")
+    assert not offenders, "rule texts carry non-ASCII characters: " + "; ".join(offenders)
