@@ -1,7 +1,8 @@
 """A static scanner must not be DoS-able by the component it scans: a crafted input must never
 make a detection regex backtrack catastrophically (which would both hang the hosted scanner and
 let the input evade analysis by timing out). These inputs target the bounded quantifiers added
-with the 2026 evasion rules; each scan must finish well under a second.
+with the 2026 evasion rules. Most of these scans take milliseconds; the largest input (a 400 KB
+line) takes about two seconds of linear regex work.
 """
 
 from __future__ import annotations
@@ -15,9 +16,11 @@ from skilltotal.concat_normalize import fold_string_concats
 from skilltotal.engine import analyze_directory
 from skilltotal.models import Component
 
-# Generous ceiling: these complete in milliseconds when the quantifiers are bounded, and would run
-# for many seconds (or wedge) if any pattern backtracked on the crafted length.
-_BUDGET_S = 3.0
+# Generous ceiling: bounded quantifiers finish in milliseconds (the 400 KB line in about two
+# seconds), and a pattern that backtracked on the crafted length would run for minutes or wedge.
+# Three seconds failed on a busy machine (a release gate running beside other jobs, 2026-10-15)
+# without any pattern having changed.
+_BUDGET_S = 8.0
 
 
 def _scan_fast(tmp_path: Path, filename: str, text: str) -> None:
