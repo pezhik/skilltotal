@@ -272,7 +272,12 @@ _COPY_CALLS = frozenset({
     "moveSync", "symlinkSync", "symlink", "linkSync", "ensureSymlink",
 })
 _OPEN_CALLS = frozenset({"open", "openSync"})
-_CALLEE = re.compile(r"([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)\s*$")
+# Starts only where a name starts, with every run bounded: from each position of a long dotted
+# chain the unbounded form re-read the rest of the chain (quadratic).
+_CALLEE = re.compile(
+    r"(?<![\w$])([A-Za-z_$][\w$]{0,100}(?:\s{0,20}\.\s{0,20}[A-Za-z_$][\w$]{0,100}){0,10})"
+    r"\s{0,20}$"
+)
 _OPEN_WRITE_MODE = re.compile(
     r",\s*(?:mode\s*=\s*)?['\"][rbt]*[wax]\+?[rbt]*['\"]|flags\s*:\s*['\"][wa]"
 )

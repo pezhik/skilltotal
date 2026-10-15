@@ -147,11 +147,16 @@ _GUARD_KEYWORDS = re.compile(
 )
 # A bare string-literal list element: only a quoted string + optional `.to_string()`/`.into()`
 # and a trailing comma (e.g. `"id_rsa".to_string(),`, `"**/.ssh/*",`). Declarative data, not a call.
-_LIST_ITEM = r"""(?:["'][^"'\n]*["']\s*(?:\.\w+\(\))?|0[oxb]?[0-9a-fA-F]+|\d+)"""
+# Written so that no text matches it two ways: `0[oxb]?[0-9a-fA-F]+|\d+` both took `01`, so a line
+# of `01,01,…` failed in 2^n ways, and optional parts between `\s*` runs (`\s*[\])]?\s*…,?\s*$`)
+# split trailing blanks every way. Each optional part now starts with the character that marks it.
+_LIST_ITEM = (
+    r"""(?:["'][^"'\n]*["'](?:\s*\.\w+\(\))?|0[oxb][0-9a-fA-F]+|0[0-9a-fA-F]+|[1-9]\d*|0)"""
+)
 _BARE_LIST_ELEMENT = re.compile(
-    r"^\s*(?:\|\s*)?[\[(]?\s*"
+    r"^\s*(?:\|\s*)?(?:[\[(]\s*)?"
     + r"(?:" + _LIST_ITEM + r"\s*[,:]\s*)*" + _LIST_ITEM
-    + r"\s*[\])]?\s*(?:=>\s*\w+\s*)?,?\s*$"
+    + r"(?:\s*[\])])?(?:\s*=>\s*\w+)?(?:\s*,)?\s*$"
 )
 # A trailing `// ssh private key` or `# comment` after a list element is still just a list element.
 # Starts only where a run of whitespace starts: from every position inside a long run, `\s+` backed
@@ -164,7 +169,7 @@ _TRAILING_COMMENT = re.compile(r"(?<!\s)\s+(?://|#).*$")
 _NAME_COMPARISON = re.compile(
     r"""(?:[=!]==?\s*["'`]$|\bstrn?casecmp\s*\(|\bstrcmp\s*\(|\bequals(?:IgnoreCase)?\s*\()"""
 )
-_BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:\[[^\]\n]*\]|[^/\\\n\[]|\\.)+/[gimsuvy]*\s*,?\s*$")
+_BARE_REGEX_ELEMENT = re.compile(r"^\s*/(?:\[[^\]\n]*\]|[^/\\\n\[]|\\.)+/[gimsuvy]*(?:\s*,)?\s*$")
 
 
 def is_metadata_without_credentials(matched: str, text: str) -> bool:

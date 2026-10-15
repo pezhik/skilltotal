@@ -92,7 +92,9 @@ _ADDR_VALUE = re.compile(r"(?:0\.0\.0\.0|::|\[::\])(?::\d{1,5})?")
 _BIND_CALLS = frozenset(
     {"listen", "bind", "serve", "run", "run_app", "run_simple", "start_server", "TCPSite"}
 )
-_BIND_KEYWORD = re.compile(r"(?i)\w*(?:host|hostname|bind|listen)\w*")
+# Searched in a keyword argument's name (an identifier, all word characters): the same test as a
+# fullmatch of `\w*(?:host|...)\w*`, which backtracked quadratically over a long name.
+_BIND_KEYWORD = re.compile(r"(?i)host|bind|listen")
 _JS_ADDR_NAME = re.compile(
     r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*(['\"])"
     r"(?:0\.0\.0\.0|::|\[::\])(?::\d{1,5})?\2"
@@ -204,7 +206,7 @@ def _python_address_binds(f, tree: ast.Module) -> list[Evidence]:
         for kw in node.keywords:
             if (
                 kw.arg
-                and _BIND_KEYWORD.fullmatch(kw.arg)
+                and _BIND_KEYWORD.search(kw.arg)
                 and isinstance(kw.value, ast.Name)
                 and kw.value.id in assigned
             ):

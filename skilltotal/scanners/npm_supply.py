@@ -56,8 +56,13 @@ _ATTACHMENTS = re.compile(r"""(?<![\w$])['"]?_attachments['"]?\s*:""")
 _DIST_TAGS = re.compile(r"""['"]dist-tags['"]\s*:""")
 _PUBLISH_DOC_WINDOW = 2000
 # A shell line (or a command after `&&`, `;`, `|`) that publishes.
-_SHELL_PUBLISH = re.compile(r"(?:^|[;&|]\s*|\bthen\s+|\bdo\s+)\s*(?:[\w./-]*/)?" + _PUBLISH_CMD,
-                            re.MULTILINE)
+# One bounded run of blanks (no newlines: a line start is its own anchor) and a bounded path: two
+# adjacent `\s*` split a long run of spaces every way, and `\s*` from each of 2 MiB of line starts
+# ran over all the newlines after it (quadratic).
+_SHELL_PUBLISH = re.compile(
+    r"(?:^|[;&|]|\bthen(?=\s)|\bdo(?=\s))[ \t]{0,100}(?:[\w./-]{0,200}/)?" + _PUBLISH_CMD,
+    re.MULTILINE,
+)
 
 
 class NpmSupplyScanner(Scanner):

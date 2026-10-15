@@ -177,7 +177,11 @@ _JS_ENV_NOT_VALUE_BEFORE = re.compile(
     r"(?:\btypeof\s+|\bObject\s*\.\s*(?:keys|getOwnPropertyNames)\s*\(\s*|\bin\s+)$"
 )
 _JS_ENV_NOT_VALUE_AFTER = re.compile(r"\s*(?:[=!]==?|&&|\?(?!\.))")
-_JS_MEMBER_READ = re.compile(r"\s*(?:(?:\?\.|\.)\s*[\w$]+(?![\w$])(?!\s*\()|(?:\?\.)?\s*\[)")
+# Bounded, and with no two whitespace runs side by side: `\s*(?:\?\.)?\s*\[` split one long run of
+# blank lines every possible way, so `.match()` after a name followed by 40,000 newlines took 26 s.
+_JS_MEMBER_READ = re.compile(
+    r"\s{0,200}(?:(?:\?\.|\.)\s{0,200}[\w$]{1,200}(?![\w$])(?!\s{0,200}\()|(?:\?\.\s{0,200})?\[)"
+)
 _JS_SINK = re.compile(
     r"(?<![\w$.])(?:fetch|axios(?:\.(?:post|put|patch|request|get))?|got(?:\.(?:post|put|patch))?|"
     r"needle|ky(?:\.(?:post|put|patch))?|superagent\.(?:post|put|patch)|"
@@ -403,7 +407,9 @@ _JS_ENCODERS = frozenset({
     "stringify", "btoa", "from", "encodeURIComponent", "encodeURI", "escape", "toString",
     "URLSearchParams", "String", "entries", "keys", "values", "assign",
 })
-_JS_CALLEE = re.compile(r"([A-Za-z_$][\w$]*)\s*$")
+# A match starts only where a name starts, and both runs are bounded: searched over a long name (or
+# a long run of spaces) before `(`, every later start position re-read the rest of it (quadratic).
+_JS_CALLEE = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]{0,200})\s{0,200}$")
 
 
 def _config_lookup(text: str, start: int, pos: int) -> bool:

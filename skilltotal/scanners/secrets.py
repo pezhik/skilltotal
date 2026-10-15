@@ -196,7 +196,10 @@ def _is_installed_app_oauth_secret(value: str, file_text: str) -> bool:
 # snowflake-connector-python ships SFCTEST/SFCDEV/PROD keys next to a
 # `*.client-telemetry.<vendor>/enqueue` URL.
 _TELEMETRY_INGEST_CTX = re.compile(
-    r"(?i)client-telemetry|telemetry[\w.-]*\.[\w.-]+/(?:enqueue|ingest)|/telemetry/(?:enqueue|ingest)"
+    # Host labels bounded and split on their dots: `[\w.-]*\.[\w.-]+/` tried every dot of a long
+    # dotted run from every `telemetry` before it (quadratic).
+    r"(?i)client-telemetry|telemetry[\w-]{0,63}(?:\.[\w-]{0,63}){1,8}/(?:enqueue|ingest)"
+    r"|/telemetry/(?:enqueue|ingest)"
 )
 
 
