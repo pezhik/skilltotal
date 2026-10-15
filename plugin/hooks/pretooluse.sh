@@ -15,6 +15,9 @@
 # than this plugin) would otherwise look exactly like protection that found nothing. In CI (strict
 # mode) nobody is there to read a warning, and a text match cannot rule an install out (an encoded,
 # globbed or computed command reads like anything), so every command is denied until the CLI works.
+# A CLI older than this plugin that says nothing about a command the pre-filter could not rule out
+# may have missed what newer releases read (an encoded or computed install): that is said, and in
+# CI denied.
 
 # The hook protocol this wrapper needs (skilltotal.cli.HOOK_PROTOCOL; a test keeps the two equal):
 # a CLI that speaks an older one, or knows no --protocol at all, fails on it.
@@ -69,6 +72,9 @@ looks_like_install() {
     *npm*|*npx*|*pnpm*|*yarn*|*bun*|*pip*|*uv*|*python*|*"py "*|*mcp*) return 0 ;;
     *poetry*|*pdm*|*conda*|*mamba*|*curl*|*wget*|*irm*|*iwr*|*iex*|*invoke-*) return 0 ;;
     *downloadstring*|*downloadfile*|*webclient*) return 0 ;;
+    # A command decoded and run: `... | base64 -d | sh`, FromBase64String, `certutil -decode`,
+    # `powershell -EncodedCommand ...` (any prefix of it, down to `-e`).
+    *base64*|*certutil*|*powershell*" -e"*|*pwsh*" -e"*|*powershell*" /e"*|*pwsh*" /e"*) return 0 ;;
   esac
   return 1
 }
@@ -165,15 +171,10 @@ cannot_check() {
   printf '%s\n' "{\"systemMessage\": \"SkillTotal did not check this command: $1. $2\", \"hookSpecificOutput\": {\"hookEventName\": \"PreToolUse\", \"additionalContext\": \"SkillTotal did not check this install: $1.\"}}"
 }
 
-# Outside CI, a CLI older than this plugin still checks what it knows: its answer stands, and for
-# what looks like an install the person is told it was not the whole check.
+# Outside CI, a CLI too old to speak this plugin's protocol still checks what it knows: its answer
+# stands, and the person is told it was not the whole check. Only a command the pre-filter could
+# not rule out gets here, so the line comes even when the old CLI said nothing.
 older() {
-  if ! looks_like_install; then
-    if [ -n "$1" ]; then
-      printf '%s\n' "$1"
-    fi
-    return
-  fi
   with_note "$1" "SkillTotal did not fully check this command: the skilltotal CLI is older than this plugin. $FIX"
 }
 
@@ -188,10 +189,52 @@ with_note() {
   esac
 }
 
-# The plugin's version, from its manifest next to this script.
+# Sets `version` to $1 when it is a plain version number (0.72.0, 1.0.0rc1), else to nothing.
+plain_version() {
+  version=$1
+  case $version in
+    [0123456789]*) ;;
+    *) version= ;;
+  esac
+  case $version in *[!$ALNUM.+-]*) version= ;; esac
+}
+
+# Sets `mine` to the plugin's version, from its manifest next to this script (shell builtins only:
+# it is read for every answer).
 plugin_version() {
-  sed -n 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"\([0-9][0-9A-Za-z.+-]*\)".*$/\1/p' \
-    "$(dirname "$0")/../.claude-plugin/plugin.json" 2>/dev/null | head -n 1
+  mine=
+  case $0 in */*|*\\*) manifest=${0%[/\\]*} ;; *) manifest=. ;; esac  # `\`: a Windows path
+  manifest=$manifest/../.claude-plugin/plugin.json
+  [ -r "$manifest" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    case $line in *'"version"'*) ;; *) continue ;; esac
+    line=${line#*'"version"'}
+    line=${line#"${line%%[! ]*}"}
+    case $line in :*) line=${line#?} ;; *) continue ;; esac
+    line=${line#"${line%%[! ]*}"}
+    case $line in \"*) line=${line#?} ;; *) continue ;; esac
+    plain_version "${line%%\"*}"
+    mine=$version
+    return 0
+  done < "$manifest"
+}
+
+# The CLI's answer starts with its version (`skilltotal 0.73.0`, asked for with
+# SKILLTOTAL_HOOK_VERSION_LINE): sets `theirs` to it and takes that line off `answer`. A CLI that
+# predates the line leaves `theirs` empty and `answer` as it was.
+NL='
+'
+split_version() {
+  theirs=
+  first=${answer%%"$NL"*}
+  case $first in 'skilltotal '*) ;; *) return 0 ;; esac
+  version=${first#skilltotal }
+  case $version in *[!$ALNUM.+-]) version=${version%?} ;; esac  # a Windows line end
+  plain_version "$version"
+  [ -n "$version" ] || return 0
+  theirs=$version
+  answer=${answer#"$first"}
+  answer=${answer#"$NL"}
 }
 
 # Whether version $1 is lower than $2, by their first three numbers (0.66.0 < 0.69.0).
@@ -212,15 +255,37 @@ lower() {
   return 1
 }
 
-# The CLI's answer for an install, with a line in front when the CLI is older than this plugin: it
-# speaks the protocol, so it checks, but without what newer releases check.
+# The CLI's answer, with a line in front when the CLI is older than this plugin: it speaks the
+# protocol, so it checks, but without what newer releases check. When it said nothing about a
+# command the pre-filter could not rule out, that silence is no verdict: said, and in CI denied.
 answer_with_version() {
-  mine=$(plugin_version)
-  theirs=$(skilltotal --version 2>/dev/null | sed -n 's/^skilltotal \([0-9][0-9A-Za-z.+-]*\).*$/\1/p' | head -n 1)
-  if [ -n "$mine" ] && [ -n "$theirs" ] && lower "$theirs" "$mine"; then
-    with_note "$1" "SkillTotal CLI $theirs is older than the plugin $mine; $UPDATE."
+  split_version
+  plugin_version
+  if [ -z "$theirs" ] && [ -n "$mine" ] && { [ -n "$answer" ] || [ -z "$plain" ]; }; then
+    # A CLI that predates the version line: asked for it separately.
+    first=$(skilltotal --version 2>/dev/null)
+    first=${first%%"$NL"*}
+    case $first in
+      'skilltotal '*)
+        version=${first#skilltotal }
+        case $version in *[!$ALNUM.+-]) version=${version%?} ;; esac
+        plain_version "$version"
+        theirs=$version
+        ;;
+    esac
+  fi
+  if [ -z "$mine" ] || [ -z "$theirs" ] || ! lower "$theirs" "$mine"; then
+    if [ -n "$answer" ]; then
+      printf '%s\n' "$answer"
+    fi
+  elif [ -n "$answer" ]; then
+    with_note "$answer" "SkillTotal CLI $theirs is older than the plugin $mine; $UPDATE."
+  elif [ -n "$plain" ]; then
+    :  # a command that certainly installs nothing (in CI, where it still goes to the CLI)
+  elif strict; then
+    deny "the skilltotal CLI $theirs is older than the plugin $mine" "$FIX"
   else
-    printf '%s\n' "$1"
+    printf '%s\n' "{\"systemMessage\": \"SkillTotal CLI $theirs is older than the plugin $mine and could not judge this command; $UPDATE.\"}"
   fi
 }
 
@@ -230,13 +295,13 @@ if ! command -v skilltotal >/dev/null 2>&1; then
   cannot_check "the skilltotal CLI is not on PATH" "$INSTALL If it is installed, run pipx ensurepath and start Claude Code from a new terminal."
   exit 0
 fi
-if ! strict && plain_command; then
-  exit 0
+plain=
+if plain_command; then
+  plain=1
+  strict || exit 0
 fi
-if answer=$(printf '%s' "$input" | skilltotal hook claude-code --protocol "$PROTOCOL" 2>/dev/null); then
-  if [ -n "$answer" ]; then
-    answer_with_version "$answer"
-  fi
+if answer=$(printf '%s' "$input" | SKILLTOTAL_HOOK_VERSION_LINE=1 skilltotal hook claude-code --protocol "$PROTOCOL" 2>/dev/null); then
+  answer_with_version
   exit 0
 fi
 if strict; then

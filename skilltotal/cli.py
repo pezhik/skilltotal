@@ -343,12 +343,21 @@ def build_parser() -> argparse.ArgumentParser:
         "hook",
         help="Agent hook entry points (used by the SkillTotal Claude Code plugin).",
     )
-    hook.add_argument("agent", choices=["claude-code"], help="Which agent's hook format.")
+    agents = hook.add_subparsers(dest="agent", required=True, metavar="agent")
+    claude_code = agents.add_parser(
+        "claude-code",
+        help="Claude Code PreToolUse hook: check what a Bash or PowerShell command installs.",
+        description=HOOK_CLAUDE_CODE_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     # The two processes a check runs in, started by the hook itself (see skilltotal.hook_scan).
-    hook.add_argument("--supervise", metavar="DIR", help=argparse.SUPPRESS)
-    hook.add_argument("--scan-into", metavar="DIR", help=argparse.SUPPRESS)
-    # The hook protocol the plugin's wrapper needs (HOOK_PROTOCOL).
-    hook.add_argument("--protocol", metavar="N", type=int, default=0, help=argparse.SUPPRESS)
+    claude_code.add_argument("--supervise", metavar="DIR", help=argparse.SUPPRESS)
+    claude_code.add_argument("--scan-into", metavar="DIR", help=argparse.SUPPRESS)
+    claude_code.add_argument(
+        "--protocol", metavar="N", type=int, default=0,
+        help=f"The hook protocol the caller needs (this CLI speaks {HOOK_PROTOCOL}); a higher "
+             f"one exits 1, so the plugin can tell a CLI older than itself.",
+    )
 
     return parser
 
@@ -1071,6 +1080,45 @@ HOOK_FAILED = {
 HOOK_PROTOCOL = 2
 # How to update the CLI, whichever way it was installed (the plugin's wrapper says the same).
 HOOK_UPDATE = "update the skilltotal CLI (pipx upgrade skilltotal or pip install -U skilltotal)"
+# Set by the plugin's wrapper: the answer starts with a line naming this CLI's version
+# (`skilltotal 0.73.0`), so the wrapper can tell a CLI older than the plugin without starting it a
+# second time for `--version`. A CLI that predates it prints no such line, and an older wrapper
+# never sets it, so neither sees the line.
+HOOK_VERSION_LINE_ENV = "SKILLTOTAL_HOOK_VERSION_LINE"
+HOOK_CLAUDE_CODE_HELP = """\
+Claude Code PreToolUse hook (the SkillTotal plugin runs it before every Bash or PowerShell
+command). Reads one hook event (JSON) on stdin, finds the packages the command would install,
+checks each one, and prints Claude Code's hook answer (JSON) on stdout, or nothing for a command
+that installs nothing:
+
+  deny     a package with malicious indicators
+  ask      high or critical risk, or anything SkillTotal could not check (a custom registry or
+           index, a name the shell fills in, a check that failed or ran out of time)
+  no decision, with a console line
+           clean packages, and installs with no package name to check (a lockfile, a local
+           path, a downloaded script, a remote MCP server, a container image)
+
+Environment:
+  SKILLTOTAL_STRICT           1/true/yes/on turns CI strict mode on, 0/false/no/off turns it
+                              off; unset, it is on when CI, TF_BUILD, JENKINS_URL,
+                              TEAMCITY_VERSION, CODEBUILD_BUILD_ID, BUILDKITE or GITLAB_CI is
+                              set. In strict mode what would be asked is denied, and so is an
+                              unchecked install whose kind is not allowed.
+  SKILLTOTAL_ALLOW_UNCHECKED  the kinds of unchecked install strict mode lets through, comma-
+                              separated: lockfile, local, script, partial, remote, container
+  SKILLTOTAL_STRICT_PARTIAL   1: strict mode also denies a partly analyzed package
+  SKILLTOTAL_HOOK_BUDGET      seconds all checks of one command share (default 60, at most 100;
+                              in strict mode 600, at most 840)
+  SKILLTOTAL_WORKERS          processes one large check may use (1 turns it off)
+  SKILLTOTAL_CACHE_DIR        where verdicts are kept (default: skilltotal/ under
+                              XDG_CACHE_HOME, LOCALAPPDATA or ~/.cache)
+  NPM_CONFIG_REGISTRY, PIP_INDEX_URL, PIP_EXTRA_INDEX_URL, UV_INDEX_URL, UV_DEFAULT_INDEX...
+                              a registry or index other than the public one (also from .npmrc
+                              or pip.conf/pip.ini): its packages are asked about (denied in CI)
+
+Exit codes: always 0 (the decision is in the answer; a failure of the hook asks, or denies in
+strict mode); 1 when --protocol asks for a newer protocol than this CLI speaks.
+"""
 # CI strict mode for the hook: SKILLTOTAL_STRICT=1/true/yes/on turns it on and 0/false/no/off off;
 # any other non-empty value turns it on too (a typo must not loosen a gate; the console says so).
 # Otherwise it is on when CI, or the marker of a CI service that does not always set CI, is set to
@@ -1152,6 +1200,8 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         answer = _hook_answer(strict_by)
     except Exception:  # noqa: BLE001 - a failure of ours asks (in CI denies), never passes silently
         answer = _hook_failed_strict(strict_by) if strict_by else HOOK_FAILED
+    if os.environ.get(HOOK_VERSION_LINE_ENV):
+        print(f"skilltotal {__version__}")
     if answer is not None:
         print(json.dumps(answer))
     return EXIT_OK
@@ -1184,11 +1234,20 @@ def _hook_answer(strict_by: str = "") -> dict | None:
     answer = hook_response(event, scan=_hook_scan_cached, budget_s=budget,
                            strict=bool(strict_by), strict_by=strict_by,
                            allow_unchecked=_hook_allowed_unchecked(os.environ),
-                           deny_partial=_hook_strict_partial(os.environ))
+                           deny_partial=_hook_strict_partial(os.environ),
+                           environ=os.environ, home=_home())
     note = _hook_settings_note(os.environ, ceiling)
     if answer is not None and note:
         answer["systemMessage"] = f"{answer.get('systemMessage', '')} {note}".strip()
     return answer
+
+
+def _home() -> Path | None:
+    """The person's home folder, or None when it cannot be told (no HOME on a bare system)."""
+    try:
+        return Path.home()
+    except (RuntimeError, KeyError, OSError):
+        return None
 
 
 def _hook_settings_note(environ, ceiling: float) -> str:
