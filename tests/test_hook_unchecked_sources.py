@@ -281,6 +281,35 @@ def test_in_ci_a_configured_registry_is_denied(tmp_path):
         f"lodash from {CORP} (set by NPM_CONFIG_REGISTRY)")
 
 
+def test_the_ci_denial_says_how_to_allow_a_mirror(tmp_path):
+    out = _no_scan("npm i lodash", strict=True, strict_by="CI",
+                   environ={"NPM_CONFIG_REGISTRY": CORP}, home=tmp_path)
+    assert f"set {ALLOW_UNCHECKED_ENV}=registry" in out["systemMessage"]
+
+
+def test_a_ci_job_behind_a_mirror_can_allow_it_without_turning_strict_off(tmp_path):
+    """A company mirror in .npmrc denied every named install in CI, and the only way out was
+    SKILLTOTAL_STRICT=0. Allowing the `registry` kind lets it through, said in the console."""
+    out = _no_scan("npm i lodash", strict=True, strict_by="CI",
+                   allow_unchecked=frozenset({"registry"}),
+                   environ={"NPM_CONFIG_REGISTRY": CORP}, home=tmp_path)
+    spec = out["hookSpecificOutput"]
+    assert spec.get("permissionDecision") != "deny"
+    assert "lodash from" in out["systemMessage"]
+
+
+def test_allowing_a_mirror_does_not_let_a_typosquat_through(tmp_path):
+    """The `registry` kind covers only what comes from the configured registry: a name the public
+    registry has and the scan flags is still judged."""
+    out = hook_response(_bash("npm i lodash"), strict=True, strict_by="CI",
+                        allow_unchecked=frozenset({"registry"}),
+                        scan=lambda s, t: {**_report(), "verdict": {
+                            "has_malicious_indicators": True}, "findings": [
+                            {"id": "ST-X", "title": "x", "severity": "high",
+                             "threat_class": "malicious_indicator", "evidence": []}]})
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_installs_without_a_package_name_are_unchanged(tmp_path):
     out = _no_scan("npm ci", environ={"NPM_CONFIG_REGISTRY": CORP}, home=tmp_path)
     assert "permissionDecision" not in out["hookSpecificOutput"]

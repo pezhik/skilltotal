@@ -1105,7 +1105,8 @@ Environment:
                               set. In strict mode what would be asked is denied, and so is an
                               unchecked install whose kind is not allowed.
   SKILLTOTAL_ALLOW_UNCHECKED  the kinds of unchecked install strict mode lets through, comma-
-                              separated: lockfile, local, script, partial, remote, container
+                              separated: lockfile, local, script, partial, remote, container,
+                              registry (a package from a configured registry or mirror)
   SKILLTOTAL_STRICT_PARTIAL   1: strict mode also denies a partly analyzed package
   SKILLTOTAL_HOOK_BUDGET      seconds all checks of one command share (default 60, at most 100;
                               in strict mode 600, at most 840)

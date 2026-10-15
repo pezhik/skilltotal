@@ -89,6 +89,7 @@ class Install:
     unverifiable: str | None = None  # e.g. "pkg from https://registry.example"
     unchecked: str | None = None
     does: str | None = None  # e.g. "installs from package-lock.json"
+    registry: bool = False  # unverifiable because it comes from a non-default registry or index
 
 
 # Text the hook could not take apart as commands, when it names an installer.
@@ -104,7 +105,12 @@ PARTIAL = "partial"
 # An MCP server an agent CLI registers that is no package: a remote server reached at a URL, or a
 # container image the server runs in. Neither is downloaded where the hook could read it.
 REMOTE, CONTAINER = "remote", "container"
-UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER)
+# A named package from a registry or index other than the public one (a company mirror set in
+# .npmrc, pip.conf or the environment): the scan reads the public package, not that one. Asked
+# about outside CI; in strict mode denied unless allowed under this name, so a CI job behind a
+# mirror can opt in without turning strict mode off.
+REGISTRY = "registry"
+UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER, REGISTRY)
 # A git clone fetches code the hook does not check, and runs none of it by itself: said in the
 # console, never denied for that alone (in CI too), so it is not one of UNCHECKED_KINDS.
 GIT_CLONE = "clone"
@@ -643,7 +649,8 @@ def _registry_from_env(found: list[Install], words: list[str]) -> list[Install]:
         source = item.source or ""
         if (npm and source.startswith("npm:")) or (py and source.startswith("pypi:")):
             name = source.split(":", 1)[1]
-            item = Install(None, f"{name} from a registry the command sets in its environment")
+            item = Install(None, f"{name} from a registry the command sets in its environment",
+                           registry=True)
         out[item] = None
     return list(out)
 
@@ -845,7 +852,7 @@ def _registry_from_config(found: list[Install], cwd: str | None, environ: Mappin
             where = _npm_configured(scope, layers, environ)
         elif source.startswith("pypi:"):
             where = py_where
-        out.append(Install(None, f"{name} from {where}") if where else item)
+        out.append(Install(None, f"{name} from {where}", registry=True) if where else item)
     return list(dict.fromkeys(out))
 
 
@@ -2864,7 +2871,7 @@ def _npm_spec(spec: str, registry: str | None) -> list[Install]:
     if not _NPM_NAME.match(name):
         return []
     if registry:
-        return [Install(None, f"{name} from {registry}")]
+        return [Install(None, f"{name} from {registry}", registry=True)]
     # The version the command asks for is the one to check: `npx x@0.1.2` must not be judged by
     # the latest release. A range (`^1.2`) is resolved by npm, not here, so it checks latest.
     return [Install(f"npm:{name}@{version}" if _NPM_EXACT.fullmatch(version) else f"npm:{name}")]
@@ -3042,7 +3049,7 @@ def _py_spec(spec: str, index: str | None) -> list[Install]:
     if spec[m.end():m.end() + 1] in ("*", "?"):
         return _computed(spec)  # a glob in the name: the shell puts a file name in its place
     if index:
-        return [Install(None, f"{m.group(0)} from {index}")]
+        return [Install(None, f"{m.group(0)} from {index}", registry=True)]
     # `requests==2.31.0` checks 2.31.0; a range or wildcard is resolved by pip, so it checks latest.
     pin = _PY_EXACT.match(re.sub(r"^\[[^\]]*\]", "", spec[m.end():]))
     return [Install(f"pypi:{m.group(0)}=={pin.group(1)}" if pin else f"pypi:{m.group(0)}")]
@@ -3727,13 +3734,20 @@ def hook_response(
     partial: list[str] = []  # clean packages the scan could not read all of
     deadline = time.monotonic() + budget_s
     checked = 0
+    from_registry = False  # an asked install came from a configured registry or index
     for item in installs:
         if item.unchecked:
             unchecked.append(item)
             continue
         if item.source is None:
+            if item.registry and strict and REGISTRY in allow_unchecked:
+                # A mirror the CI job opted into: said, not denied.
+                unchecked.append(Install(None, item.unverifiable, unchecked=REGISTRY,
+                                         does=f"installs {_clip(str(item.unverifiable))}"))
+                continue
             asked.append(f"{_clip(str(item.unverifiable))}: SkillTotal can't check what this "
                          f"would install.")
+            from_registry = from_registry or item.registry
             continue
         source = item.source
         shown = _clip(source)  # the name as the answer quotes it; the scan gets all of it
@@ -3835,11 +3849,13 @@ def hook_response(
             why.append(_details(scanned))
         reason = _STRICT + " ".join(why)
         allow = ""
-        if blocked or held:
+        if blocked or held or from_registry:
             # The whole value to set: the kinds already allowed stay allowed.
             wanted = {*allow_unchecked, *(i.unchecked for i in blocked)}
             if held:
                 wanted.add(PARTIAL)
+            if from_registry:
+                wanted.add(REGISTRY)
             kinds = ",".join(k for k in UNCHECKED_KINDS if k in wanted)
             allow = f"To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kinds}."
         return _answer(permission="deny", reason=reason,
