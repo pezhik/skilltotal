@@ -1,8 +1,8 @@
 """The action's Scan step, run as the runner runs it: bash with the inputs in env.
 
-Needs a POSIX bash and `python` on PATH (Linux/macOS CI). On Windows it runs only when
-SKILLTOTAL_TEST_BASH names a bash (Git for Windows' bash.exe). Nothing is fetched: every source is
-a folder in a temporary workspace. The snippets are inert detection fixtures.
+Needs a POSIX bash and Python 3.11+ as `python` on PATH (Linux/macOS CI). On Windows it runs only
+when SKILLTOTAL_TEST_BASH names a bash (Git for Windows' bash.exe). Nothing is fetched: every source
+is a folder in a temporary workspace. The snippets are inert detection fixtures.
 """
 
 from __future__ import annotations
@@ -27,9 +27,20 @@ def _bash() -> str | None:
     return shutil.which("bash")
 
 
+def _python_has_safe_path() -> bool:
+    """The step runs `python -P`, which needs 3.11+; the action itself sets up Python 3.12."""
+    python = shutil.which("python")
+    if python is None:
+        return False
+    done = subprocess.run(  # nosec B603 - asks the PATH python for its version
+        [python, "-c", "import sys; print(sys.version_info >= (3, 11))"],
+        capture_output=True, text=True, timeout=60, check=False)
+    return done.stdout.strip() == "True"
+
+
 pytestmark = pytest.mark.skipif(
-    _bash() is None or shutil.which("python") is None,
-    reason="needs a POSIX bash and python on PATH",
+    _bash() is None or not _python_has_safe_path(),
+    reason="needs a POSIX bash and Python 3.11+ (as the action sets up) on PATH",
 )
 
 
