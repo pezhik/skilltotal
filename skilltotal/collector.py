@@ -48,6 +48,9 @@ _NPM_NAME_RE = re.compile(r"^@?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)?$",
 _PYPI_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$", re.I)
 
 _HTTP_TIMEOUT = 60  # seconds for a registry/download request
+# Every temporary folder a scan downloads, clones or extracts into starts with this, in
+# tempfile.gettempdir(); a killed scan leaves its folder behind (see mcp_server's sweep).
+TEMP_DIR_PREFIX = "skilltotal_"
 # Archive caps (env-overridable so a hosted upload path can tighten them on a small box):
 #   SKILLTOTAL_MAX_ARCHIVE_MB   — max size of the archive itself (downloaded or uploaded)
 #   SKILLTOTAL_MAX_EXTRACT_MB   — max total uncompressed size (decompression-bomb guard)
@@ -362,6 +365,16 @@ def _archive_identity(filename: str) -> tuple[str, str]:
     return stem or filename, ""
 
 
+def registry_suggestion(name: str) -> str:
+    """``npm:<name> or pypi:<name>`` for a bare name that could be a package, naming only the
+    registries whose names allow it (a scoped ``@scope/x`` is npm only); empty otherwise."""
+    return " or ".join(
+        f"{registry}:{name}"
+        for registry, pattern in (("npm", _NPM_NAME_RE), ("pypi", _PYPI_NAME_RE))
+        if pattern.match(name)
+    )
+
+
 def _collect_local(source: str) -> SourceContext:
     root = Path(source).expanduser().resolve()
     if not root.exists():
@@ -369,11 +382,12 @@ def _collect_local(source: str) -> SourceContext:
         # An archive name or a path is a file that is missing, not a package name.
         looks_like_path = name.lower().endswith((*_TAR_SUFFIXES, *_ZIP_SUFFIXES)) or (
             "/" in name and not name.startswith("@"))
-        if not looks_like_path and (_NPM_NAME_RE.match(name) or _PYPI_NAME_RE.match(name)):
+        suggestion = "" if looks_like_path else registry_suggestion(name)
+        if suggestion:
             # `skilltotal scan lodash` most often means the package, not a folder named lodash.
             raise CollectionError(
                 f"Path does not exist: {source}. To scan a package, name its registry: "
-                f"npm:{name} or pypi:{name}"
+                f"{suggestion}"
             )
         raise CollectionError(f"Path does not exist: {source}")
     if root.is_dir():
@@ -401,7 +415,7 @@ def _collect_local_archive(path: Path, kind: str) -> SourceContext:
     except OSError as exc:
         raise _unreadable_source(path, exc) from exc
     display = neutralize_hidden(path.name)
-    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
     try:
         extract_dir = Path(tmp.name) / "x"
         extract_dir.mkdir()
@@ -427,7 +441,7 @@ def _collect_local_archive(path: Path, kind: str) -> SourceContext:
 
 def _collect_local_file(path: Path) -> SourceContext:
     display = neutralize_hidden(path.name)
-    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
     try:
         size = path.stat().st_size
         if size > _MAX_ARCHIVE_BYTES:
@@ -795,7 +809,7 @@ def _collect_remote(
     clone_url, ref, subpath, note = parse_git_url(url)
     _reject_if_too_large(clone_url, ref, subpath, on_size=on_size)
 
-    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
     dest = Path(tmp.name) / "repo"
     # Non-interactive (no credential prompt that could block) and bounded in time + size. LFS
     # objects are left as pointer files: fetching them would download from wherever the scanned
@@ -1032,7 +1046,7 @@ def _collect_archive(
     project, when the artifact may not carry a manifest that says it (a wheel has none at its
     root, and an sdist folder is named ``project-1.2.3``)."""
     data = _http_get(archive_url)
-    tmp = tempfile.TemporaryDirectory(prefix="skilltotal_")
+    tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
     try:
         extract_dir = Path(tmp.name) / "x"
         extract_dir.mkdir()

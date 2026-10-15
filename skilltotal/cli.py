@@ -1048,16 +1048,24 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
 
 
 def _cmd_mcp() -> int:
-    from skilltotal.mcp_server import serve
+    import threading
+
+    from skilltotal.mcp_server import remove_stale_temp_dirs, serve
 
     # The MCP stdio transport is UTF-8, but Windows consoles default to a legacy codepage
     # (e.g. cp1251), which would mojibake any non-ASCII snippet in a report and crash the
     # client's decoder. newline="\n" keeps the transport's one-message-per-LF framing free
     # of CRLF translation.
-    if hasattr(sys.stdin, "reconfigure"):  # real stdio; absent on injected test streams
-        sys.stdin.reconfigure(encoding="utf-8")
+    if hasattr(sys.stdout, "reconfigure"):  # real stdio; absent on injected test streams
         sys.stdout.reconfigure(encoding="utf-8", newline="\n")
-    serve(sys.stdin, sys.stdout)
+    # Requests are read as bytes and decoded per line: a text stdin raised on one byte that is
+    # not UTF-8 and ended the session.
+    stdin = getattr(sys.stdin, "buffer", sys.stdin)
+    # Folders a scan left in the temp directory when a client killed this server mid-scan; in the
+    # background, so the client's initialize is answered at once.
+    threading.Thread(target=remove_stale_temp_dirs, name="skilltotal-mcp-sweep",
+                     daemon=True).start()
+    serve(stdin, sys.stdout)
     return EXIT_OK
 
 
