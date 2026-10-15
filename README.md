@@ -315,6 +315,9 @@ skilltotal scan ./component --fail-on-unanalyzed
 # Skip paths (repeatable; combined with the config file's `exclude`)
 skilltotal scan ./component --exclude "vendor/*" --exclude "*.min.js"
 
+# Scan what the next commit will contain (git's index), as the pre-commit hook does
+skilltotal scan . --staged --fail-on-high
+
 # Opt-in provenance for npm:/pypi: sources (registry metadata -> needs_review, never scored)
 skilltotal scan npm:some-lib --provenance
 

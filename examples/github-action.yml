@@ -20,3 +20,7 @@ jobs:
           fail-on: high        # fail on a high/critical risk finding; use 'none' to report only
           # version: 0.69.0    # pin the engine for reproducible CI (optional)
           # baseline: .skilltotal-baseline.json   # suppress accepted findings (optional)
+          # fail-on-score: 50  # also fail at or above this risk score (optional)
+          # exclude: |         # skip paths, one glob per line (optional)
+          #   vendor/*
+          # config: none       # ignore the repository's .skilltotal.toml (default: use it if present)

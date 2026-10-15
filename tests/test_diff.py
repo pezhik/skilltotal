@@ -157,3 +157,17 @@ def test_cli_diff_missing_source_errors(tmp_path: Path, capsys):
     err = capsys.readouterr().err
     assert code == EXIT_ERROR
     assert "error:" in err
+
+
+def test_fail_on_new_counts_risk_the_way_scan_fail_on_does(tmp_path: Path, capsys):
+    # A new capability (a shell call is high severity) is what the component can now do: like
+    # `scan --fail-on`, the diff gate never trips on one, and the text labels it.
+    old = _make_pkg(tmp_path, "v1")
+    capability = _make_pkg(tmp_path, "v2", {
+        "run.js": "const cp = require('child_process');\ncp.execSync('ls');\n"})
+    assert main(["diff", str(old), str(capability), "--fail-on-new", "low"]) == EXIT_OK
+    assert "- capability, not scored] ST-SHELL-NODE" in capsys.readouterr().out
+
+    risky = _make_pkg(tmp_path, "v3", {"install.sh": PIPE_EXEC})
+    assert main(["diff", str(old), str(risky), "--fail-on-new", "high"]) == EXIT_FAIL_ON_HIGH
+    assert "gate: --fail-on-new high tripped by ST-SHELL-PIPE-EXEC" in capsys.readouterr().err

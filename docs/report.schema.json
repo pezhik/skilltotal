@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://www.skilltotal.ai/schemas/report-1.8.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.8 (1.7 + verdict.unanalyzed_files); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.8 (1.7 + verdict.unanalyzed_files and metadata.config_applied); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -107,7 +107,21 @@
         "files_skipped_large": { "type": "integer" },
         "scanners_run": { "type": "array", "items": { "type": "string" } },
         "findings_by_severity": { "type": "object" },
-        "suppressed_count": { "type": "integer" }
+        "suppressed_count": { "type": "integer" },
+        "config_applied": {
+          "type": "object",
+          "description": "Present only when scan applied a .skilltotal.toml: its path and how many excludes, ignored rules and policy entries it set, plus the gates it sets (optional, backward compatible).",
+          "required": ["path", "exclude", "ignore", "policy"],
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": "string" },
+            "exclude": { "type": "integer", "minimum": 0 },
+            "ignore": { "type": "integer", "minimum": 0 },
+            "policy": { "type": "integer", "minimum": 0 },
+            "fail_on": { "type": "string", "enum": ["low", "medium", "high", "critical"] },
+            "fail_on_score": { "type": "integer", "minimum": 0, "maximum": 100 }
+          }
+        }
       },
       "required": ["skilltotal_version", "schema_version", "ruleset_version"],
       "additionalProperties": true

@@ -195,6 +195,39 @@ class SourceContext:
             self._tempdir = None
 
 
+def find_program(name: str, environ=None, os_name: str = os.name) -> str | None:
+    """The absolute path of program ``name`` from the absolute directories on PATH, or None.
+
+    ``shutil.which`` on Windows before Python 3.12 looks in the current directory first, whatever
+    PATH says: a scan run inside a checkout (the pre-commit hook, CI) would start a ``git.bat``
+    committed to it. Here '.', empty and relative PATH entries are skipped, and the current
+    directory is never searched.
+    """
+    environ = os.environ if environ is None else environ
+    if os_name == "nt":
+        exts = [e for e in environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+        if any(name.lower().endswith(e.lower()) for e in exts):
+            exts = [""]
+    else:
+        exts = [""]
+    for entry in environ.get("PATH", "").split(os.pathsep):
+        entry = entry.strip().strip('"')
+        if not entry or not os.path.isabs(entry):
+            continue
+        for ext in exts:
+            candidate = os.path.join(entry, name + ext)
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
+def _git_program() -> str:
+    git = find_program("git")
+    if git is None:
+        raise CollectionError("git is required to analyze remote URLs but was not found on PATH.")
+    return git
+
+
 def is_url(source: str) -> bool:
     return bool(_GIT_URL_RE.match(source.strip()))
 
@@ -333,7 +366,10 @@ def _collect_local(source: str) -> SourceContext:
     root = Path(source).expanduser().resolve()
     if not root.exists():
         name = source.strip()
-        if _NPM_NAME_RE.match(name) or _PYPI_NAME_RE.match(name):
+        # An archive name or a path is a file that is missing, not a package name.
+        looks_like_path = name.lower().endswith((*_TAR_SUFFIXES, *_ZIP_SUFFIXES)) or (
+            "/" in name and not name.startswith("@"))
+        if not looks_like_path and (_NPM_NAME_RE.match(name) or _PYPI_NAME_RE.match(name)):
             # `skilltotal scan lodash` most often means the package, not a folder named lodash.
             raise CollectionError(
                 f"Path does not exist: {source}. To scan a package, name its registry: "
@@ -651,11 +687,14 @@ def _reject_if_too_large(
 def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
     """Run a git clone/fetch, bounded in time AND in size (watchdog kills it past the cap).
 
-    Security: git is resolved from PATH, arguments are passed as a list (never a shell), and the
-    URL was validated upstream. Reviewed exception for the static security scan.
+    Security: git is resolved to an absolute path from PATH's absolute entries (never the current
+    directory, see find_program), arguments are passed as a list (never a shell), and the URL was
+    validated upstream. Reviewed exception for the static security scan.
     """
     cap = _MAX_CLONE_MB * 1024 * 1024
-    proc = subprocess.Popen(  # nosec B603 B607
+    if args and args[0] == "git":
+        args = [_git_program(), *args[1:]]
+    proc = subprocess.Popen(  # nosec B603
         args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
         creationflags=_NO_WINDOW,
     )
@@ -707,8 +746,8 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 def _git(dest: Path, args: list[str], env: dict, *, timeout: int) -> None:
     """A bounded, non-interactive git command inside ``dest`` (errors surface to the caller)."""
-    subprocess.run(  # nosec B603 B607
-        ["git", *_GIT_LONG_PATHS, "-C", str(dest), *args],
+    subprocess.run(  # nosec B603
+        [_git_program(), *_GIT_LONG_PATHS, "-C", str(dest), *args],
         check=True, capture_output=True, text=True, timeout=timeout, env=env,
         creationflags=_NO_WINDOW,
     )
@@ -752,8 +791,7 @@ def _collect_remote(
     Parses branch/tag/commit/subfolder links, rejects oversized repositories, and clones only
     what is needed.
     """
-    if shutil.which("git") is None:
-        raise CollectionError("git is required to analyze remote URLs but was not found on PATH.")
+    _git_program()  # git missing is said before anything is fetched
     clone_url, ref, subpath, note = parse_git_url(url)
     _reject_if_too_large(clone_url, ref, subpath, on_size=on_size)
 
@@ -1019,6 +1057,7 @@ def _collect_archive(
 
 
 # An exact release, as opposed to a dist-tag (`latest`) or a range the installer resolves.
+_NPM_RANGE_RE = re.compile(r"[\^~<>=*| ]|(?:^|\.)[xX](?:\.|$)")
 _EXACT_NPM_VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 _EXACT_PYPI_VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z.+!-]*$")
 
@@ -1105,7 +1144,8 @@ def failure_category(exc: BaseException) -> str | None:
     message = str(exc)
     if "git is required" in message:
         return "git-missing"
-    if any(m in message for m in ("HTTP Error 404", "has no version", "has no resolvable release",
+    if any(m in message for m in ("HTTP Error 404", "was not found on", "has no version",
+                                  "has no resolvable release",
                                   "has no downloadable distribution")):
         return "not-found"
     if "git clone failed" in message and any(
@@ -1115,9 +1155,16 @@ def failure_category(exc: BaseException) -> str | None:
     return None
 
 
-def _registry_json(url: str) -> dict:
-    """A registry document as a JSON object; anything else is a CollectionError, not a traceback."""
-    data = _http_get(url)
+def _registry_json(url: str, not_found: str = "") -> dict:
+    """A registry document as a JSON object; anything else is a CollectionError, not a traceback.
+    A 404 is reported as ``not_found`` when given: "HTTP Error 404" says nothing to a person."""
+    try:
+        data = _http_get(url)
+    except CollectionError as exc:
+        cause = exc.__cause__
+        if not_found and isinstance(cause, urllib.error.HTTPError) and cause.code == 404:
+            raise CollectionError(not_found) from exc
+        raise
     try:
         doc = bounded_json.loads(data)
     except ValueError as exc:
@@ -1163,11 +1210,17 @@ def _collect_npm(source: str) -> SourceContext:
     name, pin = npm_package_spec(source)
     if not name:
         raise CollectionError(f"invalid npm package name in: {source}")
+    if pin and _NPM_RANGE_RE.search(pin):
+        # npm refuses a dist-tag that reads as a range, so these characters never name a tag.
+        raise CollectionError(
+            f"npm version ranges are not supported ('{pin}'): pin an exact version, "
+            f"e.g. npm:{name}@1.2.3")
     release = _npm_release(name, pin)
     if release is not None:
         chosen, tarball = release
         return _collect_archive(source, "npm_package", chosen, tarball, tarball)
-    meta = _registry_json(f"https://registry.npmjs.org/{quote(name, safe='@')}")
+    meta = _registry_json(f"https://registry.npmjs.org/{quote(name, safe='@')}",
+                          not_found=f"package '{name}' was not found on npm")
     versions = meta.get("versions") or {}
     tags = meta.get("dist-tags") or {}
     if pin:
@@ -1211,10 +1264,12 @@ def _collect_pypi(source: str) -> SourceContext:
         if not _EXACT_PYPI_VERSION_RE.match(pin):
             raise CollectionError(f"invalid PyPI version in: {source}")
         # Per-version metadata endpoint lists that release's distributions directly.
-        meta = _registry_json(f"https://pypi.org/pypi/{name}/{quote(pin)}/json")
+        meta = _registry_json(f"https://pypi.org/pypi/{name}/{quote(pin)}/json",
+                              not_found=f"package '{name}' {pin} was not found on PyPI")
         version = str((meta.get("info") or {}).get("version") or pin)
     else:
-        meta = _registry_json(f"https://pypi.org/pypi/{name}/json")
+        meta = _registry_json(f"https://pypi.org/pypi/{name}/json",
+                              not_found=f"package '{name}' was not found on PyPI")
         version = str((meta.get("info") or {}).get("version") or "")
     chosen = _pick_distribution(meta.get("urls") or [])
     if not (version and chosen and chosen.get("url")):

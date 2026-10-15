@@ -73,7 +73,7 @@ def test_text_report_leads_with_the_verdict(tmp_path, malicious_npm, clean_repor
     assert verdict < risk
     assert lines[verdict].startswith("Verdict   : MALICIOUS - Malicious indicators found (")
     # High risk without malice says so, with no reasons tacked on; a clean report reads low.
-    assert "Verdict   : HIGH - High-risk capabilities" in render_text(malicious_npm)
+    assert "Verdict   : HIGH - High risk - review before installing" in render_text(malicious_npm)
     clean = render_text(clean_report)
     assert "Verdict   : LOW - " in clean and "MALICIOUS" not in clean
 
@@ -116,3 +116,19 @@ def test_verdict_reasons_lead_with_what_is_scored(tmp_path):
     ranks = [order[by_title[r]] for r in reasons]
     assert ranks == sorted(ranks)
     assert by_title[reasons[0]] == "malicious_indicator"
+    # The text lists only malicious indicators under "Malicious indicators found".
+    verdict_line = next(line for line in render_text(report).splitlines()
+                        if line.startswith("Verdict   :"))
+    for title, threat_class in by_title.items():
+        if threat_class != "malicious_indicator":
+            assert title not in verdict_line, title
+
+
+def test_a_high_score_from_risky_constructs_is_not_called_capabilities():
+    # Capabilities score 0: a high or critical score without malice comes from risky constructs.
+    from skilltotal.engine import _verdict
+    from skilltotal.models import RiskLevel
+
+    assert _verdict([], RiskLevel.HIGH)["headline"] == "High risk - review before installing"
+    assert _verdict([], RiskLevel.CRITICAL)["headline"] == (
+        "Critical risk - review before installing")

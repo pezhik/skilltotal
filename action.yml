@@ -8,25 +8,41 @@ branding:
 
 inputs:
   source:
-    description: "What to scan: a path in the repo (default '.'), a git URL, or an npm:/pypi:<name> spec."
+    description: "What to scan: a path in the repo (default '.'), a git URL, or an npm:/pypi:<name> spec. SARIF from a git URL or a registry package is not uploaded: its alerts would point at files this repository does not have."
     required: false
     default: "."
   version:
-    description: "Install this skilltotal version from PyPI. Empty runs the engine that ships with this action's ref (no download)."
+    description: "Install this skilltotal version from PyPI. Empty runs the engine that ships with this action's ref (no download). The inputs of this action need an engine at least as new as the action."
     required: false
     default: ""
   fail-on:
-    description: "Fail the job on a finding at or above this severity: 'low', 'medium', 'high', 'critical' or 'none'. Malicious indicators fail it at any severity; a capability (what a component can do, such as running a shell) never does."
+    description: "Fail the job on a finding at or above this severity: 'low', 'medium', 'high', 'critical' or 'none'. Malicious indicators fail it at any severity; a capability (what a component can do, such as running a shell) never does. Empty (the default) uses the gate of the applied .skilltotal.toml (fail_on / fail_on_score) when it sets one, else 'high'. A level set here overrides the config's fail_on; 'none' turns off every gate the config sets (fail_on, fail_on_score, fail_on_unanalyzed, block policies), while 'fail-on-score' and 'fail-on-unanalyzed' set here still apply."
     required: false
-    default: "high"
+    default: ""
+  fail-on-score:
+    description: "Also fail the job when the risk score is at or above this number (0-100). Empty: no score gate unless the config sets fail_on_score. Overrides the config's fail_on_score."
+    required: false
+    default: ""
   fail-on-unanalyzed:
     description: "Fail the job when a file, or a part of one, was not analyzed: 'true' or 'false'."
     required: false
     default: "false"
+  exclude:
+    description: "Path globs to skip, relative to 'source', separated by newlines or commas (added to the config's exclude)."
+    required: false
+    default: ""
+  config:
+    description: "Path to a .skilltotal.toml. Empty (the default) reads .skilltotal.toml from the working directory when there is one; 'none' ignores any config. An applied config is named in the log, since a pull request can change it."
+    required: false
+    default: ""
   upload-sarif:
     description: "Upload SARIF to GitHub Code Scanning (job needs 'security-events: write')."
     required: false
     default: "true"
+  sarif-category:
+    description: "Code Scanning category of the uploaded SARIF. Empty: none for source '.', else 'skilltotal/<source>', so two scans in one job keep their alerts apart."
+    required: false
+    default: ""
   comment-on-pr:
     description: "Post a summary comment on pull requests (job needs 'pull-requests: write')."
     required: false
@@ -79,9 +95,13 @@ runs:
         INPUT_SOURCE: ${{ inputs.source }}
         INPUT_VERSION: ${{ inputs.version }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_FAIL_ON_SCORE: ${{ inputs.fail-on-score }}
         INPUT_FAIL_ON_UNANALYZED: ${{ inputs.fail-on-unanalyzed }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_CONFIG: ${{ inputs.config }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
+        INPUT_SARIF_CATEGORY: ${{ inputs.sarif-category }}
       run: |
         set -o pipefail
         # With no version pinned, run the engine that ships with this action's ref: it has no
@@ -96,6 +116,19 @@ runs:
         fi
         BASE=()
         if [ -n "$INPUT_BASELINE" ]; then BASE+=(--baseline "$INPUT_BASELINE"); fi
+        # The config: auto-discovered (empty), a named file, or none at all. Whichever applies is
+        # named in the log by the scan itself.
+        case "$INPUT_CONFIG" in
+          "") ;;
+          none|None|NONE) BASE+=(--no-config) ;;
+          *) BASE+=(--config "$INPUT_CONFIG") ;;
+        esac
+        # Excludes: one glob per line or comma; blanks around each are dropped.
+        while IFS= read -r GLOB; do
+          GLOB="${GLOB#"${GLOB%%[![:space:]]*}"}"
+          GLOB="${GLOB%"${GLOB##*[![:space:]]}"}"
+          if [ -n "$GLOB" ]; then BASE+=(--exclude "$GLOB"); fi
+        done < <(printf '%s\n' "$INPUT_EXCLUDE" | tr ',' '\n')
         # The action's own reports are not part of the component. The SARIF file is written into
         # the workspace (the upload step reads it there), and with `source: .` that is inside the
         # tree being scanned: the second scan read the first one's rule descriptions (detection
@@ -110,19 +143,45 @@ runs:
         REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"
         echo "report-json=$REPORT_JSON" >> "$GITHUB_OUTPUT"
 
+        # Code Scanning resolves a SARIF location against the repository root, and the scan
+        # writes paths relative to `source`: a scan of `app/` must say `app/x.py`, not `x.py`.
+        # A git URL or a registry package is not in this repository at all, so its SARIF is
+        # written but not uploaded (its alerts would point at files the repository does not have).
+        SARIF_ARGS=()
+        PREFIX=""
+        shopt -s nocasematch
+        case "$INPUT_SOURCE" in
+          npm:*|pypi:*|http://*|https://*|git@*|ssh://*|git://*|git+*) SARIF_UPLOAD=false ;;
+          *) SARIF_UPLOAD=true ;;
+        esac
+        shopt -u nocasematch
+        if [ "$SARIF_UPLOAD" = true ]; then
+          PREFIX="$(python -I -c 'import os, sys; src = os.path.abspath(sys.argv[1]); src = src if os.path.isdir(src) else os.path.dirname(src); rel = os.path.relpath(src, os.path.abspath(sys.argv[2])).replace(os.sep, "/"); print("" if rel == "." or rel == ".." or rel.startswith("../") else rel)' "$INPUT_SOURCE" "${GITHUB_WORKSPACE:-$PWD}")"
+          if [ -n "$PREFIX" ]; then SARIF_ARGS+=(--sarif-uri-prefix "$PREFIX"); fi
+        else
+          echo "SkillTotal: '$INPUT_SOURCE' is not a path in this repository, so its SARIF report is not uploaded to Code Scanning (the alerts would point at files the repository does not have)."
+        fi
+        echo "sarif-upload=$SARIF_UPLOAD" >> "$GITHUB_OUTPUT"
+        CATEGORY="$INPUT_SARIF_CATEGORY"
+        if [ -z "$CATEGORY" ] && [ -n "$PREFIX" ]; then CATEGORY="skilltotal/$PREFIX"; fi
+        if [ -n "$CATEGORY" ]; then SARIF_ARGS+=(--sarif-category "$CATEGORY"); fi
+
         # --fail-on counts what is risk: malicious indicators at any severity, risky constructs
         # and shipped secrets at theirs, and never a capability on its own (a shell call or
         # network access is what many tools exist to do).
+        # Empty: the config's gate when it sets one, else high (--fail-on-default). `none`: no
+        # gate from the config either (--fail-on none).
         # An unknown level must fail loudly, never silently switch the gate off.
         GATE=()
         FAIL_ON="$(printf '%s' "$INPUT_FAIL_ON" | tr '[:upper:]' '[:lower:]')"
         case "$FAIL_ON" in
-          none) ;;
-          low|medium|high|critical) GATE+=(--fail-on "$FAIL_ON") ;;
-          *) echo "::error::fail-on must be low, medium, high, critical or none (got '$INPUT_FAIL_ON')"
+          "") GATE+=(--fail-on-default high) ;;
+          none|low|medium|high|critical) GATE+=(--fail-on "$FAIL_ON") ;;
+          *) echo "::error::fail-on must be low, medium, high, critical or none (or empty for the config's gate, else high) (got '$INPUT_FAIL_ON')"
              echo "gate-exit=1" >> "$GITHUB_OUTPUT"
              exit 0 ;;
         esac
+        if [ -n "$INPUT_FAIL_ON_SCORE" ]; then GATE+=(--fail-on-score "$INPUT_FAIL_ON_SCORE"); fi
         FAIL_UNANALYZED="$(printf '%s' "$INPUT_FAIL_ON_UNANALYZED" | tr '[:upper:]' '[:lower:]')"
         case "$FAIL_UNANALYZED" in
           false) ;;
@@ -132,8 +191,15 @@ runs:
              exit 0 ;;
         esac
 
+        # From here on the log carries text from the scanned files (snippets, file names). The
+        # runner reads a line that starts with `::` as a workflow command, so commands are off
+        # until the findings are printed: a file cannot raise an annotation, mask a value or
+        # forge "gate passed". The token is random, so the scanned text cannot turn them back on.
+        STOP_TOKEN="$(python -I -c 'import secrets; print(secrets.token_hex(16))')"
+        echo "::stop-commands::$STOP_TOKEN"
+
         # SARIF report for Code Scanning (not gated, so the upload always has a file).
-        "${ST[@]}" scan "$INPUT_SOURCE" --sarif --output "$INPUT_SARIF_FILE" "${BASE[@]}" || true
+        "${ST[@]}" scan "$INPUT_SOURCE" --sarif --output "$INPUT_SARIF_FILE" "${BASE[@]}" "${SARIF_ARGS[@]}" || true
 
         # JSON run drives the outputs AND the gate. --output is written before the gate exits,
         # so the JSON file exists even when the gate trips. Capture the exit code, don't abort here.
@@ -154,17 +220,26 @@ runs:
         echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
         echo "SkillTotal: ${LEVEL:-unknown} risk (${SCORE:-?}/100) for '$INPUT_SOURCE'"
         # The findings, in the log too: Code Scanning is off in many repositories, and the log is
-        # then the only place a failed gate can be read. One line each, first evidence only.
+        # then the only place a failed gate can be read. Every location of each risk finding (up
+        # to 10 per rule), with control characters in file names shown as <U+XXXX>.
         python -I -c "
         import json, sys
-        r = json.load(open(sys.argv[1]))
-        for f in r.get('findings', []):
-            if f.get('threat_class') == 'capability':
-                continue
-            ev = (f.get('evidence') or [{}])[0]
-            where = ev.get('file', '') + (':' + str(ev['line_start']) if ev.get('line_start') else '')
-            print('  ' + f.get('severity', '').upper() + ' ' + f.get('id', '') + ' ' + f.get('title', '') + (' (' + where + ')' if where else ''))
+        def safe(text):
+            return ''.join(c if 32 <= ord(c) < 127 or ord(c) > 159 else '<U+%04X>' % ord(c) for c in str(text))
+        r = json.load(open(sys.argv[1], encoding='utf-8'))
+        findings = r.get('findings', [])
+        risk = [f for f in findings if f.get('threat_class') != 'capability']
+        print('Findings: %d risk finding(s); %d capability finding(s), not scored and never gated' % (len(risk), len(findings) - len(risk)))
+        for f in risk:
+            label = ' (malicious indicator)' if f.get('threat_class') == 'malicious_indicator' else ''
+            print('  ' + safe(f.get('severity', '').upper()) + label + ' ' + safe(f.get('id', '')) + ' ' + safe(f.get('title', '')))
+            evidence = f.get('evidence') or []
+            for ev in evidence[:10]:
+                print('      ' + safe(ev.get('file', '')) + (':' + str(ev['line_start']) if ev.get('line_start') else ''))
+            if len(evidence) > 10:
+                print('      ... and %d more location(s), all of them in the SARIF and JSON reports' % (len(evidence) - 10))
         " "$REPORT_JSON" 2>/dev/null || true
+        echo "::$STOP_TOKEN::"
 
         # 2 = the gate tripped; 1 = collection error. Both should fail the build, but only after
         # the SARIF upload step runs (which is why we defer the failure).
@@ -172,10 +247,11 @@ runs:
 
     - name: Upload SARIF to Code Scanning
       id: upload
-      if: ${{ always() && inputs.upload-sarif == 'true' }}
+      if: ${{ always() && inputs.upload-sarif == 'true' && steps.scan.outputs.sarif-upload == 'true' }}
       # The gate decides the job, not the upload. Code Scanning is off in many repositories (a
       # private repository needs GitHub Advanced Security for it), and the upload then fails:
-      # that failed every such customer's build, clean or not.
+      # that failed every such customer's build, clean or not. The failed upload still shows an
+      # error annotation of its own (continue-on-error does not hide it); the next step says why.
       continue-on-error: true
       uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
       with:
@@ -195,6 +271,7 @@ runs:
       env:
         REPORT_JSON: ${{ steps.scan.outputs.report-json }}
         UPLOADED: ${{ steps.upload.outcome }}
+        GATE_EXIT: ${{ steps.scan.outputs.gate-exit }}
       with:
         script: |
           const fs = require('fs');
@@ -208,9 +285,18 @@ runs:
           }
           const level = report.risk_level || 'unknown';
           const score = report.risk_score ?? '?';
-          const findings = (report.findings || []).length;
+          // The same count as the step's log: risk findings, and capabilities apart (a capability
+          // is what a component can do; it is never scored and never fails the gate).
+          const all = report.findings || [];
+          const risk = all.filter((f) => f.threat_class !== 'capability');
+          const malicious = all.filter((f) => f.threat_class === 'malicious_indicator').length;
+          const capFindings = all.length - risk.length;
           const caps = Object.keys(report.capabilities || {});
           const verdict = report.verdict || {};
+          const gateExit = process.env.GATE_EXIT || '';
+          const gate = gateExit === '0' ? 'passed'
+            : gateExit === '2' ? '**failed**'
+            : gateExit ? '**error** (exit ' + gateExit + ')' : '**did not run**';
           // Malicious indicators outrank the score: a dropper can score 20/100 (low).
           const icon = verdict.has_malicious_indicators === true ? '🔴'
             : ({ critical: '🔴', high: '🟠', medium: '🟡', low: '🟢' })[level] || '⚪';
@@ -219,7 +305,10 @@ runs:
             '## ' + icon + ' SkillTotal — AI component security scan',
             '',
             verdict.headline ? '**Verdict:** ' + verdict.headline : '',
-            '**Risk:** ' + level.toUpperCase() + ' (' + score + '/100) · **Findings:** ' + findings,
+            '**Risk:** ' + level.toUpperCase() + ' (' + score + '/100) · **Gate:** ' + gate,
+            '**Findings:** ' + risk.length + ' risk finding(s)'
+              + (malicious ? ' (' + malicious + ' malicious indicator(s))' : '')
+              + ' · ' + capFindings + ' capability finding(s), not scored',
             caps.length ? '**Capabilities:** ' + caps.join(', ') : '_No notable capabilities detected._',
             '',
             (process.env.UPLOADED === 'success'
@@ -259,6 +348,6 @@ runs:
           exit 1
         fi
         if [ "$EXIT" != "0" ]; then
-          echo "::error::SkillTotal gate failed (exit $EXIT). The findings are listed in the Scan step's log, and in Code Scanning when it is on."
+          echo "::error::SkillTotal gate failed (exit $EXIT). The Scan step's log says which gate tripped and lists the findings (also in Code Scanning when it is on)."
           exit "$EXIT"
         fi

@@ -131,13 +131,17 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `scanners_run` | array | Scanner names that ran |
 | `findings_by_severity` | object | Counts per severity |
 | `suppressed_count` | integer | Evidence occurrences removed via `--baseline` or an inline `skilltotal:ignore` marker (honored only for `scan` of a local directory) |
+| `config_applied` | object | Optional; present only when `scan` applied a `.skilltotal.toml`: `path`, and the number of `exclude` globs, `ignore` rule ids and `policy` entries it set, plus `fail_on` / `fail_on_score` when it sets them (added in 1.8) |
 
 ## Alternative format: SARIF
 
 `--sarif` emits a SARIF 2.1.0 document instead of the native JSON (for GitHub Code Scanning
 / IDEs). Severity maps to SARIF `level` (`critical`/`high` → `error`, `medium` → `warning`,
 `low` → `note`) plus a numeric `security-severity` property. Each evidence occurrence becomes
-one SARIF result anchored to its file/line.
+one SARIF result anchored to its file/line. A location's `uri` is the evidence path,
+percent-encoded as a relative URI reference; `--sarif-uri-prefix PATH` puts the scanned folder
+in front of it (repository-root-relative paths for Code Scanning), and `--sarif-category NAME`
+sets `runs[0].automationDetails.id` to `NAME/`.
 
 ## Invariants (guaranteed by the engine)
 

@@ -46,3 +46,30 @@ def test_the_pull_request_comment_puts_malicious_indicators_first():
     # A dropper can score 20/100 (low): the icon must not go green over malicious indicators.
     text = ACTION.read_text(encoding="utf-8")
     assert "verdict.has_malicious_indicators === true ? '🔴'" in text
+
+
+def test_sarif_from_a_source_outside_the_repository_is_not_uploaded():
+    # Alerts for an npm:/pypi: package or a git URL would point at files the repository lacks.
+    text = ACTION.read_text(encoding="utf-8")
+    assert "npm:*|pypi:*|http://*|https://*|git@*|ssh://*|git://*|git+*) SARIF_UPLOAD=false" in text
+    upload = text.split("- name: Upload SARIF to Code Scanning", 1)[1].split("- name:", 1)[0]
+    assert "steps.scan.outputs.sarif-upload == 'true'" in upload
+
+
+def test_the_pull_request_comment_counts_risk_apart_from_capabilities_and_says_the_gate():
+    text = ACTION.read_text(encoding="utf-8")
+    comment = text.split("- name: Comment on PR", 1)[1].split("- name:", 1)[0]
+    assert "GATE_EXIT: ${{ steps.scan.outputs.gate-exit }}" in comment
+    assert "f.threat_class !== 'capability'" in comment
+    assert "**Gate:** " in comment
+    assert "capability finding(s), not scored" in comment
+
+
+def test_new_inputs_reach_the_cli_through_env():
+    text = ACTION.read_text(encoding="utf-8")
+    for name in ("fail-on-score", "exclude", "config", "sarif-category"):
+        env = "INPUT_" + name.upper().replace("-", "_")
+        assert f"{env}: ${{{{ inputs.{name} }}}}" in text, name
+    fail_on = text.split("  fail-on:\n", 1)[1].split("\n  fail-on-score:", 1)[0]
+    assert 'default: ""' in fail_on
+    assert '"") GATE+=(--fail-on-default high) ;;' in text

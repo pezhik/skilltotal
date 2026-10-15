@@ -700,7 +700,7 @@ def _verdict(
        only: poisoning, obfuscated exec, prompt injection, hidden unicode). Kept narrow and
        high-confidence so we never label a legitimate-but-powerful component "malware".
     2. "Could it leak my data / get me compromised?" -> the severity tier, surfaced as
-       "High-risk capabilities" even with no malice (e.g. a clear-text credential+network
+       "High risk" / "Critical risk" even with no malice (e.g. a clear-text credential+network
        exfiltration path). This keeps the headline consistent with the risk score instead of
        the confusing "critical, but not malware".
 
@@ -715,7 +715,9 @@ def _verdict(
     if has_mal:
         vlevel, headline = "malicious", "Malicious indicators found"
     elif level in (RiskLevel.CRITICAL, RiskLevel.HIGH):
-        vlevel, headline = level.value, "High-risk capabilities - review before installing"
+        # Capabilities score 0, so a high score here comes from risky constructs: say "risk".
+        vlevel = level.value
+        headline = f"{level.value.capitalize()} risk - review before installing"
     elif level is RiskLevel.MEDIUM:
         vlevel, headline = "medium", "Some risk - review before installing"
     elif any(f.id == TYPOSQUAT_FINDING_ID for f in findings):
@@ -1407,10 +1409,22 @@ def _is_noncode_context(
     return policy == "strings_and_comments_all" and f.in_c_string(e.match_offset)
 
 
+_OCCURRENCES_SHOWN = re.compile(r" \(\d+ occurrence\(s\) shown as evidence\)\.$")
+
+
 def _cap_evidence(f: Finding) -> Finding:
-    if len(f.evidence) <= MAX_EVIDENCE_PER_FINDING:
-        return f
-    return replace(f, evidence=f.evidence[:MAX_EVIDENCE_PER_FINDING])
+    if len(f.evidence) > MAX_EVIDENCE_PER_FINDING:
+        f = replace(f, evidence=f.evidence[:MAX_EVIDENCE_PER_FINDING])
+    # The scanner counted its matches before a baseline, an inline ignore or a demotion layer
+    # removed some: the count in the description is the evidence that is left.
+    m = _OCCURRENCES_SHOWN.search(f.description)
+    if m is not None:
+        shown = len(f.evidence)
+        tail = f" ({shown} occurrence(s) shown as evidence)." if shown > 1 else ""
+        description = f.description[: m.start()] + tail
+        if description != f.description:
+            f = replace(f, description=description)
+    return f
 
 
 def _sort_findings(findings: list[Finding]) -> list[Finding]:

@@ -26,7 +26,11 @@ risk score / `fail_on_score`).
 A config that cannot be read as written is an error, never an empty config: invalid TOML, an
 unknown key (a typo such as `fail_onn`), a value of the wrong kind or out of range (`fail_on =
 "hgih"`, `fail_on_score = 200`) and an unknown policy action all raise ``ConfigError``, which
-the CLI reports with exit code 1. Read any other way, a typo would turn a CI gate off.
+the CLI reports with exit code 1. Read any other way, a typo would turn a CI gate off. The same
+holds for a rule id in `ignore` or `[policy]` that no rule has (`ST-SHEL-PY`): the entry would
+silently do nothing.
+
+A relative `baseline` path is read relative to the config file, not to the current directory.
 """
 
 from __future__ import annotations
@@ -64,6 +68,39 @@ class Config:
     baseline: str | None = None
     # Per-rule gate actions: rule id -> "block" | "warn" | "ignore".
     policy: dict[str, str] = field(default_factory=dict)
+    # The file this config was read from; None for the empty default config.
+    path: Path | None = None
+
+    def baseline_path(self) -> Path | None:
+        """``baseline`` resolved against the folder of the config file that names it."""
+        if not self.baseline:
+            return None
+        baseline = Path(self.baseline).expanduser()
+        if self.path is not None and not baseline.is_absolute():
+            return Path(self.path).parent / baseline
+        return baseline
+
+    def sets_gate(self) -> bool:
+        """True when the config sets a severity or score gate of its own."""
+        return self.fail_on is not None or self.fail_on_score is not None
+
+    def describe(self) -> str:
+        """One line on what the config changes, for the log: a config committed to the scanned
+        repository can relax the gate, and that must never happen silently."""
+        parts = [
+            f"{len(self.exclude)} exclude(s)",
+            f"{len(self.ignore)} ignored rule(s)",
+            f"{len(self.policy)} policy override(s)",
+        ]
+        if self.fail_on:
+            parts.append(f"fail_on = {self.fail_on}")
+        if self.fail_on_score is not None:
+            parts.append(f"fail_on_score = {self.fail_on_score}")
+        if self.fail_on_unanalyzed:
+            parts.append("fail_on_unanalyzed = true")
+        if self.baseline:
+            parts.append(f"baseline = {self.baseline}")
+        return f"{self.path} ({', '.join(parts)})"
 
     def ignored_rules(self) -> set[str]:
         """Rule ids suppressed entirely: the `ignore` list plus policy `ignore` entries."""
@@ -72,7 +109,8 @@ class Config:
 
 def find_config(start: Path | None = None) -> Path | None:
     """Return the path to ``.skilltotal.toml`` in ``start`` (default: CWD), or None."""
-    candidate = (Path(start) if start else Path.cwd()) / CONFIG_NAME
+    # Relative to the current directory when looked up there, so the report names it that way.
+    candidate = (Path(start) if start else Path()) / CONFIG_NAME
     return candidate if candidate.is_file() else None
 
 
@@ -92,7 +130,7 @@ def load_config(path: Path) -> Config:
     unanalyzed = data.get("fail_on_unanalyzed", False)
     if not isinstance(unanalyzed, bool):
         raise ConfigError(f"{path}: fail_on_unanalyzed must be true or false, not {unanalyzed!r}")
-    return Config(
+    config = Config(
         fail_on=_level_value(data, path),
         fail_on_score=_score_value(data, path),
         fail_on_unanalyzed=unanalyzed,
@@ -100,7 +138,30 @@ def load_config(path: Path) -> Config:
         ignore=_str_list_value(data, "ignore", path),
         baseline=_str_value(data, "baseline", path),
         policy=_policy_value(data, path),
+        path=Path(path),
     )
+    _check_rule_ids(config, path)
+    return config
+
+
+def _check_rule_ids(config: Config, path: Path) -> None:
+    """A rule id no rule has is an error: `ignore = ["ST-SHEL-PY"]` or a `block` on a typo would
+    silently do nothing, and the gate the person meant to set would be off."""
+    import difflib
+
+    from skilltotal.rules import get_rules  # the scanners load only when a config names rules
+
+    if not (config.ignore or config.policy):
+        return
+    known = sorted(r.id for r in get_rules())
+    known_set = set(known)
+    for where, ids in (("ignore", config.ignore), ("[policy]", list(config.policy))):
+        for rule_id in ids:
+            if rule_id in known_set:
+                continue
+            close = difflib.get_close_matches(rule_id.upper(), known, n=1)
+            hint = f"; did you mean {close[0]}?" if close else "; see `skilltotal rules list`"
+            raise ConfigError(f"{path}: {where}: unknown rule id {rule_id!r}{hint}")
 
 
 def _parse(text: str, path: Path) -> dict[str, object]:
