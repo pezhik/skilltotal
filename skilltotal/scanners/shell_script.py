@@ -28,6 +28,38 @@ _SHEBANG_RE = re.compile(r"^#!.*\b(?:bash|zsh|sh|dash|ksh)\b")
 # A shell that the decoded/fetched payload is piped or fed into.
 _TO_SHELL = r"\|\s*(?:sudo\s+)?\b(?:bash|zsh|sh)\b"
 
+# Fetch-and-run or decode-and-run, in a shell command or in the source of a script (shared by
+# the agent-configuration, npm lifecycle-script and shell-call checks): a download
+# piped into a shell (or into an interpreter reading its program from stdin), a download run through
+# `sh -c "$(...)"`, `eval "$(...)"` or a process substitution, PowerShell's download-then-iex in
+# either order, an encoded PowerShell command, and the same in JavaScript or Python.
+# The gaps between the parts are bounded: an unbounded `[^\n]*` after each `curl` of a crafted
+# line rescanned the rest of the line from every one of them (quadratic).
+_FETCH = r"(?:curl|wget)\b"
+_GAP = r"[^\n]{0,1000}?"
+REMOTE_EXEC = re.compile(
+    rf"{_FETCH}{_GAP}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
+    rf"|{_FETCH}[^\n|]{{0,1000}}\|\s*(?:sudo\s+)?(?:python[0-9.]*|node|perl|ruby)(?:\s+-)?\s*"
+    r"(?=$|[;&|)\n\"'])"
+    rf"|base64\s+(?:-d|-D|--decode)\b{_GAP}\|\s*(?:ba|z)?sh\b"
+    rf"|\b(?:ba|z|da|k)?sh\s+-c\s+[\"']?\$\(\s*{_FETCH}"
+    rf"|\beval\s+[\"']?\$\(\s*{_FETCH}"
+    rf"|(?:\bsource|(?<![\w.])\.|\b(?:ba|z|da|k)?sh)\s+<\(\s*{_FETCH}"
+    rf"|\b(?:iex|Invoke-Expression)\b{_GAP}\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|"
+    r"DownloadString)\b"
+    r"|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,1000}\|\s*(?:iex|Invoke-Expression)\b"
+    rf"|\bpowershell(?:\.exe)?\b{_GAP}\s-(?:e|enc|encodedcommand)\s"
+    r"|\beval\s*\(\s*(?:await\s+)?\(?\s*(?:await\s+)?fetch\s*\("
+    r"|\bexec\s*\(\s*(?:urllib\.request\.)?urlopen\s*\(",
+    re.IGNORECASE,
+)
+
+# Decode data, then run it in a shell (also read in npm lifecycle scripts).
+DECODE_EXEC_SH = alternation(
+    rf"base64\s+(?:-d|-D|--decode)\b[^\n]*{_TO_SHELL}",
+    r"\beval\b[^\n]*\bbase64\s+(?:-d|-D|--decode)\b",
+)
+
 R_DECODE_EXEC_SH = "ST-OBF-DECODE-EXEC-SH"
 R_PIPE_EXEC = "ST-SHELL-PIPE-EXEC"
 R_PASSWORD_ARCHIVE = "ST-ARCHIVE-PASSWORD-EXTRACT"  # nosec B105 - a rule id, not a password
@@ -420,10 +452,7 @@ class ShellScriptScanner(Scanner):
             capability=Capability.DYNAMIC_CODE_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             suffixes=SHELL_SUFFIXES,
-            pattern=alternation(
-                rf"base64\s+(?:-d|-D|--decode)\b[^\n]*{_TO_SHELL}",
-                r"\beval\b[^\n]*\bbase64\s+(?:-d|-D|--decode)\b",
-            ),
+            pattern=DECODE_EXEC_SH,
         ),
         RuleSpec(
             id=R_PIPE_EXEC,

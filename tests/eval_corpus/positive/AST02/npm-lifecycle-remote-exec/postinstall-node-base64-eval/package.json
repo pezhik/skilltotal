@@ -1,0 +1,9 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "tiny-date-utils",
+  "version": "1.0.3",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node -e \"eval(Buffer.from('Y29uc29sZS5sb2coJ2ZpeHR1cmUnKQ==','base64').toString())\""
+  }
+}

@@ -920,6 +920,14 @@ _PRINT_COMMAND = re.compile(
     r"console\.(?:log|info|warn|error))\b[^;&|]*$"
 )
 _QUOTED_ARG = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
+# A shell variable assigned a quoted value on its own line: `name="…"`, `export name='…'`,
+# `local name="…"`. The value ends at the next same quote (an escaped quote is rare in a hint, and
+# a value that does not close on the line is not read as one). Only a comment or `;` may follow.
+_SHELL_ASSIGNMENT = re.compile(
+    r"[ \t]*(?:(?:export|local|readonly|declare(?:[ \t]+-[A-Za-z]+)*)[ \t]+)?"
+    r"([A-Za-z_][A-Za-z0-9_]{0,100})=([\"'])"
+)
+_ASSIGNMENT_TAIL = re.compile(r"[ \t]*(?:;[ \t]*)?(?:#.*)?$")
 # JSX attributes whose value is text shown to a person.
 _JSX_UI_ATTRIBUTE = re.compile(
     r"\b(?:placeholder|title|label|aria-label|aria-description|alt|helperText|hint|tooltip|"
@@ -1845,6 +1853,36 @@ class IndexedFile:
             prefix = _QUOTED_ARG.sub(" ", line[: starts[k] - 1])
             printed[k] = bool(_PRINT_COMMAND.search(prefix))
         return printed[k]
+
+    def in_shell_assigned_hint(self, offset: int) -> bool:
+        """True if ``offset`` sits in the quoted value of a shell variable assignment
+        (``uv_hint="curl -LsSf … | sh"``) whose every use in the script is printed by an output
+        command (``echo "Install it with: $uv_hint"``), or that is never used.
+
+        Such a value is text shown to a person. A use anywhere else (``eval "$cmd"``,
+        ``bash -c "$cmd"``, ``$cmd`` as a command) keeps it in scope.
+        """
+        if not self.is_shell_like:
+            return False
+        line_no = self.line_of_offset(offset)
+        line = self._line_text(line_no)
+        col = offset - self._line_starts[line_no - 1]
+        m = _SHELL_ASSIGNMENT.match(line)
+        if m is None or col < m.end():
+            return False
+        close = line.find(m.group(2), m.end())
+        if close == -1 or col >= close or not _ASSIGNMENT_TAIL.match(line, close + 1):
+            return False
+        uses = re.compile(rf"\$(?:{m.group(1)}(?![A-Za-z0-9_])|\{{{m.group(1)}[^A-Za-z0-9_])")
+        return all(self._printed_at(use.start()) for use in uses.finditer(self.text))
+
+    def _printed_at(self, offset: int) -> bool:
+        """True if ``offset`` is an argument of an output command on its line (quoted or not)."""
+        if self.in_printed_command(offset):
+            return True
+        line_no = self.line_of_offset(offset)
+        prefix = self._line_text(line_no)[: offset - self._line_starts[line_no - 1]]
+        return bool(_PRINT_COMMAND.search(_QUOTED_ARG.sub(" ", prefix)))
 
     def _quoted_regions(self, line_no: int) -> tuple[list[int], list[int], dict[int, bool]]:
         """The closed quoted regions of one line, as parallel lists of [start, end) columns.

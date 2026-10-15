@@ -91,6 +91,9 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-INSTALL-NPM-PREPARE": ("AST02",),
     "ST-INSTALL-PY": ("AST02",),
     "ST-SHELL-PIPE-EXEC": ("AST02",),
+    "ST-SHELL-PIPE-EXEC-PY": ("AST02",),
+    "ST-SHELL-PIPE-EXEC-NODE": ("AST02",),
+    "ST-INSTALL-NPM-REMOTE-EXEC": ("AST01", "AST02"),
     "ST-TYPOSQUAT": ("AST02",),
     # AST03 Over-Privileged Skills — excessive scope/autonomy/dangerous host powers.
     "ST-MCP-AUTO-APPROVE": ("AST03",),

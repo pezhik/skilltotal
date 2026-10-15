@@ -30,6 +30,7 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     alternation,
 )
+from skilltotal.scanners.shell_script import REMOTE_EXEC
 
 NODE_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 
@@ -132,13 +133,42 @@ CMDI_RULE = RuleSpec(
 )
 
 
+PIPE_EXEC_RULE = RuleSpec(
+    id="ST-SHELL-PIPE-EXEC-NODE",
+    category=CATEGORY,
+    severity=Severity.HIGH,
+    title="Remote pipe-to-shell execution (Node.js)",
+    description=(
+        "A child_process call (exec / execSync, or spawn of `sh -c`) is given a command that "
+        "downloads code and pipes it into a shell or interpreter, e.g. "
+        "`execSync(\"curl … | bash\")`. The component runs whatever the host serves at that "
+        "moment, which no review of the component can see."
+    ),
+    recommendation=(
+        "Ship the code instead, or download a pinned artifact, verify its checksum, and run that "
+        "copy; never pipe a network response straight into a shell."
+    ),
+    capability=None,  # shell capability already covered by ST-SHELL-NODE
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+    code_context="comments",
+    suffixes=NODE_SUFFIXES,
+)
+
+# The calls whose string arguments a shell receives: exec/execSync take a command line, and
+# spawn/execFile run one when the program is a shell given `-c` (or when `shell: true` is set).
+_PIPE_CALLS = r"(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)"
+# How far into a call its arguments are read.
+_ARGS_REACH = 4000
+
+
 class ShellExecScanner(Scanner):
     name = "shell_exec"
-    rules = [SHELL_RULE, CMDI_RULE]
+    rules = [SHELL_RULE, CMDI_RULE, PIPE_EXEC_RULE]
 
     def scan(self, index: FileIndex) -> ScanResult:
         shell: list[Evidence] = []
         cmdi: list[Evidence] = []
+        pipe: list[Evidence] = []
         seen_shell: set[tuple[str, int, int]] = set()
         seen_cmdi: set[tuple[str, int, int]] = set()
         for f in index.select(suffixes=NODE_SUFFIXES):
@@ -150,12 +180,63 @@ class ShellExecScanner(Scanner):
             )
             _collect(f, (_ANYWHERE, calls), shell, seen_shell)
             _collect(f, (injections,), cmdi, seen_cmdi)
+            if len(pipe) < MAX_EVIDENCE_SCANNED and ("curl" in f.text or "wget" in f.text):
+                pipe_calls = re.compile(rf"(?:{prefixes}){_PIPE_CALLS}\s*\(", re.MULTILINE)
+                for m in pipe_calls.finditer(f.text):
+                    end = _call_end(f.text, m.end())
+                    command = " ".join(_string_literals(f.text, m.end(), end))
+                    if REMOTE_EXEC.search(command):
+                        pipe.append(f.evidence_for_span(m.start(), end))
         findings = []
         if shell:
             findings.append(_finding_from_rule(SHELL_RULE, shell))
         if cmdi:
             findings.append(_finding_from_rule(CMDI_RULE, cmdi))
+        if pipe:
+            findings.append(_finding_from_rule(PIPE_EXEC_RULE, pipe[:MAX_EVIDENCE_SCANNED]))
         return ScanResult(findings=findings)
+
+
+def _call_end(text: str, start: int) -> int:
+    """The offset just past the ``)`` that closes a call whose arguments begin at ``start``
+    (quotes and nested brackets honored), or the end of the reach when it is not found."""
+    depth, quote, i = 0, "", start
+    end = min(len(text), start + _ARGS_REACH)
+    while i < end:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 1
+            elif ch == quote:
+                quote = ""
+        elif ch in "'\"`":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            if depth == 0:
+                return i + 1
+            depth -= 1
+        i += 1
+    return end
+
+
+def _string_literals(text: str, start: int, end: int) -> list[str]:
+    """The string and template literals in ``text[start:end]``, as written (a template's
+    ``${…}`` stays in place), so a command concatenated from pieces reads as one line."""
+    out: list[str] = []
+    i = start
+    while i < end:
+        ch = text[i]
+        if ch in "'\"`":
+            j = i + 1
+            while j < end and text[j] != ch:
+                j += 2 if text[j] == "\\" else 1
+            out.append(text[i + 1:j])
+            i = j + 1
+        else:
+            i += 1
+    return out
 
 
 def _collect(

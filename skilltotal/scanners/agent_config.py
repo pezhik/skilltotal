@@ -70,6 +70,7 @@ from skilltotal.scanners.sensitive_paths import (
     joined_js_paths,
 )
 from skilltotal.scanners.sensitive_paths import _UNKNOWN_SEGMENT as _JS_UNKNOWN_SEGMENT
+from skilltotal.scanners.shell_script import REMOTE_EXEC as _REMOTE_EXEC
 
 # JS/TS (and Python) files where a client-config path may be split across concatenated literals.
 _CONFIG_INJECT_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", ".pyw")
@@ -105,30 +106,6 @@ _HTTP_HOOK_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})
 _FSMONITOR = re.compile(r"^[ \t]*fsmonitor[ \t]*=[ \t]*(.+?)[ \t]*$", re.MULTILINE | re.IGNORECASE)
 _GIT_BOOL_VALUES = frozenset({"true", "false", "yes", "no", "on", "off", "1", "0"})
 
-# Fetch-and-run or decode-and-run, in a shell command or in the source of a script: a download
-# piped into a shell (or into an interpreter reading its program from stdin), a download run through
-# `sh -c "$(...)"`, `eval "$(...)"` or a process substitution, PowerShell's download-then-iex in
-# either order, an encoded PowerShell command, and the same in JavaScript or Python.
-# The gaps between the parts are bounded: an unbounded `[^\n]*` after each `curl` of a crafted
-# line rescanned the rest of the line from every one of them (quadratic).
-_FETCH = r"(?:curl|wget)\b"
-_GAP = r"[^\n]{0,1000}?"
-_REMOTE_EXEC = re.compile(
-    rf"{_FETCH}{_GAP}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
-    rf"|{_FETCH}[^\n|]{{0,1000}}\|\s*(?:sudo\s+)?(?:python[0-9.]*|node|perl|ruby)(?:\s+-)?\s*"
-    r"(?=$|[;&|)\n\"'])"
-    rf"|base64\s+(?:-d|-D|--decode)\b{_GAP}\|\s*(?:ba|z)?sh\b"
-    rf"|\b(?:ba|z|da|k)?sh\s+-c\s+[\"']?\$\(\s*{_FETCH}"
-    rf"|\beval\s+[\"']?\$\(\s*{_FETCH}"
-    rf"|(?:\bsource|(?<![\w.])\.|\b(?:ba|z|da|k)?sh)\s+<\(\s*{_FETCH}"
-    rf"|\b(?:iex|Invoke-Expression)\b{_GAP}\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|"
-    r"DownloadString)\b"
-    r"|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,1000}\|\s*(?:iex|Invoke-Expression)\b"
-    rf"|\bpowershell(?:\.exe)?\b{_GAP}\s-(?:e|enc|encodedcommand)\s"
-    r"|\beval\s*\(\s*(?:await\s+)?\(?\s*(?:await\s+)?fetch\s*\("
-    r"|\bexec\s*\(\s*(?:urllib\.request\.)?urlopen\s*\(",
-    re.IGNORECASE,
-)
 
 _AI_CLIS = r"(?:claude|gemini|codex|kiro(?:-cli)?|opencode|aider|cursor-agent|qwen|amp|q\s+chat)"
 _BYPASS_FLAGS = (

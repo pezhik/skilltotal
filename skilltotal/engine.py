@@ -1254,6 +1254,8 @@ def _split_code_context_evidence(
 _AGENT_TEXT_RULES = frozenset(
     {"ST-PROMPT-INJECTION", "ST-MCP-TOOL-POISONING", "ST-MCP-SAMPLING-INJECTION"}
 )
+# Command rules whose match in a shell variable that is only ever printed is a hint, not a command.
+_SHELL_HINT_RULES = frozenset({"ST-SHELL-PIPE-EXEC"})
 # Policies under which only comments (and, for the second, Python docstrings) are non-code: the
 # rule's real positives are value-strings, so string literals are never demoted for it.
 _COMMENT_ONLY_POLICIES = frozenset({"comments", "comments_and_docstrings"})
@@ -1287,6 +1289,11 @@ def _is_noncode_context(
     # A command inside an `echo` / `Write-Host` argument is printed for a person to run, in every
     # language: an installer that prints `curl … | sh` as a hint does not pipe anything itself.
     if f.in_printed_command(e.match_offset):
+        return True
+    # The same command kept in a shell variable that the script only ever prints
+    # (`uv_hint="curl … | sh"` then `echo "$uv_hint"`) is a hint too. A variable that is run
+    # (`eval "$cmd"`, `bash -c "$cmd"`) keeps the match.
+    if rule_id in _SHELL_HINT_RULES and f.in_shell_assigned_hint(e.match_offset):
         return True
     if f.suffix in (".py", ".pyw"):
         if f.in_comment(e.match_offset):

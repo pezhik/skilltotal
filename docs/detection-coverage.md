@@ -34,6 +34,8 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Password-protected payload download** | `ST-ARCHIVE-PASSWORD-EXTRACT` (malicious) | `password-archive` |
 | **Network/debug exposure** | `ST-EXPOSE-BIND`, `ST-EXPOSE-DEBUG` | — |
 | **Shell decode-and-execute / remote pipe-to-shell** (`… base64 -d \| bash`, `curl \| bash`) | `ST-OBF-DECODE-EXEC-SH` (malicious), `ST-SHELL-PIPE-EXEC` | `sh-base64-exec` |
+| **npm lifecycle script that fetches or decodes code and runs it** (`"preinstall": "curl … \| bash"`, `node -e "eval(Buffer.from(…,'base64')…)"`) | `ST-INSTALL-NPM-REMOTE-EXEC` (malicious) | `npm-lifecycle-remote-exec` |
+| **Remote pipe-to-shell handed to a shell call** (`os.system("curl … \| bash")`, `execSync("curl … \| sh")`) | `ST-SHELL-PIPE-EXEC-PY`, `ST-SHELL-PIPE-EXEC-NODE` | — |
 | **Analysis evasion** (password-protected archive bundled in a component) | `ST-ENCRYPTED-ARCHIVE` | — |
 | **Instruction-driven exfiltration** (lethal trifecta: injection + file read + egress) | `ST-FLOW-TRIFECTA` | — |
 | **Stacked malicious indicators** (deception + payload in one component) | `ST-CONVERGENCE` | — |

@@ -28,6 +28,7 @@ from skilltotal.scanners.sensitive_paths import (  # reuse the credential-path s
     _STRONG_PATHS,
     is_metadata_without_credentials,
 )
+from skilltotal.scanners.shell_script import REMOTE_EXEC
 
 PY_SUFFIXES = (".py", ".pyw")
 
@@ -140,6 +141,10 @@ R_DYN = "ST-DYN-PY"
 R_DECODE_EXEC_PY = "ST-OBF-DECODE-EXEC-PY"
 R_SENS_PY = "ST-SENS-PATH-PY"
 R_PICKLE_REDUCE = "ST-PICKLE-REDUCE"
+# A shell call whose command downloads code and runs it (`os.system("curl … | bash")`).
+R_PIPE_EXEC_PY = "ST-SHELL-PIPE-EXEC-PY"
+# The shells an argv list can hand a command string to (`["bash", "-c", "…"]`).
+_SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 
 # Calls that *use* a path/command/URL — a sensitive path passed here is a real read/exec/send,
 # not a mere mention. Excludes regex builders / metadata constructors, so a detector matching its
@@ -240,6 +245,26 @@ class PythonAstScanner(Scanner):
                 "Pass arguments as a list without shell=True (e.g. "
                 "subprocess.run(['git', 'checkout', branch])); never build a shell string "
                 "from external input. If a shell is unavoidable, quote with shlex.quote."
+            ),
+            capability=None,  # the shell capability is already covered by ST-SHELL-PY
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            suffixes=PY_SUFFIXES,
+        ),
+        RuleSpec(
+            id=R_PIPE_EXEC_PY,
+            category="shell_execution",
+            severity=Severity.HIGH,
+            title="Remote pipe-to-shell execution (Python)",
+            description=(
+                "A Python shell call (os.system / os.popen, subprocess with shell=True, or an "
+                "argv list that runs `sh -c`) is given a command that downloads code and pipes it "
+                "into a shell or interpreter, e.g. `os.system(\"curl … | bash\")`. The component "
+                "runs whatever the host serves at that moment, which no review of the component "
+                "can see."
+            ),
+            recommendation=(
+                "Ship the code instead, or download a pinned artifact, verify its checksum, and "
+                "run that copy; never pipe a network response straight into a shell."
             ),
             capability=None,  # the shell capability is already covered by ST-SHELL-PY
             threat_class=ThreatClass.RISKY_CONSTRUCT,
@@ -917,6 +942,9 @@ class _CallVisitor(ast.NodeVisitor):
                 self.module_spawns.append(self._evidence(node))
             if _is_command_injection(name, node, frozenset(self._loop_constants)):
                 self._add(R_CMDI, node)
+            command = _shell_command_text(name, node)
+            if command is not None and REMOTE_EXEC.search(command):
+                self._add(R_PIPE_EXEC_PY, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:
             # Skip if this call is the payload of an enclosing exec/eval/compile — that's the
             # malicious decode-and-execute, already raised as ST-OBF-DECODE-EXEC-PY.
@@ -1667,6 +1695,43 @@ def _is_command_injection(
     if not uses_shell:
         return False
     return _is_dynamic_command(_command_arg(node), constants)
+
+
+def _shell_command_text(name: str, node: ast.Call) -> str | None:
+    """The command a shell receives from this call, as far as it is written in the source: the
+    command string of a call that runs through a shell, or the string after ``-c`` in an argv list
+    that starts a shell (``["bash", "-c", "…"]``). A part computed at run time (an f-string field,
+    a concatenated variable) reads as ``X``, so ``f"curl {url} | bash"`` is still a download piped
+    into a shell. None when the call hands no command to a shell."""
+    arg = _command_arg(node)
+    if arg is None:
+        return None
+    if name in ALWAYS_SHELL_CALLS or (name.startswith("subprocess.") and _shell_true(node)):
+        return _literal_text(arg)
+    if isinstance(arg, (ast.List, ast.Tuple)) and len(arg.elts) >= 3:
+        program = _literal_text(arg.elts[0]) or ""
+        flag = _literal_text(arg.elts[1]) or ""
+        if program.rsplit("/", 1)[-1] in _SHELL_PROGRAMS and flag.startswith("-") and "c" in flag:
+            return _literal_text(arg.elts[2])
+    return None
+
+
+def _literal_text(expr: ast.expr) -> str | None:
+    """The text of a string expression with its run-time parts as ``X``: a literal, an f-string,
+    or a ``+`` concatenation that holds at least one literal. None for anything else."""
+    if isinstance(expr, ast.Constant):
+        return expr.value if isinstance(expr.value, str) else None
+    if isinstance(expr, ast.JoinedStr):
+        return "".join(
+            v.value if isinstance(v, ast.Constant) and isinstance(v.value, str) else "X"
+            for v in expr.values
+        )
+    if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
+        left, right = _literal_text(expr.left), _literal_text(expr.right)
+        if left is None and right is None:
+            return None
+        return (left if left is not None else "X") + (right if right is not None else "X")
+    return None
 
 
 def _yaml_load_is_unsafe(node: ast.Call) -> bool:
