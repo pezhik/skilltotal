@@ -181,13 +181,14 @@ def render_diff_text(diff: DiffReport) -> str:
     lines.append(f"Old : {_diff_side(diff.old)}")
     lines.append(f"New : {_diff_side(diff.new)}")
     lines.append("")
-    lines.append(diff.summary)
+    lines.append(one_line(str(diff.summary)))
     lines.append("")
 
     if diff.ruleset_mismatch:
         lines.append(
             f"NOTE: reports were produced by different rulesets "
-            f"(old {diff.old.get('ruleset_version')}, new {diff.new.get('ruleset_version')}); "
+            f"(old {one_line(str(diff.old.get('ruleset_version')))}, "
+            f"new {one_line(str(diff.new.get('ruleset_version')))}); "
             "some finding churn may come from detection changes, not component changes."
         )
         lines.append("")
@@ -196,41 +197,38 @@ def render_diff_text(diff: DiffReport) -> str:
     if not diff.new_findings:
         lines.append(f"{_INDENT}(none)")
     for f in diff.new_findings:
-        lines.append(f"{_INDENT}[{f['severity'].upper()}{_diff_label(f)}] {f['id']}  {f['title']}")
+        lines.append(f"{_INDENT}{_diff_heading(f)}")
         for e in f.get("evidence", []):
-            lines.append(f"{_INDENT*2}+ {one_line(e['file'])}:{e['line_start']}-{e['line_end']}")
-            for snippet_line in e.get("snippet", "").splitlines():
-                lines.append(f"{_INDENT*3}{snippet_line}")
+            lines.append(f"{_INDENT*2}+ {_diff_where(e)}")
+            for snippet_line in str(e.get("snippet", "")).splitlines():
+                lines.append(f"{_INDENT*3}{one_line(snippet_line)}")
     lines.append("")
 
     if diff.resolved_findings:
         lines.append(f"Resolved findings ({len(diff.resolved_findings)}):")
         for f in diff.resolved_findings:
-            lines.append(
-                f"{_INDENT}[{f['severity'].upper()}{_diff_label(f)}] {f['id']}  {f['title']}")
+            lines.append(f"{_INDENT}{_diff_heading(f)}")
         lines.append("")
 
     if diff.changed_findings:
         lines.append(f"Changed findings ({len(diff.changed_findings)}):")
         for c in diff.changed_findings:
             lines.append(
-                f"{_INDENT}[{c['severity'].upper()}{_diff_label(c)}] {c['id']}  {c['title']}  "
+                f"{_INDENT}{_diff_heading(c)}  "
                 f"(+{len(c['added_evidence'])} / -{len(c['removed_evidence'])} evidence)"
             )
             for e in c["added_evidence"]:
-                lines.append(
-                    f"{_INDENT*2}+ {one_line(e['file'])}:{e['line_start']}-{e['line_end']}")
+                lines.append(f"{_INDENT*2}+ {_diff_where(e)}")
             for e in c["removed_evidence"]:
-                lines.append(
-                    f"{_INDENT*2}- {one_line(e['file'])}:{e['line_start']}-{e['line_end']}")
+                lines.append(f"{_INDENT*2}- {_diff_where(e)}")
         lines.append("")
 
     if diff.capabilities_added or diff.capabilities_removed:
         lines.append("Capability changes:")
         for cap in diff.capabilities_added:
-            lines.append(f"{_INDENT}+ {cap}")
+            lines.append(f"{_INDENT}+ {one_line(str(cap))}")
         for cap in diff.capabilities_removed:
-            lines.append(f"{_INDENT}- {cap}")
+            lines.append(f"{_INDENT}- {one_line(str(cap))}")
         lines.append("")
 
     return _terminal_safe("\n".join(lines).rstrip() + "\n")
@@ -242,12 +240,28 @@ def _diff_label(finding: dict) -> str:
     return _CLASS_LABEL.get(str(finding.get("threat_class", "")), "")
 
 
+# Every field of a diff comes from a report, and a report can be a saved file someone else
+# wrote, or describe a package whose manifest put a newline in its name: each is printed as one
+# line, or a forged line (a GitHub Actions `::error` command) lands at column zero of a CI log
+# (security review, 2026-10-15).
+def _diff_heading(f: dict) -> str:
+    return (f"[{one_line(str(f.get('severity', ''))).upper()}{_diff_label(f)}] "
+            f"{one_line(str(f.get('id', '')))}  {one_line(str(f.get('title', '')))}")
+
+
+def _diff_where(e: dict) -> str:
+    return (f"{one_line(str(e.get('file', '')))}:{one_line(str(e.get('line_start', '')))}"
+            f"-{one_line(str(e.get('line_end', '')))}")
+
+
 def _diff_side(side: dict) -> str:
     c = side.get("component", {})
-    version = f" {c['version']}" if c.get("version") else ""
+    c = c if isinstance(c, dict) else {}
+    version = f" {one_line(str(c['version']))}" if c.get("version") else ""
     return (
-        f"{c.get('name', '?')}{version} ({c.get('type', '?')})  "
-        f"risk {side.get('risk_score', 0)}/100 {str(side.get('risk_level', '')).upper()}"
+        f"{one_line(str(c.get('name', '?')))}{version} ({one_line(str(c.get('type', '?')))})  "
+        f"risk {one_line(str(side.get('risk_score', 0)))}/100 "
+        f"{one_line(str(side.get('risk_level', ''))).upper()}"
     )
 
 

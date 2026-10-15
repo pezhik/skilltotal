@@ -26,7 +26,12 @@ process.stderr.write(versionWarning(version, runner));
 
 // stdio is inherited untouched, so `npx -y skilltotal mcp` speaks MCP over this process's
 // stdin/stdout and the exit code (e.g. --fail-on-high in CI) passes through.
-const program = resolveCommand(runner.cmd) || runner.cmd;
+// Never the bare name: the shell would look it up itself, current directory included.
+const program = resolveCommand(runner.cmd);
+if (!program) {
+  process.stderr.write(helpText(version));
+  process.exit(127);
+}
 const child = spawn(program, [...runner.args, ...process.argv.slice(2)], {
   stdio: "inherit",
   windowsHide: true,

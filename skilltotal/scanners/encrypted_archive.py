@@ -77,10 +77,32 @@ class EncryptedArchiveScanner(Scanner):
         return ScanResult()
 
 
+# Reading a ZIP's directory loads one entry object per member, so a crafted archive with millions
+# of entries in a small file could take gigabytes (security review, 2026-10-15). Past these, the
+# archive is not opened; any other failure to read one counts as "not a readable ZIP".
+_MAX_ZIP_BYTES = 64 * 1024 * 1024
+_MAX_ZIP_DIRECTORY_BYTES = 8 * 1024 * 1024
+
+
 def _encrypted_entry_count(path: Path) -> int:
     """Number of encrypted entries in a ZIP (GP-flag bit 0), or 0 if not a/readable ZIP."""
     try:
+        if path.stat().st_size > _MAX_ZIP_BYTES or _directory_size(path) > _MAX_ZIP_DIRECTORY_BYTES:
+            return 0
         with zipfile.ZipFile(path) as zf:
             return sum(1 for info in zf.infolist() if info.flag_bits & 0x1)
-    except (zipfile.BadZipFile, OSError, RuntimeError):
+    except Exception:  # noqa: BLE001 - a crafted archive must not stop the scan
         return 0
+
+
+def _directory_size(path: Path) -> int:
+    """The size of the central directory the ZIP's end record declares (0 when there is none)."""
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell()
+        fh.seek(max(0, size - 65_557))  # the end record and the longest comment it may carry
+        tail = fh.read()
+    at = tail.rfind(b"PK\x05\x06")
+    if at < 0 or len(tail) < at + 22:
+        return 0
+    return int.from_bytes(tail[at + 12:at + 16], "little")

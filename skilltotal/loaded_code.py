@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from skilltotal import bounded_json
 from skilltotal.file_index import (
@@ -50,12 +50,31 @@ _PY = frozenset({".py", ".pyw"})
 MAX_LOADED_FILES = 300
 
 
+def _inside_by_name(base: Path, start: Path, spec: str) -> bool:
+    """True when ``spec`` from ``start`` names a path inside ``base`` by its text alone.
+
+    Checked before anything touches the file system: on Windows resolving `//host/share/x.js` (or
+    the same with backslashes, a drive, a device path) opens a network connection to that host,
+    so a command in a scanned package.json could make the scanner send the user's NTLM
+    credentials to a host of the package author's choosing (security review, 2026-10-15).
+    """
+    if not spec or "\x00" in spec:
+        return False
+    if spec.startswith(("/", "\\")) or PureWindowsPath(spec).anchor or ":" in spec:
+        return False
+    joined = posixpath.normpath(posixpath.join(start.as_posix(), spec.replace("\\", "/")))
+    root = posixpath.normpath(base.as_posix())
+    return joined == root or joined.startswith(root.rstrip("/") + "/")
+
+
 def module_file(
     base: Path, start: Path, spec: str, suffixes: tuple[str, ...] = MODULE_SUFFIXES
 ) -> Path | None:
     """The file ``spec`` names from ``start``, looked up as Node does (the path itself, then with
     each of ``suffixes``, then a folder's ``package.json`` main or ``index``), and only when it
     lies inside the component ``base``."""
+    if not _inside_by_name(base, start, spec):
+        return None
     try:
         path = (start / spec).resolve()
         # Outside the component (`../x`, or a link out of it) nothing is read, not even the
@@ -74,7 +93,7 @@ def module_file(
                     if is_regular_file(manifest) else None)
         except (OSError, ValueError, AttributeError):
             main = None
-        if isinstance(main, str) and main:
+        if isinstance(main, str) and main and _inside_by_name(base, path, main):
             entry = path / main
             candidates += [entry, *(entry.with_name(entry.name + s) for s in suffixes)]
             candidates += [entry / f"index{s}" for s in suffixes]

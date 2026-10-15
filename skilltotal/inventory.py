@@ -151,6 +151,15 @@ def _skill_dirs(home: Path, project: Path | None,
     return dirs
 
 
+def _links_out_of(path: Path, root: Path) -> bool:
+    """True when ``path`` resolves (through links or junctions) outside ``root``."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return True
+    return False
+
+
 def _quote(word: str) -> str:
     """``word`` as one bash word (POSIX single quotes)."""
     return "'" + word.replace("'", "'\\''") + "'"
@@ -529,6 +538,16 @@ def discover(
         if not sdir.is_dir():
             continue
         for child in sorted(sdir.iterdir()):
+            if child.is_dir() and project is not None and sdir.is_relative_to(project) \
+                    and _links_out_of(child, project):
+                # A project's skills folder is the repository's to fill: a link in it to a folder
+                # outside the project would have the inventory read that folder (security review,
+                # 2026-10-15). Listed, not scanned.
+                found.append(DiscoveredComponent(
+                    host=host, name=child.name, kind="skill", source=None, scannable=False,
+                    note="links to a folder outside the project; not scanned", config=str(sdir),
+                ))
+                continue
             if child.is_dir():
                 found.append(
                     DiscoveredComponent(
