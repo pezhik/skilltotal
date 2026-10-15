@@ -114,7 +114,7 @@ cat > /dev/null
 SAMPLE = [
     "git status", "ls -la", "cat README.md", "grep -rn todo src | head -5", "npm i x",
     "NPM install x", "n''px x", "pytest -q", "$X i x", "git clone https://example.invalid/x",
-    "echo 'a \"quoted\" word'", 'echo "it is \\"fine\\""', "dir C:\\Users", "ls\nnpm i x",
+    "echo 'a \"quoted\" word'", 'echo "it is \\"fine\\""', "dir C:\\Temp", "ls\nnpm i x",
     "ｎｐｍ i x", "uv add x", "cd web && make test",
 ]
 
