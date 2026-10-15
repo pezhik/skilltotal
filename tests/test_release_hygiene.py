@@ -56,6 +56,18 @@ def test_documented_action_pins_match_the_current_version():
     )
 
 
+def test_documented_install_pins_match_the_current_version():
+    """The README's CI recipes install `skilltotal==X`; X must be the version being released.
+
+    Those lines are copied into GitLab and Jenkins pipelines as they stand, like the action pins.
+    """
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    pins = re.findall(r"skilltotal==(\d+\.\d+\.\d+)", text)
+    assert pins, "README's CI recipes are expected to pin skilltotal==<version>"
+    stale = sorted({v for v in pins if v != skilltotal.__version__})
+    assert not stale, f"README install pins must be {skilltotal.__version__}, found {stale}"
+
+
 def test_efficacy_report_is_regenerated_for_this_release():
     """README says the detection-efficacy report is regenerated every release; hold it to that.
 
