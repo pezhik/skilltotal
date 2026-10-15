@@ -340,13 +340,27 @@ def _writable(root: str, entry: str, remove: Callable[[str], object]) -> None:
     for the next round."""
     try:
         folder = os.path.dirname(entry)
-        if os.path.commonpath([root, folder]) == root and not os.path.islink(folder):
-            os.chmod(folder, stat.S_IRWXU)
-        if not os.path.islink(entry):
-            os.chmod(entry, stat.S_IRWXU)
+        if os.path.commonpath([root, folder]) == root:
+            _chmod_own(folder)
+        _chmod_own(entry)
         remove(entry)
     except (OSError, ValueError):
         pass
+
+
+def _chmod_own(path: str) -> None:
+    """Make ``path`` writable when it belongs to the tree alone: never a link, and never a file
+    with another hard link (a local `git clone` hard-links its objects to the source repository,
+    whose permissions a chmod here would change too)."""
+    st = os.lstat(path)
+    if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
+        return
+    if not stat.S_ISDIR(st.st_mode) and st.st_nlink != 1:
+        return
+    if os.chmod in os.supports_follow_symlinks:
+        os.chmod(path, stat.S_IRWXU, follow_symlinks=False)
+    else:
+        os.chmod(path, stat.S_IRWXU)
 
 
 def _read_json(path: Path) -> Any:

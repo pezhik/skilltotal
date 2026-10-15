@@ -294,22 +294,73 @@ def _dist(kind, filename):
         # pip installs the pure wheel on every platform; nothing in it runs at install time.
         ([_dist("sdist", "x-1.0.tar.gz"), _dist("bdist_wheel", "x-1.0-py3-none-any.whl")],
          "x-1.0-py3-none-any.whl"),
-        # Only platform wheels: some machines build from the sdist and run its build script.
-        ([_dist("bdist_wheel", "x-1.0-cp312-cp312-manylinux_2_17_x86_64.whl"),
-          _dist("sdist", "x-1.0.tar.gz")], "x-1.0.tar.gz"),
+        # A wheel, not the sdist, whenever there is one: pip installs a wheel where one matches
+        # (a wheel that fits no host here is the first one; see the host test below).
+        ([_dist("bdist_wheel", "x-1.0-cp27-cp27m-solaris_sparc.whl"),
+          _dist("sdist", "x-1.0.tar.gz")], "x-1.0-cp27-cp27m-solaris_sparc.whl"),
         ([_dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl")],
          "x-1.0-cp312-cp312-win_amd64.whl"),
-        # A pure wheel beside platform wheels is not what pip installs where a platform wheel
-        # matches, so a clean one must not stand in for the release: the sdist is read instead.
-        ([_dist("bdist_wheel", "x-1.0-py3-none-any.whl"),
-          _dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl"),
-          _dist("sdist", "x-1.0.tar.gz")], "x-1.0.tar.gz"),
+        # The pure wheel beside platform wheels: the report notes the files not read.
+        ([_dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl"),
+          _dist("bdist_wheel", "x-1.0-py3-none-any.whl"),
+          _dist("sdist", "x-1.0.tar.gz")], "x-1.0-py3-none-any.whl"),
+        # No wheel at all: the sdist.
+        ([_dist("sdist", "x-1.0.tar.gz")], "x-1.0.tar.gz"),
         ([], None),
     ],
 )
 def test_pypi_scans_the_file_pip_installs(files, expected):
     chosen = collector._pick_distribution(files)
     assert (chosen or {}).get("filename") == expected
+
+
+@pytest.mark.parametrize(
+    ("host", "machine", "expected"),
+    [
+        ("win32", "AMD64", "x-1.0-{cp}-{cp}-win_amd64.whl"),
+        ("linux", "x86_64", "x-1.0-{cp}-{cp}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"),
+        ("linux", "aarch64", "x-1.0-cp38-abi3-musllinux_1_2_aarch64.whl"),
+        ("darwin", "arm64", "x-1.0-{cp}-{cp}-macosx_11_0_universal2.whl"),
+        # Nothing fits a host of another kind: the first wheel.
+        ("sunos5", "sparc", "x-1.0-cp27-cp27m-win32.whl"),
+    ],
+)
+def test_pypi_scans_the_platform_wheel_of_this_host(monkeypatch, host, machine, expected):
+    import platform
+    import sys
+
+    cp = f"cp{sys.version_info[0]}{sys.version_info[1]}"
+    names = ["x-1.0-cp27-cp27m-win32.whl", "x-1.0-{cp}-{cp}-win_amd64.whl",
+             "x-1.0-{cp}-{cp}-macosx_11_0_universal2.whl",
+             "x-1.0-cp38-abi3-musllinux_1_2_aarch64.whl",
+             "x-1.0-{cp}-{cp}-manylinux_2_17_x86_64.manylinux2014_x86_64.whl"]
+    files = [_dist("sdist", "x-1.0.tar.gz")] + [
+        _dist("bdist_wheel", n.format(cp=cp)) for n in names]
+    monkeypatch.setattr(sys, "platform", host)
+    monkeypatch.setattr(platform, "machine", lambda: machine)
+    assert collector._pick_distribution(files)["filename"] == expected.format(cp=cp)
+
+
+def test_the_report_names_the_distribution_scanned_and_the_ones_not_read(monkeypatch):
+    from skilltotal.engine import analyze
+
+    meta = json.dumps({
+        "info": {"name": "x", "version": "1.0"},
+        "urls": [_dist("sdist", "x-1.0.tar.gz"), _dist("bdist_wheel", "x-1.0-py3-none-any.whl"),
+                 _dist("bdist_wheel", "x-1.0-cp312-cp312-win_amd64.whl")],
+    }).encode()
+    wheel = _zip({"x/__init__.py": "x = 1\n",
+                  "x-1.0.dist-info/METADATA": "Name: x\nVersion: 1.0\n"})
+    monkeypatch.setattr(collector, "_http_get",
+                        lambda url: wheel if url.endswith(".whl") else meta)
+    notes = [n for n in analyze("pypi:x").needs_review
+             if n.title == "One distribution of the release scanned"]
+    assert len(notes) == 1
+    assert notes[0].reason.startswith(
+        "Scanned x-1.0-py3-none-any.whl; 2 other distributions of this release were not read")
+    # One file in the release: nothing to say.
+    sdist = _dist("sdist", "x-1.0.tar.gz")
+    assert collector._distribution_note([sdist], sdist) is None
 
 
 def test_collect_pypi_wheel_is_named_by_the_registry(monkeypatch):

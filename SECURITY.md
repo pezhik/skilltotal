@@ -48,11 +48,14 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
   stops the scan, password-protected archives are refused, and stored permissions are not applied.
   In a scanned folder, symbolic links and junctions are not followed. Temporary clones and
   extractions are removed when the scan ends, also on Ctrl-C or SIGTERM.
-- **Output.** `--output` and `--write-baseline` refuse to write through a symbolic link or
-  junction and replace the file atomically. The text report prints control characters from the
+- **Output.** `--output` and `--write-baseline` refuse to write when the target, or any folder
+  between the working directory and it, is a symbolic link or junction, and replace the file
+  atomically; the GitHub Action refuses a `sarif-file` under such a folder of the workspace before
+  it creates or removes anything there. The text report prints control characters from the
   scanned files as escapes (`\x1b`; in file names, `<U+XXXX>`, which also covers newlines), so
   they cannot drive your terminal or forge report lines, and the GitHub Action stops workflow
-  commands while it prints them.
+  commands from its first line until its own annotations, so neither the scanned text nor an
+  input (a branch name, an issue title) can raise one.
 - **Its own tools.** `git` is resolved from absolute `PATH` entries only, never from the current
   directory. Run the CLI as the `skilltotal` console script or `python -P -m skilltotal`: plain
   `python -m` imports from the current directory first, so a planted `json.py` would run.
@@ -60,7 +63,9 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
   is usually the repository being scanned, so a pull request can loosen the gate through it, its
   baseline file or inline `skilltotal:ignore` markers. Protect those files with CODEOWNERS and
   branch protection, and pass `--no-config` (Action: `config: none`) when you scan code you don't
-  control from its own root. An applied config is always named in the output. Inline markers are
+  control from its own root. An applied config is always named in the output (in the Action, also
+  in the job summary and the pull request comment, with a warning when a pull request changes it
+  and the base branch is fetched). Inline markers are
   honored only when scanning a local directory, never in a fetched package or repository.
 
 A finding is evidence of what the code can do, not proof of intent, and a clean report is not

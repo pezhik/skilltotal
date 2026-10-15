@@ -434,9 +434,12 @@ How it behaves:
   `fail-on high (action default)`.
 - **Errors are not verdicts.** A usage, config or fetch error fails the job as "SkillTotal could
   not run the scan (exit 1): ...", not as a tripped gate.
-- **Job summary.** Each run writes one: the verdict, the risk score and the gate result, the gate
-  lines that tripped, a table of risk findings (severity, rule, file:line and title; up to 20,
-  then a count), the capabilities, and how many findings a baseline or inline marker suppressed.
+- **Job summary.** Each run writes one: the applied `.skilltotal.toml` and what it sets, the
+  verdict, the risk score and the gate result, the gate lines that tripped, a table of risk findings
+  (severity, rule, file:line and title; up to 20, then a count), the capabilities, and how many
+  findings a baseline or inline marker suppressed. The pull request comment says the same in
+  short. A pull request that changes the applied config gets a warning when the base branch is
+  fetched (`fetch-depth: 0`).
 - **The log lists the findings.** It prints a count of risk findings and, separately, capability
   findings (not scored, never gated), then every location of each risk finding: up to 10 per rule,
   then "and N more" (the SARIF and JSON reports have them all). When Code Scanning is off, this is

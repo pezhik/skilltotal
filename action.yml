@@ -32,7 +32,7 @@ inputs:
     required: false
     default: ""
   config:
-    description: "Path to a .skilltotal.toml. Empty (the default) reads .skilltotal.toml from the working directory when there is one; 'none' ignores any config. An applied config is named in the log, since a pull request can change it."
+    description: "Path to a .skilltotal.toml. Empty (the default) reads .skilltotal.toml from the working directory when there is one; 'none' ignores any config. An applied config is named in the log, the job summary and the pull request comment, since a pull request can change it; a pull request that changes it gets a warning when the base branch is fetched."
     required: false
     default: ""
   upload-sarif:
@@ -104,6 +104,39 @@ runs:
         INPUT_SARIF_CATEGORY: ${{ inputs.sarif-category }}
       run: |
         set -o pipefail
+        # Workflow commands are off for the whole step until the findings are printed. The log
+        # carries text from the scanned files (snippets, file names) and from the inputs, which a
+        # workflow can fill with untrusted text (a branch name, an issue title): the runner reads
+        # a line that starts with `::` as a workflow command, so a newline in either could raise
+        # an annotation, mask a value or forge "gate passed". The token is random, so no printed
+        # text can turn them back on. The step's own annotations are collected in a file and
+        # printed once commands are back on, each one line with its data escaped.
+        STOP_TOKEN="$(python -I -c 'import secrets; print(secrets.token_hex(16))')"
+        echo "::stop-commands::$STOP_TOKEN"
+        REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"
+        SCAN_LOG="${RUNNER_TEMP:-/tmp}/skilltotal-scan.log"
+        SARIF_LOG="${RUNNER_TEMP:-/tmp}/skilltotal-sarif.log"
+        COMMENT_MD="${RUNNER_TEMP:-/tmp}/skilltotal-comment.md"
+        ANNOTATIONS="${RUNNER_TEMP:-/tmp}/skilltotal-annotations.txt"
+        # RUNNER_TEMP is shared by every step of the job: a second scan in the same job must not
+        # read the first one's report if it fails before writing its own.
+        rm -f -- "$REPORT_JSON" "$SCAN_LOG" "$SARIF_LOG" "$COMMENT_MD" "$ANNOTATIONS"
+        # Text for the data part of a workflow command: one line, with % CR LF escaped.
+        command_data() {
+          local text="$1"
+          text="${text//%/%25}"
+          text="${text//$'\r'/%0D}"
+          printf '%s' "${text//$'\n'/%0A}"
+        }
+        # An input that stops the step before the scan: its error, once commands are back on.
+        stop_early() {
+          echo "::error::$1" >> "$ANNOTATIONS"
+          echo "scan-error=the $2 input is not valid (see the error above)" >> "$GITHUB_OUTPUT"
+          echo "gate-exit=1" >> "$GITHUB_OUTPUT"
+          echo "::$STOP_TOKEN::"
+          cat "$ANNOTATIONS"
+          exit 0
+        }
         # With no version pinned, run the engine that ships with this action's ref: it has no
         # runtime dependencies, so a tag or SHA pin of the action pins the scanner code too,
         # and nothing is downloaded from PyPI. `-P` keeps the working directory -- the repository
@@ -113,7 +146,7 @@ runs:
           ST=(skilltotal)
           # This action passes the inputs to the engine as flags; an engine older than the action
           # can reject a flag (a usage error, exit 1) or not know it. Say so before the scan.
-          python -I - "$INPUT_VERSION" "$GITHUB_ACTION_PATH/skilltotal/__init__.py" <<'PY' || true
+          python -I - "$INPUT_VERSION" "$GITHUB_ACTION_PATH/skilltotal/__init__.py" >> "$ANNOTATIONS" <<'PY' || true
         import re, sys
         def release(text):
             m = re.match(r'\s*v?(\d+)\.(\d+)\.(\d+)', text)
@@ -157,14 +190,6 @@ runs:
         # repository being scanned, and an `os.py` planted there must not be imported.
         SARIF_EXCLUDE="$(python -I -c 'import os, sys; rel = os.path.relpath(os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])).replace(os.sep, "/"); print("".join("[" + c + "]" if c in "*?[" else c for c in rel))' "$INPUT_SARIF_FILE" "$INPUT_SOURCE")"
         BASE+=(--exclude "$SARIF_EXCLUDE")
-        REPORT_JSON="${RUNNER_TEMP:-/tmp}/skilltotal.json"
-        SCAN_LOG="${RUNNER_TEMP:-/tmp}/skilltotal-scan.log"
-        SARIF_LOG="${RUNNER_TEMP:-/tmp}/skilltotal-sarif.log"
-        COMMENT_MD="${RUNNER_TEMP:-/tmp}/skilltotal-comment.md"
-        ANNOTATIONS="${RUNNER_TEMP:-/tmp}/skilltotal-annotations.txt"
-        # RUNNER_TEMP is shared by every step of the job: a second scan in the same job must not
-        # read the first one's report if it fails before writing its own.
-        rm -f -- "$REPORT_JSON" "$SCAN_LOG" "$SARIF_LOG" "$COMMENT_MD" "$ANNOTATIONS"
         echo "report-json=$REPORT_JSON" >> "$GITHUB_OUTPUT"
         echo "comment-file=$COMMENT_MD" >> "$GITHUB_OUTPUT"
         # The first error line a run printed, as one line safe to put in a workflow command.
@@ -213,28 +238,15 @@ runs:
         case "$FAIL_ON" in
           "") GATE+=(--fail-on-default high) ;;
           none|low|medium|high|critical) GATE+=(--fail-on "$FAIL_ON") ;;
-          *) echo "::error::fail-on must be low, medium, high, critical or none (or empty for the config's gate, else high) (got '$INPUT_FAIL_ON')"
-             echo "scan-error=the fail-on input is not valid (see the error above)" >> "$GITHUB_OUTPUT"
-             echo "gate-exit=1" >> "$GITHUB_OUTPUT"
-             exit 0 ;;
+          *) stop_early "fail-on must be low, medium, high, critical or none (or empty for the config's gate, else high) (got '$(command_data "$INPUT_FAIL_ON")')" fail-on ;;
         esac
         if [ -n "$INPUT_FAIL_ON_SCORE" ]; then GATE+=(--fail-on-score "$INPUT_FAIL_ON_SCORE"); fi
         FAIL_UNANALYZED="$(printf '%s' "$INPUT_FAIL_ON_UNANALYZED" | tr '[:upper:]' '[:lower:]')"
         case "$FAIL_UNANALYZED" in
           false) ;;
           true) GATE+=(--fail-on-unanalyzed) ;;
-          *) echo "::error::fail-on-unanalyzed must be true or false (got '$INPUT_FAIL_ON_UNANALYZED')"
-             echo "scan-error=the fail-on-unanalyzed input is not valid (see the error above)" >> "$GITHUB_OUTPUT"
-             echo "gate-exit=1" >> "$GITHUB_OUTPUT"
-             exit 0 ;;
+          *) stop_early "fail-on-unanalyzed must be true or false (got '$(command_data "$INPUT_FAIL_ON_UNANALYZED")')" fail-on-unanalyzed ;;
         esac
-
-        # From here on the log carries text from the scanned files (snippets, file names). The
-        # runner reads a line that starts with `::` as a workflow command, so commands are off
-        # until the findings are printed: a file cannot raise an annotation, mask a value or
-        # forge "gate passed". The token is random, so the scanned text cannot turn them back on.
-        STOP_TOKEN="$(python -I -c 'import secrets; print(secrets.token_hex(16))')"
-        echo "::stop-commands::$STOP_TOKEN"
 
         # JSON run drives the outputs AND the gate. --output is written before the gate exits,
         # so the JSON file exists even when the gate trips. Capture the exit code, don't abort here.
@@ -282,6 +294,9 @@ runs:
                            for c in safe(text))
         def md(text):
             text = ''.join('\\' + c if c.isascii() and not c.isalnum() and c != ' ' else c for c in visible(text))
+            # No mention, and no issue or pull request reference (`#12`, `owner/repo#12`,
+            # `GH-12`): GitHub links those even when the # or - is escaped.
+            text = re.sub(r'(?i)(GH\\-)(?=\d)', '\\1\u200b', re.sub(r'#(?=\d)', '#\u200b', text))
             return text.replace('@', '@\u200b')
         def code(text, cell=True):
             # A table cell ends at an unescaped |, even inside a code span.
@@ -314,7 +329,7 @@ runs:
                     print('      ' + safe(ev.get('file', '')) + (':' + str(ev['line_start']) if ev.get('line_start') else ''))
                 if len(evidence) > 10:
                     print('      ... and %d more location(s), all of them in the SARIF and JSON reports' % (len(evidence) - 10))
-        with open(annotations_path, 'w', encoding='utf-8') as f:
+        with open(annotations_path, 'a', encoding='utf-8') as f:
             for line in gate_lines:
                 f.write('::error::SkillTotal gate: ' + safe(line).replace('%', '%25') + '\n')
 
@@ -334,6 +349,17 @@ runs:
             # One block per paragraph, list or table, with a blank line between: a line break
             # alone joins two lines into one paragraph, or onto the list item above it.
             blocks = [heading, '**Source:** ' + code(source)]
+            config = ((report or {}).get('metadata') or {}).get('config_applied')
+            if isinstance(config, dict):
+                # The scanned repository's own .skilltotal.toml can relax the gate (a pull request
+                # can change it): whenever one applied, the summary says so and what it sets.
+                parts = ['%s exclude(s)' % md(config.get('exclude', 0)),
+                         '%s ignored rule(s)' % md(config.get('ignore', 0)),
+                         '%s policy override(s)' % md(config.get('policy', 0))]
+                parts += ['%s %s' % (key, md(config[key])) for key in ('fail_on', 'fail_on_score') if key in config]
+                if config.get('baseline'):
+                    parts.append('baseline ' + code(config['baseline'], cell=False))
+                blocks.append('**Config:** %s (%s)' % (code(config.get('path', ''), cell=False), ', '.join(parts)))
             if report is None:
                 blocks.append('**SkillTotal could not run the scan** (exit %s): %s'
                               % (md(gate_exit or '?'), md(error) if error else 'see the log of this run.'))
@@ -373,6 +399,26 @@ runs:
             f.write(markdown('## %s SkillTotal — AI component security scan' % icon, 5, True))
         PY
 
+        # A pull request that changes the config the scan applied changes the gate it is judged
+        # by: say so. Only when the base branch is already fetched (a full checkout); nothing is
+        # fetched for it, and a ref or path git cannot compare is skipped without a word.
+        CONFIG_PATH="$(python -I -c 'import json, sys
+        try:
+            with open(sys.argv[1], encoding="utf-8") as f:
+                config = (json.load(f).get("metadata") or {}).get("config_applied") or {}
+            print(config.get("path") or "")
+        except (OSError, ValueError, AttributeError):
+            print("")' "$REPORT_JSON")"
+        if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] && [ -n "${GITHUB_BASE_REF:-}" ] && [ -n "$CONFIG_PATH" ] \
+          && git rev-parse --verify --quiet "refs/remotes/origin/$GITHUB_BASE_REF^{commit}" >/dev/null 2>&1; then
+          CONFIG_DIFF=0
+          git -c core.fsmonitor=false diff --quiet --no-ext-diff --no-textconv "refs/remotes/origin/$GITHUB_BASE_REF" -- "$CONFIG_PATH" \
+            >/dev/null 2>&1 || CONFIG_DIFF=$?
+          if [ "$CONFIG_DIFF" = 1 ]; then
+            echo "::warning::This pull request changes the scanner config $(command_data "$CONFIG_PATH") that SkillTotal applied: it can relax the gate (exclude, ignore, fail_on, baseline). Review the change to it." >> "$ANNOTATIONS"
+          fi
+        fi
+
         # SARIF report for Code Scanning: the same scan, never gated (`--fail-on none`) and quiet,
         # since the JSON run above already printed the report and decided the gate. Its messages
         # are shown only when it fails. A folder named in `sarif-file` is created first.
@@ -401,10 +447,32 @@ runs:
             source = "pypi:%s==%s" % (re.split("==|@", spec, maxsplit=1)[0].strip(), version)
         print(source)' "$INPUT_SOURCE" "$REPORT_JSON" || printf '%s' "$INPUT_SOURCE")"
           fi
-          mkdir -p -- "$(dirname -- "$INPUT_SARIF_FILE")" || true
-          rm -f -- "$INPUT_SARIF_FILE" 2>/dev/null || true
-          "${ST[@]}" scan "$SARIF_SOURCE" --sarif --output "$INPUT_SARIF_FILE" "${BASE[@]}" "${SARIF_ARGS[@]}" \
-            --fail-on none >/dev/null 2>"$SARIF_LOG" || SARIF_EXIT=$?
+          # A folder of `sarif-file` below the workspace that is a link (a repository can commit
+          # `reports/` as a link out of the checkout) is refused before anything is created or
+          # removed through it, as the CLI refuses to write through one.
+          if python -I -c 'import os, stat, sys
+        root = os.path.abspath(sys.argv[2])
+        folder = os.path.dirname(os.path.abspath(sys.argv[1]))
+        rel = os.path.relpath(folder, root)
+        if rel == os.curdir or rel == os.pardir or rel.startswith(os.pardir + os.sep) or os.path.isabs(rel):
+            sys.exit(0)  # outside the workspace: a path the workflow chose, not the repository
+        path = root
+        for part in rel.split(os.sep):
+            path = os.path.join(path, part)
+            try:
+                st = os.lstat(path)
+            except OSError:
+                sys.exit(0)  # created below by mkdir -p, as a real folder
+            if stat.S_ISLNK(st.st_mode) or getattr(st, "st_file_attributes", 0) & 0x400:
+                print("error: %s is a symbolic link or junction; refusing to write the SARIF report through it" % os.path.relpath(path, root))
+                sys.exit(1)' "$INPUT_SARIF_FILE" "${GITHUB_WORKSPACE:-$PWD}" > "$SARIF_LOG" 2>&1; then
+            mkdir -p -- "$(dirname -- "$INPUT_SARIF_FILE")" || true
+            rm -f -- "$INPUT_SARIF_FILE" 2>/dev/null || true
+            "${ST[@]}" scan "$SARIF_SOURCE" --sarif --output "$INPUT_SARIF_FILE" "${BASE[@]}" "${SARIF_ARGS[@]}" \
+              --fail-on none >/dev/null 2>"$SARIF_LOG" || SARIF_EXIT=$?
+          else
+            SARIF_EXIT=1
+          fi
           if [ "$SARIF_EXIT" = 0 ] && [ -f "$INPUT_SARIF_FILE" ]; then
             SARIF_WRITTEN=true
           else
@@ -418,7 +486,7 @@ runs:
         # line each with the scanned text escaped), and a SARIF report that is missing.
         cat "$ANNOTATIONS" 2>/dev/null || true
         if [ "$GATE_EXIT" != 1 ] && [ "$SARIF_WRITTEN" != true ]; then
-          echo "::warning::SkillTotal did not write the SARIF report to $INPUT_SARIF_FILE (exit $SARIF_EXIT): $(first_error "$SARIF_LOG"). The gate is decided by the scan above; Code Scanning gets no upload."
+          echo "::warning::SkillTotal did not write the SARIF report to $(command_data "$INPUT_SARIF_FILE") (exit $SARIF_EXIT): $(first_error "$SARIF_LOG"). The gate is decided by the scan above; Code Scanning gets no upload."
         fi
 
         # 2 = the gate tripped; 1 = the scan could not run (a usage, config or fetch error). Both
@@ -443,6 +511,10 @@ runs:
       env:
         INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
       run: |
+        # The path is an input: one line in the command, % CR LF escaped.
+        INPUT_SARIF_FILE="${INPUT_SARIF_FILE//%/%25}"
+        INPUT_SARIF_FILE="${INPUT_SARIF_FILE//$'\r'/%0D}"
+        INPUT_SARIF_FILE="${INPUT_SARIF_FILE//$'\n'/%0A}"
         echo "::warning::SkillTotal could not upload SARIF to Code Scanning. Code Scanning may be off for this repository (a private repository needs GitHub Advanced Security), or the job lacks 'security-events: write' (and 'actions: read' in a private repository). The scan and the gate ran as usual; the report is in $INPUT_SARIF_FILE. Set 'upload-sarif: false' to skip the upload."
 
     - name: Comment on PR
@@ -479,7 +551,10 @@ runs:
             // Every page: on a busy pull request the first page of 30 missed the old comment.
             const comments = await github.paginate(github.rest.issues.listComments,
               { owner, repo, issue_number, per_page: 100 });
-            const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+            // Only a comment this action posted: anyone can write the marker into a comment of
+            // their own, which must neither be overwritten nor stand in for the report.
+            const existing = comments.find((c) => c.body && c.body.includes(MARKER)
+              && c.user && c.user.type === 'Bot' && c.user.login === 'github-actions[bot]');
             if (existing) {
               await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
             } else {

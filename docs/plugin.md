@@ -243,9 +243,11 @@ CI.
 - **SkillTotal's own reports.** A SARIF report, JSON report or baseline that SkillTotal wrote into
   the scanned folder is recognised by its content (pure JSON of exactly that shape), listed in the
   report and not scanned: its rule descriptions quote detection patterns.
-- **Platform-specific wheels.** For a PyPI release that ships them, SkillTotal scans the source
-  distribution; the wheel pip picks for your machine can differ from it. A release whose only
-  wheel is pure Python is scanned as that wheel.
+- **Platform-specific wheels.** A PyPI release is scanned as one of its files: a pure-Python wheel
+  when it has one, else the wheel for the machine running the check, else its first wheel; the
+  source distribution only when it has no wheel. The other files are not read, and the report says
+  which file was scanned and how many were not; a wheel for another platform can carry different
+  code.
 - **Behavior in languages other than Python, JavaScript/TypeScript and shell.** Secrets, sensitive
   paths and hidden Unicode are still checked there. The console line says the package was partly
   analyzed.

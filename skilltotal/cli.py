@@ -529,8 +529,8 @@ class StagedError(Exception):
 @contextlib.contextmanager
 def _staged_snapshot(source: str):
     """A temporary copy of what the next commit would contain under ``source`` (a folder in a git
-    work tree): git's index written out by ``git checkout-index``. The copy keeps the folder's own
-    name, so the component reads as itself; it is removed afterwards."""
+    work tree): the staged blobs, read with ``git cat-file`` and written by path. The copy keeps
+    the repository's own name, so the component reads as itself; it is removed afterwards."""
     import subprocess  # nosec B404 - runs git with fixed arguments, never a shell
     import tempfile
 
@@ -544,27 +544,101 @@ def _staged_snapshot(source: str):
     if git is None:
         raise StagedError("git is not installed")
 
-    # No LFS download and no fsmonitor hook while writing out the index: the repository's own
-    # .lfsconfig would otherwise pick the host git-lfs fetches from (security review, 2026-10-15),
-    # as the clone path already ensures for remote sources.
-    env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_TERMINAL_PROMPT": "0"}
-
-    def run(*argv: str) -> str:
-        done = subprocess.run(  # nosec B603 - fixed git arguments, no shell
-            [git, "-c", "core.fsmonitor=false", "-C", str(folder), *argv],
-            capture_output=True, text=True, check=False, env=env)
-        if done.returncode != 0:
-            raise StagedError(done.stderr.strip() or f"git {argv[0]} failed")
-        return done.stdout.strip()
-
-    top = Path(run("rev-parse", "--show-toplevel")).resolve()
-    inside = folder.resolve().relative_to(top)
+    # Nothing the repository's own configuration names runs while the index is read: no LFS
+    # download (its .lfsconfig would pick the host git-lfs fetches from), no fsmonitor hook, no
+    # hook from core.hooksPath, no lazy fetch of a missing object (security review, 2026-10-15).
+    # The blobs are read raw, so no smudge or process filter from .git/config runs either:
+    # `git checkout-index` runs them to write a file out.
+    env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_TERMINAL_PROMPT": "0",
+           "GIT_NO_LAZY_FETCH": "1"}
     with tempfile.TemporaryDirectory(prefix="skilltotal-staged-") as tmp:
-        copy = Path(tmp) / (top.name or "repo")
-        # --prefix writes each staged file under the copy; the trailing slash makes it a folder.
-        run("checkout-index", "--all", "--force", f"--prefix={copy.as_posix()}/")
-        copy.mkdir(exist_ok=True)  # an empty index writes nothing
-        yield copy / inside
+        no_hooks = Path(tmp) / "hooks"
+        no_hooks.mkdir()
+        base = [git, "-c", "core.fsmonitor=false", "-c", f"core.hooksPath={no_hooks}",
+                "-C", str(folder)]
+
+        def run(*argv: str) -> bytes:
+            done = subprocess.run(  # nosec B603 - fixed git arguments, no shell
+                [*base, *argv], capture_output=True, check=False, env=env)
+            if done.returncode != 0:
+                error = os.fsdecode(done.stderr or b"").strip()
+                raise StagedError(error or f"git {argv[0]} failed")
+            return done.stdout
+
+        top = Path(os.fsdecode(run("rev-parse", "--show-toplevel")).strip()).resolve()
+        copy = Path(tmp) / "copy" / (top.name or "repo")
+        target = copy / folder.resolve().relative_to(top)
+        target.mkdir(parents=True)
+        # Run inside `source`, ls-files lists only what is staged under it, relative to it.
+        _write_blobs(base, env, run("ls-files", "--stage", "-z"), target)
+        yield target
+
+
+# What a staged path may not hold on Windows: a device name (`CON`, `aux.txt`) opens the device,
+# and `\` or `:` would read as a separator or a stream there.
+_WINDOWS_DEVICE = re.compile(r"(?i)^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$")
+
+
+def _staged_parts(path: str) -> list[str] | None:
+    """The components of an index path to write under the copy, or None for one that could
+    leave it or name something else than a file in it."""
+    parts = path.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return None
+    if os.name == "nt" and any(
+            "\\" in part or ":" in part or part.endswith((".", " ")) or _WINDOWS_DEVICE.match(part)
+            for part in parts):
+        return None
+    return parts
+
+
+def _write_blobs(base: list[str], env: dict[str, str], listing: bytes, root: Path) -> None:
+    """Write each staged regular file of ``listing`` (``git ls-files --stage -z``) under ``root``,
+    its content read raw with ``git cat-file --batch``. A link (mode 120000), a submodule and an
+    unmerged entry are left out, as the scan of a folder skips links; nothing is ever created
+    except plain folders and files, so no write can be redirected out of ``root``."""
+    import subprocess  # nosec B404 - runs git with fixed arguments, never a shell
+
+    entries = []
+    for record in listing.split(b"\0"):
+        meta, _, raw_path = record.partition(b"\t")
+        fields = meta.split(b" ")
+        if len(fields) != 3 or fields[0] not in (b"100644", b"100755") or fields[2] != b"0":
+            continue
+        parts = _staged_parts(os.fsdecode(raw_path))
+        if parts is not None:
+            entries.append((fields[1], fields[0] == b"100755", root.joinpath(*parts)))
+    if not entries:
+        return
+    with subprocess.Popen(  # nosec B603 - fixed git arguments, no shell
+            [*base, "cat-file", "--batch"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, env=env) as proc:
+        assert proc.stdin is not None and proc.stdout is not None  # nosec B101 - set by PIPE
+        try:
+            # One object at a time: each answer is read whole before the next is asked for.
+            for sha, executable, dest in entries:
+                proc.stdin.write(sha + b"\n")
+                proc.stdin.flush()
+                header = proc.stdout.readline().split()
+                if len(header) != 3 or header[1] != b"blob":
+                    if not header:
+                        raise StagedError("git cat-file stopped answering")
+                    continue  # missing: nothing to write
+                size = int(header[2])
+                data = proc.stdout.read(size + 1)[:size]  # each object ends with a newline
+                if len(data) != size:
+                    raise StagedError("git cat-file stopped answering")
+                try:
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(data)
+                    if executable and os.name != "nt":
+                        dest.chmod(0o755)
+                except OSError:
+                    continue  # a path this file system cannot hold
+        finally:
+            proc.stdin.close()
+            proc.stdout.read()
+            proc.wait()
 
 
 def _cmd_scan(args: argparse.Namespace) -> int:
@@ -592,6 +666,12 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     baseline_path = args.baseline or config.baseline_path()
     suppress: set[str] = set()
     if baseline_path:
+        # A device (`CON`, a FIFO) is never a baseline: reading one waits for input forever.
+        if not Path(baseline_path).is_file() or (
+                os.name == "nt" and _WINDOWS_DEVICE.match(Path(baseline_path).name)):
+            print(f"error: cannot read baseline {_one_line(str(baseline_path))}: not a file",
+                  file=sys.stderr)
+            return EXIT_ERROR
         try:
             suppress = load_baseline(baseline_path)
         except (OSError, json.JSONDecodeError) as exc:

@@ -56,7 +56,10 @@ def _scan_step() -> str:
     raise AssertionError("no Scan step in action.yml")
 
 
-def _run(workspace: Path, tmp_path: Path, **inputs: str) -> tuple[dict[str, str], str]:
+def _run(workspace: Path, tmp_path: Path, github: dict[str, str] | None = None,
+         stdout_only: bool = False, **inputs: str) -> tuple[dict[str, str], str]:
+    """The step's outputs and its log: stdout, then stderr (the order within each is kept, not
+    across them), or only stdout, where the step's own commands go."""
     out = tmp_path / "github_output"
     out.write_text("", encoding="utf-8")
     env = {
@@ -66,11 +69,13 @@ def _run(workspace: Path, tmp_path: Path, **inputs: str) -> tuple[dict[str, str]
         "GITHUB_ACTION_PATH": str(ROOT),
         "GITHUB_WORKSPACE": str(workspace),
         "RUNNER_TEMP": str(tmp_path),
+        "GITHUB_EVENT_NAME": "push", "GITHUB_BASE_REF": "",
         "INPUT_SOURCE": ".", "INPUT_VERSION": "", "INPUT_FAIL_ON": "", "INPUT_FAIL_ON_SCORE": "",
         "INPUT_FAIL_ON_UNANALYZED": "false", "INPUT_EXCLUDE": "", "INPUT_CONFIG": "",
         "INPUT_BASELINE": "", "INPUT_SARIF_FILE": "skilltotal.sarif", "INPUT_SARIF_CATEGORY": "",
     }
     env.update({f"INPUT_{k.upper()}": v for k, v in inputs.items()})
+    env.update(github or {})
     # From a file, as the runner runs it: on Windows a long `-c` argument loses characters.
     script = tmp_path / "scan_step.sh"
     script.write_bytes(_scan_step().encode("utf-8"))
@@ -81,7 +86,7 @@ def _run(workspace: Path, tmp_path: Path, **inputs: str) -> tuple[dict[str, str]
     assert done.returncode == 0, done.stderr
     outputs = dict(line.split("=", 1) for line in out.read_text(encoding="utf-8").splitlines()
                    if "=" in line)
-    return outputs, done.stdout + done.stderr
+    return outputs, done.stdout + ("" if stdout_only else done.stderr)
 
 
 def _after_resume(log: str) -> str:
@@ -197,3 +202,96 @@ def test_the_enforce_step_names_an_error_apart_from_a_tripped_gate(tmp_path):
     assert gate.returncode == 2
     assert gate.stdout.startswith("::error::SkillTotal gate failed (exit 2).")
     assert _enforce(tmp_path, EXIT="0", SCAN_ERROR="").returncode == 0
+
+
+def _before_stop(log: str) -> str:
+    return log.split("::stop-commands::", 1)[0]
+
+
+def test_an_input_with_a_newline_cannot_forge_a_workflow_command(tmp_path):
+    ws = _workspace(tmp_path)
+    forged = "fx-high\n::error title=FORGED::gate passed"
+    for inputs in ({"source": forged}, {"source": "npm:" + forged},
+                   {"fail_on": "high\n::error title=FORGED::x"},
+                   {"fail_on_unanalyzed": "no\n::error title=FORGED::x"},
+                   {"source": "fx-high", "sarif_file": "taken\n::error title=FORGED::x/st.sarif"}):
+        _, log = _run(ws, tmp_path, stdout_only=True, **inputs)
+        # Commands are off from the first line the step prints until its own annotations; what
+        # the scan prints to stderr comes in between, while they are off.
+        assert _before_stop(log).strip() == "", inputs
+        assert not any(line.startswith("::error title=FORGED")
+                       for line in _after_resume(log).splitlines()), inputs
+    # The step's own error still reaches the log as a command, the input escaped on its line.
+    outputs, log = _run(ws, tmp_path, fail_on="high\n::error title=FORGED::x")
+    assert outputs["gate-exit"] == "1"
+    assert ("::error::fail-on must be low, medium, high, critical or none (or empty for the "
+            "config's gate, else high) (got 'high%0A::error title=FORGED::x')"
+            ) in _after_resume(log)
+
+
+def test_the_summary_and_the_comment_name_the_applied_config(tmp_path):
+    ws = _workspace(tmp_path)
+    (ws / ".skilltotal.toml").write_text(
+        'fail_on = "critical"\nexclude = ["docs/*"]\nbaseline = "bl.json"\n', encoding="utf-8")
+    (ws / "bl.json").write_text('{"version": 1, "suppressed": []}\n', encoding="utf-8")
+    _run(ws, tmp_path)
+    line = ("**Config:** ` .skilltotal.toml ` (1 exclude(s), 0 ignored rule(s), 0 policy "
+            "override(s), fail_on critical, baseline ` bl.json `)")
+    assert line in (tmp_path / "step_summary.md").read_text(encoding="utf-8")
+    assert line in (tmp_path / "skilltotal-comment.md").read_text(encoding="utf-8")
+    # No config applied, no line.
+    _run(ws, tmp_path, config="none")
+    assert "**Config:**" not in (tmp_path / "skilltotal-comment.md").read_text(encoding="utf-8")
+
+
+def test_an_issue_reference_in_escaped_text_is_not_a_link(tmp_path):
+    ws = _workspace(tmp_path)
+    _run(ws, tmp_path, source="fx-high", config="missing#12 GH-7.toml")
+    summary = (tmp_path / "step_summary.md").read_text(encoding="utf-8")
+    assert "missing\\#​12 GH\\-​7\\.toml" in summary
+
+
+def _git(repo: Path, *argv: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *argv], check=True, capture_output=True,  # nosec B603
+                   timeout=60)
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_a_pull_request_that_changes_the_config_gets_a_warning(tmp_path):
+    ws = _workspace(tmp_path)
+    (ws / ".skilltotal.toml").write_text('fail_on = "high"\n', encoding="utf-8")
+    _git(ws, "init", "-q")
+    _git(ws, "add", "-A")
+    _git(ws, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "base")
+    _git(ws, "update-ref", "refs/remotes/origin/main", "HEAD")
+    pr = {"GITHUB_EVENT_NAME": "pull_request", "GITHUB_BASE_REF": "main"}
+    warning = "::warning::This pull request changes the scanner config .skilltotal.toml"
+    assert warning not in _run(ws, tmp_path, pr)[1]  # the same config as the base branch
+    (ws / ".skilltotal.toml").write_text('fail_on = "critical"\n', encoding="utf-8")
+    assert warning in _after_resume(_run(ws, tmp_path, pr)[1])
+    assert warning not in _run(ws, tmp_path)[1]  # not a pull request
+    # A base branch that was not fetched: nothing to compare, nothing said.
+    log = _run(ws, tmp_path, {**pr, "GITHUB_BASE_REF": "release"})[1]
+    assert "changes the scanner config" not in log
+
+
+def test_a_sarif_folder_that_is_a_link_is_refused(tmp_path):
+    ws = _workspace(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "st.sarif").write_text("keep me", encoding="utf-8")
+    try:
+        (ws / "reports").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        if os.name != "nt":
+            raise
+        subprocess.run(["cmd", "/c", "mklink", "/J", str(ws / "reports"), str(outside)],  # noqa: S603,S607 # nosec
+                       check=True, capture_output=True, timeout=60)
+    outputs, _ = _run(ws, tmp_path, source="fx-high", sarif_file="reports/sub/st.sarif")
+    assert outputs["sarif-written"] == "false"
+    assert not (outside / "sub").exists()  # nothing created through the link
+    outputs, log = _run(ws, tmp_path, source="fx-high", sarif_file="reports/st.sarif")
+    assert outputs["sarif-written"] == "false"
+    assert (outside / "st.sarif").read_text(encoding="utf-8") == "keep me"
+    assert ("reports is a symbolic link or junction; refusing to write the SARIF report"
+            in _after_resume(log))

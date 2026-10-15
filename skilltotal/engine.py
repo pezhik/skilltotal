@@ -105,6 +105,10 @@ def analyze(
             )
         if ctx.skipped_entries:
             report.needs_review.append(_skipped_entries_note(ctx.skipped_entries))
+        if ctx.distribution_note:
+            report.needs_review.append(NeedsReview(
+                category="coverage", title="One distribution of the release scanned",
+                reason=ctx.distribution_note))
         return report
 
 

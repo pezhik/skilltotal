@@ -14,6 +14,7 @@ import re
 import shutil
 import stat
 import subprocess  # nosec B404
+import sys
 import tarfile
 import tempfile
 import threading
@@ -185,6 +186,9 @@ class SourceContext:
     note: str | None = None
     # Archive entries that were deliberately not extracted (links, FIFOs, devices).
     skipped_entries: int = 0
+    # A PyPI release is several files (wheels, an sdist), one of which is scanned: which one,
+    # and how many were not read.
+    distribution_note: str | None = None
 
     def __enter__(self) -> SourceContext:
         return self
@@ -1275,20 +1279,70 @@ def _collect_npm(source: str) -> SourceContext:
 
 
 def _pick_distribution(urls: list[dict]) -> dict | None:
-    """The file to scan for a PyPI release: the one pip installs whenever that is one file.
+    """The file to scan for a PyPI release: a wheel whenever the release has one, since pip
+    installs a wheel over building the sdist wherever one matches.
 
-    A pure-Python wheel (``*-none-any.whl``) that is the release's only wheel is what pip installs
-    on every platform: nothing in it runs at install time, and its code is exactly what gets
-    imported, without the tests, docs and build tooling an sdist carries. Next to platform wheels
-    it is not: pip prefers a platform wheel where one matches, so a clean pure wheel could stand
-    in for a different one. Then the sdist is scanned, the source every build starts from, whose
-    build script runs wherever pip has to build it. A release with neither gets its first wheel.
+    A pure-Python wheel (``*-none-any.whl``) first: pip installs it wherever no platform wheel
+    matches, and its code is exactly what gets imported. Else the wheel built for this
+    interpreter and platform, what pip here would install; else the first wheel. The sdist only
+    when the release has no wheel. The other files are not read: the report says so
+    (``distribution_note``), since a platform wheel can carry code the scanned one does not.
     """
     wheels = [u for u in urls if u.get("packagetype") == "bdist_wheel"]
-    sdist = next((u for u in urls if u.get("packagetype") == "sdist"), None)
-    if len(wheels) == 1 and str(wheels[0].get("filename") or "").lower().endswith("-none-any.whl"):
-        return wheels[0]
-    return sdist or (wheels[0] if wheels else None)
+    if not wheels:
+        return next((u for u in urls if u.get("packagetype") == "sdist"), None)
+    def name(u: dict) -> str:
+        return str(u.get("filename") or "").lower()
+
+    pure = next((u for u in wheels if name(u).endswith("-none-any.whl")), None)
+    host = next((u for u in wheels if _wheel_fits_host(name(u))), None)
+    return pure or host or wheels[0]
+
+
+def _wheel_fits_host(filename: str) -> bool:
+    """Whether a wheel's tags (``name-ver[-build]-py-abi-platform.whl``) fit this interpreter and
+    platform, by a plain reading of the tags (no `packaging`): the Python tag is this CPython
+    (``cp312``, or an older ``cp3x`` with ``abi3``) or ``py3``, and the platform tag names this
+    operating system and machine."""
+    import platform
+
+    parts = filename[: -len(".whl")].split("-") if filename.endswith(".whl") else []
+    if len(parts) not in (5, 6):
+        return False
+    pythons, abis, platforms = (part.split(".") for part in parts[-3:])
+    major, minor = sys.version_info[:2]
+    own = f"cp{major}{minor}"
+
+    def python_fits(tag: str) -> bool:
+        if tag in (own, f"py{major}", f"py{major}{minor}"):
+            return True
+        older = tag.startswith(f"cp{major}") and tag[len(f"cp{major}"):].isdigit()
+        return "abi3" in abis and older and int(tag[len(f"cp{major}"):]) <= minor
+
+    machine = platform.machine().lower()
+
+    def platform_fits(tag: str) -> bool:
+        if sys.platform == "win32":
+            return tag == {"amd64": "win_amd64", "arm64": "win_arm64", "x86": "win32"}.get(machine)
+        if sys.platform.startswith("linux"):
+            return tag.startswith(("manylinux", "musllinux", "linux_")) and tag.endswith(
+                "_" + machine)
+        if sys.platform == "darwin":
+            return tag.startswith("macosx_") and tag.endswith(("_" + machine, "_universal2"))
+        return False
+
+    return any(python_fits(t) for t in pythons) and any(platform_fits(t) for t in platforms)
+
+
+def _distribution_note(urls: list[dict], chosen: dict) -> str | None:
+    """What the report says about the files of a release that were not scanned, if any."""
+    others = sum(1 for u in urls if u is not chosen and u.get("filename"))
+    if not others:
+        return None
+    files = "distribution of this release was" if others == 1 else (
+        "distributions of this release were")
+    return (f"Scanned {neutralize_hidden(str(chosen.get('filename') or ''))}; {others} other "
+            f"{files} not read (other platform wheels or the sdist can carry different code).")
 
 
 def _collect_pypi(source: str) -> SourceContext:
@@ -1306,14 +1360,17 @@ def _collect_pypi(source: str) -> SourceContext:
         meta = _registry_json(f"https://pypi.org/pypi/{name}/json",
                               not_found=f"package '{name}' was not found on PyPI")
         version = str((meta.get("info") or {}).get("version") or "")
-    chosen = _pick_distribution(meta.get("urls") or [])
+    urls = meta.get("urls") or []
+    chosen = _pick_distribution(urls)
     if not (version and chosen and chosen.get("url")):
         raise CollectionError(f"PyPI project '{name}' has no downloadable distribution")
     project = str((meta.get("info") or {}).get("name") or name)
-    return _collect_archive(
+    ctx = _collect_archive(
         source, "python_package", version, chosen["url"], chosen.get("filename", ""),
         name=project,
     )
+    ctx.distribution_note = _distribution_note(urls, chosen)
+    return ctx
 
 
 def detect_component(root: Path, source: str, default_name: str | None = None) -> Component:

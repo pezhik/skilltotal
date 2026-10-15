@@ -450,3 +450,14 @@ def test_a_config_baseline_is_read_relative_to_the_config(tmp_path, monkeypatch,
     cfg = _config(conf_dir, 'baseline = "bl.json"\nfail_on = "low"\n')
     monkeypatch.chdir(tmp_path)  # not the config's folder
     assert main(["scan", str(root), "--json", "--config", str(cfg)]) == EXIT_OK
+
+
+@pytest.mark.parametrize("baseline", [os.devnull, "folder", "CON"])
+def test_a_baseline_that_is_not_a_file_is_an_error_not_a_hang(tmp_path, monkeypatch, capsys,
+                                                              baseline):
+    # Reading a device (`CON` on Windows) as a baseline waited for input forever.
+    root = _component(tmp_path, {"m.py": "x = 1\n"})
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "folder").mkdir()
+    assert main(["scan", str(root), "--baseline", baseline]) == EXIT_ERROR
+    assert f"error: cannot read baseline {baseline}: not a file" in capsys.readouterr().err
