@@ -197,7 +197,8 @@ test("a command is found in PATH, never in the current directory", {
     assert.equal(runnerLib.resolveCommand("faketool", env, "win32"),
       path.win32.join(onPath, "faketool.exe"));
     assert.equal(runnerLib.resolveCommand("faketool", { PATH: "." }, "win32"), null);
-    assert.equal(runnerLib.resolveCommand("faketool", env, "linux"), "faketool");
+    // Elsewhere only absolute POSIX directories count; this PATH has none.
+    assert.equal(runnerLib.resolveCommand("faketool", env, "linux"), null);
   } finally {
     process.chdir(saved);
     fs.rmSync(cwd, { recursive: true, force: true });
@@ -227,5 +228,29 @@ test("programs planted in the current directory are never what runs", {
     assert.match(r.stdout, /^skilltotal \d+\.\d+\.\d+/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("on POSIX a program in the current directory is never run, whatever PATH says", {
+  skip: process.platform === "win32",
+}, () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "planted-"));
+  const onPath = fs.mkdtempSync(path.join(os.tmpdir(), "onpath-"));
+  const script = "#!/bin/sh" + String.fromCharCode(10);
+  fs.writeFileSync(path.join(cwd, "faketool"), script, { mode: 0o755 });
+  fs.writeFileSync(path.join(onPath, "faketool"), script, { mode: 0o755 });
+  const saved = process.cwd();
+  try {
+    process.chdir(cwd);
+    // `.` and an empty entry both mean the current directory to a POSIX shell.
+    const env = { PATH: [".", "", "relative/dir", onPath].join(":") };
+    assert.equal(runnerLib.resolveCommand("faketool", env, "linux"), path.posix.join(onPath, "faketool"));
+    assert.equal(runnerLib.resolveCommand("faketool", { PATH: ".:" }, "linux"), null);
+  } finally {
+    process.chdir(saved);
+    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(onPath, { recursive: true, force: true });
   }
 });

@@ -136,8 +136,11 @@ def analyze_directory(
     published = component.type in _PUBLISHED_PACKAGE_TYPES
     # What npm runs on install is read whatever its shape, minified or not: it is the attack.
     install_scripts = _install_script_files(Path(root))
+    # So is the code the package runs when it is imported or its command is run: a main file padded
+    # with one long comment until it looked minified was skipped, and its payload with it.
     index = FileIndex.build(
-        Path(root), exclude=exclude, skip_build_output=not published, always_index=install_scripts
+        Path(root), exclude=exclude, skip_build_output=not published, always_index=install_scripts,
+        keep_minified=_entry_point_files(Path(root)),
     )
     # Code the component loads by a literal path from a folder the walk passed over (its own
     # `lib/env/`, `src/vendor/`, ...) is read too: it runs whatever folder it is filed under.
@@ -476,6 +479,60 @@ _MAX_INSTALL_FILES = 200
 # Packages inside a component: how deep and how many are read (a monorepo has tens).
 _MAX_PACKAGE_DEPTH = 6
 _MAX_PACKAGES = 100
+
+
+# How many entry points of the component's own package.json are read whatever their shape.
+_MAX_ENTRY_POINTS = 32
+
+
+def _entry_point_files(root: Path) -> set[str]:
+    """The files the component's own ``package.json`` names as what runs: ``main``, ``module``,
+    ``browser`` (a string), every ``bin`` and the file targets of ``exports``, found the way Node
+    finds them and only inside the component. These are read even when they look minified, like
+    the install scripts: they are the code that runs, so their shape cannot exempt them (security
+    review, 2026-10-15: a padded main file hid an exfiltration from the scan and from guard).
+    """
+    manifest = root / "package.json"
+    if not is_regular_file(manifest):
+        return set()
+    try:
+        data = bounded_json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    specs: list[str] = []
+    for key in ("main", "module", "browser"):
+        if isinstance(data.get(key), str):
+            specs.append(data[key])
+    bins = data.get("bin")
+    specs += [bins] if isinstance(bins, str) else [
+        v for v in bins.values() if isinstance(v, str)] if isinstance(bins, dict) else []
+
+    def targets(node: object, depth: int = 0) -> None:
+        if depth > 6 or len(specs) >= _MAX_ENTRY_POINTS * 2:
+            return
+        if isinstance(node, str):
+            specs.append(node)
+        elif isinstance(node, dict):
+            for value in node.values():
+                targets(value, depth + 1)
+        elif isinstance(node, list):
+            for value in node:
+                targets(value, depth + 1)
+
+    targets(data.get("exports"))
+    base = root.resolve()
+    found: set[str] = set()
+    for spec in specs:
+        if len(found) >= _MAX_ENTRY_POINTS:
+            break
+        if "*" in spec:  # a subpath pattern names many files, not one entry point
+            continue
+        target = _module_file(base, base, spec)
+        if target is not None:
+            found.add(target.relative_to(base).as_posix())
+    return found
 
 
 def _package_manifests(root: Path) -> list[Path]:

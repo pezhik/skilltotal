@@ -544,9 +544,15 @@ def _staged_snapshot(source: str):
     if git is None:
         raise StagedError("git is not installed")
 
+    # No LFS download and no fsmonitor hook while writing out the index: the repository's own
+    # .lfsconfig would otherwise pick the host git-lfs fetches from (security review, 2026-10-15),
+    # as the clone path already ensures for remote sources.
+    env = {**os.environ, "GIT_LFS_SKIP_SMUDGE": "1", "GIT_TERMINAL_PROMPT": "0"}
+
     def run(*argv: str) -> str:
         done = subprocess.run(  # nosec B603 - fixed git arguments, no shell
-            [git, "-C", str(folder), *argv], capture_output=True, text=True, check=False)
+            [git, "-c", "core.fsmonitor=false", "-C", str(folder), *argv],
+            capture_output=True, text=True, check=False, env=env)
         if done.returncode != 0:
             raise StagedError(done.stderr.strip() or f"git {argv[0]} failed")
         return done.stdout.strip()
@@ -1684,6 +1690,22 @@ def _is_link(path: Path) -> bool:
     return bool(getattr(st, "st_file_attributes", 0) & reparse)
 
 
+def _linked_folder_below_cwd(target: Path) -> Path | None:
+    """The first folder between the working directory and ``target`` that is a link, if any."""
+    cwd = Path(os.path.abspath(os.getcwd()))
+    parent = Path(os.path.abspath(target)).parent
+    try:
+        rel = parent.relative_to(cwd)
+    except ValueError:
+        return None  # outside the working directory: an absolute path the operator chose
+    folder = cwd
+    for part in rel.parts:
+        folder = folder / part
+        if _is_link(folder):
+            return folder
+    return None
+
+
 def _write_file(path: str, text: str) -> None:
     """Write ``text`` to ``path`` (UTF-8) without following a link at ``path``.
 
@@ -1698,6 +1720,14 @@ def _write_file(path: str, text: str) -> None:
     if _is_link(target):
         raise UnsafeOutputPath(f"{path} is a symbolic link or junction; refusing to write "
                                "through it")
+    # The same holds for a folder on the way inside the working directory, where a checkout
+    # puts what a repository commits: `reports/` as a link out of it redirected the write
+    # (security review, 2026-10-15). Folders above the working directory are the machine's own
+    # (macOS /tmp is a link) and are not the repository's to choose.
+    linked = _linked_folder_below_cwd(target)
+    if linked is not None:
+        raise UnsafeOutputPath(f"{linked} is a symbolic link or junction; refusing to write "
+                               f"{path} through it")
     fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

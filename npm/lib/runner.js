@@ -24,11 +24,27 @@ function noCurrentDirectoryLookup(env = process.env, platform = process.platform
 /**
  * The file a bare command name runs: on Windows, the first `.com` or `.exe` in PATH's absolute
  * directories (as libuv looks), never the current directory, which the libuv of Node before 22
- * searches whatever the variable says. Null when there is none. Elsewhere the name is returned
- * as is: a POSIX shell never searches the current directory unless PATH asks it to.
+ * searches whatever the variable says. Null when there is none. Elsewhere, the first executable
+ * file of that name in PATH's absolute directories: a PATH holding `.` or an empty entry (which
+ * means the current directory) would otherwise run a `uvx` committed to the scanned repository
+ * (security review, 2026-10-15).
  */
 function resolveCommand(cmd, env = process.env, platform = process.platform) {
-  if (platform !== "win32") return cmd;
+  if (platform !== "win32") {
+    for (const dir of String(env.PATH ?? "").split(":")) {
+      if (!dir.startsWith("/")) continue; // empty or relative: the current directory
+      const file = path.posix.join(dir, cmd);
+      try {
+        if (fs.statSync(file).isFile()) {
+          fs.accessSync(file, fs.constants.X_OK);
+          return file;
+        }
+      } catch {
+        // not there, or not executable
+      }
+    }
+    return null;
+  }
   for (const entry of String(env.PATH ?? env.Path ?? "").split(";")) {
     const dir = entry.trim().replace(/^"(.*)"$/, "$1");
     if (!/^(?:[A-Za-z]:[\\/]|[\\/]{2})/.test(dir)) continue; // not absolute: relative to the cwd

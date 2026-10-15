@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import bisect
+import codecs
 import fnmatch
 import io
 import os
@@ -1537,8 +1538,21 @@ _NUL_TOLERANT_SUFFIXES = frozenset(
 )
 
 
+# Byte-order marks of the wide Unicode encodings, longest first (a UTF-32 LE mark starts with the
+# UTF-16 LE one). Text in these is full of NUL bytes, and PowerShell, VBScript and cmd run such a
+# script as it is: read as text by its mark, a UTF-16 install.ps1 was skipped as binary and its
+# download-and-run never seen (security review, 2026-10-15).
+_WIDE_BOMS = (
+    (codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+    (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"),
+)
+
+
 def _sniffed_text(name: str, raw: bytes) -> str | None:
     """The file's text, or None when the sniff says it is binary."""
+    for bom, encoding in _WIDE_BOMS:
+        if raw.startswith(bom):
+            return raw.decode(encoding, errors="replace")
     if b"\x00" in raw[:_BINARY_SNIFF_BYTES]:
         if Path(name).suffix.lower() not in _NUL_TOLERANT_SUFFIXES:
             return None
@@ -2256,6 +2270,7 @@ class FileIndex:
         exclude: Iterable[str] | None = None,
         skip_build_output: bool = True,
         always_index: Iterable[str] = (),
+        keep_minified: Iterable[str] = (),
     ) -> FileIndex:
         """Walk ``root`` once and load its text files.
 
@@ -2278,6 +2293,8 @@ class FileIndex:
         }
         excludes = tuple(exclude or ())
         always = frozenset(always_index)
+        # Read whatever their shape, but otherwise like any file (a package's entry points).
+        keep = frozenset(keep_minified)
         links: list[str] = []
         unreadable: list[str] = []
         skipped: list[tuple[str, str]] = []
@@ -2325,7 +2342,7 @@ class FileIndex:
                 stats["skipped_own_output"] += 1
                 own_outputs.append(relpath)
                 continue
-            if _is_minified(path.name, text) and relpath not in always:
+            if _is_minified(path.name, text) and relpath not in always and relpath not in keep:
                 stats["skipped_minified"] += 1
                 minified.append(relpath)
                 continue
