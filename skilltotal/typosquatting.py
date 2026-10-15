@@ -197,7 +197,8 @@ def _wheel_metadata(index: FileIndex) -> IndexedFile | None:
 
 
 _NPM_NAME = re.compile(r'"name"\s*:\s*"([^"]*)"')
-_PY_MANIFEST_NAME = re.compile(r'(?im)^\s*name\s*[=:]\s*["\']([^"\']*)["\']')
+# `[^\S\n]*`, not `\s*`: from each of many blank lines `^\s*` ran over all the rest (quadratic).
+_PY_MANIFEST_NAME = re.compile(r'(?im)^[^\S\n]*name\s*[=:]\s*["\']([^"\']*)["\']')
 # Core metadata (an sdist's PKG-INFO, a wheel's METADATA): an RFC 822 `Name:` header.
 _CORE_METADATA_NAME = re.compile(r"(?m)^Name:[ \t]*(\S+)[ \t]*\r?$")
 

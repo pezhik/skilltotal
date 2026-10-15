@@ -42,7 +42,10 @@ _FETCH_EXEC = re.compile(
     + r"|\b(?:ba|z)?sh\s+(?:-c\s+)?[\"']?(?:\$\(|<\()\s*(?:curl|wget)\b[^\n)]{0,300}?" + _URL
     + r"|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|`]{0,300}?" + _URL
     + r"[^\n|`]{0,200}\|\s*(?:iex|Invoke-Expression)\b"
-    + r"|\b(?:iex|Invoke-Expression)\s*[(\s]\s*\(?\s*(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod"
+    # At least one blank or `(`, at most two `(`: `\s*[(\s]\s*\(?\s*` matched the same, but tried
+    # every split of a long blank run (cubic: "iex " and 1,000 blanks took 42 s).
+    + r"|\b(?:iex|Invoke-Expression)(?=[\s(])\s*(?:\(\s*){0,2}"
+    r"(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod"
     r"|\(?New-Object\s+(?:System\.)?Net\.WebClient\)?\.DownloadString)\b[^\n`]{0,300}?" + _URL,
     re.IGNORECASE,
 )

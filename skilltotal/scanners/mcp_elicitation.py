@@ -21,7 +21,8 @@ R_ELICIT_SECRET = "ST-MCP-ELICIT-SECRET"  # nosec B105 - a rule id, not a secret
 _JS_SUFFIXES = (".js", ".mjs", ".cjs", ".ts", ".mts", ".cts")
 _JS_CALL = re.compile(r"\belicitInput\s*\(")
 _PY_CALL = re.compile(r"\.elicit\s*\(")
-_PY_MCP_IMPORT = re.compile(r"^\s*(?:from|import)\s+(?:mcp|fastmcp)\b", re.MULTILINE)
+# `[^\S\n]*`, not `\s*`: from each of many blank lines `^\s*` ran over all the rest (quadratic).
+_PY_MCP_IMPORT = re.compile(r"^[^\S\n]*(?:from|import)\s+(?:mcp|fastmcp)\b", re.MULTILINE)
 _PY_MODEL_ARG = re.compile(r"\b(?:schema|response_type)\s*=\s*([A-Za-z_]\w*)")
 _SENSITIVE = re.compile(
     r"(?<![a-z])(?:pass(?:word|phrase|code)|api[\s_-]?key|access[\s_-]?token|auth[\s_-]?token"

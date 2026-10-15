@@ -10,6 +10,7 @@ hook or a server no longer hides it, on whichever Python json would have given u
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -143,10 +144,13 @@ PY_CASES = {
     # The parser's own stack overflows (MemoryError).
     "parser stack": "x = " + "not " * 50_000 + "1\n",
     "deep lambdas": "x = " + "lambda: " * 3000 + "1\n",
-    # Parses, but nests deeper than the scanners' visitors can walk.
+    # Parses, but nests deeper than the default recursion limit lets the visitors walk: walked
+    # again with room for it on Python 3.12+, read by regex before.
     "visitor recursion": "x = " + "+".join(["1"] * 800) + "\n",
     "tool return": "@mcp.tool()\ndef t():\n    return " + "+".join(['"a"'] * 800) + "\n",
 }
+TOO_DEEP = "Python file too deeply nested to analyze"
+WALKED_ON_312 = {"visitor recursion", "tool return"}
 
 
 @pytest.mark.parametrize("label", sorted(PY_CASES))
@@ -155,9 +159,13 @@ def test_deep_python_source_is_unparseable_not_a_crash(tmp_path, label):
     (tmp_path / "real.py").write_text("import os\nos.system('id')\n", encoding="utf-8")
     report = _report(tmp_path)
     assert any(f.id == "ST-SHELL-PY" for f in report.findings)  # the rest is still analyzed
-    notes = [n for n in report.needs_review if n.title == "Unparseable Python file"]
-    assert len(notes) == 1
-    assert "deep.py" in notes[0].reason
+    assert not [n for n in report.needs_review if n.title == "Unparseable Python file"]
+    notes = [n for n in report.needs_review if n.title == TOO_DEEP]
+    if label in WALKED_ON_312 and sys.version_info >= (3, 12):
+        assert not notes
+    else:
+        assert len(notes) == 1
+        assert "deep.py" in notes[0].reason
 
 
 def test_a_nul_byte_in_python_source_is_unparseable_not_a_crash(tmp_path):

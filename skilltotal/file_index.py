@@ -1011,9 +1011,19 @@ _PY_EXEC_SINK = re.compile(r"(?<![\w.])(?:exec|eval|compile)\s*\(\s*$")
 _SHELL_SHEBANG = re.compile(r"#!\S*(?:/|\s)(?:env\s+)?(?:ba|z|da|k)?sh\b")
 # Commands whose argument is text for a person to read, not something the line executes.
 _PRINT_COMMAND = re.compile(
-    r"(?:^|[;&|(]\s*|\$\()\s*(?:echo|printf|print|puts|Write-Host|Write-Output|Write-Information|"
+    r"(?:^|[;&|(]|\$\()\s*(?:echo|printf|print|puts|Write-Host|Write-Output|Write-Information|"
     r"console\.(?:log|info|warn|error))\b[^;&|]*$"
 )
+
+
+def _prints(prefix: str) -> bool:
+    """True if the text before an argument on its line ends in an output command's arguments.
+
+    The command must follow the last `;`, `&` or `|` (nothing after it may contain one), so only
+    that part is searched: searching all of it from every `echo` of a crafted line was quadratic.
+    """
+    cut = max(prefix.rfind(";"), prefix.rfind("&"), prefix.rfind("|"))
+    return bool(_PRINT_COMMAND.search(prefix, max(cut, 0)))
 _QUOTED_ARG = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
 # A shell variable assigned a quoted value on its own line: `name="…"`, `export name='…'`,
 # `local name="…"`. The value ends at the next same quote (an escaped quote is rare in a hint, and
@@ -1964,7 +1974,7 @@ class IndexedFile:
         if k not in printed:
             line = self._line_text(line_no)
             prefix = _QUOTED_ARG.sub(" ", line[: starts[k] - 1])
-            printed[k] = bool(_PRINT_COMMAND.search(prefix))
+            printed[k] = _prints(prefix)
         return printed[k]
 
     def in_shell_assigned_hint(self, offset: int) -> bool:
@@ -1995,7 +2005,7 @@ class IndexedFile:
             return True
         line_no = self.line_of_offset(offset)
         prefix = self._line_text(line_no)[: offset - self._line_starts[line_no - 1]]
-        return bool(_PRINT_COMMAND.search(_QUOTED_ARG.sub(" ", prefix)))
+        return _prints(_QUOTED_ARG.sub(" ", prefix))
 
     def _quoted_regions(self, line_no: int) -> tuple[list[int], list[int], dict[int, bool]]:
         """The closed quoted regions of one line, as parallel lists of [start, end) columns.

@@ -326,7 +326,7 @@ CODE_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 _TS_TOOL_NAME = re.compile(r"\.(?:registerTool|tool)\s*\(\s*['\"]([\w.-]+)['\"]")
 # Python decorator over a function: @mcp.tool() \n def run_command(...)
 _PY_TOOL_DEF = re.compile(
-    r"@(?:mcp|server|app|fastmcp)\.tool\s*(?:\([^)]*\))?\s*\r?\n\s*(?:async\s+)?def\s+(\w+)",
+    r"@(?:mcp|server|app|fastmcp)\.tool[ \t]*(?:\([^)]*\)[ \t]*)?\r?\n\s*(?:async\s+)?def\s+(\w+)",
     re.MULTILINE,
 )
 # Python decorator with an explicit name: @mcp.tool(name="run_command")

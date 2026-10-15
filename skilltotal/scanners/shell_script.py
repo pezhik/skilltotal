@@ -49,15 +49,18 @@ REMOTE_EXEC = re.compile(
     r"DownloadString)\b"
     r"|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,1000}\|\s*(?:iex|Invoke-Expression)\b"
     rf"|\bpowershell(?:\.exe)?\b{_GAP}\s-(?:e|enc|encodedcommand)\s"
-    r"|\beval\s*\(\s*(?:await\s+)?\(?\s*(?:await\s+)?fetch\s*\("
+    r"|\beval\s*\(\s*(?:await\s+)?(?:\(\s*)?(?:await\s+)?fetch\s*\("
     r"|\bexec\s*\(\s*(?:urllib\.request\.)?urlopen\s*\(",
     re.IGNORECASE,
 )
 
 # Decode data, then run it in a shell (also read in npm lifecycle scripts).
+# Bounded gaps: an unbounded `[^\n]*` rescanned the rest of a crafted line from every `eval` or
+# `base64 -d` on it (quadratic). `base64(?<!\wbase64)` is `\bbase64` written so that the gap is
+# followed by a literal, which the regex engine skips ahead to instead of trying every position.
 DECODE_EXEC_SH = alternation(
-    rf"base64\s+(?:-d|-D|--decode)\b[^\n]*{_TO_SHELL}",
-    r"\beval\b[^\n]*\bbase64\s+(?:-d|-D|--decode)\b",
+    rf"base64\s+(?:-d|-D|--decode)\b[^\n]{{0,1000}}{_TO_SHELL}",
+    r"\beval\b[^\n]{0,1000}base64(?<!\wbase64)\s+(?:-d|-D|--decode)\b",
 )
 
 R_DECODE_EXEC_SH = "ST-OBF-DECODE-EXEC-SH"
@@ -474,8 +477,10 @@ class ShellScriptScanner(Scanner):
             # A `# Usage: curl … | bash` line documents the install command; it is a comment, not
             # a runnable pipe-to-shell. Demote matches inside shell comments (engine code-context).
             code_context="comments",
+            # Bounded gap, as in REMOTE_EXEC: unbounded, it rescanned the rest of a crafted line
+            # from every `curl` on it (quadratic).
             pattern=alternation(
-                rf"(?:curl|wget)\b[^\n]*{_TO_SHELL}",
+                rf"(?:curl|wget)\b[^\n]{{0,1000}}{_TO_SHELL}",
             ),
         ),
         RuleSpec(
@@ -496,10 +501,11 @@ class ShellScriptScanner(Scanner):
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             suffixes=SHELL_SUFFIXES,
             code_context="comments",
+            # Bounded gaps: an unbounded `[^\n]*` from each `unzip` of a crafted line was quadratic.
             pattern=alternation(
-                r"\bunzip\b[^\n]*\s-P\s*\S+",
-                r"\b7za?\s+[xe]\b[^\n]*\s-p\S+",
-                r"\bunrar\s+[xe]\b[^\n]*\s-p\S+",
+                r"\bunzip\b[^\n]{0,1000}\s-P\s*\S+",
+                r"\b7za?\s+[xe]\b[^\n]{0,1000}\s-p\S+",
+                r"\bunrar\s+[xe]\b[^\n]{0,1000}\s-p\S+",
             ),
         ),
         RuleSpec(

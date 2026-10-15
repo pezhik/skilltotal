@@ -44,6 +44,7 @@ from skilltotal.file_index import (
 from skilltotal.loaded_code import BARE_MODULE as _BARE_MODULE
 from skilltotal.loaded_code import LOADING_SUFFIXES as _LOADING_SUFFIXES
 from skilltotal.loaded_code import MAX_LOADED_FILES, follow_skipped_references
+from skilltotal.loaded_code import MODULE_SUFFIXES as _MODULE_SUFFIXES
 from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
 from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
 from skilltotal.loaded_code import module_file as _module_file
@@ -205,9 +206,11 @@ def analyze_directory(
 
     # Side by side in worker processes when the component is large and the entry point allows it;
     # the results are used in SCANNERS order either way (see skilltotal.parallel).
+    regex_only: set[str] = set()
     for result in run_scanners(index, SCANNERS, checked):
         findings.extend(result.findings)
         needs_review.extend(result.needs_review)
+        regex_only.update(result.regex_only_files)
 
     findings, suppressed_count = apply_suppressions(findings, suppress or set())
     # Reported apart from the inline markers' share, so the report can say what the baseline hid.
@@ -268,7 +271,7 @@ def analyze_directory(
         findings, _command_lines(index), index
     )
     needs_review.extend(structured_data_review)
-    findings, code_ctx_review = _split_code_context_evidence(findings, index)
+    findings, code_ctx_review = _split_code_context_evidence(findings, index, regex_only)
     needs_review.extend(code_ctx_review)
     findings, provider_review = _split_own_provider_reads(findings, component)
     needs_review.extend(provider_review)
@@ -446,12 +449,10 @@ def _install_script_files(root: Path) -> dict[str, str]:
             command = scripts.get(script)
             if not isinstance(command, str):
                 continue
-            for word in re.split(r"[\s;&|<>()]+", command):
-                word = word.strip("\"'`")
-                if word and not word.startswith("-"):
-                    target = _module_file(base, package, word)
-                    if target is not None:
-                        queue.append((target, script))
+            for word in _install_command_words(package, command):
+                target = _module_file(base, package, word)
+                if target is not None:
+                    queue.append((target, script))
     found: dict[str, str] = {}
     while queue and len(found) < _MAX_INSTALL_FILES:
         target, script = queue.pop(0)
@@ -478,6 +479,37 @@ def _install_script_files(root: Path) -> dict[str, str]:
     return found
 
 
+def _install_command_words(package: Path, command: str) -> list[str]:
+    """The words of an install command that may name a file of ``package``, once each.
+
+    Each is looked up on disk, which takes milliseconds, so a 20,000-word command took minutes.
+    A word with no path separator and no dot names a file only through a top-level entry of
+    the package (``node install`` runs ``install.js``); any other bare word is a command or an
+    argument and is not looked up. At most ``_MAX_INSTALL_WORDS`` words are.
+    """
+    try:
+        names = {name.casefold() for name in os.listdir(package)}
+    except OSError:
+        names = set()
+    words: list[str] = []
+    seen: set[str] = set()
+    for word in re.split(r"[\s;&|<>()]+", command):
+        word = word.strip("\"'`")
+        if not word or word.startswith("-") or word in seen:
+            continue
+        seen.add(word)
+        if not any(c in word for c in "/\\."):
+            folded = word.casefold()
+            if folded not in names and not any(folded + s in names for s in _MODULE_SUFFIXES):
+                continue
+        words.append(word)
+        if len(words) >= _MAX_INSTALL_WORDS:
+            break
+    return words
+
+
+# An install command names a file or two; this only bounds a padded one.
+_MAX_INSTALL_WORDS = 64
 # An install-time dropper is a handful of files; this only bounds a pathological require graph.
 _MAX_INSTALL_FILES = 200
 # Packages inside a component: how deep and how many are read (a monorepo has tens).
@@ -1404,7 +1436,7 @@ def _split_ci_evidence(
 
 
 def _split_code_context_evidence(
-    findings: list[Finding], index: FileIndex
+    findings: list[Finding], index: FileIndex, regex_only: set[str] | frozenset[str] = frozenset()
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Demote regex matches inside a Python string literal/comment, per the rule's policy.
 
@@ -1423,10 +1455,12 @@ def _split_code_context_evidence(
             kept.append(finding)
             continue
         real = [
-            e for e in finding.evidence if not _is_noncode_context(e, policy, by_path, finding.id)
+            e for e in finding.evidence
+            if not _is_noncode_context(e, policy, by_path, finding.id, regex_only)
         ]
         demoted = [
-            e for e in finding.evidence if _is_noncode_context(e, policy, by_path, finding.id)
+            e for e in finding.evidence
+            if _is_noncode_context(e, policy, by_path, finding.id, regex_only)
         ]
         if real:
             kept.append(_finding_with_evidence(finding, real))
@@ -1448,7 +1482,8 @@ _COMMENT_ONLY_POLICIES = frozenset({"comments", "comments_and_docstrings"})
 
 
 def _is_noncode_context(
-    e: Evidence, policy: str, by_path: dict[str, IndexedFile], rule_id: str = ""
+    e: Evidence, policy: str, by_path: dict[str, IndexedFile], rule_id: str = "",
+    regex_only: set[str] | frozenset[str] = frozenset(),
 ) -> bool:
     """True if evidence ``e`` is a non-executable string/comment match that ``policy`` demotes.
 
@@ -1488,9 +1523,10 @@ def _is_noncode_context(
         # example. Opt-in, because for other rules a value-string in .py is the real signal.
         if policy == "comments_and_docstrings" and f.in_python_docstring(e.match_offset):
             return True
-        return policy in ("strings_and_comments", "strings_and_comments_all") and f.in_string(
-            e.match_offset
-        )
+        # A file nested too deeply for the AST walk was read by regex alone: the credential path
+        # a call reads is in a string there, and nothing else reports the call.
+        return (policy in ("strings_and_comments", "strings_and_comments_all")
+                and e.file not in regex_only and f.in_string(e.match_offset))
     everything = policy == "strings_and_comments_all"
     if f.is_shell_like:
         return f.in_shell_comment(e.match_offset) or (
