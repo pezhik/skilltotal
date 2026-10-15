@@ -178,14 +178,18 @@ def test_the_action_log_prints_file_names_on_one_line(tmp_path):
     import textwrap
 
     action = (Path(__file__).resolve().parent.parent / "action.yml").read_text(encoding="utf-8")
-    code = re.search(r'python -I -c "\n(.*?def safe.*?)\n\s*" "\$REPORT_JSON"', action, re.S)
+    code = re.search(
+        r"""python -I - "\$REPORT_JSON" [^\n]*<<'PY' \|\| true\n(.*?def safe.*?)\n\s*PY\n""",
+        action, re.S)
     assert code is not None
     report = tmp_path / "r.json"
     findings = [{"id": "ST-X", "severity": "high", "title": "t", "threat_class": "risky_construct",
                  "evidence": [{"file": SPOOF, "line_start": i + 1} for i in range(12)]}]
     report.write_text(json.dumps({"findings": findings}), encoding="utf-8")
     done = subprocess.run(  # nosec B603 - this interpreter, the action's own snippet
-        [sys.executable, "-I", "-c", textwrap.dedent(code.group(1)), str(report)],
+        [sys.executable, "-I", "-c", textwrap.dedent(code.group(1)), str(report),
+         str(tmp_path / "scan.log"), "2", ".", str(tmp_path / "comment.md"),
+         str(tmp_path / "annotations.txt")],
         capture_output=True, text=True, encoding="utf-8", check=True)
     lines = done.stdout.splitlines()
     assert not any(line.lstrip().startswith("::") for line in lines)
