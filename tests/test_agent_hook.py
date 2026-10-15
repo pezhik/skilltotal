@@ -7,6 +7,8 @@ never touch the network.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from skilltotal.agent_hook import MAX_TARGETS, hook_response, install_targets
@@ -1655,16 +1657,75 @@ def test_a_local_binary_still_runs_the_line_it_is_given(tmp_path):
     assert calls == ["npm:evil-pkg"]
 
 
-def test_a_windows_shim_counts_only_on_windows(tmp_path):
-    import os
-
+@pytest.mark.parametrize("shims", [("next.cmd",), ("next.ps1",), ("next.cmd", "next.ps1")])
+def test_a_windows_shim_alone_does_not_count(tmp_path, shims):
+    """npx looks for `node_modules/.bin/next` without an extension, on Windows too (npm writes
+    it next to the .cmd and .ps1 shims): a planted `next.cmd` alone is no local copy, and npx
+    fetches `next` from the registry."""
     root = tmp_path / "proj"
     bin_dir = root / "node_modules" / ".bin"
     bin_dir.mkdir(parents=True)
-    (bin_dir / "next.cmd").write_text("@echo off\n", encoding="utf-8")
+    (root / "package.json").write_text("{}", encoding="utf-8")
+    for shim in shims:
+        (bin_dir / shim).write_text("@echo off\n", encoding="utf-8")
     calls = []
     hook_response(_in(root, "npx next build"), scan=lambda s, t: calls.append(s) or _report())
-    assert calls == ([] if os.name == "nt" else ["npm:next"])
+    assert calls == ["npm:next"]
+
+
+def _workspace(tmp_path, workspaces, member="packages/app"):
+    root = tmp_path / "mono"
+    app = root / member
+    app.mkdir(parents=True)
+    (root / "package.json").write_text(json.dumps({"private": True, "workspaces": workspaces}),
+                                       encoding="utf-8")
+    (app / "package.json").write_text('{"name": "app"}', encoding="utf-8")
+    return root, app
+
+
+@pytest.mark.parametrize("workspaces", [
+    ["packages/*"], ["packages/app"], ["./packages/app/"], ["packages/**"], ["**"],
+    {"packages": ["packages/*"]},
+])
+def test_a_workspace_member_runs_what_the_workspace_root_has(tmp_path, workspaces):
+    """In an npm workspace member npm's project folder is the workspace root: npx looks in the
+    root's node_modules/.bin and above, never in the member's own. A program planted only in the
+    member's node_modules/.bin is fetched from the registry, and checked."""
+    root, app = _workspace(tmp_path, workspaces)
+    planted = app / "node_modules" / ".bin"
+    planted.mkdir(parents=True)
+    (planted / "zzevilpkgq").write_text("#!/bin/sh\n", encoding="utf-8")
+    calls = []
+    hook_response(_in(app, "npx zzevilpkgq"), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ["npm:zzevilpkgq"]
+    # The root's own copy is the one npx runs: nothing is fetched.
+    (root / "node_modules" / ".bin").mkdir(parents=True)
+    (root / "node_modules" / ".bin" / "zzevilpkgq").write_text("#!/bin/sh\n", encoding="utf-8")
+    calls.clear()
+    assert hook_response(_in(app, "npx zzevilpkgq"), scan=lambda s, t: calls.append(s)) is None
+    assert calls == []
+
+
+def test_a_package_outside_the_workspaces_keeps_its_own_folder(tmp_path):
+    root, app = _workspace(tmp_path, ["libs/*"])
+    (app / "node_modules" / ".bin").mkdir(parents=True)
+    (app / "node_modules" / ".bin" / "tsc").write_text("#!/bin/sh\n", encoding="utf-8")
+    calls = []
+    assert hook_response(_in(app, "npx tsc"), scan=lambda s, t: calls.append(s)) is None
+    assert calls == []
+
+
+@pytest.mark.parametrize("workspaces", [["packages/{app,web}"], ["!packages/x", "packages/*"],
+                                        ["packages/[a]pp"], "packages/*"])
+def test_a_workspace_list_the_hook_cannot_match_is_checked(tmp_path, workspaces):
+    """When the hook cannot tell whether the root lists the member, the program must be there
+    for both folders npm may take; otherwise the package is checked."""
+    root, app = _workspace(tmp_path, workspaces)
+    (app / "node_modules" / ".bin").mkdir(parents=True)
+    (app / "node_modules" / ".bin" / "tsc").write_text("#!/bin/sh\n", encoding="utf-8")
+    calls = []
+    hook_response(_in(app, "npx tsc"), scan=lambda s, t: calls.append(s) or _report())
+    assert calls == ["npm:tsc"]
 
 
 def test_no_working_directory_means_the_package_is_checked():
@@ -2256,6 +2317,23 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
         started = clock.monotonic()
         for text in hostile:
             run(first, text) if first is not None else run(text)
+        assert clock.monotonic() - started < 2, run
+    # And what reads the configuration files a repository can ship (.npmrc, uv.toml, ...),
+    # with runs of spaces between the parts a key or a header is made of.
+    readers = [
+        hook._PS_COMPUTED_CALL.search, hook._PS_MEMBER.match, hook._INI_LINE.match,
+        hook._INI_SECTION.match, hook._TOML_HEADER.match, hook._TOML_KEY.match,
+        hook._QUOTED_URL.match, hook._YARNRC.findall, hook._YARNRC_YML.findall,
+        hook._BUNFIG.findall, hook._BUNFIG_SCOPES.search, hook._PNPM_WORKSPACE.findall,
+        hook._WORKSPACE_GLOB.fullmatch, hook._npmrc,
+        lambda text: hook._uv_settings(text, "tool.uv"),
+    ]
+    spaced = ["a" + " " * n + "b", "[" + " " * n, "a" + ". " * (n // 2), "& " + " " * n,
+              "a" + " " * n + "=", "'" + " " * n]
+    for run in readers:
+        started = clock.monotonic()
+        for text in hostile + spaced:
+            run(text)
         assert clock.monotonic() - started < 2, run
 
 

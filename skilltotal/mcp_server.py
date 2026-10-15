@@ -496,6 +496,16 @@ def _checked_source(source: str) -> str:
             f"directory is not the client's. For example: \"source\": {json.dumps(example)}."
             f"{package} A git URL or npm:<name> / pypi:<name> works too."
         )
+    if source.startswith(("\\\\", "//")) or (os.name == "nt" and ":" in source[2:]):
+        # A network share (`\\host\share`, `\\localhost\C$\...`), a device path (`\\?\...`,
+        # `\\.\...`, `\\?\GLOBALROOT\...`) or an NTFS stream (`C:\Users\me::$INDEX_ALLOCATION`):
+        # each can name the home folder, or reach another machine, under a spelling the checks
+        # below would not see through.
+        raise _RefusedSource(
+            f"Refusing to scan {source}: network shares, device paths and alternate data "
+            f"streams are not scanned. Use a local drive path, for example: \"source\": "
+            f"{json.dumps(example)}."
+        )
     try:
         root = Path(source).resolve()
         home = Path.home().resolve()
@@ -518,9 +528,20 @@ _EXAMPLE_PATH = (r"C:\Users\me\.claude\skills\my-skill" if os.name == "nt"
 
 
 def _same_or_inside(path: Path, folder: Path) -> bool:
-    """Whether ``path`` is ``folder`` or inside it (case-insensitively where the OS is)."""
+    """Whether ``path`` is ``folder`` or inside it. Folders are compared by what the file system
+    says they are (``os.path.samefile``), so another spelling of the same folder (letter case,
+    an 8.3 short name, a link) is no way around the check; the text comparison stays for paths
+    that do not exist."""
     path_text, folder_text = os.path.normcase(str(path)), os.path.normcase(str(folder))
-    return path_text == folder_text or path_text.startswith(folder_text.rstrip("\\/") + os.sep)
+    if path_text == folder_text or path_text.startswith(folder_text.rstrip("\\/") + os.sep):
+        return True
+    for candidate in (path, *path.parents):
+        try:
+            if os.path.samefile(candidate, folder):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 
 def _size_limit_message(exc: SizeLimitError, args: dict[str, Any]) -> str:

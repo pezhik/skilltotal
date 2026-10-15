@@ -130,8 +130,9 @@ def test_every_scan_flag_in_the_readme_exists(skilltotal):
     help_text = skilltotal("scan", "--help").out
     shown = set()
     for line in README.splitlines():
-        if re.search(r"\bskilltotal scan\b", line):
-            shown.update(re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", line))
+        command = re.search(r"\bskilltotal scan\b.*", line)
+        if command:  # flags in front of it are npx's (`npx -y --package=... -- skilltotal scan`)
+            shown.update(re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", command.group()))
     assert shown, "no scan command found in the README"
     missing = sorted(flag for flag in shown if flag not in help_text)
     assert not missing, f"README shows flags the CLI does not have: {missing}"

@@ -91,6 +91,7 @@ def test_cli_inventory_json_no_scan(tmp_path, capsys, monkeypatch):
     {"command": "uvx", "args": ["skilltotal", "mcp"]},
     {"command": "uvx", "args": ["skilltotal@0.72.0", "mcp"]},
     {"command": "npx", "args": ["-y", "skilltotal", "mcp"]},
+    {"command": "npx", "args": ["-y", "--package=skilltotal@0.73.0", "--", "skilltotal", "mcp"]},
     {"command": "python", "args": ["-m", "skilltotal", "mcp"]},
 ])
 def test_skilltotals_own_mcp_server_is_recognised(tmp_path, server):

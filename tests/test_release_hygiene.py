@@ -68,6 +68,20 @@ def test_documented_install_pins_match_the_current_version():
     assert not stale, f"README install pins must be {skilltotal.__version__}, found {stale}"
 
 
+def test_documented_npx_commands_name_the_current_release():
+    """A plain `npx skilltotal` inside a repository runs that repository's
+    `node_modules/.bin/skilltotal` if it has one, so the docs name the package with
+    `--package=skilltotal@X`, and X is the version being released."""
+    for doc in ("README.md", "npm/README.md"):
+        text = (ROOT / doc).read_text(encoding="utf-8")
+        assert not re.search(r"npx\s+(?:-y\s+)?skilltotal\s+(?:scan|mcp|guard|diff|inventory)\b"
+                             r"|\"-y\",\s*\"skilltotal\"", text), doc
+        pins = re.findall(r"--package=skilltotal@(\d+\.\d+\.\d+)", text)
+        assert pins, f"{doc} is expected to show the npx form with --package"
+        stale = sorted({v for v in pins if v != skilltotal.__version__})
+        assert not stale, f"{doc} npx pins must be {skilltotal.__version__}, found {stale}"
+
+
 def test_efficacy_report_is_regenerated_for_this_release():
     """README says the detection-efficacy report is regenerated every release; hold it to that.
 
