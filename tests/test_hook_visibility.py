@@ -574,8 +574,12 @@ STRICT_ENVS = [
     ({"SKILLTOTAL_STRICT": "false", "CI": "1"}, ""),
     ({"SKILLTOTAL_STRICT": "no", "GITLAB_CI": "true"}, ""),
     ({"SKILLTOTAL_STRICT": " off ", "CI": "1"}, ""),
-    ({"SKILLTOTAL_STRICT": "maybe", "CI": "true"}, "CI"),  # not a known word: CI decides
-    ({"SKILLTOTAL_STRICT": "maybe"}, ""),
+    # Not a known word: read as on, as SKILLTOTAL_STRICT_PARTIAL is (a typo must not loosen a
+    # gate), and the console says so.
+    ({"SKILLTOTAL_STRICT": "maybe", "CI": "true"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "maybe"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "ture"}, "SKILLTOTAL_STRICT"),
+    ({"SKILLTOTAL_STRICT": "  "}, ""),  # empty once the spaces are dropped: CI decides
     ({"TF_BUILD": "True"}, "TF_BUILD"),  # Azure Pipelines
     ({"JENKINS_URL": "https://ci.example.invalid/"}, "JENKINS_URL"),
     ({"TEAMCITY_VERSION": "2024.03"}, "TEAMCITY_VERSION"),
@@ -599,6 +603,13 @@ def test_strict_mode_says_in_the_console_what_turned_it_on():
     assert note in out["systemMessage"]
     # How to turn it off is for the pipeline's owner, not for the agent.
     assert "SKILLTOTAL_STRICT" not in out["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_an_unknown_strict_value_is_read_as_on_and_said():
+    note = cli._hook_settings_note({"SKILLTOTAL_STRICT": "maybe"}, 600)
+    assert "SKILLTOTAL_STRICT is 'maybe', read as on; use 1 or 0." in note
+    assert cli._hook_settings_note({"SKILLTOTAL_STRICT": "1"}, 600) == ""
+    assert cli._hook_settings_note({"SKILLTOTAL_STRICT": "off"}, 600) == ""
 
 
 def test_strict_partial_is_off_unless_set_and_a_typo_reads_as_on():

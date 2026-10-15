@@ -20,7 +20,23 @@ from skilltotal.collector import FAILURE_CATEGORIES, CollectionError, failure_ca
      "'https://github.com': terminal prompts disabled", "repo-not-found"),
     ("git clone failed for https://github.com/o/r: remote: Repository not found.",
      "repo-not-found"),
-    ("failed to fetch https://example.invalid/x: timed out", None),
+    # Offline or a registry that does not answer: the network reason, briefly (audit 2026-10-15).
+    ("failed to fetch https://example.invalid/x: timed out", "timeout"),
+    ("failed to fetch https://registry.npmjs.org/x: <urlopen error [Errno 11001] getaddrinfo "
+     "failed>", "offline"),
+    ("failed to fetch https://pypi.org/pypi/x/json: <urlopen error [Errno -3] Temporary failure "
+     "in name resolution>", "offline"),
+    ("failed to fetch https://registry.npmjs.org/x: <urlopen error [WinError 10061] No "
+     "connection could be made because the target machine actively refused it>", "offline"),
+    ("failed to fetch https://registry.npmjs.org/x: <urlopen error [Errno 111] Connection "
+     "refused>", "offline"),
+    ("git clone failed for https://github.com/o/r: fatal: unable to access "
+     "'https://github.com/o/r/': Could not resolve host: github.com", "offline"),
+    ("failed to fetch https://registry.npmjs.org/x: HTTP Error 503: Service Unavailable",
+     "registry-error"),
+    ("failed to fetch https://registry.npmjs.org/x: HTTP Error 429: Too Many Requests",
+     "registry-error"),
+    ("archive could not be read: it is damaged", None),
 ])
 def test_a_fetch_failure_has_a_fixed_category(message, category):
     assert failure_category(CollectionError(message)) == category

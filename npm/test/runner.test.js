@@ -22,7 +22,9 @@ test("an installed Python is the fallback, and only one that already has the eng
   for (const c of linux) {
     // -P keeps the current directory (often the repository being scanned) off sys.path.
     assert.deepEqual(c.args, ["-P", "-m", "skilltotal"]);
-    assert.deepEqual(c.probe, ["-P", "-c", "import skilltotal"]);
+    // The probe imports the engine and prints its version (for the mismatch warning).
+    assert.deepEqual(c.probe, ["-P", "-c", "import skilltotal; print(skilltotal.__version__)"]);
+    assert.equal(c.reportsVersion, true);
   }
   const win = candidates("1.0.0", "win32").slice(2);
   assert.deepEqual(win.map((c) => c.cmd), ["py", "python", "python3"]);
@@ -41,6 +43,27 @@ test("choose takes the first available way, best first", () => {
   assert.equal(choose("1.0.0", only("pipx"), "linux").name, "pipx");
   assert.equal(choose("1.0.0", only("python"), "linux").name, "python");
   assert.equal(choose("1.0.0", () => false, "linux"), null);
+});
+
+test("an installed Python skilltotal of another version gets a warning on stderr", () => {
+  const { versionWarning } = require("../lib/runner");
+  const python = { name: "python3", reportsVersion: true, installed: "0.66.0" };
+  const warning = versionWarning("0.69.0", python);
+  assert.match(warning, /^skilltotal: npm package 0\.69\.0 is running the installed Python skilltotal 0\.66\.0/);
+  assert.match(warning, /pip install -U skilltotal==0\.69\.0/);
+  assert.ok(warning.endsWith("\n"));
+  assert.equal(versionWarning("0.69.0", { ...python, installed: "0.69.0" }), "");
+  assert.equal(versionWarning("0.69.0", { ...python, installed: "" }), "");
+  // uvx and pipx run the matching release: nothing to say.
+  assert.equal(versionWarning("0.69.0", { name: "uvx", installed: "1.0.0" }), "");
+});
+
+test("the probe of a Python records the version it prints", () => {
+  const probe = {
+    name: "node", cmd: "node", probe: ["-e", "console.log('0.66.0')"], reportsVersion: true,
+  };
+  assert.equal(isAvailable(probe), true);
+  assert.equal(probe.installed, "0.66.0");
 });
 
 test("a command that does not exist is not available", () => {

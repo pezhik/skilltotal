@@ -57,7 +57,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
-from skilltotal import __version__, parallel
+from skilltotal import RULESET_VERSION, __version__, parallel
 from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
 
 # The engine, the collector and the scanners are imported inside the commands that use them:
@@ -276,6 +276,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--project",
         metavar="DIR",
         help="With --installed: also check project-local agent configs in DIR.",
+    )
+    guard.add_argument(
+        "--allow-unchecked",
+        action="store_true",
+        help=(
+            "With --installed: exit 0 even when a component could not be checked (a scan error, "
+            "a remote or unsupported server) or none was found. Without it that exits 1."
+        ),
     )
     guard.add_argument(
         "--block-on",
@@ -850,8 +858,10 @@ def _cmd_guard(args: argparse.Namespace) -> int:
 
 
 def _guard_installed(args: argparse.Namespace) -> int:
-    """Guard every installed AI component; block if any of them blocks."""
-    from skilltotal.engine import analyze
+    """Guard every installed AI component: exit 2 if any of them blocks, else 1 if any could not
+    be checked or none was found (unless --allow-unchecked), else 0. What was not checked is never
+    reported as passed: a sweep where every scan failed used to say "ALLOW"."""
+    from skilltotal import engine
     from skilltotal.inventory import discover
     from skilltotal.report import _terminal_safe, render_inventory_json
 
@@ -860,13 +870,15 @@ def _guard_installed(args: argparse.Namespace) -> int:
     blocked: list[str] = []
     for c in components:
         item: dict = {"host": c.host, "name": c.name, "kind": c.kind, "source": c.source}
+        if c.secrets:
+            item["secrets"] = c.secrets
         if not (c.scannable and c.source):
-            item["decision"] = "not scanned"
+            item["decision"] = "risky" if c.risky else "not scanned"
             item["note"] = c.note
             items.append(item)
             continue
         try:
-            report = analyze(c.source).to_dict()
+            report = engine.analyze(c.source).to_dict()
         except Exception as exc:  # noqa: BLE001 - one bad item must not abort the sweep
             item["decision"] = "error"
             item["note"] = str(exc)
@@ -880,25 +892,50 @@ def _guard_installed(args: argparse.Namespace) -> int:
             blocked.append(c.name)
         items.append(item)
 
+    unchecked = {kind: sum(it["decision"] == kind for it in items)
+                 for kind in ("error", "not scanned", "risky")}
+    missing = sum(unchecked.values())
     if args.json:
         print(render_inventory_json(items))
     else:
         lines: list[str] = []
         for it in items:
-            marker = {"allow": "ok", "block": "BLOCK"}.get(it["decision"], it["decision"])
+            marker = {"allow": "ok", "block": "BLOCK", "risky": "RISKY"}.get(
+                it["decision"], it["decision"])
             risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
             lines.append(f"[{marker}] {it['name']} ({it['host']}, {it['kind']}){risk}")
             lines.extend(f"      - {reason}" for reason in it.get("reasons", []))
+            if it.get("note") and it["decision"] in unchecked:
+                lines.append(f"      - {it['note']}")
+            lines.extend(f"      - inline secret in its config: {secret}"
+                         for secret in it.get("secrets", []))
         lines.append("")
+        counts = ", ".join(f"{n} {kind}" + ("s" if kind == "error" and n > 1 else "")
+                           for kind, n in unchecked.items() if n)
+        not_checked = (f"{missing} of {len(items)} component(s) could not be checked "
+                       f"({counts}).")
         if blocked:
             lines.append(f"BLOCK: {len(blocked)} component(s) failed the guard: "
                          f"{', '.join(blocked)}")
+            if missing:
+                lines.append(not_checked)
+        elif not items:
+            lines.append("UNCHECKED: no installed AI components were found, so nothing was "
+                         "checked." if not args.allow_unchecked else
+                         "ALLOW: no installed AI components were found.")
+        elif missing:
+            lead = "ALLOW (--allow-unchecked): " if args.allow_unchecked else "UNCHECKED: "
+            lines.append(lead + not_checked)
         else:
             lines.append(f"ALLOW: all {len(items)} component(s) passed the guard.")
         # Names come from config files anyone can write (a repository's `.mcp.json`): their
         # escape sequences must not reach the terminal, as in every other text report.
         print(_terminal_safe("\n".join(lines)))
-    return EXIT_FAIL_ON_HIGH if blocked else EXIT_OK
+    if blocked:
+        return EXIT_FAIL_ON_HIGH
+    if (missing or not items) and not args.allow_unchecked:
+        return EXIT_ERROR  # could not check: never a silent pass
+    return EXIT_OK
 
 
 def _cmd_inventory(args: argparse.Namespace) -> int:
@@ -915,7 +952,7 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
         item = {
             "host": c.host, "name": c.name, "kind": c.kind,
             "source": c.source, "scannable": c.scannable, "note": c.note,
-            "config": c.config,
+            "config": c.config, "risky": c.risky, "secrets": c.secrets,
         }
         if c.scannable and not args.no_scan and c.source is not None:
             try:
@@ -972,8 +1009,11 @@ HOOK_FAILED = {
 # denies). Raise it, with the wrapper's PROTOCOL (a test keeps them equal), when the wrapper comes
 # to rely on something an older CLI does not do.
 HOOK_PROTOCOL = 2
+# How to update the CLI, whichever way it was installed (the plugin's wrapper says the same).
+HOOK_UPDATE = "update the skilltotal CLI (pipx upgrade skilltotal or pip install -U skilltotal)"
 # CI strict mode for the hook: SKILLTOTAL_STRICT=1/true/yes/on turns it on and 0/false/no/off off;
-# otherwise it is on when CI, or the marker of a CI service that does not always set CI, is set to
+# any other non-empty value turns it on too (a typo must not loosen a gate; the console says so).
+# Otherwise it is on when CI, or the marker of a CI service that does not always set CI, is set to
 # anything but empty or a false value. The plugin's wrapper reads them the same way (a shared test
 # table keeps the two in step): only ASCII letters are lowercased, and only spaces, tabs and line
 # ends are removed.
@@ -994,10 +1034,10 @@ def _hook_strict(environ) -> str:
     """The variable that turns CI strict mode on (where what the hook would ask about is denied),
     or "" when it is off."""
     value = _env_word(environ.get(HOOK_STRICT_ENV, ""))
-    if value in _ENV_TRUE:
-        return HOOK_STRICT_ENV
     if value in _ENV_FALSE:
         return ""
+    if value:  # on, or a value that is neither on nor off: a typo must not loosen a gate
+        return HOOK_STRICT_ENV
     return next((name for name in HOOK_CI_MARKERS
                  if _env_word(environ.get(name, "")) not in _ENV_FALSE | {""}), "")
 
@@ -1045,7 +1085,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         return hook_scan.supervise(Path(args.supervise), remember=_hook_remember)
     if args.protocol > HOOK_PROTOCOL:
         print(f"error: this skilltotal speaks hook protocol {HOOK_PROTOCOL}, the plugin needs "
-              f"{args.protocol}; run pipx upgrade skilltotal", file=sys.stderr)
+              f"{args.protocol}; {HOOK_UPDATE}", file=sys.stderr)
         return EXIT_ERROR
     strict_by = _hook_strict(os.environ)
     try:
@@ -1101,6 +1141,9 @@ def _hook_settings_note(environ, ceiling: float) -> str:
     )
 
     notes = []
+    strict = _env_word(environ.get(HOOK_STRICT_ENV, ""))
+    if strict and strict not in _ENV_TRUE | _ENV_FALSE:
+        notes.append(f"{HOOK_STRICT_ENV} is {strict!r}, read as on; use 1 or 0.")
     word = environ.get(STRICT_PARTIAL_ENV, "").strip().lower()
     if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
         notes.append(f"{STRICT_PARTIAL_ENV} is {word!r}, read as on; use 1 or 0.")
@@ -1167,11 +1210,11 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     path = _hook_cache_path()
     now = time.time()
     hit = _hook_cache_read(path).get(key)
-    if isinstance(hit, dict) and hit.get("engine") == __version__ and _fresh(hit, now, ttl):
+    if _usable(hit) and _fresh(hit, now, ttl):
         return hit["report"]
     # What the verdict is kept under, and for which file: everything that keeps it needs to know.
     job = {"key": key, "ttl": ttl, "artifact": release.artifact if release else "", "at": now,
-           "engine": __version__}
+           "engine": __version__, "ruleset": RULESET_VERSION}
     pending = Pending(path.parent / "hook-pending")
     try:
         marker = pending.claim(key, now, wait_s=min(2.0, max(0.0, hard - time.monotonic())))
@@ -1289,6 +1332,7 @@ def _hook_remember(job: dict, report: dict, deadline: float | None = None) -> di
     verdict = report.get("verdict") or {}
     entry = {
         "engine": job["engine"],
+        "ruleset": job.get("ruleset"),
         "at": job["at"],
         "ttl": job["ttl"],
         "report": {
@@ -1370,6 +1414,20 @@ def _hook_cache_ttl(key: str) -> float:
     """How long a verdict kept under ``key`` may be reused: a week for one exact release, an hour
     for anything else. It is worked out from the key, never taken from the cache file."""
     return HOOK_RELEASE_TTL_S if _RELEASE_KEY.fullmatch(key) else HOOK_MOVING_TTL_S
+
+
+def _usable(entry: object) -> bool:
+    """Whether a cache entry may answer at all: it records this engine and ruleset, and a verdict.
+
+    The cache is a plain file that anything running as the person can write, so this is not a
+    defense against such a program (it can as well replace the CLI); it keeps a stale entry, or
+    one written by hand without these fields, from deciding an install.
+    """
+    if not isinstance(entry, dict):
+        return False
+    report = entry.get("report")
+    return (entry.get("engine") == __version__ and entry.get("ruleset") == RULESET_VERSION
+            and isinstance(report, dict) and isinstance(report.get("verdict"), dict))
 
 
 def _fresh(entry: dict, now: float, ttl: float) -> bool:

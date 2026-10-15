@@ -1820,7 +1820,8 @@ def _cache_entry(cache_dir, key, *, at, ttl):
 
     import skilltotal
 
-    entry = {"engine": skilltotal.__version__, "at": at, "ttl": ttl,
+    entry = {"engine": skilltotal.__version__, "ruleset": skilltotal.RULESET_VERSION,
+             "at": at, "ttl": ttl,
              "report": {"risk_level": "low", "risk_score": 0, "component": {"version": ""},
                         "verdict": {"has_malicious_indicators": False, "headline": ""},
                         "findings": [], "needs_review": []}}
@@ -1859,6 +1860,44 @@ def test_a_cache_entry_cannot_extend_its_own_life(tmp_path, monkeypatch, key, ag
     monkeypatch.setattr(cli, "_hook_scan", lambda s, t, job=None: calls.append(s) or _report())
     cli._hook_scan_cached(key, 20)
     assert calls == ([key] if rescanned else [])
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"ruleset": None},  # written by hand, or by a CLI that did not record it
+        {"ruleset": -1},  # another ruleset: the verdict may be stale
+        {"engine": None},
+        {"report": "clean"},  # not a report at all
+        {"report": {"risk_level": "low"}},  # a report without its verdict
+    ],
+)
+def test_a_cache_entry_without_the_right_fields_is_not_used(tmp_path, monkeypatch, change):
+    """The cache is a file anything running as the person can write. An entry is used only when
+    it records the engine and ruleset that produced it, and a verdict."""
+    import json
+
+    import skilltotal.cli as cli
+
+    monkeypatch.setenv("SKILLTOTAL_CACHE_DIR", str(tmp_path))
+    now = 1_000_000_000.0
+    monkeypatch.setattr(cli.time, "time", lambda: now)
+    _cache_entry(tmp_path, "npm:tsc@5.0.0", at=now - 60, ttl=WEEK)
+    path = tmp_path / "hook-cache.json"
+    cache = json.loads(path.read_text(encoding="utf-8"))
+    entry = cache["npm:tsc@5.0.0"]
+    for field, value in change.items():
+        if value is None:
+            del entry[field]
+        else:
+            entry[field] = value
+    path.write_text(json.dumps(cache), encoding="utf-8")
+    calls = []
+    monkeypatch.setattr(cli, "_hook_scan", lambda s, t, job=None: calls.append(s) or _report())
+    cli._hook_scan_cached("npm:tsc@5.0.0", 20)
+    assert calls == ["npm:tsc@5.0.0"]
+    stored = json.loads(path.read_text(encoding="utf-8"))["npm:tsc@5.0.0"]
+    assert stored["ruleset"] == cli.RULESET_VERSION
 
 
 def test_a_cache_entry_dated_in_the_future_is_not_used(tmp_path, monkeypatch):

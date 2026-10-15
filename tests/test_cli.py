@@ -229,7 +229,7 @@ def test_guard_installed_text_never_carries_terminal_escapes(monkeypatch, capsys
                                 kind="mcp_server", source=None, scannable=False,
                                 note=f"remote{esc}[31m")]
     monkeypatch.setattr("skilltotal.inventory.discover", lambda project=None: fake)
-    assert main(["guard", "--installed"]) == EXIT_OK
+    assert main(["guard", "--installed"]) == EXIT_ERROR  # nothing could be checked
     out = capsys.readouterr().out
     assert esc not in out and bel not in out
     assert "srv\\x1b[2J" in out

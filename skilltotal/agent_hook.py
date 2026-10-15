@@ -101,6 +101,9 @@ LOCKFILE, LOCAL, SCRIPT = "lockfile", "local", "script"
 # not read or parse. Allowed in strict mode under this name too.
 PARTIAL = "partial"
 UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL)
+# A git clone fetches code the hook does not check, and runs none of it by itself: said in the
+# console, never denied for that alone (in CI too), so it is not one of UNCHECKED_KINDS.
+GIT_CLONE = "clone"
 # A URL a line may quote: no whitespace, quotes or anything a shell fills in.
 _PLAIN_URL = re.compile(r"https?://[A-Za-z0-9._~/:@%+=?&#-]{1,200}")
 
@@ -135,6 +138,32 @@ def _downloaded_script(url: str | None) -> list[Install]:
     """A script downloaded and run as it arrives (``curl ... | bash``, ``iex (irm ...)``)."""
     where = url if url and _PLAIN_URL.fullmatch(url) else "the internet"
     return [Install(None, unchecked=SCRIPT, does=f"runs a script downloaded from {where}")]
+
+
+# git's options that take a value: global ones in front of `clone`, and `clone`'s own.
+_GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path",
+                    "--config-env"}
+_CLONE_VALUE_FLAGS = {"-b", "--branch", "-o", "--origin", "-c", "--config", "--depth", "-u",
+                      "--upload-pack", "--reference", "--reference-if-able", "--template",
+                      "--separate-git-dir", "--filter", "-j", "--jobs", "--shallow-since",
+                      "--shallow-exclude", "--server-option", "--bundle-uri", "--ref-format"}
+# A clone URL a line may quote: plain, as _PLAIN_URL, in any of git's URL schemes.
+_PLAIN_GIT_URL = re.compile(r"(?:https?|git|ssh)://[A-Za-z0-9._~/:@%+=-]{1,200}")
+
+
+def _git(args: list[str]) -> list[Install]:
+    """``git clone URL``: code fetched that nothing checked. It runs none of it by itself, so it
+    is only said in the console (the hook is never silent about fetched code), in CI too."""
+    sub, rest = _subcommand(args, _GIT_VALUE_FLAGS)
+    if sub != "clone" or any(a in ("-h", "--help") for a in rest):
+        return []
+    url = next(iter(_positionals(rest, _CLONE_VALUE_FLAGS)), None)
+    if url is None:
+        return []
+    shown = url if _PLAIN_GIT_URL.fullmatch(url) else "a git repository"
+    return [Install(None, unchecked=GIT_CLONE, does=f"clones {shown}")]
+
+
 # Stands in for a command substitution among a command's words: what it prints is not known here.
 _SUB = "$(...)"
 # An installer and an install-like verb near it: read in text that runs but that the parser could
@@ -172,6 +201,67 @@ _INSTALLER_NAME = re.compile(
     re.IGNORECASE,
 )
 _ENV_ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# Hidden command lines (audit 2026-10-15). An installer's name can be kept out of the command
+# line altogether: decoded (`eval "$(echo bnBt... | base64 -d)"`, `iex ([Text.Encoding]::...
+# FromBase64String(...))`), built from pieces (`$c = "np" + "m"; & $c i x`, `printf "\x6e..."`) or
+# read from somewhere the hook does not see. Then nothing on the line names an installer, so the
+# checks that ask when one is named stay quiet. The rule, kept narrow so that everyday commands
+# stay silent:
+#
+# * text another program runs (`eval`, `iex`, `bash -c`, `source`, a shell or `iex` reading stdin)
+#   that comes from a substitution or a variable is asked about when the line holds a decoder or
+#   builds a string from pieces (`_hides`), or names an installer (as before). Plain shell init,
+#   `eval "$(ssh-agent -s)"`, `eval "$(pyenv init -)"`, `eval "$(direnv hook bash)"`, holds
+#   neither and stays silent: asking before every shell init would teach people to approve blindly.
+# * a shell or `iex` reading on stdin what a program prints (`... | base64 -d | sh`, `... | rev |
+#   sh`) is asked about, unless the program only reads a file (`cat x.sh | bash` runs a script on
+#   disk, as `bash x.sh` does, which the hook does not read either) or downloads it (said in the
+#   console as a downloaded script);
+# * a command name the shell computes (`$X`, `$(...)`, `& $c`) is asked about when the line holds
+#   a decoder or builds a string, or the next word is an install verb (`$X i is-number`); `$EDITOR
+#   notes.md` and `"$(command -v python3)" x.py` stay silent;
+# * code given on another interpreter's command line (`python -c`, `node -e`, `perl -e`) is asked
+#   about when it both decodes something and runs a command or code (`os.system(base64.b64decode(
+#   ...))`); decoding alone (`print(base64.b64decode(...))`) is a common one-liner and stays silent.
+#
+# Decoders and string builders: base64/base32/xxd/openssl/uudecode/rev, printf or code with \x or
+# octal escapes, Python's b64decode/fromhex/unhexlify/decompress/codecs.decode, JavaScript's atob/
+# Buffer.from(..., 'base64'|'hex')/fromCharCode, PowerShell's FromBase64String/GetString/[char]/
+# -join, and two string literals joined with `+` or `-f`.
+_DECODER = re.compile(
+    r"(?<![\w.-])(?:base64|base32|basenc|xxd|uudecode|openssl|rev)(?![\w-])"
+    r"|b(?:64|32|85|16)decode|a85decode|decode_base64|unhexlify|fromhex|decompress"
+    r"|codecs\.decode|rot_?13|\batob\s{0,20}\(|buffer\.from\s{0,20}\([^)]{0,200}['\"]"
+    r"(?:base64|hex)['\"]"
+    r"|fromcharcode|frombase64string|\.getstring\s{0,20}\(|\[char\]|(?<![\w-])-join\b"
+    r"|\\x[0-9a-f]{2}|\\[0-3][0-7]{2}|\\u00[0-9a-f]{2}",
+    re.IGNORECASE,
+)
+# Runs of spaces are bounded: the hook reads every command, however long (no quadratic match).
+_CONCAT = re.compile(r"""["']\s{0,20}\+\s{0,20}["']|["']\s{1,20}-f\s{1,20}["']""",
+                     re.IGNORECASE)
+# What runs a command or code from inside another language's one-liner.
+_CODE_SINK = re.compile(
+    r"\b(?:system|popen|exec\w*|eval|spawn\w*|subprocess|child_process|shell_exec|passthru"
+    r"|proc_open|qx|invoke-expression|iex)\b|`",
+    re.IGNORECASE,
+)
+# The first word after a computed command name that makes it read as an installer's verb.
+_INSTALL_VERBS = frozenset({"install", "i", "in", "isntall", "add", "x", "dlx", "exec",
+                            "create", "tool", "ci", "sync", "-y", "--yes"})
+
+
+def _hides(text: str) -> bool:
+    """Whether ``text`` decodes something or builds a string from pieces (see above)."""
+    return bool(_DECODER.search(text) or _CONCAT.search(text))
+
+
+def _code_hides(code: str) -> bool:
+    """Whether another language's one-liner decodes something and runs it."""
+    return bool(_DECODER.search(code) or _CONCAT.search(code)) and bool(_CODE_SINK.search(code))
+
+
 # A file path a reason may quote: no whitespace or punctuation a sentence needs (see guard).
 _PLAIN_PATH = PLAIN_PATH
 # A version the reason may quote; it comes from the scanned manifest, so it is held to the same.
@@ -358,6 +448,12 @@ class _Context:
         """Whether the whole command line names an installer anywhere (`N=npm; $N i x`)."""
         return bool(_INSTALLER_NAME.search(self.root))
 
+    @functools.cached_property
+    def root_hides(self) -> bool:
+        """Whether the whole command line decodes text or builds a string from pieces, which a
+        command it runs can be spelled from (`X=$(printf '\\x6e...'); $X i x`)."""
+        return _hides(self.root)
+
 
 @dataclass(frozen=True)
 class _Level:
@@ -372,6 +468,11 @@ class _Level:
     def subs_install(self) -> bool:
         """Whether a command substitution here names an installer (worked out once)."""
         return any(_INSTALL_WORDS.search(sub) for sub in self.subs)
+
+    @functools.cached_property
+    def subs_hide(self) -> bool:
+        """Whether a command substitution here decodes text or builds a string from pieces."""
+        return any(_hides(sub) for sub in self.subs)
 
 
 def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
@@ -573,6 +674,21 @@ def _net(*texts: str) -> list[Install]:
     return [_NOT_READ] if any(_INSTALL_WORDS.search(t) for t in texts) else []
 
 
+def _net_code(*texts: str) -> list[Install]:
+    """Code in another language that runs (``python -c``, ``node -e``, a script on stdin): asked
+    about when it names an installer, or decodes or builds a string and runs it."""
+    return [_NOT_READ] if any(_INSTALL_WORDS.search(t) or _code_hides(t) for t in texts) else []
+
+
+def _stdin_code(feed: list[tuple[str, bool]]) -> list[Install]:
+    """The code an interpreter reads on stdin: what an ``echo`` writes is read as code; what a
+    decoder prints (``... | base64 -d | python``) cannot be read."""
+    found = _net_code(*(text for text, _ in feed))
+    if not found and any(not readable and _hides(text) for text, readable in feed):
+        found = [_NOT_READ]
+    return found
+
+
 def _run(text: str, shell: str, depth: int, level: _Level) -> list[Install]:
     """What a command line another program runs would install (``bash -c``, ``eval``, ``iex``,
     a script piped into a shell)."""
@@ -595,23 +711,44 @@ def _unseen(text: str, shell: str, level: _Level) -> list[Install]:
     (``bash -c "$(curl -fsSL ...)"``, ``bash <(curl ...)``) runs a script nothing checked."""
     found = [item for sub in level.subs for item in _download_of(sub, shell)] if (
         _SUB in text) else []
-    if _SUB in text and level.subs_install:
-        found.append(_NOT_READ)
-    elif _VARIABLE[shell].search(text.replace(_SUB, "")) and level.ctx.root_installs:
-        found.append(_NOT_READ)
+    if _SUB in text and (level.subs_install or level.subs_hide):
+        found.append(_NOT_READ)  # `eval "$(echo bnBt... | base64 -d)"`
+    elif _VARIABLE[shell].search(text.replace(_SUB, "")) and (
+            level.ctx.root_installs or level.ctx.root_hides):
+        found.append(_NOT_READ)  # `X=$(... | base64 -d); eval "$X"`
     return found
 
 
 def _from_stdin(feed: list[tuple[str, bool]], shell: str, depth: int,
                 level: _Level) -> list[Install]:
     """A script a shell (or ``iex``) reads on stdin: read as commands when the hook could read
-    it, else asked about when it names an installer, and said to be unchecked when it is a
-    download (``curl ... | bash``)."""
+    it, said to be unchecked when it is a download (``curl ... | bash``), and otherwise asked
+    about unless it is a file read from disk (``cat x.sh | bash``, as ``bash x.sh``): what a
+    program prints (``... | base64 -d | sh``) is a command line nobody can read here."""
     found: dict[Install, None] = {}
     for text, readable in feed:
-        found.update(dict.fromkeys(_run(text, shell, depth, level) if readable else _net(text)))
+        if readable:
+            found.update(dict.fromkeys(_run(text, shell, depth, level)))
+        elif _download_of(text, shell) or _reads_file(text, shell):
+            found.update(dict.fromkeys(_net(text)))
+        else:
+            found[_NOT_READ] = None
     found.update(dict.fromkeys(_stdin_downloads(feed, shell)))
     return list(found)
+
+
+# Programs that print a file as it is on disk.
+_FILE_READERS = frozenset({"cat", "type", "get-content", "gc"})
+
+
+def _reads_file(text: str, shell: str) -> bool:
+    """Whether ``text`` only prints files named on its command line (``cat setup.sh``,
+    ``Get-Content .\\setup.ps1 -Raw``)."""
+    words = _unwrap(_words(text, shell) or [])
+    if not words or _base(words[0]) not in _FILE_READERS:
+        return False
+    names = [w for w in words[1:] if not w.startswith(tuple(_PS_DASHES))]
+    return bool(names) and not any(_SUB in w or _filled_in(w) for w in names)
 
 
 # Programs that print what they download: piped into a shell, or run by `bash -c "$(...)"`, the
@@ -1696,8 +1833,11 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
 
     feed = feed or []
     if _COMPUTED_HEAD[shell].search(command):
-        # `N=npm; $N i x`, `$(echo npm) i x`, `{npm,} i x`: the shell decides what runs.
-        return [_NOT_READ] if level.ctx.root_names_installer else []
+        # `N=npm; $N i x`, `$(echo npm) i x`, `{npm,} i x`: the shell decides what runs. With no
+        # installer named, a decoder or a string built on the line, or an install verb next,
+        # (`X=$(printf '\x6e\x70\x6d'); $X i x`, `$c = "np" + "m"; & $c i x`) still asks.
+        hidden = level.ctx.root_hides or (bool(rest) and rest[0].lower() in _INSTALL_VERBS)
+        return [_NOT_READ] if level.ctx.root_names_installer or hidden else []
     if shell == "bash" and not pattern and _globbed(command):
         return [_NOT_READ]  # `*pip install x`: the shell runs whichever file name matches
     if head in _SHELLS or head in ("cmd", "powershell", "pwsh"):
@@ -1713,6 +1853,10 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         args = [a for a in rest if a.lower() != "-command"]
         if args:
             return _run(" ".join(args), "powershell", depth, level)
+        if not feed and level.ctx.root_hides:
+            # `iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('...')))`: what it
+            # runs is the parenthesized part, a decoded string.
+            return [_NOT_READ]
         return _from_stdin(feed, "powershell", depth, level)  # `'npm i x' | iex`
     if head in _LAUNCHERS or (shell == "cmd" and head == "start"):
         return _launched(rest, shell, depth, level)
@@ -1740,6 +1884,8 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
     if head == "gemini" and rest[:1] in (["extensions"], ["extension"]) \
             and rest[1:2] == ["install"]:
         return _gemini_extension(rest[2:])
+    if head == "git":
+        return _git(rest)
     if head in _SKILLS_CLIS:
         return _skills_add(rest)
     if command.lower() in ("@smithery/cli", "smithery"):
@@ -1871,7 +2017,8 @@ def _interpreter(head: str, rest: list[str], feed: list[tuple[str, bool]],
     if head == "deno" and "eval" in rest:
         codes.append(" ".join(rest[rest.index("eval") + 1:]))
     computed = [item for arg in rest if _SUB in arg for item in _unseen(arg, shell, level)]
-    return _net(*codes, *(text for text, _ in feed)) + _stdin_downloads(feed, shell) + computed
+    return (_net_code(*codes) + _stdin_code(feed) + _stdin_downloads(feed, shell)
+            + computed)
 
 
 def _script(head: str, rest: list[str]) -> str | None:
@@ -2600,11 +2747,11 @@ def _python_module(rest: list[str], shell: str, depth: int, level: _Level,
                             return [_NOT_READ] if level.ctx.root_names_installer else []
                         return _python_m(_base(value), rest[i + 1:], shell, depth, level)
                     if letter == "c":
-                        return _net(value)
+                        return _net_code(value)
                     break
         i += 1
     if i >= len(rest) or rest[i] == "-":  # the script comes from stdin
-        return _net(*(text for text, _ in feed)) + _stdin_downloads(feed, shell)
+        return _stdin_code(feed) + _stdin_downloads(feed, shell)
     # `python script.py`; `python3 <(curl ...)` runs what a substitution prints.
     if _SUB in rest[i]:
         return _unseen(rest[i], shell, level)
@@ -3251,9 +3398,11 @@ def hook_response(
             unchecked.append(item)
             continue
         if item.source is None:
-            asked.append(f"{item.unverifiable}: SkillTotal can't check what this would install.")
+            asked.append(f"{_clip(str(item.unverifiable))}: SkillTotal can't check what this "
+                         f"would install.")
             continue
         source = item.source
+        shown = _clip(source)  # the name as the answer quotes it; the scan gets all of it
         if checked == MAX_TARGETS:
             skipped.append(source)
             continue
@@ -3265,15 +3414,15 @@ def hook_response(
         try:
             report = scan(source, remaining)
         except CheckInBackground as check:
-            asked.append(_background_detail(source, check, budget_s))
+            asked.append(_background_detail(shown, check, budget_s))
             continue
         except TooLargeToCheck as big:
-            asked.append(f"{source}: too large for SkillTotal to check here: its full check would "
+            asked.append(f"{shown}: too large for SkillTotal to check here: its full check would "
                          f"take more than {big.ceiling_s / 60:g} minutes. Run `skilltotal scan "
-                         f"{big.target}` to check it.")
+                         f"{_clip(big.target)}` to check it.")
             continue
         except BackgroundFull as full:
-            asked.append(f"{source}: not checked; SkillTotal is already running {full.running} "
+            asked.append(f"{shown}: not checked; SkillTotal is already running {full.running} "
                          f"checks in the background. Run the same command again in a few minutes.")
             continue
         except TimeoutError:
@@ -3283,17 +3432,17 @@ def hook_response(
             variable = getattr(exc, "variable", None)
             reason = getattr(exc, "reason", None)
             if variable in LIMIT_SETTINGS:
-                asked.append(f"{source}: not checked because it is over SkillTotal's size "
+                asked.append(f"{shown}: not checked because it is over SkillTotal's size "
                              f"limit. To check it, set {variable} to a higher value and run the "
                              f"same command again.")
             elif isinstance(reason, str) and reason:
-                asked.append(f"{source}: not checked because {reason}.")
+                asked.append(f"{shown}: not checked because {_clip(reason, 300)}.")
             else:
                 failed.append(source)
             continue
         decision = evaluate(report)
         verdict = report.get("verdict") or {}
-        label = _checked_label(source, report)
+        label = _clip(_checked_label(source, report))
         # The hint names the release that was checked, so `skilltotal scan` reads the same one.
         if verdict.get("has_malicious_indicators"):
             denied.append(_sentence(f"{label}: {_malicious_detail(report)}"))
@@ -3325,7 +3474,8 @@ def hook_response(
                      f"{MAX_TARGETS} packages in a command.")
 
     # In CI an unchecked install is denied unless its kind is allowed; elsewhere it is said only.
-    blocked = [i for i in unchecked if i.unchecked not in allow_unchecked] if strict else []
+    blocked = [i for i in unchecked if i.unchecked in UNCHECKED_KINDS
+               and i.unchecked not in allow_unchecked] if strict else []
     passed = [i for i in unchecked if i not in blocked]
     held = partial if strict and deny_partial and PARTIAL not in allow_unchecked else []
 
@@ -3426,7 +3576,12 @@ def _not_checked(items: list[Install], *, rest: bool) -> str:
     already says what was checked."""
     if not items:
         return ""
-    what = "the rest of this install" if rest else "this install"
+    if rest:
+        what = "the rest of this install"
+    elif all(item.unchecked == GIT_CLONE for item in items):
+        what = "this command"  # a clone installs nothing by itself
+    else:
+        what = "this install"
     return (f"SkillTotal did not check {what}: it {_does(items)}, and SkillTotal checks only the "
             f"packages a command names.")
 
@@ -3488,7 +3643,19 @@ def _ago(seconds: float) -> str:
 
 def _names(sources: list[str], shown: int = 3) -> str:
     more = f" and {len(sources) - shown} more" if len(sources) > shown else ""
-    return ", ".join(sources[:shown]) + more
+    return ", ".join(_clip(source) for source in sources[:shown]) + more
+
+
+# The most of one name, command or reason the answer echoes: a 200,000-character package name
+# once came back three times in 600 KB of hook output.
+MAX_ECHO = 200
+
+
+def _clip(text: str, limit: int = MAX_ECHO) -> str:
+    """``text`` cut to about ``limit`` characters, keeping its end (where a reason says why)."""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit - 41]}…{text[-40:]}"
 
 
 def _details(scanned: list[str]) -> str:

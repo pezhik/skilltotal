@@ -1136,7 +1136,20 @@ FAILURE_CATEGORIES = {
     "git-missing": "git is not installed, and checking a git source needs it",
     "not-found": "the registry has no such package or version",
     "repo-not-found": "the repository was not found, or it is private",
+    "offline": "the registry could not be reached (no network connection, or a proxy or "
+               "firewall blocks it)",
+    "timeout": "the registry did not answer in time",
+    "registry-error": "the registry answered with an error; try again later",
 }
+# What a fetch error says when the network, not the package, is the reason.
+_OFFLINE_MARKERS = (
+    "getaddrinfo failed", "Name or service not known", "nodename nor servname",
+    "Temporary failure in name resolution", "No address associated with hostname",
+    "Network is unreachable", "Connection refused", "No route to host", "actively refused",
+    "[WinError 10051]", "[WinError 10060]", "[WinError 10065]", "Could not resolve host",
+    "Could not resolve proxy", "Failed to connect to",
+)
+_REGISTRY_ERROR = re.compile(r"HTTP Error (?:5\d\d|429)")
 
 
 def failure_category(exc: BaseException) -> str | None:
@@ -1152,6 +1165,14 @@ def failure_category(exc: BaseException) -> str | None:
             m in message for m in ("Repository not found", "could not read Username",
                                    "not found", "Authentication failed")):
         return "repo-not-found"
+    if not message.startswith(("failed to fetch", "git clone failed")):
+        return None
+    if any(m in message for m in _OFFLINE_MARKERS):
+        return "offline"
+    if "timed out" in message:
+        return "timeout"
+    if _REGISTRY_ERROR.search(message):
+        return "registry-error"
     return None
 
 

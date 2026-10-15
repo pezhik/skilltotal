@@ -16,7 +16,7 @@ def _write(path: Path, obj) -> None:
 # --- derive_source -------------------------------------------------------------------
 def test_derive_npx(tmp_path):
     src, _ = derive_source({"command": "npx", "args": ["-y", "@scope/mcp-foo@1.2.0"]}, tmp_path)
-    assert src == "npm:@scope/mcp-foo"
+    assert src == "npm:@scope/mcp-foo@1.2.0"  # the pinned release is the one that runs
 
 
 def test_derive_uvx(tmp_path):
