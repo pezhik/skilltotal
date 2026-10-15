@@ -711,7 +711,10 @@ def test_in_ci_what_would_be_asked_is_denied(case, command, scan):
     asked = ask["hookSpecificOutput"]["permissionDecisionReason"]
     assert reason[len(prefix):] == asked.removeprefix(
         "SkillTotal needs your approval for this install. ").replace("up to 100)", "up to 840)")
-    assert out["systemMessage"] == f"{reason} {STRICT_ON}"
+    # A package from a registry the command or its setup names can be allowed in CI by kind.
+    allow = (" To allow it in CI, set SKILLTOTAL_ALLOW_UNCHECKED=registry."
+             if "registry" in case else "")
+    assert out["systemMessage"] == f"{reason}{allow} {STRICT_ON}"
 
 
 def test_malicious_indicators_are_denied_the_same_way_in_ci():
