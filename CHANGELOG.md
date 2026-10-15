@@ -6,10 +6,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ## [0.73.0]
 
-Ruleset 75 is unchanged: no detection rule changed. Report schema 1.9. Fixes from a review of
-the CLI, the GitHub Action, the plugin and the MCP server in daily use.
+Ruleset 76, report schema 1.9. Fixes from a review of the CLI, the GitHub Action, the plugin and
+the MCP server in daily use, and from a security review of the engine, the plugin and the Action.
+No rule was added or removed. The ruleset changes because the scan now reads files it used to
+skip or read only by regex (see `RULES_CHANGELOG.md`).
 
 Behaviour changes to know about:
+- A `pypi:` source is scanned as a wheel whenever the release has one: the pure-Python wheel
+  first, then a platform wheel in a fixed order (Linux x86-64, Windows x64, macOS). The sdist is
+  scanned only when the release has no wheel. The choice depends on the release alone, so the
+  same source gives the same report on any machine. A `needs_review` note names the file scanned
+  and how many other files were not read.
 - With `--output FILE`, the console now gets a short summary and the full report goes only to the
   file.
 - Abbreviated options are refused: `--out` no longer means `--output`.
@@ -24,6 +31,94 @@ Behaviour changes to know about:
 - Evidence lookups use a binary search, so a package with a 1.4 MB JavaScript bundle scans in
   about 25 seconds instead of 60, with the same report. A first-time hook check of such a package
   now fits the plugin's 60-second limit.
+
+### Security
+Fixes from a security review.
+
+Scanning:
+- A path in a scanned manifest that names another host or drive (`\\host\share`, `C:\...`,
+  `//host/...`) is never resolved, so a component cannot make the scan open a network share.
+- A package's entry points (`main`, `module`, `browser`, `bin`, `exports`) are read even when
+  they look minified or are padded to look like a bundle. Other minified files are still set
+  aside.
+- Scripts saved as UTF-16 or UTF-32 with a byte-order mark are read as text.
+- Patterns that slowed down on crafted lines now run in linear time. Two were cubic: `iex`
+  followed by a long run of blanks (42 s for 1,000) and `@mcp.tool` followed by blank lines (34 s
+  for 500). Several others were quadratic. The gap between the parts of a matched command is
+  limited to 1,000 characters on one line.
+- A crafted `pyproject.toml` no longer stalls the scan: for a file over 16 KB, only the
+  `[project]` table is read. A `.skilltotal.toml` nested thousands deep is a config error
+  (exit 1) instead of a traceback.
+- On Python 3.12+, Python nested deeper than the default recursion limit (a 1,000-term
+  `1+1+...`) is analyzed by the AST instead of the regex fallback. A file too deep even to parse
+  gets a `needs_review` note, "Python file too deeply nested to analyze", and its matches are
+  kept.
+- An archive is refused on every system when two members would be one file on Windows or macOS
+  (names that differ in case, Unicode composition, trailing dots or spaces, `::$DATA`, or `\` vs
+  `/`), when a member names a Windows device (`NUL.py`, `CON`, `COM1`), or when a tar member name
+  holds a character Windows cannot store. The report does not depend on where the scan runs.
+- A ZIP whose central directory declares more than the size limit is not opened. A broken ZIP
+  never stops the scan.
+- At most once a day, a scan removes temporary folders older than six hours that killed scans
+  left behind.
+
+Output:
+- A report, baseline or SARIF file is never written through a linked folder (symlink or
+  junction) below the working directory.
+- `diff`, `guard --installed` and `inventory` print each field taken from a report or a config
+  file on one line, with newlines, escapes and bidi controls shown as `<U+XXXX>`.
+- Text output breaks up GitHub workflow commands (`::cmd::` at the start of a line, `##[`) found
+  in snippets, so a scanned file cannot issue one in a CI log.
+- A baseline path that is not a file is an error (exit 1) instead of a hang.
+
+Sources:
+- `--staged` reads staged files as raw blobs (`git cat-file`), so no LFS download, clean or
+  smudge filter, fsmonitor or hook runs. A staged symlink is not written out. An index path that
+  could escape the temporary copy, or that Windows cannot hold, is refused.
+- `inventory` and `guard --installed` do not follow a project skill that links to a folder
+  outside the project.
+- On Linux and macOS, the npm wrapper looks for `uvx` and the other runners only in absolute
+  `PATH` folders, so an empty or `.` entry cannot run a program committed to the scanned
+  repository.
+
+GitHub Action:
+- Workflow commands are switched off from the action's first line, so an input with a newline
+  cannot forge `::error::` or another command.
+- The job summary and the PR comment name the config file applied. A pull request that changes
+  `.skilltotal.toml` gets a warning, since it can change the gate it is judged by.
+- The sticky PR comment is updated only when the bot wrote it.
+- Escaped text in the summary and the comment cannot turn into an issue link (`#12`, `GH-7`).
+- A SARIF folder that is a link is refused.
+
+Claude Code plugin:
+- `npx` checks follow what npm runs. In a workspace member, the workspace root's
+  `node_modules/.bin` counts. Only the extensionless program counts, so a planted `next.cmd`
+  alone does not. If the hook cannot match the workspace list, the package is checked.
+- `.npmrc` is read the way npm reads it: the last key wins, and quoted keys and values, sections
+  and comments are handled. The user's `prefix` and `globalconfig` are followed to the global
+  `.npmrc`, and a workspace member reads the workspace root's file. The registry is left unknown
+  for a file over the read limit, a project `.npmrc` that sets `userconfig`, `globalconfig` or
+  `prefix`, or a key built from a variable. The hook then asks, and CI denies the install.
+- `.yarnrc`, `.yarnrc.yml`, `bunfig.toml`, `pnpm-workspace.yaml`, `uv.toml` and `[tool.uv]` in
+  `pyproject.toml` are read when the command runs that tool.
+- An npm dist-tag set in `.npmrc` or `npm_config_tag` picks the release checked
+  (`npm:x@next`). If the scan cannot ask for that tag, the hook asks.
+- More command forms are read: PowerShell `& (...)`, `corepack pm@version`, `pnpm --package`
+  before `dlx`, `volta run`, `nvm exec`, `fnm exec`, `cross-env`, `aws-vault exec`, `mise exec`
+  and `wsl`. A package installed through a runner that loads variables (`dotenv`, `direnv`,
+  `op run`, `doppler run`, `devbox`, `nix-shell`, `mise`, `wsl`) is treated as coming from a
+  configured registry, since one can be set there: the hook asks, and CI denies it unless
+  `registry` is allowed. An install command given to an unknown program is asked about, and CI
+  denies it.
+- A line with thousands of parentheses or words is read in milliseconds. Past a limit it is not
+  read, and an installer named in it is asked about.
+- When the plugin cleans up a check's temporary folder, it never changes permissions through a
+  link or on a file that has another hard link (a local `git clone` hard-links files to the
+  source).
+
+MCP server:
+- A local path that is a network share, a device path or an NTFS stream is refused. The home
+  folder is refused under another name too (a link to it, or a short 8.3 name).
 
 ### CLI
 - `--output FILE`: the console gets the verdict, the risk, the counts, any gate lines and

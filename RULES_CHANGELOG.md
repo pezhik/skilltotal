@@ -4,6 +4,26 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 76 (engine 0.73.0)
+
+Detection-efficacy corpus: 125 positive / 89 negative samples, 125/125 flagged, 0 false positives.
+
+No rule was added or removed. The change is in which text the rules see:
+
+- **Entry points**: a package's `main`, `module`, `browser`, `bin` and `exports` files are read
+  even when they look minified. Before, a payload padded to look like a bundle was set aside
+  with the bundles.
+- **UTF-16 and UTF-32**: a file with a UTF-16 or UTF-32 byte-order mark is decoded and scanned.
+  Before, it was read as binary and skipped.
+- **Deep Python**: on Python 3.12+, a file nested deeper than the default recursion limit is
+  analyzed by the AST rules (`ST-SHELL-PY`, `ST-FS-PY-*`, `ST-NET-PY`, `ST-DYN-PY`) instead of the
+  regex fallback.
+- **Bounded patterns**: patterns that crafted input could slow down now allow at most 1,000
+  characters between the parts of a command on one line. A longer match is no longer reported;
+  the detection-efficacy corpus had none.
+- **PyPI sources**: a `pypi:` source is scanned as a wheel when the release has one (see the
+  engine CHANGELOG), so a report for such a release can differ from one made from the sdist.
+
 ## ruleset 75 (engine 0.72.0)
 
 Detection-efficacy corpus: 125 positive / 89 negative samples, 125/125 flagged, 0 false positives.

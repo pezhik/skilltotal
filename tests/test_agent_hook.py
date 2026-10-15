@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from skilltotal.agent_hook import MAX_TARGETS, hook_response, install_targets
+from skilltotal.agent_hook import MAX_TARGETS, hook_response, install_targets, parse_installs
 
 INSTALL_COMMANDS = [
     (
@@ -2335,6 +2335,26 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
         for text in hostile + spaced:
             run(text)
         assert clock.monotonic() - started < 2, run
+
+
+def test_parentheses_that_are_not_arithmetic_do_not_stall_the_hook():
+    """Each `((` the reading tries as arithmetic reads on to the end of the line when it is not;
+    thousands of them (`a((((...`) once took a minute. Past a few the line is not read, and an
+    installer named in it is asked about, as for an unclosed quote."""
+    import time as clock
+
+    for command in ["a" + "(" * 32_000, "a" + "(('" * 12_000, "a" + "(" * 32_000 + "))"]:
+        started = clock.monotonic()
+        parse_installs(command, "bash")
+        assert clock.monotonic() - started < 2, command[:20]
+    for command in ["npm i evil-pkg; a" + "(" * 32_000, "a" + "(" * 1000 + "\nnpm i evil-pkg"]:
+        assert [i.unverifiable for i in parse_installs(command, "bash")] == [
+            "a command SkillTotal could not read"]
+    # Real arithmetic and arrays are read as before.
+    assert install_targets("(( x << 2 )) && npm i lodash") == ["npm:lodash"]
+    assert install_targets("a=(x y); npm i lodash") == ["npm:lodash"]
+    assert "npm:evil" in install_targets("arr+=($(npm i evil))")
+    assert install_targets("echo $((1+2)); npm i left-pad") == ["npm:left-pad"]
 
 
 @pytest.mark.parametrize(

@@ -75,6 +75,9 @@ LIMIT_SETTINGS = frozenset({
 _MAX_DEPTH = 4  # nested `bash -c "$(...)"`; deeper than this is not an honest install command
 # Quotes and substitutions nested deeper than this inside one command line are not read.
 _MAX_NESTING = 64
+# `((` that turned out not to be arithmetic, at most: each failed try reads on to the end of the
+# line, so thousands of them (`a((((...`) would cost time in the square of the length.
+_MAX_ARITHMETIC_MISSES = 16
 # Where a wrapper's command may start (`claude mcp add`, `watch`): the places tried, at most.
 _MAX_LAUNCHES = 16
 
@@ -1753,6 +1756,7 @@ class _Lexer:
         self.expansions: list[str] = []
         self.pipelines: list[list[_Stage]] = []
         self.safe = 0  # where the last complete top-level line ends
+        self.arithmetic_misses = 0
 
     def lex(self) -> _Lexer:
         self._commands(0, None, 0)
@@ -1986,7 +1990,10 @@ class _Lexer:
                     cut(True)
                     i += 2 if (sh == "bash" and nx == "&") else 1
                 continue
-            if sh == "bash" and c == "(" and in_word and _ARRAY_TARGET.fullmatch("".join(word)):
+            # An array assignment ends in `=` (or `+=`): checked first, so a word of thousands of
+            # `(` is not joined and matched once per parenthesis (quadratic, 2026-10-15 review).
+            if (sh == "bash" and c == "(" and in_word and word and word[-1].endswith("=")
+                    and _ARRAY_TARGET.fullmatch("".join(word))):
                 end = self._commands(i + 1, ")", nest + 1)  # `a=(x y)`: an array, not a subshell
                 if top:
                     self.expansions.append(s[i + 1:end])  # its elements may run substitutions
@@ -2205,7 +2212,7 @@ class _Lexer:
             elif c in "'\"":
                 end = s.find(c, i + 1)
                 if end < 0:
-                    return None
+                    return self._arithmetic_miss()
                 i = end + 1
             elif c == "$" and s[i + 1:i + 2] == "(":
                 i = self._substitution(i + 2, nest + 1, record)
@@ -2216,10 +2223,16 @@ class _Lexer:
                     depth += 1
                 elif c == ")":
                     if depth == 0:
-                        return i + 2 if s[i + 1:i + 2] == ")" else None
+                        return i + 2 if s[i + 1:i + 2] == ")" else self._arithmetic_miss()
                     depth -= 1
                 i += 1
-        return None
+        return self._arithmetic_miss()
+
+    def _arithmetic_miss(self) -> None:
+        """Count a ``((`` that was a subshell after all; too many of them are not read."""
+        self.arithmetic_misses += 1
+        if self.arithmetic_misses > _MAX_ARITHMETIC_MISSES:
+            raise _Unreadable
 
     def _heredoc_operator(self, i: int) -> tuple[int, str, bool, bool]:
         """``<<[-]WORD`` from just past ``<<``: where it ends, the delimiter, whether tabs are
