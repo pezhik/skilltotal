@@ -4,6 +4,21 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 75 (engine 0.72.0)
+
+Detection-efficacy corpus: 125 positive / 89 negative samples, 125/125 flagged, 0 false positives.
+
+- **`ST-INSTALL-NPM-REMOTE-EXEC`** (changed): now also reads the shell scripts that an npm
+  lifecycle script runs (`"postinstall": "bash install.sh"`, `sh ./scripts/x.sh`, `./install.sh`).
+  Before, it read only the lifecycle command itself (`"preinstall": "curl ... | bash"`), and the
+  indirect form scored low (20). A line in such a script that downloads code and pipes it into a
+  shell, or decodes data and runs it, is now the same malicious indicator as that command in
+  `package.json`. Comments, printed hints and hints stored in a variable that is only printed do
+  not count. A script that no install script runs, such as a standalone installer people run by
+  hand, stays a risky construct (`ST-SHELL-PIPE-EXEC`). New corpus samples: a positive postinstall
+  that runs a script piping a download into bash, and a negative package that ships a manual
+  installer npm never runs.
+
 ## ruleset 74 (engine 0.71.0)
 
 Detection-efficacy corpus, now 124 positive / 88 negative: 124/124 flagged, 0 false positives.

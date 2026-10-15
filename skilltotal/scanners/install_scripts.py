@@ -86,7 +86,8 @@ class InstallScriptsScanner(PatternScanner):
             title="npm install script downloads or decodes code and runs it",
             description=(
                 "A package.json lifecycle script that npm runs on its own (preinstall / install / "
-                "postinstall, or prepare on a git or local install) downloads code and pipes it "
+                "postinstall, or prepare on a git or local install), or a shell script one of them "
+                "runs (`\"postinstall\": \"bash install.sh\"`), downloads code and pipes it "
                 "into a shell, or decodes data and executes it, for example "
                 "`curl -fsSL https://… | bash` or `node -e \"eval(Buffer.from(…, 'base64')…)\"`. "
                 "What runs is whatever the host serves, or the decoded text, on every install; "
@@ -166,10 +167,31 @@ class InstallScriptsScanner(PatternScanner):
         evidence = [
             ev for f in index.select(names=("package.json",)) for ev in _remote_exec_scripts(f)
         ]
+        evidence += [
+            ev for f in index.files
+            if f.relpath in index.install_scripts and f.is_shell_like
+            for ev in _remote_exec_lines(f)
+        ]
         if evidence:
             rule = next(r for r in self.rules if r.id == R_NPM_REMOTE_EXEC)
             result.findings.append(_finding_from_rule(rule, evidence))
         return result
+
+
+def _remote_exec_lines(f: IndexedFile) -> list[Evidence]:
+    """Evidence for each line of ``f``, a shell script an npm install script runs
+    (``"postinstall": "bash install.sh"``), that downloads code and pipes it into a shell or decodes
+    data and runs it. A comment, a printed hint or a hint kept in a variable that is only printed
+    is not run, so it does not count."""
+    found: list[Evidence] = []
+    for pattern in (REMOTE_EXEC, DECODE_EXEC_SH):
+        for match in pattern.finditer(f.text):
+            at = match.start()
+            if (f.in_shell_comment(at) or f.in_printed_command(at)
+                    or f.in_shell_assigned_hint(at)):
+                continue
+            found.append(f.evidence_for_span(match.start(), match.end()))
+    return found
 
 
 def _remote_exec_scripts(f: IndexedFile) -> list[Evidence]:

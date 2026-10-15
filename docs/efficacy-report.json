@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.71.0",
-  "ruleset_version": 74,
+  "engine_version": "0.72.0",
+  "ruleset_version": 75,
   "python_version": "3.14",
-  "positives": 124,
-  "negatives": 88,
+  "positives": 125,
+  "negatives": 89,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -66,7 +66,8 @@
     "AST02": {
       "manifest/text": 20,
       "node": 11,
-      "python": 2
+      "python": 2,
+      "shell": 1
     },
     "AST03": {
       "node": 1

@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.72.0]
+
+Ruleset 75. See `RULES_CHANGELOG.md`.
+
+### Detection
+- An npm install script can run a shell script shipped in the package
+  (`"postinstall": "bash install.sh"`). If that script downloads code and pipes it into a shell,
+  SkillTotal now reports the same malicious indicator as for a download written into
+  `package.json` itself. Before, this indirect form scored low.
+
 ## [0.71.0]
 
 Ruleset 74. See `RULES_CHANGELOG.md`.

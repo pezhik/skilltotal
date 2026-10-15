@@ -1,0 +1,9 @@
+{
+  "name": "fixture-manual-installer",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "bin": { "fixture-cli": "cli.js" },
+  "scripts": {
+    "postinstall": "node cli.js --check"
+  }
+}
