@@ -18,6 +18,54 @@ business days.
   but that no rule flagged (a detection gap), or a false positive. Detection gaps are expected in
   a static scanner. They are fixed in the open, and the sample is added to the test corpus.
 
+Send a description, the SkillTotal version (`skilltotal --version`) and, if you can, a minimal
+sanitized reproducer. We acknowledge within a few business days, keep you informed while we fix
+it, and credit you in the advisory unless you prefer otherwise.
+
+## Scanning untrusted input
+
+SkillTotal is built to be pointed at code you do not trust. What it does and does not do with it:
+
+- **It never runs the scanned code.** Files are read as text and parsed (Python's `ast`, JSON,
+  TOML, markdown); nothing is imported, executed, installed or built, and no LLM is called. Package
+  install scripts are read, never run.
+- **What it contacts, and when.** A local folder, archive or file is scanned without any network
+  request. A git URL is cloned with `git clone --depth 1` (terminal prompts off, Git LFS downloads
+  skipped), after GitHub REST API calls that check the size of a github.com repository. An `npm:`
+  or `pypi:` source is fetched over HTTPS from the npm registry or PyPI. `--provenance` fetches
+  registry metadata. `inventory`, `guard --installed` and the Claude Code plugin fetch the packages
+  they check from the same places. There is no telemetry.
+- **Limits.** Each file over 2 MiB is not read (the verdict says "Partially analyzed"). Archives,
+  clones and the total text read are capped by environment variables, and a source over a limit
+  is refused with the variable to raise: `SKILLTOTAL_MAX_ARCHIVE_MB` (150), `SKILLTOTAL_MAX_EXTRACT_MB`
+  (400), `SKILLTOTAL_MAX_ARCHIVE_MEMBERS` (30000), `SKILLTOTAL_MAX_CLONE_MB` (200),
+  `SKILLTOTAL_MAX_READABLE_MB` (same as the clone limit) and `SKILLTOTAL_CLONE_TIMEOUT` (300 seconds).
+  Registry and download requests time out after 60 seconds, and JSON is parsed with size and depth
+  bounds. Regular expressions that ran superlinearly on crafted input are bounded and tested on
+  200,000-character inputs.
+- **Archives and links.** Archive entries are checked before anything is written: symbolic and
+  hard links, devices and FIFOs are left out, a path that would land outside the extraction folder
+  stops the scan, password-protected archives are refused, and stored permissions are not applied.
+  In a scanned folder, symbolic links and junctions are not followed. Temporary clones and
+  extractions are removed when the scan ends, also on Ctrl-C or SIGTERM.
+- **Output.** `--output` and `--write-baseline` refuse to write through a symbolic link or
+  junction and replace the file atomically. The text report prints control characters from the
+  scanned files as escapes (`\x1b`; in file names, `<U+XXXX>`, which also covers newlines), so
+  they cannot drive your terminal or forge report lines, and the GitHub Action stops workflow
+  commands while it prints them.
+- **Its own tools.** `git` is resolved from absolute `PATH` entries only, never from the current
+  directory. Run the CLI as the `skilltotal` console script or `python -P -m skilltotal`: plain
+  `python -m` imports from the current directory first, so a planted `json.py` would run.
+- **Config discovery.** `.skilltotal.toml` is read from the directory the CLI runs in. In CI that
+  is usually the repository being scanned, so a pull request can loosen the gate through it, its
+  baseline file or inline `skilltotal:ignore` markers. Protect those files with CODEOWNERS and
+  branch protection, and pass `--no-config` (Action: `config: none`) when you scan code you don't
+  control from its own root. An applied config is always named in the output. Inline markers are
+  honored only when scanning a local directory, never in a fetched package or repository.
+
+A finding is evidence of what the code can do, not proof of intent, and a clean report is not
+proof of safety: see the limitations in the [README](README.md#limitations).
+
 ## Supported versions
 
 Only the latest release receives fixes. The engine, the CLI, the Claude Code plugin, the GitHub

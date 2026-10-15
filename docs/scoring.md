@@ -21,11 +21,9 @@ The sum is over **distinct findings** (one finding per rule), so repeated matche
 same rule do not inflate the score — only a new *kind* of risk does. The score is capped at
 100.
 
-**A malicious indicator scores at least 50 (high).** One indicator used to weigh only its
-severity, so a single high-severity install hook that publishes packages summed to 20 (low) under
-a "malicious indicators found" verdict. Since ruleset 72 a component with any `malicious_indicator`
-finding has `risk_score >= 50`, so the score, the level and a `fail_on_score` gate agree with
-the verdict.
+**A malicious indicator scores at least 50 (high).** A component with any `malicious_indicator`
+finding has `risk_score >= 50`, so the score, the level and a `fail_on_score` gate agree with the
+"Malicious indicators found" verdict even when the indicator's own weight is small.
 
 **Capability is not risk.** Only findings whose `threat_class` is `malicious_indicator` or
 `risky_construct` contribute to the score. Neutral `capability` findings (shell execution,
@@ -36,7 +34,7 @@ as capability chips — but contribute **0**.
 private key (`ST-SECRET-EMBEDDED`), a `.env` packed into a release (`ST-ENV-SHIPPED`) — are the
 author's leak: anyone holding the package can use the credential. They are reported with full
 evidence, counted in `verdict.exposed_secrets`, keep their severity for `--fail-on`, and contribute
-**0** to the score (since schema 1.6 / ruleset 55). A legitimate-but-powerful component is therefore
+**0** to the score. A legitimate-but-powerful component is therefore
 not pushed into the red by what it *can* do; the score and verdict reflect actual risk
 (deliberate malice and dangerous constructs), not raw capability.
 
@@ -51,26 +49,35 @@ not pushed into the red by what it *can* do; the score and verdict reflect actua
 
 ## Default severities by category
 
-| Category | Severity |
-|----------|----------|
-| Shell execution | high |
-| Sensitive path access | high |
-| Filesystem access (read/write) | medium |
-| Network egress | medium |
-| Install-time execution | high |
-| Dynamic code execution | high |
-| Obfuscation (decode-and-execute) | high |
-| Prompt injection indicators | medium |
-| Broad MCP tools (shell/fs/network/credential) | high |
-| MCP server launches a command | high |
-| MCP surface detected | low |
+Severity says how serious a finding is; the threat class decides whether it is scored. Capability
+findings keep their severity (it is shown, and SARIF reports them as notes) but add **0** to the
+score. `skilltotal rules list --json` gives every rule's severity and class.
+
+| Category | Example rules | Severity | Threat class | Score weight |
+|----------|---------------|----------|--------------|--------------|
+| Shell execution | `ST-SHELL-PY`, `ST-SHELL-NODE` | high | capability | 0 |
+| Download piped into a shell | `ST-SHELL-PIPE-EXEC`, `-PY`, `-NODE` | high | risky_construct | 20 |
+| Sensitive path access | `ST-SENS-PATH`, `ST-SENS-PATH-PY` | high | risky_construct | 20 |
+| Filesystem access (read/write) | `ST-FS-PY-READ`, `ST-FS-NODE-WRITE` | medium | capability | 0 |
+| Network egress | `ST-NET-PY`, `ST-NET-NODE` | medium | capability | 0 |
+| Install-time execution (a lifecycle hook) | `ST-INSTALL-NPM`, `ST-INSTALL-PY` | high | capability | 0 |
+| Install script that downloads or decodes code and runs it | `ST-INSTALL-NPM-REMOTE-EXEC` | high | malicious_indicator | 20, score at least 50 |
+| Dynamic code execution | `ST-DYN-PY`, `ST-DYN-NODE` | high | capability | 0 |
+| Unsafe deserialization | `ST-DESERIALIZE-PY` | high | risky_construct | 20 |
+| Obfuscation (decode-and-execute) | `ST-OBF-DECODE-EXEC` | high | malicious_indicator | 20, score at least 50 |
+| Prompt injection indicators | `ST-PROMPT-INJECTION` | medium | malicious_indicator | 10, score at least 50 |
+| Broad MCP tools (shell/fs/network/credential) | `ST-MCP-DANGEROUS-TOOL` | high | capability | 0 |
+| MCP server launches a command | `ST-MCP-SERVER-EXEC` | high | capability | 0 |
+| MCP surface detected | `ST-MCP-DETECTED` | low | capability | 0 |
+| Embedded secret | `ST-SECRET-EMBEDDED` | high | exposure | 0 |
 
 ## Combination rule (sensitive data + network ⇒ critical)
 
 If a component **both** reads a credential location (`ST-SENS-PATH`, `ST-SENS-PATH-PY`: `~/.ssh`,
 `~/.aws/credentials`, an AI assistant's login file, written out or built by joining segments onto
 the home directory, as in `path.join(os.homedir(), ".aws", "credentials")` or
-`Path.home() / ".aws" / "credentials"`) **and** has `network_egress`,
+`Path.home() / ".aws" / "credentials"`), or reads a wallet private key or seed phrase from an
+environment variable (`ST-SECRET-ENV`), **and** has `network_egress`,
 the engine adds one synthesized **critical** `risky_construct` finding, `ST-COMBO-EXFIL`
 ("Sensitive-data access combined with network egress"). Its evidence is drawn (de-duplicated)
 from the contributing finding/capabilities, so the evidence invariant still holds. This makes
@@ -80,6 +87,19 @@ Note this is **sensitivity-gated**: plain filesystem access plus network is a ne
 combination (legitimate tools read files and use the network) and is *not* flagged — only access
 to *secret* data combined with an egress channel is. An embedded secret is not an input: a key the
 component ships plus a network call describes no theft, and it is reported as an exposure.
+
+## Other synthesized combinations
+
+`ST-COMBO-EXFIL` is one of four findings the engine synthesizes from combinations of base findings,
+in the order `combinations.py` declares. Each carries the merged evidence of what it combines and
+is a scored `risky_construct`:
+
+| Rule | Severity | Fires when |
+|------|----------|------------|
+| `ST-COMBO-EXFIL` | critical | credential access + network egress (above) |
+| `ST-FLOW-TRIFECTA` | high | a real `ST-PROMPT-INJECTION` + filesystem read + network egress (the "lethal trifecta"); not added when `ST-COMBO-EXFIL` already fired |
+| `ST-INSTALL-DROPPER` | high | an install/build hook + a decode-and-execute payload or credential access |
+| `ST-CONVERGENCE` | high | two or more distinct malicious-indicator findings in one component |
 
 ## Taint: untrusted input → dangerous sink (Python)
 
@@ -91,8 +111,10 @@ argument) to a dangerous sink, as `risky_construct` (high):
 - `ST-TAINT-SHELL-PY` — reaches a shell (`os.system` / `os.popen` / `subprocess(..., shell=True)`)
 - `ST-TAINT-DESERIAL-PY` — reaches unsafe deserialization
 
-These **upgrade** an already-reported capability (`ST-DYN-PY` / `ST-SHELL-PY` /
-`ST-DESERIALIZE-PY`, weight 0) into a scored risk; the capability finding still appears. This is
+These turn an already-reported capability (`ST-DYN-PY` / `ST-SHELL-PY`, weight 0) into a scored
+risk; the capability finding still appears. `ST-DESERIALIZE-PY` is already a scored
+`risky_construct` (high) on its own, so `ST-TAINT-DESERIAL-PY` adds a second, distinct finding when
+the loaded data provably comes from an untrusted source. This is
 stronger than `ST-CMDI-PY` (which flags any non-constant shell command): when taint proves an
 untrusted source reaches the shell, `ST-TAINT-SHELL-PY` supersedes `ST-CMDI-PY` on that node so the
 injection is scored once. The analysis is conservative (default-deny propagation, sanitizers clear
@@ -125,28 +147,29 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   `.clinerules/`, `.cursor/rules/` or `.windsurf/rules/` folder unless it is named for an attack or
   a record) are **kept in scope** — a real injection lives there.
 - **Data / eval / benchmark corpora** — inert reference *data* files under `eval_datasets/`,
-  `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … (`is_data_corpus_path`). A
+  `fixtures/`, `benchmarks/`, `datasets/`, `snapshots/`, … A
   prompt-injection string in an eval dataset is a detector test vector, not behavior. Restricted to
   non-code suffixes, so a real payload shipped as code in such a directory is still scanned/scored.
 - **Python string literals / comments, shell `#` and PowerShell `<# … #>` comments, and C-family
   `//` `/* */` comments** (`.ts`/`.js`/`.go`/`.rs`/…) — a behavior/text detector matching
   its own regex literal or a docstring example is not behavior; a `# Usage: curl … | bash` line is a
-  doc comment, not a runnable pipe-to-shell. Governed per-rule by `code_context`
-  (`strings_and_comments` for decode-exec / tool-poisoning / prompt-injection / sensitive-path;
-  `comments` for shell pipe-to-shell and the Node.js filesystem / network / shell rules, whose real
-  positives are code and value-strings, so a JSDoc `* fs.writeFileSync(...)` example is not a write;
-  `comments_and_docstrings` for the network-exposure rules and the AI-CLI permission-bypass rule,
-  where a Python docstring that shows `host="0.0.0.0"` is an example, not a bind).
+  doc comment, not a runnable pipe-to-shell. Which contexts count depends on the rule: the
+  decode-exec, tool-poisoning, prompt-injection and sensitive-path rules set aside matches in
+  strings and comments; shell pipe-to-shell and the Node.js filesystem / network / shell rules set
+  aside comments only, since their real positives are code and value strings (a JSDoc
+  `* fs.writeFileSync(...)` example is not a write); the network-exposure rules and the AI-CLI
+  permission-bypass rule also set aside Python docstrings (a docstring that shows
+  `host="0.0.0.0"` is an example, not a bind).
 - **A provider SDK reading its own provider's credentials** — botocore, boto3, awscli and the
   AWS JavaScript SDK (`@aws-sdk/*`, `@smithy/*`) reading `~/.aws`, the Kubernetes client reading
   `~/.kube/config`, package-index tooling (pip, twine, distlib, pipenv, setuptools, flit, pdm)
-  reading the PyPI upload configuration `~/.pypirc`, and the other curated, exactly named
-  registry packages in `scoring.py`: a
+  reading the PyPI upload configuration `~/.pypirc`, and other packages on a curated list,
+  matched by exact registry name (an `npm:` or `pypi:` source): a
   `ST-SENS-PATH`/`ST-SENS-PATH-PY` match in the package's own credential domain is what the package
   is for, so it goes to `needs_review` and cannot feed `ST-COMBO-EXFIL`. Another domain (an AWS SDK
   reading `~/.ssh`), and the same read in any other package, still score.
-- **Denylist / guardrail credential paths and public DocSearch keys** — demoted at the scanner level
-  (`sensitive_paths.py`, `secrets.py`): a policy that *protects* `~/.ssh`/`id_rsa` is not access to
+- **Denylist / guardrail credential paths and public DocSearch keys** — set aside by the scanners
+  themselves: a policy that *protects* `~/.ssh`/`id_rsa` is not access to
   it — including a macOS sandbox profile's `(deny file-read* …)` rule that keeps an agent CLI's
   tools away from its own login file — a key or kubeconfig handed to its own client (`ssh -i`,
   `--kubeconfig`) is read locally to authenticate, and an Algolia DocSearch search key sitting next
@@ -161,6 +184,8 @@ so the engine does not flag descriptions of attacks or its own detection pattern
   model) is demoted to `needs_review` by the prompt-surface scanner; the same words addressed to the
   agent still score.
 
+How each layer is implemented is in [architecture.md](architecture.md#evidence-context-demotion).
+
 ## `needs_review` and the score
 
 Items in `needs_review` (e.g. lone base64 blobs, ambiguous prompt phrasing, minified files,
@@ -173,12 +198,13 @@ preserving the rule that the score reflects only evidence-confirmed risk.
 |---------|----------|--------------|--------|
 | ST-SENS-PATH (reads `~/.ssh`, `.aws/credentials`) | high | risky_construct | 20 |
 | ST-COMBO-EXFIL (sensitive data + network) | critical | risky_construct | 30 |
+| ST-INSTALL-DROPPER (install hook + credential access) | high | risky_construct | 20 |
 | ST-INSTALL-NPM | high | capability | 0 |
 | ST-SHELL-NODE | high | capability | 0 |
 | ST-FS-NODE-READ | medium | capability | 0 |
 | ST-NET-NODE | medium | capability | 0 |
-| **Sum** | | | **50** |
+| **Sum** | | | **70** |
 
-Result: `risk_score = 50`, `risk_level = high`. The credential-exfiltration pattern (read
-secrets + reach the network) drives the score; the raw capabilities are reported but do not.
+Result: `risk_score = 70`, `risk_level = high`. The credential-exfiltration pattern (read
+secrets + reach the network, run from an install hook) drives the score; the raw capabilities are reported but do not.
 A *benign* tool with the same capabilities but no sensitive-data access scores **0 / low**.

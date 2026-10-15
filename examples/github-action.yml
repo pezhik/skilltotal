@@ -18,9 +18,12 @@ jobs:
         with:
           source: .            # a path in the repo, a git URL, or an npm:/pypi:<name> spec
           fail-on: high        # fail on a high/critical risk finding; use 'none' to report only
-          # version: 0.69.0    # pin the engine for reproducible CI (optional)
+          # fail-on empty (the default) uses the gate of the repository's .skilltotal.toml, else high
+          # version: 0.69.0    # the tag above already pins the engine; this runs another PyPI release (optional)
           # baseline: .skilltotal-baseline.json   # suppress accepted findings (optional)
           # fail-on-score: 50  # also fail at or above this risk score (optional)
           # exclude: |         # skip paths, one glob per line (optional)
           #   vendor/*
           # config: none       # ignore the repository's .skilltotal.toml (default: use it if present)
+          # sarif-category: skilltotal/app   # Code Scanning category (default: set for a subfolder source)
+          # comment-on-pr: 'true'            # summary comment on pull requests (needs pull-requests: write)

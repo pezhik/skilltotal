@@ -1,7 +1,8 @@
 # SkillTotal Report Schema
 
 The JSON report (`--json` / `--output`) is the serialization of the core `Report` model.
-It is the stable contract intended for the web and SaaS products.
+It is the stable, machine-readable contract for any consumer: CI scripts, dashboards, or a service
+that imports the engine and returns `Report.to_dict()`.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
 > schema version **1.8**) is the machine-readable source of truth. Consumers should validate
@@ -40,7 +41,7 @@ It is the stable contract intended for the web and SaaS products.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | string | From `package.json`/`pyproject` or directory name |
-| `type` | string | `npm_package`, `python_package`, `mcp_server`, `ai_component`, `directory` |
+| `type` | string | `npm_package`, `python_package`, `mcp_server`, `agent_skill` (a folder with a `SKILL.md`), `ai_component` (a folder with an `AGENTS.md` or `CLAUDE.md`), `go_project`, `java_project`, `directory` (a local folder or clone with none of these), or `project` (an archive or single file with none of these). Treat an unknown value as `directory`: new types can be added |
 | `source` | string | Resolved local path or the original URL |
 | `version` | string | From manifest if available, else `""` |
 | `download_url` | string \| null | The distribution artifact fetched for an npm/PyPI source; `null` for git and local sources (added in 1.2) |
@@ -136,9 +137,20 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 ## Alternative format: SARIF
 
 `--sarif` emits a SARIF 2.1.0 document instead of the native JSON (for GitHub Code Scanning
-/ IDEs). Severity maps to SARIF `level` (`critical`/`high` → `error`, `medium` → `warning`,
-`low` → `note`) plus a numeric `security-severity` property. Each evidence occurrence becomes
-one SARIF result anchored to its file/line. A location's `uri` is the evidence path,
+/ IDEs). The driver lists every rule. Each evidence occurrence of a finding becomes one SARIF
+result anchored to its file/line; `needs_review` items are not included.
+
+| Finding | SARIF `level` | `security-severity` |
+|---------|---------------|---------------------|
+| `capability` (any severity) | `note` | none (tagged `capability`, so Code Scanning does not rank it as a security alert) |
+| any other threat class, `critical` | `error` | 9.0 |
+| any other threat class, `high` | `error` | 7.0 |
+| any other threat class, `medium` | `warning` | 4.0 |
+| any other threat class, `low` | `note` | 2.0 |
+
+So a malicious indicator keeps its own severity's level: a medium one (such as
+`ST-PROMPT-INJECTION`) is a `warning`. Rules carry their OWASP Agentic Skills ids as tags and
+`relationships`. A location's `uri` is the evidence path,
 percent-encoded as a relative URI reference; `--sarif-uri-prefix PATH` puts the scanned folder
 in front of it (repository-root-relative paths for Code Scanning), and `--sarif-category NAME`
 sets `runs[0].automationDetails.id` to `NAME/`.

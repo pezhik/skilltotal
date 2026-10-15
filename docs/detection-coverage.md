@@ -33,7 +33,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Auto-run agent / editor configuration** (Claude/Gemini/Cursor hooks, VS Code folder-open tasks) | `ST-AGENT-AUTORUN` (risky), `ST-AGENT-AUTORUN-REMOTE` (malicious), `ST-AGENT-CLI-BYPASS` (risky) | `agent-config-autorun` |
 | **Password-protected payload download** | `ST-ARCHIVE-PASSWORD-EXTRACT` (malicious) | `password-archive` |
 | **Network/debug exposure** | `ST-EXPOSE-BIND`, `ST-EXPOSE-DEBUG` | — |
-| **Shell decode-and-execute / remote pipe-to-shell** (`… base64 -d \| bash`, `curl \| bash`) | `ST-OBF-DECODE-EXEC-SH` (malicious), `ST-SHELL-PIPE-EXEC` | `sh-base64-exec` |
+| **Shell decode-and-execute / remote pipe-to-shell in a shell script** (`… base64 -d \| bash`, `curl \| bash` in `.sh` and other shell files) | `ST-OBF-DECODE-EXEC-SH` (malicious), `ST-SHELL-PIPE-EXEC` | `sh-base64-exec` |
 | **npm lifecycle script that fetches or decodes code and runs it** (`"preinstall": "curl … \| bash"`, `node -e "eval(Buffer.from(…,'base64')…)"`) | `ST-INSTALL-NPM-REMOTE-EXEC` (malicious) | `npm-lifecycle-remote-exec` |
 | **Remote pipe-to-shell handed to a shell call** (`os.system("curl … \| bash")`, `execSync("curl … \| sh")`) | `ST-SHELL-PIPE-EXEC-PY`, `ST-SHELL-PIPE-EXEC-NODE` | — |
 | **Analysis evasion** (password-protected archive bundled in a component) | `ST-ENCRYPTED-ARCHIVE` | — |
