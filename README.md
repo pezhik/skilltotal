@@ -103,10 +103,13 @@ pip install skilltotal
 You can also run it with npx. The npm package only starts this engine, so it needs uv, pipx, or
 Python 3.11+ with `skilltotal` installed. With uv or pipx it runs the PyPI release that matches
 the npm version; when it falls back to an installed Python `skilltotal` of another release, it
-says so on stderr.
+says so on stderr. Name the release with `--package`: a plain `npx skilltotal` run inside a
+repository first runs any `skilltotal` program in that repository's `node_modules/.bin`, and a
+repository you are about to scan can ship one (with `--package`, npx runs only that exact release;
+`uvx` does not look in the folder at all).
 
 ```bash
-npx -y skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.73.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 From source (development):
@@ -650,9 +653,11 @@ up in your shell. If it cannot start `skilltotal`, give the full path that `whic
 (`where skilltotal` on Windows) prints as `command`.
 
 If you have not installed it locally, use `"command": "uvx", "args": ["skilltotal@0.73.0", "mcp"]`
-(pinned) or `"command": "npx", "args": ["-y", "skilltotal", "mcp"]`. The npx form needs uv, pipx,
-or Python 3.11+ with `skilltotal`; if it falls back to an installed Python `skilltotal` of another
-release, it warns on stderr (stdout stays the MCP session).
+(pinned) or `"command": "npx", "args": ["-y", "--package=skilltotal@0.73.0", "--", "skilltotal",
+"mcp"]` (with `--package`, npx does not run whatever `skilltotal` program the `node_modules/.bin`
+of the client's folder holds). The npx form needs uv, pipx, or Python 3.11+ with
+`skilltotal`; if it falls back to an installed Python `skilltotal` of another release, it warns on
+stderr (stdout stays the MCP session).
 
 Tools exposed, all annotated read-only:
 
@@ -666,8 +671,9 @@ Tools exposed, all annotated read-only:
   for each rule's description and recommendation.
 
 A local path must be absolute, because the server's working directory is not the client's. The
-home folder, any folder above it and a filesystem root are refused, and `~` is not expanded. The
-server runs two requests at a time and answers `ping` at once; a cancelled request gets no
+home folder (under any name for it, a link included), any folder above it and a filesystem root
+are refused, and `~` is not expanded. So are network shares and device paths (`\\host\share`,
+`\\?\...`) and NTFS streams. The server runs two requests at a time and answers `ping` at once; a cancelled request gets no
 answer. Scans run locally with the same never-execute static engine; the component's code is not
 uploaded anywhere. To raise a size limit for the server, set the variable in the `env` of its
 entry in the client's config.

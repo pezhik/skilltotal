@@ -261,9 +261,11 @@ def test_a_config_path_that_is_no_regular_file_is_skipped(tmp_path):
     assert _checked("npm i lodash", environ={}, home=tmp_path) == ["npm:lodash"]
 
 
-def test_a_large_config_file_is_read_only_in_part(tmp_path):
+def test_a_config_file_too_large_to_read_leaves_the_registry_unknown(tmp_path):
+    """npm reads all of it; a registry past the part the hook reads was a silent pass."""
     (tmp_path / ".npmrc").write_text("; x\n" * 40_000 + f"registry={CORP}\n", encoding="utf-8")
-    assert _checked("npm i lodash", environ={}, home=tmp_path) == ["npm:lodash"]
+    assert "lodash from a registry SkillTotal could not read (set in " in _asked(
+        _no_scan("npm i lodash", environ={}, home=tmp_path))
 
 
 def test_without_an_environment_nothing_outside_the_command_is_read(tmp_path):
@@ -322,3 +324,184 @@ def test_the_cli_reads_the_agents_environment(tmp_path, monkeypatch, capsys):
     assert cli.main(["hook", "claude-code"]) == cli.EXIT_OK
     answer = json.loads(capsys.readouterr().out)
     assert f"lodash from {CORP} (set by NPM_CONFIG_REGISTRY)" in _asked(answer)
+
+
+# --- .npmrc read as npm reads it (security review 2026-10-15, H2 and H4) ------------------------
+
+
+def _project_npmrc(tmp_path, text):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "package.json").write_text("{}", encoding="utf-8")
+    (project / ".npmrc").write_text(text, encoding="utf-8")
+    return project
+
+
+@pytest.mark.parametrize("text", [
+    f"registry=https://registry.npmjs.org/\nregistry={CORP}/\n",  # the last one wins
+    f'"registry"={CORP}/\n',  # a quoted key
+    f"'registry' = '{CORP}/'\n",
+    f'registry = "{CORP}/" ; a comment\n',
+    f"  registry  =  {CORP}/  # a comment\n",
+    f"registry={CORP}/\r\n[section]\nregistry=https://registry.npmjs.org/\n",
+])
+def test_an_npmrc_is_read_the_way_npm_reads_it(tmp_path, text):
+    project = _project_npmrc(tmp_path, text)
+    out = _no_scan("npm i lodash", cwd=project, environ={}, home=tmp_path / "home")
+    assert f"lodash from {CORP} (set in " in _asked(out)
+
+
+@pytest.mark.parametrize("text", [
+    f"[mirror]\nregistry={CORP}/\n",  # a key under a section is no npm setting
+    f"registry\t:{CORP}/\n",  # no `=`: the whole line is one key npm does not know
+    f"; registry={CORP}/\n# registry={CORP}/\n",
+    f"registry={CORP}/\nregistry=https://registry.npmjs.org/\n",
+])
+def test_what_npm_does_not_take_for_the_registry_is_not_one(tmp_path, text):
+    project = _project_npmrc(tmp_path, text)
+    assert _checked("npm i lodash", cwd=project, environ={}, home=tmp_path / "home") == [
+        "npm:lodash"]
+
+
+@pytest.mark.parametrize("text", [
+    "userconfig=./u.npmrc\n",
+    "globalconfig=./g.npmrc\n",
+    "prefix=./tools\n",
+    "${KEY}=https://npm.corp.invalid/\n",
+    f"registry[]={CORP}/\n",
+])
+def test_an_npmrc_that_sends_npm_elsewhere_leaves_the_registry_unknown(tmp_path, text):
+    """A project's .npmrc can name another configuration file, which npm then reads; the hook
+    does not follow a file the repository picks, so the registry is unknown: asked, denied in
+    CI."""
+    project = _project_npmrc(tmp_path, text)
+    (project / "u.npmrc").write_text(f"registry={CORP}/\n", encoding="utf-8")
+    (project / "g.npmrc").write_text(f"registry={CORP}/\n", encoding="utf-8")
+    out = _no_scan("npm i lodash", cwd=project, environ={}, home=tmp_path / "home")
+    assert "lodash from a registry SkillTotal could not read (" in _asked(out)
+    strict = _no_scan("npm i lodash", cwd=project, environ={}, home=tmp_path / "home",
+                      strict=True, strict_by="CI")
+    assert strict["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+def test_settings_above_the_unknown_file_still_decide(tmp_path):
+    project = _project_npmrc(tmp_path, "userconfig=./u.npmrc\n")
+    environ = {"NPM_CONFIG_REGISTRY": "https://registry.npmjs.org/"}
+    # The file the project names could still set the dist-tag.
+    assert "lodash at an npm dist-tag SkillTotal could not read (" in _asked(
+        _no_scan("npm i lodash", cwd=project, environ=environ, home=tmp_path))
+    environ["npm_config_tag"] = "latest"
+    assert _checked("npm i lodash", cwd=project, environ=environ, home=tmp_path) == [
+        "npm:lodash"]
+
+
+def test_the_user_npmrc_prefix_is_followed_to_the_global_npmrc(tmp_path):
+    """`prefix=~/.npm-global` in the user's own .npmrc is common: npm then reads the global
+    .npmrc under that prefix, and so does the hook."""
+    home = tmp_path / "home"
+    (home / ".npm-global" / "etc").mkdir(parents=True)
+    (home / ".npmrc").write_text("prefix=~/.npm-global\n", encoding="utf-8")
+    assert _checked("npm i lodash", environ={}, home=home) == ["npm:lodash"]
+    (home / ".npm-global" / "etc" / "npmrc").write_text(f"registry={CORP}/\n", encoding="utf-8")
+    out = _no_scan("npm i lodash", environ={}, home=home)
+    assert f"lodash from {CORP} (set in " in _asked(out)
+
+
+def test_a_workspace_member_reads_the_workspace_roots_npmrc(tmp_path):
+    root = tmp_path / "mono"
+    member = root / "pkg"
+    member.mkdir(parents=True)
+    (root / "package.json").write_text('{"workspaces": ["pkg"]}', encoding="utf-8")
+    (root / ".npmrc").write_text(f"registry={CORP}/\n", encoding="utf-8")
+    (member / "package.json").write_text("{}", encoding="utf-8")
+    # npm ignores a member's own .npmrc; the root's is the project's.
+    (member / ".npmrc").write_text("registry=https://registry.npmjs.org/\n", encoding="utf-8")
+    out = _no_scan("npm i lodash", cwd=member, environ={}, home=tmp_path / "home")
+    assert f"lodash from {CORP} (set in {(root / '.npmrc').as_posix()})" in _asked(out)
+
+
+def test_a_pip_config_file_too_large_to_read_leaves_the_index_unknown(tmp_path):
+    (tmp_path / "pip.conf").write_text("# x\n" * 20_000 + f"index-url={CORP_PY}\n",
+                                       encoding="utf-8")
+    environ = {"PIP_CONFIG_FILE": str(tmp_path / "pip.conf")}
+    out = _no_scan("pip install requests", environ=environ, home=tmp_path)
+    assert "requests from a registry SkillTotal could not read (set in " in _asked(out)
+
+
+@pytest.mark.parametrize(("where", "text"), [
+    ("project", "tag=next\n"),
+    ("project", "tag = next ; prerelease\n"),
+    ("project", "tag=latest\ntag='next'\n"),
+    ("env", "next"),
+])
+def test_a_configured_dist_tag_is_the_release_checked(tmp_path, where, text):
+    """npm installs a package named without a version from the `tag` it is configured with: a
+    clean `latest` must not vouch for a different `next`."""
+    project = _project_npmrc(tmp_path, text if where == "project" else "")
+    environ = {"npm_config_tag": text} if where == "env" else {}
+    assert _checked("npm i lodash && npx -y some-mcp && npm i x@1.2.3", cwd=project,
+                    environ=environ, home=tmp_path / "home") == [
+        "npm:lodash@next", "npm:some-mcp@next", "npm:x@1.2.3"]
+
+
+@pytest.mark.parametrize("tag", ["latest", ""])
+def test_the_latest_tag_changes_nothing(tmp_path, tag):
+    project = _project_npmrc(tmp_path, f"tag={tag}\n" if tag else "")
+    assert _checked("npm i lodash", cwd=project, environ={}, home=tmp_path / "home") == [
+        "npm:lodash"]
+
+
+def test_a_dist_tag_the_scan_cannot_ask_for_is_asked_about(tmp_path):
+    project = _project_npmrc(tmp_path, "tag=>=1 <2\n")
+    out = _no_scan("npm i lodash", cwd=project, environ={}, home=tmp_path / "home")
+    assert "lodash at an npm dist-tag SkillTotal could not read (set in " in _asked(out)
+
+
+# --- yarn, bun, pnpm and uv configuration files -------------------------------------------------
+
+
+@pytest.mark.parametrize(("name", "text", "command"), [
+    (".yarnrc.yml", f'npmRegistryServer: "{CORP}"\n', "yarn add lodash"),
+    (".yarnrc.yml", f"npmScopes:\n  corp:\n    npmRegistryServer: {CORP}\n", "yarn dlx lodash"),
+    (".yarnrc", f'registry "{CORP}/"\n', "yarn add lodash"),
+    ("bunfig.toml", f'[install]\nregistry = "{CORP}/"\n', "bun add lodash"),
+    ("bunfig.toml", f'[install]\nregistry = {{ url = "{CORP}/" }}\n', "bunx lodash"),
+    ("bunfig.toml", f'[install.scopes]\ncorp = "{CORP}/"\n', "bun add lodash"),
+    ("pnpm-workspace.yaml", f"packages:\n  - app\nregistry: {CORP}/\n", "pnpm add lodash"),
+])
+def test_a_node_tools_own_registry_file_is_read(tmp_path, name, text, command):
+    (tmp_path / "app").mkdir()
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    out = _no_scan(command, cwd=tmp_path / "app", environ={}, home=tmp_path / "home")
+    assert "lodash from " in _asked(out)
+    # npm itself does not read that file.
+    assert _checked("npm i lodash", cwd=tmp_path / "app", environ={},
+                    home=tmp_path / "home") == ["npm:lodash"]
+
+
+@pytest.mark.parametrize(("name", "text"), [
+    ("uv.toml", f'index-url = "{CORP_PY}/simple"\n'),
+    ("uv.toml", f'[[index]]\nname = "corp"\nurl = "{CORP_PY}/simple"\n'),
+    ("uv.toml", f'[pip]\nextra-index-url = ["{CORP_PY}/simple"]\n'),
+    ("pyproject.toml", f'[project]\nname = "x"\n\n[tool.uv]\ndefault-index = "{CORP_PY}"\n'),
+    ("pyproject.toml", f'[[tool.uv.index]]\nname = "corp"\nurl = "{CORP_PY}/simple"\n'),
+])
+def test_a_uv_index_in_a_project_file_is_read(tmp_path, name, text):
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    out = _no_scan("uvx ruff", cwd=tmp_path, environ={}, home=tmp_path / "home")
+    assert "ruff from " in _asked(out)
+    assert _checked("pip install ruff", cwd=tmp_path, environ={}, home=tmp_path / "home") == [
+        "pypi:ruff"]
+
+
+@pytest.mark.parametrize(("name", "text", "command"), [
+    (".yarnrc.yml", 'npmRegistryServer: "https://registry.yarnpkg.com"\nnodeLinker: pnp\n',
+     "yarn add lodash"),
+    ("bunfig.toml", "[install]\noptional = true\n", "bun add lodash"),
+    ("pnpm-workspace.yaml", "packages:\n  - 'apps/*'\n", "pnpm add lodash"),
+    ("pyproject.toml", '[project]\nname = "x"\n\n[tool.uv]\ndev-dependencies = []\n', "uvx ruff"),
+    ("uv.toml", 'index-url = "https://pypi.org/simple"\n', "uvx ruff"),
+])
+def test_a_tool_file_without_another_registry_changes_nothing(tmp_path, name, text, command):
+    (tmp_path / name).write_text(text, encoding="utf-8")
+    assert _checked(command, cwd=tmp_path, environ={}, home=tmp_path / "home") != []

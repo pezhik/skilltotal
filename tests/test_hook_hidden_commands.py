@@ -192,3 +192,157 @@ def test_a_huge_unverifiable_spec_is_capped_but_keeps_its_reason():
     reason = out["hookSpecificOutput"]["permissionDecisionReason"]
     assert len(reason) < 1_000
     assert "(a remote archive or repository)" in reason
+
+
+# --- Security review 2026-10-15, H3: commands the parser did not take apart ---------------------
+
+# PowerShell's call operator in front of an expression: the command is computed when the line runs.
+COMPUTED_CALLS = [
+    "& (gcm npm) i evilx",
+    "& (Get-Command npm) install evilx",
+    "& (Get-Command npm).Path i evilx",
+    "& (gcm npm).Source i evilx",
+    "& ('n'+'pm') i evilx",
+    "& ('np' + 'm') install evilx",
+    "& (Join-Path $env:ProgramFiles 'nodejs\\npm.cmd') i evilx",
+    "& (where.exe npm | select -first 1) i evilx",
+    "& (which npm) i evilx",
+    "& $(gcm npm) i evilx",
+    ". (gcm npm) i evilx",
+    "& (gcm npx) -y evilx",
+    "& (gcm pip) install evilx",
+    "& (Get-Command -Name npm -CommandType Application) add evilx",
+    "& (Get-Variable -ValueOnly x) i evilx",
+]
+
+
+@pytest.mark.parametrize("command", COMPUTED_CALLS)
+def test_a_command_powershell_computes_is_asked_about(command):
+    out = _respond(command, "powershell")
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert NOT_READ in out["hookSpecificOutput"]["permissionDecisionReason"]
+    strict = _respond(command, "powershell", strict=True, strict_by="CI")
+    assert strict["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("command", [
+    "& (gcm python) --version",
+    "& (Join-Path $PSScriptRoot 'build.ps1') -Release",
+    "$x = (Get-Date).AddDays(1)",
+    "& ($env:EDITOR) notes.md",
+    ". (Join-Path $HOME 'profile.ps1')",
+])
+def test_a_computed_call_that_installs_nothing_stays_silent(command):
+    assert parse_installs(command, "powershell") == []
+
+
+# Programs that run the command they are given: what that command installs is checked.
+WRAPPED = [
+    ("corepack pnpm@9 add evilx", "npm:evilx"),
+    ("corepack yarn@1.22.22 add evilx", "npm:evilx"),
+    ("corepack npm@10.8.0 i evilx", "npm:evilx"),
+    ("pnpm --package=evilx dlx y", "npm:evilx"),
+    ("pnpm --package evilx dlx y", "npm:evilx"),
+    ("npm --package=evilx exec -- y", "npm:evilx"),
+    ("volta run npm i evilx", "npm:evilx"),
+    ("volta run --node 20 npx evilx", "npm:evilx"),
+    ("nvm exec 20 npm i evilx", "npm:evilx"),
+    ("fnm exec --using=20 npm i evilx", "npm:evilx"),
+    ("cross-env NODE_ENV=production npm i evilx", "npm:evilx"),
+    ("npx cross-env A=1 npm i evilx", "npm:evilx"),
+    ("aws-vault exec prod -- npm i evilx", "npm:evilx"),
+    ("mise use -g npm:evilx", "npm:evilx"),
+    ("mise install npm:evilx@1.2.3", "npm:evilx@1.2.3"),
+    ("mise use -g pipx:evilx", "pypi:evilx"),
+]
+
+
+@pytest.mark.parametrize(("command", "source"), WRAPPED)
+def test_what_a_wrapped_command_installs_is_checked(command, source):
+    assert source in [i.source for i in parse_installs(command)]
+
+
+def test_pnpm_package_in_front_of_dlx_checks_both_names():
+    assert [i.source for i in parse_installs("pnpm --package=evilx dlx y")] == [
+        "npm:evilx", "npm:y"]
+
+
+# Programs that run the command with variables loaded from somewhere the hook does not read (a
+# .env or .envrc, a secrets manager, a tool's configuration, WSL's own home): a registry can be
+# set there, so the package is asked about like one from a configured registry.
+ENV_LOADERS = [
+    ("bash", "dotenv -- npm i evilx"),
+    ("bash", "dotenv -e .env.local -- npx -y evilx"),
+    ("bash", "direnv exec . npm i evilx"),
+    ("bash", "op run --env-file=.env -- npm i evilx"),
+    ("bash", "doppler run -- pip install evilx"),
+    ("bash", "devbox run npm i evilx"),
+    ("bash", "nix-shell -p nodejs --run 'npm i evilx'"),
+    ("bash", "mise exec node@20 -- npm i evilx"),
+    ("bash", "mise x -- npx evilx"),
+    ("bash", "mise exec npm:evilx -- evilx"),
+    ("powershell", "wsl npm i evilx"),
+    ("powershell", "wsl -e npm i evilx"),
+    ("powershell", "wsl -- npm i evilx"),
+    ("powershell", "wsl.exe -d Ubuntu -e bash -c 'npm i evilx'"),
+    ("bash", "wsl bash -c 'npm i evilx'"),
+]
+
+
+@pytest.mark.parametrize(("shell", "command"), ENV_LOADERS)
+def test_a_command_run_with_loaded_variables_is_asked_about(shell, command):
+    out = _respond(command, shell)
+    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert "evilx from a registry the environment " in reason
+    strict = _respond(command, shell, strict=True, strict_by="CI")
+    assert strict["hookSpecificOutput"]["permissionDecision"] == "deny"
+    allowed = _respond(command, shell, strict=True, strict_by="CI",
+                       allow_unchecked=frozenset({"registry"}))
+    assert allowed["hookSpecificOutput"].get("permissionDecision") != "deny"
+
+
+UNKNOWN_RUNNERS = [
+    "with-env npm i evilx",
+    "retry -t 3 -- npm install evilx",
+    "lerna exec -- npm i evilx",
+    "some-tool run uvx evilx",
+    "npx some-runner npm i evilx",
+]
+
+
+@pytest.mark.parametrize("command", UNKNOWN_RUNNERS)
+def test_an_unknown_program_given_an_install_command_is_asked_about(command):
+    """In CI a line that installs through a program the hook does not know is denied; outside
+    CI the person is asked. The package it names is still checked."""
+    calls: list[str] = []
+    clean = {"risk_level": "low", "risk_score": 0, "findings": [],
+             "verdict": {"has_malicious_indicators": False}}
+    out = hook_response(_event(command, "bash"), scan=lambda s, t: calls.append(s) or clean)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert "a program SkillTotal does not know" in out["hookSpecificOutput"][
+        "permissionDecisionReason"]
+    assert "npm:evilx" in calls or "pypi:evilx" in calls
+    strict = hook_response(_event(command, "bash"), scan=lambda s, t: clean, strict=True,
+                           strict_by="CI")
+    assert strict["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+@pytest.mark.parametrize("command", [
+    "echo npm i evilx",
+    "grep -rn npm install docs",
+    "which npm",
+    "git commit -m 'npm i evilx'",
+    "docker run --rm node:22 npm ci",
+    "ssh build-host npm i evilx",
+    "nvm use 20",
+    "nvm install 20",
+    "volta pin node@20",
+    "op item get npm",
+    "mise use node@20",
+    "kill npm",
+    "some-tool npm",
+    "nodemon --exec 'npm start'",
+])
+def test_an_installer_named_where_it_does_not_run_stays_silent(command):
+    assert parse_installs(command) == []

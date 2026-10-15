@@ -25,8 +25,17 @@ finds them inside `$(...)`, `if` blocks, loops and functions; in a script piped 
 to one through a here-document; and in chains like `cd x && npm i y`. On Windows, Claude Code runs
 most commands through its PowerShell tool, and the hook also follows `$r = npm i ...`,
 `& { ... }`, `iex '...'`, `Start-Process npm -ArgumentList ...` and `powershell -EncodedCommand`.
+It follows tools that run a command for you: `corepack pnpm@9 ...`, `volta run`, `nvm exec`,
+`fnm exec`, `cross-env`, `aws-vault exec`, `mise exec`/`mise use npm:x`, and `wsl`. When the tool
+loads variables from a place the hook does not read (`dotenv --`, `direnv exec`, `op run --`,
+`doppler run --`, `devbox run`, `nix-shell --run`, `mise exec`, `wsl`), a registry could be set
+there, so the package counts as coming from a custom registry. A program the hook does not know
+that is given an install command (`some-tool npm i x`) is asked about, and its package is still
+checked.
 Running a program the project already has in `node_modules/.bin` (`npx tsc`) installs nothing, so
-the hook does not check it.
+the hook does not check it. It looks where npx looks: in npm's project folder (in a workspace
+member, the workspace root) and the folders above it, for the program file itself (a `tsc.cmd`
+alone does not count).
 
 ## What happens to the install
 
@@ -41,7 +50,7 @@ the hook does not check it.
   - a command hidden from the hook: decoded or assembled when it runs and then run
     (`eval "$(echo ... | base64 -d)"`, `... | base64 -d | sh`, `X=$(printf '\x6e...'); $X i x`,
     `iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))`,
-    `$c = "np" + "m"; & $c i x`)
+    `$c = "np" + "m"; & $c i x`, `& (gcm npm) i x`, `& ('n'+'pm') i x`)
   - an install inside a `node -e` or `python -c` one-liner, or one that decodes something and runs
     it
   - a direct archive URL
@@ -83,18 +92,29 @@ hook looks for another registry in:
   `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `UV_INDEX_URL`, `UV_DEFAULT_INDEX`,
   `UV_EXTRA_INDEX_URL`, `UV_INDEX` and `UV_FIND_LINKS`, whether set for the agent or in the
   command itself (`PIP_INDEX_URL=... pip install x`)
-- npm's config files: the `.npmrc` of the project (the nearest folder up from where the command
-  runs that holds `package.json` or `node_modules`) and of the user (`NPM_CONFIG_USERCONFIG`, else
-  `~/.npmrc`)
+- npm's config files, read the way npm reads them (the last setting of a key wins, quotes and
+  comments as npm takes them, keys under a `[section]` ignored): the `.npmrc` of the project (the
+  nearest folder up from where the command runs that holds `package.json` or `node_modules`; in a
+  workspace member, the workspace root), of the user (`NPM_CONFIG_USERCONFIG`, else `~/.npmrc`),
+  and the global one when the user's file sets `prefix` or `globalconfig`
 - pip's config files: `PIP_CONFIG_FILE`, the virtual environment's, the user's and the machine's
   `pip.conf` or `pip.ini`
+- when the command runs yarn, bun, pnpm or uv, that tool's own files in the folder it runs in and
+  the folders above it: `.yarnrc`, `.yarnrc.yml` (`npmRegistryServer`), `bunfig.toml`,
+  `pnpm-workspace.yaml`, `uv.toml` and the `[tool.uv]` index settings of `pyproject.toml`
+
+When the hook cannot tell which registry applies, it asks (CI denies): a config file larger than
+it reads (64 KB, 256 KB for `pyproject.toml`), a project `.npmrc` that points npm at another config file (`userconfig`,
+`globalconfig`, `prefix`), a key npm fills in from a variable, or a tool's registry setting that is
+not one plain URL. npm's `tag` setting (`.npmrc` or `npm_config_tag`) picks the dist-tag a package
+named without a version comes from; the hook checks that release (`npm:x@next`), and asks when the
+tag is not one it can name.
 
 A scoped registry (`@corp:registry=...`) counts only for packages of that scope. An extra index
 or find-links location counts wherever it is set, since it can serve a newer version than the
 public one. The console line and the reason show only the registry's scheme and host, never a
 token or a path. A command that changes the installer's config before it installs
 (`npm config set registry ...`, `echo registry=... > .npmrc`, `pip config set ...`) counts too.
-The hook does not read `uv.toml`, `.yarnrc.yml` or `bunfig.toml` files already on disk.
 
 ### The console line
 

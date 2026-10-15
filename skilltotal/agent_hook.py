@@ -39,6 +39,7 @@ from __future__ import annotations
 import base64
 import binascii
 import functools
+import json
 import math
 import os
 import re
@@ -516,6 +517,7 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
         found.update(dict.fromkeys(_net(text)))  # `[scriptblock]::Create('npm i x')`
     if shell == "powershell":
         found.update(dict.fromkeys(_ps_runs_download(lexed.pipelines, text)))
+        found.update(dict.fromkeys(_ps_computed_call(text, level)))
     found.update(dict.fromkeys(_download_then_run(lexed.pipelines, shell)))
     seen: list[str] = [text]
     # A command substitution runs too: `echo $(npm install x)` installs x.
@@ -543,6 +545,45 @@ def _parse(text: str, shell: str, depth: int, outer: _Level) -> list[Install]:
             if position < len(pipeline):
                 output = _output_of(words, feed, "".join(stage.text), shell)
     return _registry_from_env(list(found), seen)
+
+
+# PowerShell's call or dot-source operator in front of a parenthesized expression: `& (gcm npm)`,
+# `& ('n'+'pm')`, `& (Get-Command npm).Path`, `. (Join-Path $dir npm.cmd)`, `& $(which npm)`.
+_PS_COMPUTED_CALL = re.compile(r"(?:^|(?<=[\s;|{(]))[&.][ \t]*\$?\(")
+_PS_MEMBER = re.compile(r"(?:\.[A-Za-z_]\w*(?:\(\))?)+")
+_GROUP_SCAN = 4096  # characters read for the end of one parenthesized expression, at most
+
+
+def _ps_computed_call(text: str, level: _Level) -> list[Install]:
+    """A command PowerShell computes when the line runs (`& (gcm npm) i x`): the hook cannot tell
+    what it is, so the person is asked when the line names an installer, decodes or builds a
+    string, or an install verb follows the expression (as for a command name in a variable)."""
+    for count, match in enumerate(_PS_COMPUTED_CALL.finditer(text)):
+        if level.ctx.root_names_installer or level.ctx.root_hides:
+            return [_NOT_READ]
+        depth, quote, i = 0, "", match.end() - 1
+        end = min(len(text), i + _GROUP_SCAN)
+        while i < end:
+            char = text[i]
+            if quote:
+                quote = "" if char == quote else quote
+            elif char in "'\"":
+                quote = char
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        member = _PS_MEMBER.match(text, i + 1, i + 1 + _GROUP_SCAN)
+        start = member.end() if member else i + 1
+        after = text[start:start + 100].split(None, 1)
+        if after and after[0].lower() in _INSTALL_VERBS:
+            return [_NOT_READ]
+        if count == _MAX_LAUNCHES:
+            break
+    return []
 
 
 def _expand_aliases(words: list[str], aliases: dict[str, list[str]], shell: str) -> list[str]:
@@ -656,18 +697,19 @@ def _registry_from_env(found: list[Install], words: list[str]) -> list[Install]:
 
 
 # Where an installer finds its registry or index outside the command line: the agent's own
-# environment and the installer's configuration files. npm reads `npm_config_*` (any case) and the
-# `.npmrc` of the project (the nearest folder up from where it runs that holds package.json or
-# node_modules) and of the user (NPM_CONFIG_USERCONFIG, else ~/.npmrc), the first that sets a key
-# winning; `@scope:registry` wins over `registry` for that scope's packages. pip reads PIP_* and
-# its pip.conf/pip.ini files (PIP_CONFIG_FILE, the virtualenv's, the user's, the machine's); uv
-# reads UV_*. A configured extra index or find-links counts wherever it is set: the extra source
-# can serve the higher version. A file is read only when it is a regular file, and only its first
-# _CONFIG_MAX_BYTES.
+# environment and the installer's configuration files. npm reads `npm_config_*` (any case), the
+# `.npmrc` of the project (see _npm_prefixes), of the user (NPM_CONFIG_USERCONFIG, else ~/.npmrc)
+# and the global one when a setting moves it there (`globalconfig`, `prefix`), the first that sets
+# a key winning; `@scope:registry` wins over `registry` for that scope's packages, and `tag` names
+# the dist-tag a package named without a version comes from. pip reads PIP_* and its pip.conf/
+# pip.ini files (PIP_CONFIG_FILE, the virtualenv's, the user's, the machine's); uv reads UV_*.
+# A configured extra index or find-links counts wherever it is set: the extra source can serve
+# the higher version. yarn, bun, pnpm and uv have files of their own (_TOOL_CONFIGS). A file is
+# read only when it is a regular file of at most _CONFIG_MAX_BYTES; a larger one, or a setting
+# that sends npm to a file the hook does not read, leaves the registry unknown: asked about.
 _CONFIG_MAX_BYTES = 64 * 1024
+_PROJECT_FILE_MAX_BYTES = 256 * 1024  # package.json, pyproject.toml
 _NPM_PROJECT_LEVELS = 32  # folders walked up from where the command runs, at most
-_NPMRC_KEY = re.compile(r"^[ \t]*((?:@[^\s=:]{1,100}:)?registry)[ \t]*=[ \t]*([^\r\n]*)",
-                        re.IGNORECASE | re.MULTILINE)
 _PIP_CONF_KEY = re.compile(
     r"^[ \t]*(index[-_]url|extra[-_]index[-_]url|find[-_]links)[ \t]*[=:][ \t]*([^\r\n]*)",
     re.IGNORECASE | re.MULTILINE)
@@ -681,9 +723,10 @@ _PLAIN_FILE = re.compile(r"[A-Za-z0-9._/@+:~ -]{1,200}")
 _PLAIN_VARIABLE = re.compile(r"[A-Za-z0-9_@:./-]{1,100}")
 
 
-def _read_config(path: Path) -> str:
-    """The start of a configuration file, or "" when it is missing or not a regular file (a FIFO
-    or device could block or never end)."""
+def _read_config(path: Path, limit: int = _CONFIG_MAX_BYTES) -> str | None:
+    """A configuration file's text: "" when it is missing or not a regular file (a FIFO or device
+    could block or never end), None when it holds more than ``limit`` bytes, which the installer
+    reads in full and the hook does not."""
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     try:
         fd = os.open(path, flags)
@@ -692,11 +735,12 @@ def _read_config(path: Path) -> str:
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             return ""
-        return os.read(fd, _CONFIG_MAX_BYTES).decode("utf-8", "replace")
+        data = os.read(fd, limit + 1)
     except OSError:
         return ""
     finally:
         os.close(fd)
+    return None if len(data) > limit else data.decode("utf-8", "replace")
 
 
 def _public(value: str) -> bool:
@@ -708,6 +752,10 @@ def _registry_where(value: str, origin: str) -> str:
     its path) and where it is set."""
     host = _shown_host(value.strip().strip("\"'"))
     return f"{host or 'a registry'} ({origin})"
+
+
+def _unknown_where(origin: str) -> str:
+    return f"a registry SkillTotal could not read ({origin})"
 
 
 def _file_origin(path: Path) -> str:
@@ -724,63 +772,313 @@ def _env_get(environ: Mapping[str, str], name: str) -> str:
     return value or ""
 
 
-def _npm_project_dir(cwd: Path) -> Path:
-    """npm's project folder: the nearest one up from ``cwd`` that holds package.json or
-    node_modules, else ``cwd`` itself."""
-    folder = cwd
-    for _ in range(_NPM_PROJECT_LEVELS):
+# npm's project folder (its `localPrefix`): the nearest folder up from where it runs that holds
+# package.json or node_modules (never the filesystem root), else that folder itself. In a
+# workspace member it is the workspace root: the nearest folder further up whose package.json
+# lists the member under "workspaces". npm reads the project's .npmrc there (a member's own is
+# ignored) and npx looks for programs in its node_modules/.bin and the folders above.
+_WORKSPACE_GLOB = re.compile(r"[A-Za-z0-9._@*?/-]{1,200}")
+
+
+def _workspace_covers(root: Path, member: Path) -> bool | None:
+    """Whether ``root``'s package.json lists ``member`` as a workspace; None when the hook cannot
+    tell (the file is too large, the list is not a list of names, a pattern it does not match
+    the way npm does)."""
+    text = _read_config(root / "package.json", _PROJECT_FILE_MAX_BYTES)
+    if text is None:
+        return None
+    try:
+        manifest = bounded_json.loads(text)
+    except ValueError:
+        return False  # npm skips a package.json it cannot read
+    if not isinstance(manifest, dict) or "workspaces" not in manifest:
+        return False
+    patterns = manifest["workspaces"]
+    if isinstance(patterns, dict):
+        patterns = patterns.get("packages", [])
+    if not isinstance(patterns, list) or not all(isinstance(p, str) for p in patterns):
+        return None
+    try:
+        relative = member.relative_to(root).as_posix()
+    except ValueError:
+        return False
+    matched = unsure = False
+    for pattern in patterns:
+        pattern = pattern.strip()
+        while pattern.startswith("./"):
+            pattern = pattern[2:]
+        pattern = pattern.rstrip("/")
+        if not pattern:
+            continue
+        if pattern.startswith("!") or not _WORKSPACE_GLOB.fullmatch(pattern) or ".." in (
+                pattern.split("/")):
+            unsure = True  # an exclusion, a brace or class, a folder outside the root
+            continue
+        if any(c in pattern for c in "*?") and any(
+                part.startswith(".") for part in relative.split("/")):
+            unsure = True  # npm's globs skip dot folders
+            continue
+        regex = "".join("(?:[^/]+/)*" if part == "**" else
+                        re.escape(part).replace(r"\*", "[^/]*").replace(r"\?", "[^/]") + "/"
+                        for part in pattern.split("/"))
+        matched = matched or bool(re.fullmatch(
+            regex, relative + "/", re.IGNORECASE if os.name == "nt" else 0))
+    if unsure:
+        return None
+    return matched
+
+
+def _npm_prefixes(cwd: Path) -> tuple[Path, ...]:
+    """npm's project folder for a command run in ``cwd`` (see above); more than one when the hook
+    cannot tell which of them npm takes."""
+    folders = [cwd, *cwd.parents][:_NPM_PROJECT_LEVELS]
+    try:
+        for i, folder in enumerate(folders):
+            if folder.parent == folder:
+                break
+            manifest = (folder / "package.json").is_file()
+            if not (manifest or (folder / "node_modules").is_dir()):
+                continue
+            if not manifest:
+                return (folder,)  # no package.json: no workspace can list it
+            maybe: list[Path] = []
+            for root in folders[i + 1:]:
+                if root.parent == root:
+                    break
+                if not (root / "package.json").is_file():
+                    continue
+                covers = _workspace_covers(root, folder)
+                if covers:
+                    return (*maybe, root)
+                if covers is None:
+                    maybe.append(root)
+            return (*maybe, folder)
+    except OSError:
+        pass
+    return (cwd,)
+
+
+# npm's .npmrc is read by its `ini` module: lines split at any run of line ends, `;` or `#`
+# comments, `[section]` headers (whose keys are not npm settings), `key = value` with the key
+# everything before the first `=`, each side trimmed and unquoted ('...' or JSON "..."; an
+# unquoted value ends at an unescaped `;` or `#`), `key[]` an array, and the last value of a key
+# winning. npm then fills in `${VAR}` in keys and values.
+_INI_SKIP = re.compile(r"^\s*(?:[;#]|$)")
+_INI_SECTION = re.compile(r"^\[[^\]]*\]\s*$")
+_INI_LINE = re.compile(r"^([^=]+)(?:=(.*))?$")
+# The .npmrc settings the hook reads: the registry, a scope's registry, the dist-tag, and the
+# ones that send npm to another configuration file.
+_NPMRC_INDIRECT = ("userconfig", "globalconfig", "prefix")
+
+
+def _ini_unquote(text: str) -> str:
+    """One side of an ini line as npm's ``ini`` module reads it (its ``unsafe``)."""
+    text = text.strip()
+    if text[:1] in ("'", '"') and text.endswith(text[0]):
+        inner = text[1:-1] if text[0] == "'" else text
         try:
-            if (folder / "package.json").exists() or (folder / "node_modules").exists():
-                return folder
-        except OSError:
-            return cwd
-        if folder.parent == folder:
+            value = json.loads(inner)
+        except ValueError:
+            return inner
+        return value if isinstance(value, str) else json.dumps(value)
+    out: list[str] = []
+    escaped = False
+    for char in text:
+        if escaped:
+            out.append(char if char in "\\;#" else "\\" + char)
+            escaped = False
+        elif char in ";#":
             break
-        folder = folder.parent
-    return cwd
+        elif char == "\\":
+            escaped = True
+        else:
+            out.append(char)
+    if escaped:
+        out.append("\\")
+    return "".join(out).strip()
 
 
-def _npm_layers(cwd: Path | None, environ: Mapping[str, str],
-                home: Path | None) -> list[tuple[str, dict[str, str]]]:
-    """npm's configuration, highest precedence first: (where it is set, key -> value)."""
-    layers: list[tuple[str, dict[str, str]]] = []
+def _npmrc_key(key: str) -> bool:
+    return key in ("registry", "tag", *_NPMRC_INDIRECT) or key.endswith(":registry")
+
+
+def _npmrc(text: str) -> dict[str, str] | None:
+    """The settings of an .npmrc the hook reads, as npm reads them; None when one cannot be read
+    for sure (a key npm fills in from a variable, a setting given as an array)."""
+    values: dict[str, str] = {}
+    in_section = False
+    for line in re.split(r"[\r\n]+", text):
+        if _INI_SKIP.match(line):
+            continue
+        if _INI_SECTION.match(line):
+            in_section = True
+            continue
+        match = _INI_LINE.match(line)
+        if not match or in_section:
+            continue
+        key = _ini_unquote(match.group(1))
+        if "${" in key:
+            return None
+        array = len(key) > 2 and key.endswith("[]")
+        if array:
+            key = key[:-2]
+        if not _npmrc_key(key):
+            continue
+        if array:
+            return None
+        values[key] = _ini_unquote(match.group(2)) if match.group(2) is not None else "true"
+    return values
+
+
+# One layer of npm's configuration: where it is set, and its settings (None when they could not
+# be read: the registry is then unknown).
+_Layer = tuple[str, "dict[str, str] | None"]
+
+
+def _npmrc_layer(path: Path) -> _Layer | None:
+    """One .npmrc as a layer, or None when it sets nothing the hook reads."""
+    text = _read_config(path)
+    if text == "":
+        return None
+    values = None if text is None else _npmrc(text)
+    if values == {}:
+        return None
+    return _file_origin(path), values
+
+
+def _config_path(value: str, home: Path | None) -> Path | None:
+    """The file a path setting names, when the hook can tell which one it is: absolute, or under
+    the home folder (npm reads a relative one from wherever it runs)."""
+    if "${" in value:
+        return None
+    if value.startswith(("~/", "~\\")) and home is not None:
+        return home / value[2:]
+    path = Path(value)
+    return path if path.is_absolute() else None
+
+
+def _global_npmrc(values: dict[str, str], home: Path | None) -> Path | None:
+    """The global .npmrc a ``globalconfig`` or ``prefix`` setting names; None when it cannot be
+    told."""
+    if values.get("globalconfig"):
+        return _config_path(values["globalconfig"], home)
+    prefix = _config_path(values["prefix"], home)
+    return prefix / "etc" / "npmrc" if prefix is not None else None
+
+
+def _npm_stacks(cwd: Path | None, environ: Mapping[str, str],
+                home: Path | None) -> list[list[_Layer]]:
+    """npm's configuration, highest precedence first, once for each folder npm may take for the
+    project (see _npm_prefixes).
+
+    A setting that names another configuration file is followed as npm does when it comes from
+    the environment or the user's own .npmrc; from the project's .npmrc (a file the repository
+    controls) it leaves that file unknown.
+    """
+    env: list[_Layer] = []
+    moves: dict[str, str] = {}  # userconfig/globalconfig/prefix set in the environment
     for name, value in environ.items():
         key = name.lower().removeprefix("npm_config_")
-        if key != name.lower() and (key == "registry" or key.endswith(":registry")):
+        if key == name.lower():
+            continue
+        if key in ("registry", "tag") or key.endswith(":registry"):
             plain = _PLAIN_VARIABLE.fullmatch(name)
-            layers.append((f"set by {name}" if plain else "set in the environment", {key: value}))
-    files: list[Path] = []
-    if cwd is not None:
-        files.append(_npm_project_dir(cwd) / ".npmrc")
-    user = _env_get(environ, "npm_config_userconfig")
-    if user:
-        files.append(Path(user))
-    elif home is not None:
-        files.append(home / ".npmrc")
-    for path in files:
-        found: dict[str, str] = {}
-        for match in _NPMRC_KEY.finditer(_read_config(path)):
-            found.setdefault(match.group(1).lower(), match.group(2))
-        if found:
-            layers.append((_file_origin(path), found))
-    return layers
+            env.append((f"set by {name}" if plain else "set in the environment", {key: value}))
+        elif key in _NPMRC_INDIRECT and value:
+            moves[key] = value
+    stacks: list[list[_Layer]] = []
+    for project in _npm_prefixes(cwd) if cwd is not None else (None,):
+        layers = list(env)
+        from_project: dict[str, str] = {}
+        if project is not None:
+            layer = _npmrc_layer(project / ".npmrc")
+            if layer is not None:
+                layers.append(layer)
+                from_project = {key: layer[0] for key in _NPMRC_INDIRECT
+                                if key in (layer[1] or {})}
+        user_values: dict[str, str] = {}
+        if "userconfig" in moves or "userconfig" not in from_project:
+            user = (_config_path(moves["userconfig"], home) if "userconfig" in moves
+                    else home / ".npmrc" if home is not None else None)
+            layer = _npmrc_layer(user) if user is not None else (
+                ("set by npm_config_userconfig", None) if "userconfig" in moves else None)
+            if layer is not None:
+                layers.append(layer)
+                user_values = layer[1] or {}
+        else:
+            layers.append((f"a user config the project names, {from_project['userconfig']}",
+                           None))
+        if "globalconfig" in moves or "prefix" in moves:
+            path = _global_npmrc(moves, home)
+            where = "set by npm_config_globalconfig or npm_config_prefix"
+        elif "globalconfig" in from_project or "prefix" in from_project:
+            path = None
+            where = ("a global config the project names, "
+                     + (from_project.get("globalconfig") or from_project["prefix"]))
+        elif user_values.get("globalconfig") or user_values.get("prefix"):
+            path = _global_npmrc(user_values, home)
+            where = "a global config the user's .npmrc names"
+        else:
+            stacks.append(layers)
+            continue
+        layer = _npmrc_layer(path) if path is not None else (where, None)
+        if layer is not None:
+            layers.append(layer)
+        stacks.append(layers)
+    return stacks
 
 
-def _npm_configured(scope: str, layers: list[tuple[str, dict[str, str]]],
+def _npm_decide(key: str, layers: list[_Layer]) -> tuple[str | None, str] | None:
+    """(value, where it is set) of an npm setting, or None when nothing sets it. The value is
+    None when a layer that may set it could not be read."""
+    for origin, values in layers:
+        if values is None:
+            return None, origin
+        if key in values:
+            return values[key], origin
+    return None
+
+
+def _npm_configured(scope: str, stacks: list[list[_Layer]],
                     environ: Mapping[str, str]) -> str | None:
     """Where a package of ``scope`` ("" for none) comes from, when that is not the public
-    registry."""
-    for key in ([f"{scope}:registry"] if scope else []) + ["registry"]:
-        for origin, values in layers:
-            if key in values:
-                value = values[key]
-                return None if _public(value) else _registry_where(value, origin)
+    registry or the hook cannot tell."""
+    for layers in stacks:
+        for key in ([f"{scope}:registry"] if scope else []) + ["registry"]:
+            decided = _npm_decide(key, layers)
+            if decided is None:
+                continue
+            value, origin = decided
+            if value is None:
+                return _unknown_where(origin)
+            if not _public(value):
+                return _registry_where(value, origin)
+            break
     if not scope:
         for name in _NODE_TOOL_REGISTRY_ENV:
             value = _env_get(environ, name)
             if value and not _public(value):
                 return _registry_where(value, f"set by {name}")
     return None
+
+
+# A dist-tag the scan can ask the registry for (npm refuses a tag that reads as a version).
+_NPM_TAG = re.compile(r"[A-Za-z][A-Za-z0-9._-]{0,63}")
+
+
+def _npm_tag(stacks: list[list[_Layer]]) -> tuple[str | None, str] | None:
+    """The dist-tag npm installs a package named without a version from, with where it is set,
+    when that is not ``latest``; (None, where) when it cannot be told."""
+    found: list[tuple[str | None, str]] = []
+    for layers in stacks:
+        decided = _npm_decide("tag", layers)
+        tag, origin = decided if decided is not None else ("latest", "")
+        found.append((tag if tag is None or _NPM_TAG.fullmatch(tag) else None, origin))
+    tags = {tag for tag, _ in found}
+    if tags <= {"latest"}:
+        return None
+    origin = next(where for tag, where in found if tag != "latest")
+    return (None, origin) if len(tags) > 1 else found[0]  # the folders npm may take disagree
 
 
 def _pip_config_files(environ: Mapping[str, str], home: Path | None) -> list[Path]:
@@ -818,7 +1116,10 @@ def _py_configured(environ: Mapping[str, str], home: Path | None) -> str | None:
             return _registry_where(value.split()[0], f"set by {name}")
     index_decided = bool(_env_get(environ, "PIP_INDEX_URL"))
     for path in _pip_config_files(environ, home):
-        for match in _PIP_CONF_KEY.finditer(_read_config(path)):
+        text = _read_config(path)
+        if text is None:
+            return _unknown_where(_file_origin(path))
+        for match in _PIP_CONF_KEY.finditer(text):
             key = match.group(1).lower().replace("_", "-")
             if key == "index-url":
                 if index_decided:
@@ -830,18 +1131,155 @@ def _py_configured(environ: Mapping[str, str], home: Path | None) -> str | None:
     return None
 
 
+# The registry settings of yarn, bun, pnpm and uv in their own files, read by a plain key search
+# in the folder the command runs in, the folders above it and the home folder. A value that is
+# not one quoted URL (a table, a list, a variable) counts as a registry the hook cannot read.
+_TOOL_WORD = {
+    "yarn": re.compile(r"(?<![\w.-])(?:yarn|yarnpkg)(?![\w.-])", re.IGNORECASE),
+    "bun": re.compile(r"(?<![\w.-])(?:bun|bunx)(?![\w.-])", re.IGNORECASE),
+    "pnpm": re.compile(r"(?<![\w.-])(?:pnpm|pnpx)(?![\w.-])", re.IGNORECASE),
+    "uv": re.compile(r"(?<![\w.-])(?:uv|uvx)(?![\w.-])", re.IGNORECASE),
+}
+_YARNRC = re.compile(r"""^[ \t]*["']?(?:--)?(?:@[^\s"':]+:)?registry["']?[ \t]+(\S[^\r\n]*)""",
+                     re.MULTILINE)
+_YARNRC_YML = re.compile(r"""^[ \t]*["']?npmRegistryServer["']?[ \t]*:[ \t]*([^\r\n]*)""",
+                         re.MULTILINE)
+_BUNFIG = re.compile(r"""^[ \t]*["']?(?:install\.)?registry["']?[ \t]*=[ \t]*([^\r\n]*)""",
+                     re.MULTILINE)
+_BUNFIG_SCOPES = re.compile(
+    r"^[ \t]*\[[ \t]*install\.scopes|^[ \t]*(?:install\.)?scopes[ \t]*=", re.MULTILINE)
+_PNPM_WORKSPACE = re.compile(
+    r"""^[ \t]*["']?(?:@[^\s"':]+:)?(registry|registries)["']?[ \t]*:[ \t]*([^\r\n]*)""",
+    re.MULTILINE)
+_UV_KEYS = ("index-url", "extra-index-url", "default-index", "find-links", "index")
+_TOML_HEADER = re.compile(r"^[ \t]*(\[\[?)([^\]\r\n]*)\]")
+_TOML_KEY = re.compile(
+    r"""^[ \t]*([\w"'-]+(?:[ \t]*\.[ \t]*[\w"'-]+)*)[ \t]*=[ \t]*([^\r\n]*)""")
+_QUOTED_URL = re.compile(r"""^(["'])([^"'\s]{1,500})\1[ \t]*(?:#.*)?$""")
+
+
+def _quoted(value: str) -> str | None:
+    """The URL of a value that is one quoted string; None for anything else."""
+    match = _QUOTED_URL.match(value.strip())
+    return match.group(2) if match else None
+
+
+def _yaml_value(value: str) -> str | None:
+    value = value.split(" #", 1)[0].strip()
+    if not value:
+        return None  # a block below the key
+    quoted = _quoted(value)
+    return quoted if quoted is not None else (value if " " not in value else None)
+
+
+def _yarnrc(text: str) -> list[str | None]:
+    return [_quoted(m.group(1)) or (m.group(1).strip() if " " not in m.group(1).strip()
+                                    else None) for m in _YARNRC.finditer(text)]
+
+
+def _yarnrc_yml(text: str) -> list[str | None]:
+    return [_yaml_value(m.group(1)) for m in _YARNRC_YML.finditer(text)]
+
+
+def _bunfig(text: str) -> list[str | None]:
+    found: list[str | None] = [_quoted(m.group(1)) for m in _BUNFIG.finditer(text)]
+    return found + ([None] if _BUNFIG_SCOPES.search(text) else [])
+
+
+def _pnpm_workspace(text: str) -> list[str | None]:
+    return [None if m.group(1) == "registries" else _yaml_value(m.group(2))
+            for m in _PNPM_WORKSPACE.finditer(text)]
+
+
+def _toml_name(text: str) -> str:
+    """A TOML key or table name with its quotes and the spaces around its dots removed."""
+    return ".".join(part.strip() for part in text.replace('"', "").replace("'", "").split("."))
+
+
+def _uv_settings(text: str, prefix: str) -> list[str | None]:
+    """uv's index settings in a TOML file: at the top of uv.toml (``prefix`` "") or under
+    ``[tool.uv]`` in pyproject.toml (``prefix`` "tool.uv")."""
+    found: list[str | None] = []
+    header = ""
+    wanted = {f"{prefix}.{key}".lstrip(".") for key in _UV_KEYS}
+    wanted |= {f"{prefix}.pip.{key}".lstrip(".") for key in _UV_KEYS}
+    for line in text.splitlines():
+        head = _TOML_HEADER.match(line)
+        if head:
+            header = _toml_name(head.group(2))
+            if head.group(1) == "[[" and header == f"{prefix}.index".lstrip("."):
+                found.append(None)  # `[[index]]`: an index of its own
+            continue
+        key = _TOML_KEY.match(line)
+        if not key:
+            continue
+        if f"{header}.{_toml_name(key.group(1))}".lstrip(".") in wanted:
+            found.append(_quoted(key.group(2)))
+    return found
+
+
+_TOOL_CONFIGS: dict[str, tuple[tuple[str, Callable[[str], list[str | None]]], ...]] = {
+    "yarn": ((".yarnrc", _yarnrc), (".yarnrc.yml", _yarnrc_yml)),
+    "bun": (("bunfig.toml", _bunfig), (".bunfig.toml", _bunfig)),
+    "pnpm": (("pnpm-workspace.yaml", _pnpm_workspace),),
+    "uv": (("uv.toml", functools.partial(_uv_settings, prefix="")),
+           ("pyproject.toml", functools.partial(_uv_settings, prefix="tool.uv"))),
+}
+
+
+def _tool_config_files(cwd: Path | None, environ: Mapping[str, str],
+                       home: Path | None) -> list[Path]:
+    """The folders whose tool configuration files are read: where the command runs and up, the
+    home folder, and uv's user folder."""
+    folders: list[Path] = []
+    if cwd is not None:
+        folders += [cwd, *cwd.parents][:_NPM_PROJECT_LEVELS]
+    if home is not None:
+        folders += [home, home / ".config" / "uv"]
+    for name in ("XDG_CONFIG_HOME", "APPDATA"):
+        value = _env_get(environ, name)
+        if value:
+            folders.append(Path(value) / "uv")
+    return list(dict.fromkeys(folders))
+
+
+def _tool_configured(tool: str, folders: list[Path]) -> str | None:
+    """Where ``tool``'s own configuration files send its installs, when that is not the public
+    registry or index or the hook cannot tell."""
+    for folder in folders:
+        for name, read in _TOOL_CONFIGS[tool]:
+            path = folder / name
+            limit = _PROJECT_FILE_MAX_BYTES if name == "pyproject.toml" else _CONFIG_MAX_BYTES
+            text = _read_config(path, limit)
+            if text is None:
+                return _unknown_where(_file_origin(path))
+            for value in read(text) if text else []:
+                if value is None:
+                    return _unknown_where(_file_origin(path))
+                if not _public(value):
+                    return _registry_where(value, _file_origin(path))
+    return None
+
+
 def _registry_from_config(found: list[Install], cwd: str | None, environ: Mapping[str, str],
-                          home: Path | None) -> list[Install]:
+                          home: Path | None, command: str = "") -> list[Install]:
     """A package an installer would fetch from a registry or index configured outside the
     command line (see above), which the public copy the scan reads may not match: asked about,
-    like ``--registry``."""
+    like ``--registry``. A dist-tag npm is configured to install from is the release checked."""
     npm = [i for i in found if (i.source or "").startswith("npm:")]
     py = [i for i in found if (i.source or "").startswith("pypi:")]
     if not npm and not py:
         return found
     folder = Path(cwd) if cwd and Path(cwd).is_absolute() else None
-    layers = _npm_layers(folder, environ, home) if npm else []
-    py_where = _py_configured(environ, home) if py else None
+    stacks = _npm_stacks(folder, environ, home) if npm else []
+    tag = _npm_tag(stacks) if npm else None
+    tools = [tool for tool, word in _TOOL_WORD.items()
+             if (npm if tool != "uv" else py) and word.search(command)]
+    folders = _tool_config_files(folder, environ, home) if tools else []
+    tool_where = {tool: _tool_configured(tool, folders) for tool in tools}
+    node_where = next((tool_where[t] for t in ("yarn", "bun", "pnpm") if tool_where.get(t)),
+                      None)
+    py_where = (_py_configured(environ, home) or tool_where.get("uv")) if py else None
     out: list[Install] = []
     for item in found:
         source = item.source or ""
@@ -849,7 +1287,14 @@ def _registry_from_config(found: list[Install], cwd: str | None, environ: Mappin
         where = None
         if source.startswith("npm:"):
             scope = name.split("/", 1)[0].lower() if name.startswith("@") and "/" in name else ""
-            where = _npm_configured(scope, layers, environ)
+            where = _npm_configured(scope, stacks, environ) or node_where
+            versioned = name.count("@") > (1 if name.startswith("@") else 0)
+            if not where and tag is not None and not versioned:
+                if not tag[0]:
+                    item = Install(None, f"{name} at an npm dist-tag SkillTotal could not read "
+                                         f"({tag[1]})")
+                else:
+                    item = Install(f"{source}@{tag[0]}")
         elif source.startswith("pypi:"):
             where = py_where
         out.append(Install(None, f"{name} from {where}", registry=True) if where else item)
@@ -1967,6 +2412,9 @@ def _unwrap(tokens: list[str]) -> list[str]:
         head = _base(tokens[0])
         if head in _PASSTHROUGH:
             tokens = tokens[1:]
+            if head == "corepack" and tokens and "@" in tokens[0][1:]:
+                # `corepack pnpm@9 add x`: the package manager at a version, run with the rest.
+                tokens = [tokens[0][0] + tokens[0][1:].split("@", 1)[0], *tokens[1:]]
             continue
         if head == "env":
             tokens = _env_command(tokens[1:])
@@ -2100,6 +2548,12 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _skills_add(rest)
     if command.lower() in ("@smithery/cli", "smithery"):
         return _smithery(rest)
+    if head in _COMMAND_RUNNERS:
+        started = _command_runner(head, rest, shell, depth, level)
+        if started is not None:
+            return started
+    if head == "mise":
+        return _mise(rest, shell, depth, level)
     if head == "volta":
         return _volta(rest)
     if _EASY_INSTALL.fullmatch(head):
@@ -2135,7 +2589,7 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _project_envs(head, rest, shell, depth, level)
     if head in _CONDA:
         return _conda(rest, shell, depth, level)
-    return []
+    return _unknown_runner(head, rest, shell, depth, level)
 
 
 # A PowerShell assignment: its target (`$x`, `$env:X`, `[int]$x`, `${x}`) and operator.
@@ -2296,7 +2750,128 @@ def _could_launch(word: str) -> bool:
         or head in _CODE_OPTIONS or head in _PS_EVAL
         or head in _SKILLS_CLIS or bool(_EASY_INSTALL.fullmatch(head))
         or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
+        or head in _COMMAND_RUNNERS or head == "mise"
     )
+
+
+def _runs_installer(word: str) -> bool:
+    """True for a word that names an installer or a package runner."""
+    head = _base(word)
+    return (
+        head in _NPM_RUNNERS or head in ("npm", "pnpm", "yarn", "bun", "uv", "uvx", "pipx",
+                                         "pip-sync", "volta", "rye", "pixi", "corepack")
+        or head in _PYPROJECT_ADD or head in _CONDA or bool(_EASY_INSTALL.fullmatch(head))
+        or bool(_PIP_HEAD.fullmatch(head) or _PYTHON_HEAD.fullmatch(head))
+    )
+
+
+# Programs that run a command line they are given, with the subcommand that does it (None: no
+# subcommand): `cross-env A=1 npm i x`, `nvm exec 20 npm i x`, `wsl -e npm i x`, `op run -- npm i
+# x`. Where the command starts is found the way _launched finds it.
+_COMMAND_RUNNERS: dict[str, frozenset[str] | None] = {
+    "cross-env": None, "cross-env-shell": None, "dotenv": None, "wsl": None, "nix-shell": None,
+    "nvm": frozenset({"exec"}), "fnm": frozenset({"exec"}), "volta": frozenset({"run"}),
+    "devbox": frozenset({"run"}), "direnv": frozenset({"exec"}), "op": frozenset({"run"}),
+    "doppler": frozenset({"run"}), "aws-vault": frozenset({"exec"}),
+}
+# Of those (and mise), the ones that run the command with variables loaded from somewhere the
+# hook does not read: a .env or .envrc file, a secrets manager, a tool's configuration, another
+# system (WSL has its own home and npm configuration). A registry can be set there, so a package
+# such a command installs is asked about like one from a configured registry.
+_ENV_LOADERS = frozenset({"dotenv", "direnv", "op", "doppler", "devbox", "nix-shell", "wsl",
+                          "mise"})
+
+
+def _command_runner(head: str, rest: list[str], shell: str, depth: int,
+                    level: _Level) -> list[Install] | None:
+    """What a command runner (see _COMMAND_RUNNERS) installs; None when its subcommand runs
+    nothing."""
+    verbs = _COMMAND_RUNNERS[head]
+    if verbs is not None:
+        sub, rest = _subcommand(rest, set())
+        if sub not in verbs:
+            return None
+    found = _launched(rest, "bash" if head == "wsl" else shell, depth, level)
+    return _loaded_env(head, found) if head in _ENV_LOADERS else found
+
+
+def _loaded_env(head: str, found: list[Install]) -> list[Install]:
+    out: list[Install] = []
+    for item in found:
+        source = item.source or ""
+        if source.startswith(("npm:", "pypi:")):
+            name = source.split(":", 1)[1]
+            item = Install(None, f"{name} from a registry the environment {head} loads may set",
+                           registry=True)
+        out.append(item)
+    return list(dict.fromkeys(out))
+
+
+# mise installs tools from npm and PyPI (`mise use -g npm:x`, `mise install pipx:x@1.0`) and runs a
+# command with them (`mise exec npm:x -- x`, `mise x node@20 -- npm i y`).
+_MISE_VALUE_FLAGS = {"-C", "--cd", "-E", "--env", "-j", "--jobs", "-p", "--path"}
+
+
+def _mise(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
+    sub, args = _subcommand(rest, _MISE_VALUE_FLAGS)
+    if sub not in ("use", "u", "install", "i", "exec", "x"):
+        return []
+    tools = args[:args.index("--")] if "--" in args else args
+    found: list[Install] = []
+    for word in tools:
+        backend, _, spec = word.partition(":")
+        if not spec or word.startswith("-"):
+            continue
+        if backend.lower() == "npm":
+            found += _npm_spec(spec, None)
+        elif backend.lower() == "pipx":
+            name, at, version = spec.partition("@")
+            found += _py_spec(f"{name}=={version}" if at and version != "latest" else name, None)
+    if sub in ("exec", "x"):
+        found = _loaded_env("mise", found + _launched(args, shell, depth, level))
+    return list(dict.fromkeys(found))
+
+
+# Programs that print, search or look up their arguments: an installer named among them runs
+# nothing here.
+_PRINTERS = frozenset({
+    "echo", "printf", "print", "write-host", "write-output", "write-error", "write-warning",
+    "write-verbose", "write-information", "out-host", "man", "help", "info", "tldr", "apropos",
+    "whatis", "which", "where", "whereis", "type", "get-command", "gcm", "get-help", "grep",
+    "egrep", "fgrep", "rg", "ag", "ack", "findstr", "select-string", "sls", "jq", "yq", "sed",
+    "awk", "test", "[", "[[", "ls", "dir", "gci", "get-childitem", "rm", "del", "remove-item",
+    "mkdir", "touch", "cp", "mv", "copy", "move", "set-content", "add-content", "out-file",
+    "wc", "head", "tail", "sort", "uniq", "cut", "tr", "diff", "file", "stat", "readlink",
+    "realpath", "basename", "dirname", "cd", "pushd", "popd", "set-location", "export", "set",
+    "unset", "read", "let", "declare", "local", "readonly", "typeset", "hash", "complete",
+    "compgen", "true", "false", ":", "exit", "return", "kill", "pkill", "killall", "pgrep",
+    "ps", "get-process", "stop-process", "#",
+    # Elsewhere: in a container or on another machine, not where the agent runs.
+    "docker", "podman", "nerdctl", "kubectl", "ssh", "docker-compose", "vagrant", "multipass",
+    "lxc",
+})
+_UNKNOWN_RUNNER = Install(None, "a program SkillTotal does not know, given an install command "
+                                "to run")
+
+
+def _unknown_runner(head: str, rest: list[str], shell: str, depth: int,
+                    level: _Level) -> list[Install]:
+    """A program the hook does not know, given an installer's command line as its arguments
+    (`with-env npm i x`, `some-tool exec -- uvx y`): it may well run it, in an environment the
+    hook cannot see. What that command line installs is checked, and the person is asked (in CI
+    it is denied). An installer named among a printer's or a search's arguments runs nothing."""
+    if head in _PRINTERS or not rest:
+        return []
+    found: dict[Install, None] = {}
+    tried = 0
+    for i, word in enumerate(rest):
+        if not _runs_installer(word):
+            continue
+        found.update(dict.fromkeys(_installs_in(rest[i:], shell, depth + 1, level)))
+        tried += 1
+        if tried == _MAX_LAUNCHES:
+            break
+    return [_UNKNOWN_RUNNER, *found] if found else []
 
 
 def _mcp_add(args: list[str], shell: str, depth: int, level: _Level) -> list[Install]:
@@ -2594,7 +3169,15 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
     if head == "pnpm" and sub == "exec":
         return _launched(args, shell, depth, level)  # runs a command; fetches nothing itself
     if sub in ("exec", "x", "dlx"):
-        return _npx(args, shell, depth, level, registry, fetches=sub == "dlx", quiet=quiet)
+        packages = _package_options(rest[:len(rest) - len(args) - 1])  # `npm -p x exec y`
+        found = _npx(packages + args, shell, depth, level, registry, fetches=sub == "dlx",
+                     quiet=quiet)
+        if head == "pnpm" and packages:
+            # `pnpm --package=x dlx y`: whether pnpm takes the option in front of `dlx` or
+            # fetches y itself, both are checked.
+            found = list(dict.fromkeys(found + _npx(args, shell, depth, level, registry,
+                                                    fetches=True, quiet=quiet)))
+        return found
     if sub in _SCAFFOLDERS[head]:
         return _scaffold(args, registry)
     if sub in _NPM_UPDATE or (head == "yarn" and sub == "upgrade-interactive"):
@@ -2619,6 +3202,17 @@ def _node_manager(head: str, rest: list[str], shell: str, depth: int,
                 "package.json")
         return _npm_packages(args, registry, head)
     return []
+
+
+def _package_options(args: list[str]) -> list[str]:
+    """The ``-p x`` / ``--package x`` / ``--package=x`` options among ``args``, as words."""
+    out: list[str] = []
+    for i, arg in enumerate(args):
+        if arg in ("-p", "--package") and i + 1 < len(args):
+            out += [arg, args[i + 1]]
+        elif arg.startswith("--package="):
+            out.append(arg)
+    return out
 
 
 def _npm_global(args: list[str]) -> bool:
@@ -2794,9 +3388,11 @@ _BIN_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]*")
 
 
 def _local_bin(name: str, level: _Level) -> bool:
-    """Whether the project the command runs in has ``node_modules/.bin/<name>`` in its
-    directory or a parent, the copy npx runs (on Windows npm also writes ``.cmd`` and ``.ps1``
-    shims next to it)."""
+    """Whether npx would run ``node_modules/.bin/<name>`` of the project the command runs in
+    (npm's project folder, a workspace root for a member: see _npm_prefixes) or of a folder
+    above it. npm looks for the file without an extension: the ``.cmd`` and ``.ps1`` shims it
+    also writes on Windows do not count alone. When the hook cannot tell which folder npm takes,
+    the program has to be there for each of them."""
     if not level.cwd or not _BIN_NAME.fullmatch(name):
         return False
     key = (name, level.cwd)
@@ -2810,9 +3406,9 @@ def _find_local_bin(name: str, cwd: str) -> bool:
         start = Path(cwd)
         if not start.is_absolute():
             return False
-        names = (name, f"{name}.cmd", f"{name}.ps1") if os.name == "nt" else (name,)
-        return any((folder / "node_modules" / ".bin" / n).is_file()
-                   for folder in (start, *start.parents) for n in names)
+        return all(any((folder / "node_modules" / ".bin" / name).is_file()
+                       for folder in (prefix, *prefix.parents))
+                   for prefix in _npm_prefixes(start))
     except (OSError, ValueError):
         return False
 
@@ -3721,7 +4317,7 @@ def hook_response(
     if not installs:
         return None
     if environ is not None:
-        installs = _registry_from_config(installs, cwd, environ, home)
+        installs = _registry_from_config(installs, cwd, environ, home, command)
 
     denied: list[str] = []
     asked: list[str] = []

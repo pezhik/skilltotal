@@ -234,6 +234,59 @@ def test_the_home_directory_a_folder_above_it_and_a_root_are_refused(no_scan, tm
     assert "component's own folder" in root
 
 
+@pytest.mark.parametrize("source", [
+    "\\\\fileserver.invalid\\share\\skill",
+    "\\\\localhost\\C$\\Users\\me",
+    "\\\\127.0.0.1\\c$\\Users\\me",
+    "\\\\?\\C:\\Users\\me",
+    "\\\\.\\C:\\Users\\me",
+    "\\\\?\\UNC\\localhost\\C$\\Users\\me",
+    "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\me",
+    "//fileserver.invalid/share/skill",
+    "//?/C:/",
+])
+def test_a_network_share_or_device_path_is_refused(no_scan, source):
+    """A UNC or device path can name the home folder under a spelling the home check does not
+    see through, or reach another machine (an SMB connection that can leak the user's NTLM hash):
+    the server refuses it before resolving anything."""
+    text = _error_text("scan_component", {"source": source})
+    assert "network shares, device paths and alternate data streams are not scanned" in text
+    assert "absolute path" not in text
+    diff = _error_text("diff_components", {"old": "npm:x", "new": source})
+    assert "network shares" in diff
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NTFS streams")
+@pytest.mark.parametrize("suffix", ["::$INDEX_ALLOCATION", "::$DATA", ":stream"])
+def test_an_ntfs_stream_of_a_folder_is_refused(no_scan, suffix):
+    text = _error_text("scan_component", {"source": str(Path.home()) + suffix})
+    assert "alternate data streams" in text
+
+
+def test_another_name_for_the_home_folder_is_still_the_home_folder(no_scan, tmp_path, monkeypatch):
+    """The home check compares folders by what the file system says they are: a link to the home
+    folder (or a short 8.3 name) is refused like the home folder itself."""
+    home = tmp_path / "home"
+    (home / "skills" / "x").mkdir(parents=True)
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(home, target_is_directory=True)
+    except OSError:
+        try:
+            import _winapi  # a junction needs no privilege
+
+            _winapi.CreateJunction(str(home), str(alias))
+        except (ImportError, OSError):
+            pytest.skip("cannot create a link here")
+    monkeypatch.setattr(mcp.Path, "home", classmethod(lambda cls: home))
+    # resolve() would see through the link; the check must not depend on it.
+    monkeypatch.setattr(mcp.Path, "resolve", lambda self, strict=False: self)
+    assert "home directory" in _error_text("scan_component", {"source": str(alias)})
+    assert "above home" in _error_text("scan_component", {"source": str(tmp_path)})
+    assert mcp._same_or_inside(alias / "skills" / "x", home)
+    assert not mcp._same_or_inside(tmp_path / "elsewhere", home)
+
+
 def test_diff_checks_both_sides(no_scan):
     assert "absolute path" in _error_text("diff_components", {"old": "npm:x", "new": "."})
 
