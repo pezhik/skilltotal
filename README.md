@@ -259,8 +259,9 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
   line, in CI too. A script the agent downloads and runs (`curl ... | bash`) is not read either,
   but that is an install: the hook says so in the console, and in CI it denies the command unless
   `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
-- **Minified bundles.** They are listed in the report but not analyzed. The scripts npm runs at
-  install are the exception: they are analyzed even when minified.
+- **Minified bundles.** They are listed in the report but not analyzed, and a low verdict then
+  reads "Partially analyzed". The scripts npm runs at install are the exception: they are analyzed
+  even when minified.
 - **SkillTotal's own reports.** A SARIF report, JSON report or baseline that SkillTotal wrote into
   the scanned folder is recognised by its content (pure JSON of exactly that shape), listed in the
   report and not scanned: its rule descriptions quote detection patterns.
@@ -665,7 +666,8 @@ pytest
   Dart, Lua, Perl, Elixir, Groovy, Haskell, Clojure, Erlang, R and Zig files still get the secret,
   sensitive-path and hidden-Unicode checks, but their behavior is not analyzed yet. If a component
   ships code in those languages, the report adds a `needs_review` note, and a low verdict reads
-  "Partially analyzed" instead of "No significant risks found".
+  "Partially analyzed" instead of "No significant risks found". The same holds when a code file
+  was not read at all because it is larger than 2 MiB or a minified bundle.
 - **Test code** (`__tests__/`, `*.test.*`, `tests/`, `conftest.py`, …) is demoted to
   `needs_review` — it is not executed by consumers, so it does not affect the score.
 - Ambiguous signals (bare `secrets`/`credentials` words, lone base64 blobs, "before

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.7.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.8.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.7 (1.6 + verdict.unanalyzed_code); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.8 (1.7 + verdict.unanalyzed_files); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -61,6 +61,15 @@
           "type": "object",
           "description": "Shipped source files per language whose behavior (shell, network, file access, dynamic code) is not analyzed yet, e.g. {\"Go\": 12}. Present only when such files exist; a low-level headline then says the analysis was partial (added in 1.7).",
           "additionalProperties": { "type": "integer", "minimum": 1 }
+        },
+        "unanalyzed_files": {
+          "type": "object",
+          "description": "Shipped (non-test) code files that were not read at all, counted by reason: too_large (over the size cap) and minified (a bundle without a readable copy beside it). Present only when such files exist; a low-level headline then says the analysis was partial, and the score is unchanged (added in 1.8).",
+          "additionalProperties": false,
+          "properties": {
+            "too_large": { "type": "integer", "minimum": 1 },
+            "minified": { "type": "integer", "minimum": 1 }
+          }
         }
       }
     },

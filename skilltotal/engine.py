@@ -190,6 +190,7 @@ def analyze_directory(
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
+    skipped_code = _skipped_code_files(index)
     def checked(number: int) -> None:
         if progress is not None:
             progress(f"Scanning {len(index.files)} files: check {number} of {len(SCANNERS)}")
@@ -317,7 +318,9 @@ def analyze_directory(
         risk_score=score,
         risk_level=level,
         summary=_summary(level, score, findings, capabilities, needs_review),
-        verdict=_verdict(findings, level, unanalyzed, nothing_read=not index.files),
+        verdict=_verdict(
+            findings, level, unanalyzed, nothing_read=not index.files, skipped_code=skipped_code
+        ),
         capabilities=capabilities,
         traits=traits,
         findings=_sort_findings(findings),
@@ -563,6 +566,51 @@ def _unanalyzed_code(index: FileIndex) -> dict[str, int]:
     return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
 
 
+# Source code by suffix, for telling a skipped code file from skipped data or an asset: the
+# languages the scanners read, plus those no scanner reads for behavior yet.
+_CODE_SUFFIXES = frozenset(
+    {
+        ".py", ".pyw", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts",
+        ".sh", ".bash", ".zsh", ".ps1", ".psm1", ".bat", ".cmd",
+        *_UNANALYZED_LANGUAGES,
+    }
+)
+_MINIFIED_INFIX = re.compile(r"[.-]min(?=\.[^.]+$)", re.IGNORECASE)
+
+
+def _skipped_code_files(index: FileIndex) -> dict[str, int]:
+    """Count the shipped (non-test) code files the scan did not read, by reason: ``too_large``
+    (over MAX_FILE_BYTES, including a script npm runs at install, whatever its suffix) and
+    ``minified`` (a bundle; see file_index._is_minified). A minified copy shipped next to its
+    readable source (``x.min.js`` beside ``x.js``) was read in that source and is not counted."""
+    indexed = {f.relpath for f in index.files}
+    too_large = {
+        p for p in index.large
+        if (Path(p).suffix.lower() in _CODE_SUFFIXES or p in index.install_scripts)
+        and not is_test_path(p)
+    }
+    for p in index.install_scripts - indexed:  # one in a skipped folder is not in index.large
+        try:
+            if (index.root / p).stat().st_size > MAX_FILE_BYTES:
+                too_large.add(p)
+        except OSError:
+            continue
+    minified = [
+        p for p in index.minified
+        if not is_test_path(p) and _MINIFIED_INFIX.sub("", p) not in indexed
+    ]
+    counts = {"too_large": len(too_large), "minified": len(minified)}
+    return {reason: n for reason, n in counts.items() if n}
+
+
+def _skipped_code_phrase(skipped: dict[str, int]) -> str:
+    total = sum(skipped.values())
+    reasons = " and ".join(
+        f"{n} {'too large' if reason == 'too_large' else reason}" for reason, n in skipped.items()
+    )
+    return f"{total} code file{'s' if total != 1 else ''} not read ({reasons})"
+
+
 def _language_list(unanalyzed: dict[str, int]) -> str:
     names = list(unanalyzed)
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
@@ -644,6 +692,7 @@ def _verdict(
     unanalyzed: dict[str, int] | None = None,
     *,
     nothing_read: bool = False,
+    skipped_code: dict[str, int] | None = None,
 ) -> dict:
     """Plain-language top-line answer, mapped to the two real user fears:
 
@@ -691,13 +740,19 @@ def _verdict(
     else:
         vlevel, headline = "low", "No significant risks found"
 
-    if unanalyzed and vlevel == "low":
+    if (unanalyzed or skipped_code) and vlevel == "low":
         # Never a reassuring headline over code nothing read: the level and score stay as they
         # are (unread code is not evidence of risk), only the wording stops implying "checked".
-        headline = (
-            f"Partially analyzed - {_language_list(unanalyzed)} code not checked "
-            "for shell, network or file access"
-        )
+        # That covers code in a language no scanner reads for behavior, and code files that were
+        # not read at all (too large, or a minified bundle).
+        parts = []
+        if unanalyzed:
+            parts.append(
+                f"{_language_list(unanalyzed)} code not checked for shell, network or file access"
+            )
+        if skipped_code:
+            parts.append(_skipped_code_phrase(skipped_code))
+        headline = "Partially analyzed - " + "; ".join(parts)
     if nothing_read and vlevel == "low":
         # Nothing was read, so nothing could be found: the level and score stay as they are, and
         # the headline does not word an empty scan as a clean one.
@@ -715,6 +770,8 @@ def _verdict(
     }
     if unanalyzed:
         verdict["unanalyzed_code"] = dict(unanalyzed)
+    if skipped_code:
+        verdict["unanalyzed_files"] = dict(skipped_code)
     return verdict
 
 

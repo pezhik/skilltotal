@@ -24,7 +24,7 @@ from skilltotal.models import (
 #   consumer knows when re-scanning old reports may surface new findings.
 __version__ = "0.69.0"
 ENGINE_VERSION = __version__
-REPORT_SCHEMA_VERSION = "1.7"
+REPORT_SCHEMA_VERSION = "1.8"
 RULESET_VERSION = 72
 
 __all__ = [
