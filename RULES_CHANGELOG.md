@@ -4,6 +4,18 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 74 (engine 0.71.0)
+
+Detection-efficacy corpus, now 124 positive / 88 negative: 124/124 flagged, 0 false positives.
+
+- **`ST-SHELL-PIPE-EXEC`** (changed): ruleset 73 moved a download-and-run command to
+  `needs_review` when the script keeps it in a shell variable and only prints it (an install hint).
+  It missed the same assignment written in a `case` arm, such as
+  `Linux) uv_hint="curl ... | sh" ;;`, because that line starts with the arm's pattern and ends
+  with `;;`. Such an assignment is now read the same way. A value passed to `eval` or `sh -c`, or
+  followed on its line by anything other than `;;` or a comment, is still a finding. New benign
+  corpus sample: an installer that picks its hint per platform in a `case` statement.
+
 ## ruleset 73 (engine 0.70.0)
 
 Gaps and false positives found by a review that used SkillTotal the way a DevSecOps engineer

@@ -985,12 +985,15 @@ _PRINT_COMMAND = re.compile(
 _QUOTED_ARG = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
 # A shell variable assigned a quoted value on its own line: `name="…"`, `export name='…'`,
 # `local name="…"`. The value ends at the next same quote (an escaped quote is rare in a hint, and
-# a value that does not close on the line is not read as one). Only a comment or `;` may follow.
+# a value that does not close on the line is not read as one). Only a comment, `;` or a case arm's
+# `;;` may follow. A `case` arm's pattern may lead the line (`Linux) uv_hint="curl … | sh" ;;`): an
+# installer picks its hint per platform. Anything else after the value keeps the line in scope.
 _SHELL_ASSIGNMENT = re.compile(
-    r"[ \t]*(?:(?:export|local|readonly|declare(?:[ \t]+-[A-Za-z]+)*)[ \t]+)?"
+    r"[ \t]*(?:[A-Za-z0-9_*?.|\[\]-]{1,100}\)[ \t]*)?"
+    r"(?:(?:export|local|readonly|declare(?:[ \t]+-[A-Za-z]+)*)[ \t]+)?"
     r"([A-Za-z_][A-Za-z0-9_]{0,100})=([\"'])"
 )
-_ASSIGNMENT_TAIL = re.compile(r"[ \t]*(?:;[ \t]*)?(?:#.*)?$")
+_ASSIGNMENT_TAIL = re.compile(r"[ \t]*(?:;;?[ \t]*)?(?:#.*)?$")
 # JSX attributes whose value is text shown to a person.
 _JSX_UI_ATTRIBUTE = re.compile(
     r"\b(?:placeholder|title|label|aria-label|aria-description|alt|helperText|hint|tooltip|"

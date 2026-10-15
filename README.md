@@ -363,7 +363,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pezhik/skilltotal@v0.70.1
+      - uses: pezhik/skilltotal@v0.71.0
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail on a high/critical risk finding (or 'none')
@@ -428,7 +428,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.70.1
+    rev: v0.71.0
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -452,7 +452,7 @@ create folders, so create the report folder first.
 A shell step:
 
 ```bash
-pipx install skilltotal==0.70.1
+pipx install skilltotal==0.71.0
 OUT="$(mktemp -d)"
 skilltotal scan . --sarif --output "$OUT/skilltotal.sarif" --fail-on high
 ```
@@ -463,7 +463,7 @@ GitLab CI (`allow_failure: exit_codes: [2]` would turn the gate into a warning):
 skilltotal:
   image: python:3.12-slim
   script:
-    - pip install skilltotal==0.70.1
+    - pip install skilltotal==0.71.0
     - mkdir -p skilltotal-reports
     - skilltotal scan . --exclude "skilltotal-reports/*" --sarif --output skilltotal-reports/skilltotal.sarif --fail-on high
   artifacts:
@@ -479,7 +479,7 @@ stage('SkillTotal') {
   steps {
     sh '''
       python -m venv .skilltotal-venv    # a virtual environment is not scanned
-      .skilltotal-venv/bin/pip install skilltotal==0.70.1
+      .skilltotal-venv/bin/pip install skilltotal==0.71.0
       mkdir -p skilltotal-reports
       .skilltotal-venv/bin/skilltotal scan . --exclude "skilltotal-reports/*" --sarif --output skilltotal-reports/skilltotal.sarif --fail-on high
     '''
@@ -774,7 +774,7 @@ that produced them.
 
 - **[Detection efficacy](https://github.com/pezhik/skilltotal/blob/main/docs/efficacy-report.md)**:
   recall and precision on a labeled corpus we built and publish (124 malicious and
-  87 benign samples), regenerated every release and enforced by CI as a floor. A perfect
+  88 benign samples), regenerated every release and enforced by CI as a floor. A perfect
   score on our own corpus guards against regressions; it is not a claim about every attack in the
   wild.
 - **[The MCP registry, scanned](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-registry-survey.md)**

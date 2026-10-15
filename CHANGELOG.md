@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.71.0]
+
+Ruleset 74. See `RULES_CHANGELOG.md`.
+
+### Detection
+- An install hint that a script keeps in a shell variable inside a `case` arm and only prints,
+  such as `Linux) uv_hint="curl ... | sh" ;;`, is no longer reported as a download-and-run
+  command. Ruleset 73 already handled the same hint on a line of its own.
+
 ## [0.70.1]
 
 Ruleset 73 and report schema 1.8 are unchanged. No detection changes in this release.

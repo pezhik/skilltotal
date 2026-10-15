@@ -194,6 +194,33 @@ def test_a_pipe_to_shell_kept_in_a_variable_that_is_only_echoed_is_not_run(tmp_p
     assert report.risk_score == 0
 
 
+def test_a_hint_assigned_in_a_case_arm_and_only_echoed_is_not_run(tmp_path):
+    """Installers pick the hint per platform: `Linux) uv_hint="curl ... | sh" ;;`."""
+    script = (
+        "#!/bin/bash\n"
+        'case "$(uname -s)" in\n'
+        '  Darwin)               uv_hint="brew install uv" ;;\n'
+        '  Linux)                uv_hint="curl -LsSf https://x.example.invalid/uv/i.sh | sh" ;;\n'
+        '  MINGW*|MSYS*|CYGWIN*) uv_hint="see https://x.example.invalid/uv" ;;\n'
+        "esac\n"
+        'echo "uv is missing. Install it with: $uv_hint"\n'
+    )
+    report = _scan(tmp_path, {"install.sh": script})
+    assert SH not in _ids(report)
+    assert report.risk_score == 0
+
+
+@pytest.mark.parametrize("arm", [
+    '  Linux) cmd="curl -s {url} | sh" ;;',
+    '  Linux) cmd="curl -s {url} | sh"; eval "$cmd" ;;',
+])
+def test_a_case_arm_command_that_is_run_still_fires(tmp_path, arm):
+    script = ('#!/bin/sh\ncase "$(uname -s)" in\n' + arm.format(url=URL) + "\nesac\n"
+              'echo "running $cmd"\neval "$cmd"\n')
+    report = _scan(tmp_path, {"install.sh": script})
+    assert SH in _ids(report)
+
+
 @pytest.mark.parametrize("use", ['eval "$cmd"', 'bash -c "$cmd"', "sh -c \"${cmd}\""])
 def test_a_pipe_to_shell_kept_in_a_variable_that_is_run_still_fires(tmp_path, use):
     script = f'#!/bin/sh\ncmd="curl -s {URL} | sh"\necho "running $cmd"\n{use}\n'

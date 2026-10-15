@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.70.1",
-  "ruleset_version": 73,
+  "engine_version": "0.71.0",
+  "ruleset_version": 74,
   "python_version": "3.14",
   "positives": 124,
-  "negatives": 87,
+  "negatives": 88,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
