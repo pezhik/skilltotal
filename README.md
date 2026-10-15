@@ -261,6 +261,9 @@ you, with SkillTotal's reason. Nothing is installed unless you approve.
   `SKILLTOTAL_ALLOW_UNCHECKED` includes `script`.
 - **Minified bundles.** They are listed in the report but not analyzed. The scripts npm runs at
   install are the exception: they are analyzed even when minified.
+- **SkillTotal's own reports.** A SARIF report, JSON report or baseline that SkillTotal wrote into
+  the scanned folder is recognised by its content (pure JSON of exactly that shape), listed in the
+  report and not scanned: its rule descriptions quote detection patterns.
 - **Platform-specific wheels.** For a PyPI release that ships them, SkillTotal scans the source
   distribution; the wheel pip picks for your machine can differ from it. A release whose only
   wheel is pure Python is scanned as that wheel.

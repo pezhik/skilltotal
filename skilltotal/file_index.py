@@ -166,6 +166,69 @@ def _is_codeless_source_map(filename: str, text: str) -> bool:
     )
 
 
+# SkillTotal's own outputs (`scan --sarif/--json --output`, `--write-baseline`). A report quotes the
+# detection patterns in its rule descriptions and the findings it reported, so read as component
+# content it made the next scan of the same folder report MALICIOUS. Recognised by content, never
+# by name: the whole file must parse as pure JSON (which runs nothing) with exactly the shape
+# SkillTotal writes. Strings that must appear near either end of each shape, checked before parsing.
+_OWN_OUTPUT_HINTS = ('"SkillTotal"', '"skilltotal_version"', '"suppressed"')
+_OWN_OUTPUT_PEEK = 4096
+_SARIF_KEYS = frozenset({"$schema", "version", "runs"})
+_SARIF_RUN_KEYS = frozenset({"tool", "taxonomies", "results", "properties"})
+_REPORT_KEYS = frozenset({
+    "component", "risk_score", "risk_level", "summary", "verdict", "capabilities", "traits",
+    "findings", "needs_review", "metadata",
+})
+_BASELINE_FINGERPRINT = re.compile(r"[0-9a-f]{16}")
+
+
+def is_skilltotal_output(text: str) -> bool:
+    """True if ``text`` is, in full, a SARIF log whose every run's tool is SkillTotal, a SkillTotal
+    JSON report (its exact top-level keys, with SkillTotal's version metadata), or a baseline
+    written by ``--write-baseline`` (``version`` and a list of fingerprints, nothing else)."""
+    if not text.lstrip().startswith("{"):
+        return False
+    ends = text[:_OWN_OUTPUT_PEEK] + text[-_OWN_OUTPUT_PEEK:]
+    if not any(hint in ends for hint in _OWN_OUTPUT_HINTS):
+        return False
+    try:
+        data, cut = bounded_json.loads_cut(text)
+    except ValueError:
+        return False
+    if cut or not isinstance(data, dict):
+        return False
+    keys = set(data)
+    if keys == {"version", "suppressed"}:
+        items = data["suppressed"]
+        return (
+            isinstance(data["version"], int) and isinstance(items, list)
+            and all(isinstance(i, str) and _BASELINE_FINGERPRINT.fullmatch(i) for i in items)
+        )
+    if keys <= _SARIF_KEYS and "runs" in keys:
+        runs = data["runs"]
+        return (
+            data.get("version") == "2.1.0" and isinstance(runs, list) and bool(runs)
+            and all(_is_skilltotal_run(run) for run in runs)
+        )
+    if keys == _REPORT_KEYS:
+        meta = data["metadata"]
+        return (
+            isinstance(meta, dict)
+            and isinstance(meta.get("skilltotal_version"), str)
+            and isinstance(meta.get("schema_version"), str)
+            and isinstance(meta.get("ruleset_version"), int)
+        )
+    return False
+
+
+def _is_skilltotal_run(run: object) -> bool:
+    if not (isinstance(run, dict) and set(run) <= _SARIF_RUN_KEYS):
+        return False
+    tool = run.get("tool")
+    driver = tool.get("driver") if isinstance(tool, dict) else None
+    return isinstance(driver, dict) and driver.get("name") == "SkillTotal"
+
+
 def is_build_output_path(relpath: str) -> bool:
     """True when the path sits under a build-output directory (``dist/``, ``build/``)."""
     return any(part in BUILD_OUTPUT_DIRS for part in relpath.replace("\\", "/").split("/"))
@@ -2121,6 +2184,7 @@ class FileIndex:
         skip_build_output: bool = True,
         large: list[str] | None = None,
         install_scripts: frozenset[str] = frozenset(),
+        own_outputs: list[str] | None = None,
     ):
         self.root = root
         self.files = files
@@ -2144,6 +2208,8 @@ class FileIndex:
         self.large = large or []
         # Relative paths of the files npm runs at install time (see engine._install_script_files).
         self.install_scripts = install_scripts
+        # Relative paths of SkillTotal's own reports and baselines, not read (is_skilltotal_output).
+        self.own_outputs = own_outputs or []
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -2171,6 +2237,7 @@ class FileIndex:
             "skipped_large": 0,
             "skipped_minified": 0,
             "skipped_source_map": 0,
+            "skipped_own_output": 0,
             "total_seen": 0,
         }
         excludes = tuple(exclude or ())
@@ -2179,6 +2246,7 @@ class FileIndex:
         unreadable: list[str] = []
         skipped: list[tuple[str, str]] = []
         large: list[str] = []
+        own_outputs: list[str] = []
 
         for path in cls._walk(root, excludes, skip_build_output=skip_build_output,
                               links=links, unreadable=unreadable, skipped=skipped):
@@ -2217,6 +2285,10 @@ class FileIndex:
                 )
                 continue
             relpath = path.relative_to(root).as_posix()
+            if relpath not in always and is_skilltotal_output(text):
+                stats["skipped_own_output"] += 1
+                own_outputs.append(relpath)
+                continue
             if _is_minified(path.name, text) and relpath not in always:
                 stats["skipped_minified"] += 1
                 minified.append(relpath)
@@ -2258,7 +2330,8 @@ class FileIndex:
         return cls(root, files, stats, sorted(minified), git_config,
                    links=sorted(links), unreadable=sorted(unreadable),
                    skipped_dirs=sorted(skipped), skip_build_output=skip_build_output,
-                   large=sorted(large), install_scripts=always)
+                   large=sorted(large), install_scripts=always,
+                   own_outputs=sorted(own_outputs))
 
     def with_files(
         self, extra: list[IndexedFile], minified: list[str] | None = None
@@ -2272,7 +2345,7 @@ class FileIndex:
             self.root, files, stats, sorted({*self.minified, *(minified or [])}), self.git_config,
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
             skip_build_output=self.skip_build_output, large=self.large,
-            install_scripts=self.install_scripts,
+            install_scripts=self.install_scripts, own_outputs=self.own_outputs,
         )
 
     @staticmethod

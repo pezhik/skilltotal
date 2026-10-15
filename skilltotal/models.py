@@ -191,6 +191,11 @@ UNANALYZED_LOADED_CODE = "Code loaded from a skipped folder not analyzed"
 # a working tree, and code the component loads from them was read.
 SKIPPED_FOLDERS = "Folders not analyzed"
 
+# The needs_review title listing SkillTotal's own reports and baselines found in the component and
+# set aside (file_index.is_skilltotal_output). Informational: they are the scanner's output, not a
+# part of the component left unanalyzed.
+OWN_OUTPUTS_SKIPPED = "SkillTotal output files not analyzed"
+
 # The needs_review titles that say a file, or a part of one, was not analyzed: what
 # `scan --fail-on-unanalyzed` fails on. Every other note is a signal to read, not a gap in the scan.
 UNANALYZED_TITLES = frozenset({

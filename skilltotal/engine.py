@@ -49,6 +49,7 @@ from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
 from skilltotal.loaded_code import module_file as _module_file
 from skilltotal.models import (
     NOTHING_READ,
+    OWN_OUTPUTS_SKIPPED,
     SKIPPED_FOLDERS,
     UNANALYZED_INSTALL_SCRIPT,
     UNANALYZED_LOADED_CODE,
@@ -162,6 +163,15 @@ def analyze_directory(
             )
         )
     needs_review.extend(_unread_notes(index))
+    if index.own_outputs:
+        needs_review.append(aggregated_review(
+            category="coverage",
+            title=OWN_OUTPUTS_SKIPPED,
+            places=[(p, None) for p in index.own_outputs],
+            what="file(s) are reports or baselines SkillTotal wrote (SARIF, JSON report, baseline)",
+            advice="Each parsed in full as JSON of exactly that shape, which runs nothing; their "
+                   "rule descriptions quote detection patterns, so they were not scanned.",
+        ))
     if unloaded:
         needs_review.append(_unloaded_note(unloaded))
     skipped_note = _skipped_folders_note(index)
@@ -600,6 +610,7 @@ def _unread_notes(index: FileIndex) -> list[NeedsReview]:
             (stats.get("skipped_large", 0), f"larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB"),
             (stats.get("skipped_minified", 0), "minified"),
             (stats.get("skipped_source_map", 0), "source maps without code"),
+            (stats.get("skipped_own_output", 0), "SkillTotal reports or baselines"),
             (len(index.unreadable), "unreadable"),
             (len(index.links), "links not followed"),
         ]
