@@ -34,9 +34,8 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
 5. `ruff check . && pytest && bandit -r skilltotal` — all green (the release gate runs all
    three; ruff failures have blocked a tag before).
 6. Commit and push. When CI is green on that commit, create a signed annotated tag
-   (`git tag -s -m vX.Y.Z vX.Y.Z`) and push it. `release.yml` builds the release. Its publish
-   jobs wait until a maintainer approves the `pypi` and `npm` environments in GitHub, and only
-   then publish through OIDC.
+   (`git tag -s -m vX.Y.Z vX.Y.Z`) and push it. `release.yml` builds the release and publishes
+   it through OIDC from the `pypi` and `npm` environments, which accept only `v*` tags.
 
 ## Release cadence and guarantees
 

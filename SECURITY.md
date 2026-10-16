@@ -98,9 +98,8 @@ guard against committing secrets or keys — no single layer is relied on alone:
    so there is no static publishing key to leak. What the release workflow publishes carries a
    PEP 740 attestation (PyPI) or npm provenance that points back to the workflow run that built
    it.
-   Publishing also needs a maintainer to approve the `pypi` and `npm` environments in GitHub, so
-   pushing a tag alone publishes nothing. Release tags are signed and protected: only a
-   maintainer can create one, and no release tag can be moved or deleted.
+   The `pypi` and `npm` environments publish only from `v*` tags. Release tags are signed and
+   protected: only a maintainer can create one, and no release tag can be moved or deleted.
 
 Supporting measures: `.gitignore` excludes common secret files (`.env`, `*.pem`, `*.key`,
 `id_rsa`, `.pypirc`, `.npmrc`, …); a `detect-secrets` baseline (`.secrets.baseline`) tracks
