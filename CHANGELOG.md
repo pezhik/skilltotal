@@ -4,7 +4,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.74.0]
+
+Ruleset 76 and report schema 1.9 are unchanged: no detection rule changed.
 
 ### Added
 - Scanning through a company registry mirror (Artifactory, Nexus, Verdaccio, devpi).
