@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse, urlsplit
 
 from skilltotal import bounded_json
 from skilltotal.file_index import MAX_FILE_BYTES
@@ -189,6 +189,8 @@ class SourceContext:
     # A PyPI release is several files (wheels, an sdist), one of which is scanned: which one,
     # and how many were not read.
     distribution_note: str | None = None
+    # Set when a registry package was fetched through a configured mirror, not the public registry.
+    mirror_note: str | None = None
 
     def __enter__(self) -> SourceContext:
         return self
@@ -845,11 +847,145 @@ def _collect_remote(
 
 # --------------------------------------------------------------- package registries
 
+# A company registry mirror (Artifactory, Nexus, Verdaccio, devpi) to fetch `npm:` / `pypi:`
+# sources from instead of the public registries. Read only from the scanning process's own
+# environment, never from a scanned component's files. Unset, nothing changes.
+NPM_REGISTRY_ENV = "SKILLTOTAL_NPM_REGISTRY"  # npm protocol: <base>/<name>[/<version|tag>]
+PYPI_INDEX_ENV = "SKILLTOTAL_PYPI_INDEX"  # PyPI JSON API: <base>/pypi/<name>[/<version>]/json
+# Sent as `Authorization: Bearer` to the mirror's own scheme and host only.
+REGISTRY_TOKEN_ENV = "SKILLTOTAL_REGISTRY_TOKEN"  # nosec B105 - a variable name, not a secret
+_PUBLIC_NPM = "https://registry.npmjs.org"
+_PUBLIC_PYPI = "https://pypi.org"
+# Where the public registries serve their files: a mirror may hand out these download URLs too.
+_PUBLIC_DOWNLOAD_HOSTS = {"npm": frozenset({"registry.npmjs.org"}),
+                          "pypi": frozenset({"files.pythonhosted.org"})}
+# Public hosts the token is never sent to, whatever a mirror setting names.
+_PUBLIC_HOSTS = frozenset({"registry.npmjs.org", "registry.yarnpkg.com", "www.npmjs.com",
+                           "pypi.org", "pypi.python.org", "files.pythonhosted.org"})
+# The only hosts a mirror may be reached over plain http.
+_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+# What a mirror URL may hold: no whitespace, quotes, backslashes or control characters (a query
+# or fragment is refused by name after this).
+_MIRROR_URL_CHARS = re.compile(r"[A-Za-z0-9._~:/?#\[\]%@!$&'()*+,;=-]+")
+
+
+def normalize_registry_url(value: str, variable: str) -> str:
+    """``value`` as a mirror base URL (``scheme://host[:port]/path``, lowercase scheme and host,
+    no trailing slash), or a CollectionError naming ``variable``.
+
+    https only, except http to this machine (localhost, 127.0.0.1, ::1); no user name or password
+    (the token goes in SKILLTOTAL_REGISTRY_TOKEN), no query, no fragment. The value is not quoted
+    back: it may hold a credential the person pasted by mistake.
+    """
+    def bad(why: str) -> CollectionError:
+        return CollectionError(f"{variable} is not a usable registry URL: {why}")
+
+    value = value.strip()
+    if not _MIRROR_URL_CHARS.fullmatch(value):
+        raise bad("it holds spaces, quotes, backslashes or other characters a URL cannot")
+    parts = urlsplit(value)
+    scheme = parts.scheme.lower()
+    if scheme not in ("https", "http"):
+        raise bad("it must start with https://")
+    if "@" in parts.netloc:
+        raise bad("it must not hold a user name or password; set "
+                  f"{REGISTRY_TOKEN_ENV} for a token")
+    if "?" in value or "#" in value:
+        raise bad("it must not hold a query (?) or a fragment (#)")
+    try:
+        host, _port = parts.hostname, parts.port
+    except ValueError:
+        raise bad("its port is not a number from 0 to 65535") from None
+    if not host:
+        raise bad("it names no host")
+    if scheme == "http" and host not in _LOOPBACK_HOSTS:
+        raise bad("plain http is allowed only for localhost; use https")
+    path = parts.path.rstrip("/")
+    if any(segment in (".", "..") for segment in path.split("/")):
+        raise bad("its path must not hold . or .. segments")
+    return f"{scheme}://{parts.netloc.lower()}{path}"
+
+
+def registry_mirror(kind: str, environ=None) -> str | None:
+    """The mirror base URL configured for ``kind`` ("npm" or "pypi"), normalized; None when unset.
+    An unusable value raises a CollectionError naming the variable."""
+    variable = NPM_REGISTRY_ENV if kind == "npm" else PYPI_INDEX_ENV
+    raw = (os.environ if environ is None else environ).get(variable, "").strip()
+    return normalize_registry_url(raw, variable) if raw else None
+
+
+def _origin(url: str) -> str:
+    """``scheme://host[:port]`` of a URL, lowercase; "" when it has none."""
+    parts = urlsplit(url)
+    return f"{parts.scheme.lower()}://{parts.netloc.lower()}" if parts.netloc else ""
+
+
+def _mirror_origins() -> set[str]:
+    """The origins of the mirrors this process is configured with (an unusable setting, none)."""
+    origins: set[str] = set()
+    for kind in ("npm", "pypi"):
+        try:
+            base = registry_mirror(kind)
+        except CollectionError:
+            continue
+        if base:
+            origins.add(_origin(base))
+    return origins
+
+
+def _token_for(url: str, origins: set[str]) -> str:
+    """The registry token, when ``url`` is on a configured mirror's own scheme and host (and
+    that host is not a public registry); else ""."""
+    token = os.environ.get(REGISTRY_TOKEN_ENV, "").strip()
+    if not token or _origin(url) not in origins:
+        return ""
+    return "" if (urlsplit(url).hostname or "") in _PUBLIC_HOSTS else token
+
+
+def _fetchable(url: str, origins: set[str]) -> bool:
+    """https, or plain http to a configured mirror on this machine."""
+    lowered = url.lower()
+    return lowered.startswith("https://") or (lowered.startswith("http://")
+                                              and _origin(url) in origins)
+
+
+class _MirrorRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to an https URL (or a configured http mirror on this machine), and
+    carries the token only to a configured mirror's own scheme and host: a mirror that sends a
+    download on to cloud storage does not hand that storage the token."""
+
+    def __init__(self, origins: set[str]) -> None:
+        super().__init__()
+        self._origins = origins
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        if not _fetchable(newurl, self._origins):
+            raise CollectionError("refusing to follow a redirect to a non-https URL")
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        token = _token_for(newurl, self._origins)
+        if new is not None and token:
+            new.add_unredirected_header("Authorization", f"Bearer {token}")
+        return new
+
+
 def _open(url: str, *, timeout: float = _HTTP_TIMEOUT):
-    """Open an https URL (scheme enforced) with a timeout."""
-    if not url.lower().startswith("https://"):
+    """Open an https URL (scheme enforced) with a timeout.
+
+    With no mirror configured this is a plain https request, as it always was. A URL on a
+    configured mirror may also be http to this machine, and gets the registry token; the token
+    is an unredirected header, so it never follows a redirect to another host.
+    """
+    origins = _mirror_origins()
+    if not _fetchable(url, origins):
         raise CollectionError(f"refusing to fetch non-https URL: {url}")
-    return urllib.request.urlopen(url, timeout=timeout)  # nosec B310 - https enforced above
+    if not origins:
+        return urllib.request.urlopen(url, timeout=timeout)  # nosec B310 - https enforced above
+    request = urllib.request.Request(url)
+    token = _token_for(url, origins)
+    if token:
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
+    opener = urllib.request.build_opener(_MirrorRedirects(origins))
+    return opener.open(request, timeout=timeout)  # nosec B310 - scheme checked above
 
 
 def _http_get(url: str) -> bytes:
@@ -1181,7 +1317,8 @@ class Release(NamedTuple):
         return " ".join(part for part in (self.source, self.artifact, self.files) if part)
 
 
-def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release | None:
+def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT,
+                    use_mirror: bool = True) -> Release | None:
     """The exact artifact a registry source names right now.
 
     ``npm:x`` / ``npm:x@latest`` -> ``npm:x@1.2.3``; ``pypi:x`` -> ``pypi:x==1.2.3`` plus the file
@@ -1190,7 +1327,8 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
     answer: the caller then knows only the name, not what it would get.
 
     One small request (npm's per-tag manifest, PyPI's release JSON), so a caller that keeps a
-    verdict per package can tell a new release from the one it checked.
+    verdict per package can tell a new release from the one it checked. It goes to the configured
+    mirror (see ``registry_mirror``) unless ``use_mirror`` is False.
     """
     kind = classify_source(source)
     try:
@@ -1200,7 +1338,8 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
                 return None
             if pin and _EXACT_NPM_VERSION_RE.match(pin):
                 return Release(f"npm:{name}@{pin}")
-            url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest')}"
+            base = _registry_base("npm", use_mirror)[0]
+            url = f"{base}/{quote(name, safe='@')}/{quote(pin or 'latest')}"
             with _open(url, timeout=timeout) as resp:
                 version = str(bounded_json.loads(resp.read(8 * 1024 * 1024)).get("version")
                               or "")
@@ -1211,8 +1350,9 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT) -> Release |
             name, pin = pypi_package_spec(source)
             if not name or (pin and not _EXACT_PYPI_VERSION_RE.match(pin)):
                 return None
-            url = f"https://pypi.org/pypi/{name}/{quote(pin)}/json" if pin else (
-                f"https://pypi.org/pypi/{name}/json")
+            base = _registry_base("pypi", use_mirror)[0]
+            url = f"{base}/pypi/{name}/{quote(pin)}/json" if pin else (
+                f"{base}/pypi/{name}/json")
             with _open(url, timeout=timeout) as resp:
                 meta = bounded_json.loads(resp.read(_MAX_ARCHIVE_BYTES))
             version = str((meta.get("info") or {}).get("version") or "")
@@ -1295,7 +1435,40 @@ def _registry_json(url: str, not_found: str = "") -> dict:
     return doc
 
 
-def _npm_release(name: str, pin: str | None) -> tuple[str, str] | None:
+def _registry_base(kind: str, use_mirror: bool = True) -> tuple[str, bool]:
+    """The base URL ``kind``'s packages are fetched from, and whether it is a configured mirror."""
+    mirror = registry_mirror(kind) if use_mirror else None
+    if mirror:
+        return mirror, True
+    return (_PUBLIC_NPM if kind == "npm" else _PUBLIC_PYPI), False
+
+
+def _mirror_download(kind: str, url: str, metadata_url: str) -> str:
+    """The file URL a mirror's metadata gives, checked: on the mirror's own scheme and host, or on
+    the public registry's file host over https. A relative URL is read against the metadata's.
+    Anything else is refused: the mirror's answer must not send the scan, or the token, elsewhere.
+    """
+    variable = NPM_REGISTRY_ENV if kind == "npm" else PYPI_INDEX_ENV
+    resolved = urljoin(metadata_url, url)
+    parts = urlsplit(resolved)
+    host = (parts.hostname or "").lower() if parts.netloc else ""
+    if _origin(resolved) == _origin(metadata_url) or (
+            parts.scheme.lower() == "https" and host in _PUBLIC_DOWNLOAD_HOSTS[kind]):
+        return resolved
+    shown = host if re.fullmatch(r"[a-z0-9.:\[\]-]{1,200}", host) else "another host"
+    raise CollectionError(
+        f"the mirror set by {variable} points the download at {shown}, which is neither the "
+        f"mirror nor the public registry; refusing to fetch it")
+
+
+def _mirror_note(kind: str, base: str) -> str:
+    variable = NPM_REGISTRY_ENV if kind == "npm" else PYPI_INDEX_ENV
+    public = "the public npm registry" if kind == "npm" else "PyPI"
+    return (f"Fetched from the registry mirror at {_origin(base)} ({variable}), not from "
+            f"{public}: the report describes the mirror's copy of the package.")
+
+
+def _npm_release(name: str, pin: str | None, base: str = _PUBLIC_NPM) -> tuple[str, str] | None:
     """``(version, tarball)`` of one version or dist-tag of ``name``, from the registry's
     per-version document (a few KB) instead of the packument, which lists every version ever
     published (31 MB for ``next``). The registry resolves a dist-tag there the same way, and
@@ -1305,7 +1478,7 @@ def _npm_release(name: str, pin: str | None) -> tuple[str, str] | None:
     packument, so every outcome, error messages included, stays what it was. A registry that
     cannot be reached raises: asking it a second time would only double the wait.
     """
-    url = f"https://registry.npmjs.org/{quote(name, safe='@')}/{quote(pin or 'latest', safe='')}"
+    url = f"{base}/{quote(name, safe='@')}/{quote(pin or 'latest', safe='')}"
     try:
         data = _http_get(url)
     except CollectionError as exc:
@@ -1336,12 +1509,15 @@ def _collect_npm(source: str) -> SourceContext:
         raise CollectionError(
             f"npm version ranges are not supported ('{pin}'): pin an exact version, "
             f"e.g. npm:{name}@1.2.3")
-    release = _npm_release(name, pin)
+    base, mirrored = _registry_base("npm")
+    release = _npm_release(name, pin, base)
     if release is not None:
         chosen, tarball = release
-        return _collect_archive(source, "npm_package", chosen, tarball, tarball)
-    meta = _registry_json(f"https://registry.npmjs.org/{quote(name, safe='@')}",
-                          not_found=f"package '{name}' was not found on npm")
+        return _npm_archive(source, chosen, tarball, base if mirrored else None,
+                            f"{base}/{quote(name, safe='@')}/{quote(pin or 'latest', safe='')}")
+    where = "the npm registry mirror" if mirrored else "npm"
+    packument = f"{base}/{quote(name, safe='@')}"
+    meta = _registry_json(packument, not_found=f"package '{name}' was not found on {where}")
     versions = meta.get("versions") or {}
     tags = meta.get("dist-tags") or {}
     if pin:
@@ -1357,7 +1533,18 @@ def _collect_npm(source: str) -> SourceContext:
     tarball = (dist or {}).get("tarball")
     if not (chosen and tarball):
         raise CollectionError(f"npm package '{name}' has no resolvable release")
-    return _collect_archive(source, "npm_package", str(chosen), tarball, tarball)
+    return _npm_archive(source, str(chosen), tarball, base if mirrored else None, packument)
+
+
+def _npm_archive(source: str, version: str, tarball: str, mirror: str | None,
+                 metadata_url: str) -> SourceContext:
+    """Fetch and extract an npm tarball; from a mirror, only once its URL is checked."""
+    if mirror is None:
+        return _collect_archive(source, "npm_package", version, tarball, tarball)
+    tarball = _mirror_download("npm", tarball, metadata_url)
+    ctx = _collect_archive(source, "npm_package", version, tarball, tarball)
+    ctx.mirror_note = _mirror_note("npm", mirror)
+    return ctx
 
 
 def _pick_distribution(urls: list[dict]) -> dict | None:
@@ -1421,27 +1608,35 @@ def _collect_pypi(source: str) -> SourceContext:
     name, pin = pypi_package_spec(source)
     if not name:
         raise CollectionError(f"invalid PyPI package name in: {source}")
+    base, mirrored = _registry_base("pypi")
+    where = "the PyPI mirror" if mirrored else "PyPI"
     if pin:
         if not _EXACT_PYPI_VERSION_RE.match(pin):
             raise CollectionError(f"invalid PyPI version in: {source}")
         # Per-version metadata endpoint lists that release's distributions directly.
-        meta = _registry_json(f"https://pypi.org/pypi/{name}/{quote(pin)}/json",
-                              not_found=f"package '{name}' {pin} was not found on PyPI")
+        metadata_url = f"{base}/pypi/{name}/{quote(pin)}/json"
+        meta = _registry_json(metadata_url,
+                              not_found=f"package '{name}' {pin} was not found on {where}")
         version = str((meta.get("info") or {}).get("version") or pin)
     else:
-        meta = _registry_json(f"https://pypi.org/pypi/{name}/json",
-                              not_found=f"package '{name}' was not found on PyPI")
+        metadata_url = f"{base}/pypi/{name}/json"
+        meta = _registry_json(metadata_url, not_found=f"package '{name}' was not found on {where}")
         version = str((meta.get("info") or {}).get("version") or "")
     urls = meta.get("urls") or []
     chosen = _pick_distribution(urls)
     if not (version and chosen and chosen.get("url")):
         raise CollectionError(f"PyPI project '{name}' has no downloadable distribution")
     project = str((meta.get("info") or {}).get("name") or name)
+    download = str(chosen["url"])
+    if mirrored:
+        download = _mirror_download("pypi", download, metadata_url)
     ctx = _collect_archive(
-        source, "python_package", version, chosen["url"], chosen.get("filename", ""),
+        source, "python_package", version, download, chosen.get("filename", ""),
         name=project,
     )
     ctx.distribution_note = _distribution_note(urls, chosen)
+    if mirrored:
+        ctx.mirror_note = _mirror_note("pypi", base)
     return ctx
 
 

@@ -80,8 +80,9 @@ alone does not count).
 
 ### Custom registries and mirrors
 
-SkillTotal scans the package from the public npm registry or PyPI. When the installer is set to
-fetch from somewhere else, that public copy may not be what gets installed, so the package
+SkillTotal scans the package from the public npm registry or PyPI, or from your mirror when you
+set one (see "Checking through your mirror" below). When the installer is set to fetch from
+somewhere else, that copy may not be what gets installed, so the package
 counts as not checked: Claude Code asks you, and CI denies it unless `registry` is allowed. The
 hook looks for another registry in:
 
@@ -116,6 +117,40 @@ public one. The console line and the reason show only the registry's scheme and 
 token or a path. A command that changes the installer's config before it installs
 (`npm config set registry ...`, `echo registry=... > .npmrc`, `pip config set ...`) counts too.
 
+**Checking through your mirror.** Set `SKILLTOTAL_NPM_REGISTRY` and/or `SKILLTOTAL_PYPI_INDEX`
+(and `SKILLTOTAL_REGISTRY_TOKEN` if the mirror needs one) in the environment Claude Code runs in;
+see the README's
+[registry mirror section](https://github.com/pezhik/skilltotal#scanning-through-a-registry-mirror).
+When the registry an install resolves to through the environment or the config files above is
+that mirror, the hook checks the package there instead of calling it unchecked, and the console
+line says "(from the registry mirror)". The URLs must match in scheme, host, port and path after
+normalization (a trailing slash and letter case in the scheme and host do not matter; a user name
+and password in the installer's URL are ignored). For pip and uv, the index may be the mirror's
+base, `<base>/simple` or devpi's `<base>/+simple`.
+
+For Python, the hook uses the index of the installer that runs. pip and pipx read
+`PIP_INDEX_URL` and `pip.conf`. uv and uvx (including `uv pip`) read `UV_DEFAULT_INDEX`,
+`UV_INDEX_URL`, `uv.toml` and `[tool.uv]`. Neither reads the other's settings, so `uv add x` with
+only `PIP_INDEX_URL` on the mirror is checked on PyPI, where uv fetches it. When the hook cannot
+tell which installer runs or what it reads, a package is not checked through the mirror. That
+covers poetry, pdm, pipenv, rye, pixi and similar tools, and a command where both pip and uv
+appear and read different indexes. The package then stays unchecked.
+
+The mirror counts only when nothing else is configured besides it. These stay unchecked exactly as
+before (asked about, denied in CI unless `registry` is allowed):
+
+- any other registry or index, including another path on the same host
+- a mirror set only as an extra index (`PIP_EXTRA_INDEX_URL`, `extra-index-url`), or a main index
+  on the mirror with an extra index elsewhere
+- npm on the mirror while `YARN_REGISTRY` (or another tool's setting) names another registry
+- a registry named on the command line (`--registry`, `--index-url`) or set in the command's own
+  environment (`PIP_INDEX_URL=... pip install x`)
+- a mirror setting that is not a usable URL (the console line says so)
+
+A package whose installer reads the public registry is checked on the public registry, even when a
+mirror is set. Only checks of mirror packages get the mirror settings and the token; a verdict for
+a mirror package is cached apart from the public one, for an hour.
+
 ### The console line
 
 Every install command gets one line in the Claude Code console: what was checked and its score,
@@ -141,7 +176,10 @@ So is every install it could not check, unless `SKILLTOTAL_ALLOW_UNCHECKED` list
 
 `registry` lets a CI job behind a company mirror install named packages without turning strict
 mode off (`SKILLTOTAL_STRICT=0`), which would also let through everything else it asks about.
-Outside CI, a package from such a registry is still asked about.
+Outside CI, a package from such a registry is still asked about. Better still, set
+`SKILLTOTAL_NPM_REGISTRY` / `SKILLTOTAL_PYPI_INDEX` to the mirror: its packages are then checked
+there and need no `registry` allowance (see
+[Custom registries](#custom-registries-and-mirrors)).
 
 A partly analyzed package (a bundle too large to read, code in a language the engine does not
 analyze) passes, and its console line names what was not read. What it runs at install is read
@@ -228,6 +266,7 @@ The hook reads these environment variables from the environment Claude Code runs
 | `SKILLTOTAL_HOOK_BUDGET` | 60 (600 in strict mode) | Seconds all checks of one command share; at most 100 (840 in strict mode) |
 | `SKILLTOTAL_WORKERS` | up to 4 | Processes one large check may use; `1` turns this off |
 | `SKILLTOTAL_CACHE_DIR` | see [the verdict cache](#git-sources-the-verdict-cache-and-timing) | Folder for the verdict cache |
+| `SKILLTOTAL_NPM_REGISTRY`, `SKILLTOTAL_PYPI_INDEX`, `SKILLTOTAL_REGISTRY_TOKEN` | unset | The registry mirror to check mirror packages through (see [Custom registries](#custom-registries-and-mirrors)) |
 
 The scan limits in the README's
 [settings table](https://github.com/pezhik/skilltotal#environment-variables)
@@ -300,9 +339,11 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
    change, fork or mirror the marketplace and point `repo` at your copy. See Claude Code's
    [plugin marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference)
    and [managed settings](https://code.claude.com/docs/en/managed-settings) for the details.
-4. **Allow internal packages.** Packages from a company registry or mirror are asked about on a
-   workstation. In CI, allow them with `SKILLTOTAL_ALLOW_UNCHECKED=registry`, together with the
-   other kinds your jobs need (`lockfile` for `npm ci`, for example).
+4. **Allow internal packages.** Set `SKILLTOTAL_NPM_REGISTRY` / `SKILLTOTAL_PYPI_INDEX` (and
+   `SKILLTOTAL_REGISTRY_TOKEN`) to your mirror so its packages are checked there. Packages from any
+   other company registry are asked about on a workstation. In CI, allow them with
+   `SKILLTOTAL_ALLOW_UNCHECKED=registry`, together with the other kinds your jobs need (`lockfile`
+   for `npm ci`, for example).
 5. **Know where decisions show.** Every install command gets a console line in Claude Code. The
    verdicts are kept in the cache file (see
    [the verdict cache](#git-sources-the-verdict-cache-and-timing)); `SKILLTOTAL_CACHE_DIR` moves it.

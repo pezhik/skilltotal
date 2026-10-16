@@ -20,7 +20,15 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from skilltotal import bounded_json
-from skilltotal.collector import npm_package_spec, pypi_package_spec
+from skilltotal.collector import (
+    CollectionError,
+    _mirror_origins,
+    _open,
+    _origin,
+    _registry_base,
+    npm_package_spec,
+    pypi_package_spec,
+)
 from skilltotal.models import NeedsReview
 
 RECENT_DAYS = 30
@@ -43,13 +51,13 @@ def collect_provenance(source: str, *, now: datetime | None = None) -> list[Need
         name, version = npm_package_spec(source)
         if not name:
             raise ProvenanceError(f"invalid npm package name in: {source}")
-        meta = _fetch(f"https://registry.npmjs.org/{quote(name, safe='@')}")
+        meta = _fetch(f"{_base('npm')}/{quote(name, safe='@')}")
         return signals_from_npm(meta, version, now=now)
     if normalized.startswith("pypi:"):
         name, version = pypi_package_spec(source)
         if not name:
             raise ProvenanceError(f"invalid PyPI package name in: {source}")
-        meta = _fetch(f"https://pypi.org/pypi/{quote(name)}/json")
+        meta = _fetch(f"{_base('pypi')}/pypi/{quote(name)}/json")
         return signals_from_pypi(meta, version, now=now)
     return []
 
@@ -169,12 +177,27 @@ def _earliest_upload(files: list[dict]) -> datetime | None:
     return min(stamps) if stamps else None
 
 
-def _fetch(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": "skilltotal-scanner"})
+def _base(kind: str) -> str:
+    """The registry the scan itself reads ``kind`` from: a configured mirror, else the public one.
+    Asking the public registry about a package fetched from a company mirror would also tell it
+    the names of the company's internal packages."""
     try:
-        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
+        return _registry_base(kind)[0]
+    except CollectionError as exc:
+        raise ProvenanceError(str(exc)) from exc
+
+
+def _fetch(url: str) -> dict:
+    try:
+        if _origin(url) in _mirror_origins():
+            # The collector's request: the mirror's token, and no redirect that carries it away.
+            opened = _open(url, timeout=_HTTP_TIMEOUT)
+        else:
+            req = urllib.request.Request(url, headers={"User-Agent": "skilltotal-scanner"})
+            opened = urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT)  # nosec B310 - https
+        with opened as resp:
             data = bounded_json.loads(resp.read(_MAX_METADATA_BYTES))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, CollectionError) as exc:
         raise ProvenanceError(f"cannot fetch registry metadata from {url}: {exc}") from exc
     if not isinstance(data, dict):
         raise ProvenanceError(f"unexpected registry metadata shape from {url}")

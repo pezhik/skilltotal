@@ -94,6 +94,9 @@ class Install:
     unchecked: str | None = None
     does: str | None = None  # e.g. "installs from package-lock.json"
     registry: bool = False  # unverifiable because it comes from a non-default registry or index
+    # Comes from the registry mirror the scan itself is set to read (SKILLTOTAL_NPM_REGISTRY,
+    # SKILLTOTAL_PYPI_INDEX): checked there instead of on the public registry.
+    mirror: bool = False
 
 
 # Text the hook could not take apart as commands, when it names an installer.
@@ -750,6 +753,43 @@ def _public(value: str) -> bool:
     return value.strip().strip("\"'").rstrip("/").lower() in _PUBLIC_SOURCES
 
 
+# What `_npm_configured`, `_py_configured` and `_tool_configured` answer when the installer's
+# registry or index is the mirror SkillTotal itself is configured to read: checked there.
+_MIRROR = "the registry mirror SkillTotal reads"
+
+
+def _is_mirror(value: str, kind: str, environ: Mapping[str, str]) -> bool:
+    """Whether a configured registry (``kind`` "npm") or index ("pypi") is the mirror that
+    SKILLTOTAL_NPM_REGISTRY / SKILLTOTAL_PYPI_INDEX in ``environ`` names: the same scheme, host,
+    port and path once normalized. A pip index is the mirror's simple API, so ``<base>/simple``
+    and devpi's ``<base>/+simple`` count too. A user name and password in the installer's URL are
+    the installer's own credential and are left out of the comparison. An unusable setting
+    matches nothing: the package is then not checked, as without it."""
+    from skilltotal.collector import CollectionError, normalize_registry_url, registry_mirror
+
+    try:
+        mirror = registry_mirror(kind, environ)
+        if not mirror:
+            return False
+        text = value.strip().strip("\"'")
+        scheme, sep, rest = text.partition("://")
+        authority, slash, path = rest.partition("/")
+        if sep and "@" in authority:
+            text = f"{scheme}://{authority.rsplit('@', 1)[1]}{slash}{path}"
+        normalized = normalize_registry_url(text, "the installer's registry")
+    except CollectionError:
+        return False
+    accepted = {mirror} if kind == "npm" else {mirror, f"{mirror}/simple", f"{mirror}/+simple"}
+    return normalized in accepted
+
+
+def _combine(*wheres: str | None) -> str | None:
+    """Where packages come from, given what several configurations say: any registry other than
+    the mirror decides (not checked); else the mirror; else the public registry (None)."""
+    other = next((w for w in wheres if w and w != _MIRROR), None)
+    return other or (_MIRROR if _MIRROR in wheres else None)
+
+
 def _registry_where(value: str, origin: str) -> str:
     """How the reason names a configured registry: its host (never a credential or a token in
     its path) and where it is set."""
@@ -1045,7 +1085,10 @@ def _npm_decide(key: str, layers: list[_Layer]) -> tuple[str | None, str] | None
 def _npm_configured(scope: str, stacks: list[list[_Layer]],
                     environ: Mapping[str, str]) -> str | None:
     """Where a package of ``scope`` ("" for none) comes from, when that is not the public
-    registry or the hook cannot tell."""
+    registry or the hook cannot tell; ``_MIRROR`` when it is the mirror the scan reads, for every
+    project folder npm may take."""
+    mirror: str | None = None  # where the mirror is set, when a folder's registry is the mirror
+    public = False  # a folder's registry is the public one
     for layers in stacks:
         for key in ([f"{scope}:registry"] if scope else []) + ["registry"]:
             decided = _npm_decide(key, layers)
@@ -1055,14 +1098,22 @@ def _npm_configured(scope: str, stacks: list[list[_Layer]],
             if value is None:
                 return _unknown_where(origin)
             if not _public(value):
-                return _registry_where(value, origin)
+                if not _is_mirror(value, "npm", environ):
+                    return _registry_where(value, origin)
+                mirror = mirror or _registry_where(value, origin)
+            else:
+                public = True
             break
+        else:
+            public = True  # nothing sets it: the public registry
+    if mirror and public:
+        return mirror  # the folders npm may take disagree: not checked, as before
     if not scope:
         for name in _NODE_TOOL_REGISTRY_ENV:
             value = _env_get(environ, name)
-            if value and not _public(value):
+            if value and not _public(value) and not (mirror and _is_mirror(value, "npm", environ)):
                 return _registry_where(value, f"set by {name}")
-    return None
+    return _MIRROR if mirror else None
 
 
 # A dist-tag the scan can ask the registry for (npm refuses a tag that reads as a version).
@@ -1111,12 +1162,98 @@ def _pip_config_files(environ: Mapping[str, str], home: Path | None) -> list[Pat
     return list(dict.fromkeys(files))
 
 
-def _py_configured(environ: Mapping[str, str], home: Path | None) -> str | None:
-    """Where Python packages come from, when an index other than PyPI is configured."""
+# Which Python installer family a command runs, for the index it reads: pip (and pipx, which
+# installs with pip) reads PIP_* and pip.conf; uv (and uvx) reads UV_* and its own files. Neither
+# reads the other's. `uv pip install` is uv. Any other Python installer (poetry, pdm, pipenv, rye,
+# pixi, easy_install, mise, hatch, conda) has sources of its own the hook does not resolve.
+_PIP_FAMILY_WORD = re.compile(r"(?<![\w.-])(?:pip\d*(?:\.\d+)?|pipx)(?![\w.-])", re.IGNORECASE)
+_UV_PIP_WORDS = re.compile(r"(?<![\w.-])uv\s+pip(?![\w.-])", re.IGNORECASE)
+_OTHER_PY_INSTALLER = re.compile(
+    r"(?<![\w.-])(?:easy_install[\w.-]*|rye|pixi|poetry|pdm|pipenv|mise|hatch|conda|mamba"
+    r"|micromamba)(?![\w.-])", re.IGNORECASE)
+_PIP_INDEX_VARS = ("PIP_INDEX_URL",)
+_PIP_EXTRA_VARS = ("PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS")
+_UV_INDEX_VARS = ("UV_DEFAULT_INDEX", "UV_INDEX_URL")  # UV_DEFAULT_INDEX wins
+_UV_EXTRA_VARS = ("UV_INDEX", "UV_EXTRA_INDEX_URL", "UV_FIND_LINKS")
+_UV_MAIN_KEYS = ("index-url", "default-index")
+_UV_EXTRA_KEYS = ("extra-index-url", "find-links", "index")
+
+
+def _py_families(command: str) -> frozenset[str] | None:
+    """The Python installer families (``pip``, ``uv``) a command runs; None when it runs another
+    Python installer, or none the hook can name, so the index it reads cannot be told."""
+    if _OTHER_PY_INSTALLER.search(command):
+        return None
+    families = set()
+    if _TOOL_WORD["uv"].search(command):
+        families.add("uv")
+    if _PIP_FAMILY_WORD.search(_UV_PIP_WORDS.sub(" ", command)):
+        families.add("pip")
+    return frozenset(families) or None
+
+
+def _index_state(main: str | None, extras: list[str], environ: Mapping[str, str]) -> str:
+    """"mirror" when one installer's main index is the mirror and no extra source is PyPI,
+    "public" when it reads PyPI alone, else "mixed". Every value is the public index or the
+    mirror by now (any other was reported before)."""
+    main_mirror = main is not None and _is_mirror(main, "pypi", environ)
+    extra_mirror = any(_is_mirror(e, "pypi", environ) for e in extras)
+    extra_public = any(_public(e) for e in extras)
+    if main_mirror and not extra_public:
+        return "mirror"
+    if not main_mirror and not extra_mirror:
+        return "public"
+    return "mixed"
+
+
+def _uv_config_values(folders: list[Path], keys: tuple[str, ...]) -> list[str | None]:
+    """The values of ``keys`` in uv's files, highest precedence first."""
+    found: list[str | None] = []
+    for folder in folders:
+        for name, prefix in (("uv.toml", ""), ("pyproject.toml", "tool.uv")):
+            limit = _PROJECT_FILE_MAX_BYTES if name == "pyproject.toml" else _CONFIG_MAX_BYTES
+            text = _read_config(folder / name, limit)
+            if text is None:
+                return [None]
+            if text:
+                found += _uv_settings(text, prefix, keys)
+    return found
+
+
+def _py_configured(environ: Mapping[str, str], home: Path | None, command: str = "",
+                   uv_folders: list[Path] | None = None) -> str | None:
+    """Where Python packages come from, when an index other than PyPI is configured;
+    ``_MIRROR`` when every installer the command runs reads the mirror the scan reads as its
+    main index, and nothing else.
+
+    An index other than PyPI and the mirror counts wherever it is set, as it always did. The
+    mirror counts per installer: pip's own settings for pip and pipx, uv's for uv and uvx. A
+    mirror only another installer reads leaves this one on PyPI, so its packages are checked
+    there. When the hook cannot tell which installer runs, or what it reads, a configured mirror
+    leaves the package unchecked, never passed in silence."""
+    mirror: str | None = None  # where the mirror is set, when any setting names it
+    pip_main: str | None = None
+    pip_extras: list[str] = []
+    uv_main: str | None = None
+    uv_extras: list[str] = []
     for name in (*_PY_INDEX_VARS, *_PY_EXTRA_VARS):
-        value = _env_get(environ, name)
-        if value and not all(_public(part) for part in value.split()):
-            return _registry_where(value.split()[0], f"set by {name}")
+        parts = _env_get(environ, name).split()
+        for part in parts:
+            if _public(part):
+                continue
+            if not _is_mirror(part, "pypi", environ):
+                return _registry_where(part, f"set by {name}")
+            mirror = mirror or _registry_where(part, f"set by {name}")
+        if not parts:
+            continue
+        if name in _PIP_INDEX_VARS:
+            pip_main = parts[0]
+        elif name in _PIP_EXTRA_VARS:
+            pip_extras += parts
+        elif name in _UV_INDEX_VARS:
+            uv_main = uv_main or parts[0]
+        elif name in _UV_EXTRA_VARS:
+            uv_extras += parts
     index_decided = bool(_env_get(environ, "PIP_INDEX_URL"))
     for path in _pip_config_files(environ, home):
         text = _read_config(path)
@@ -1128,10 +1265,43 @@ def _py_configured(environ: Mapping[str, str], home: Path | None) -> str | None:
                 if index_decided:
                     continue
                 index_decided = True  # the file with the highest precedence decides
-            value = match.group(2).strip()
-            if not value or not _public(value.split()[0]):
-                return _registry_where(value.split()[0] if value else "", _file_origin(path))
-    return None
+            parts = match.group(2).split()
+            if not parts:
+                return _registry_where("", _file_origin(path))
+            for part in parts:  # an extra index or find-links may list several
+                if _public(part):
+                    continue
+                if not _is_mirror(part, "pypi", environ):
+                    return _registry_where(part, _file_origin(path))
+                mirror = mirror or _registry_where(part, _file_origin(path))
+            if key == "index-url":
+                pip_main = parts[0]
+            else:
+                pip_extras += parts
+    if uv_folders:
+        # uv's own files (any other index there was reported by _tool_configured already).
+        main = _uv_config_values(uv_folders, _UV_MAIN_KEYS)
+        extras = _uv_config_values(uv_folders, _UV_EXTRA_KEYS)
+        if None in main or None in extras:
+            return _unknown_where("uv's configuration")
+        if uv_main is None and main:
+            uv_main = main[0]
+        uv_extras += [value for value in extras if value is not None]
+        for value in [*main, *extras]:
+            if value is not None and _is_mirror(value, "pypi", environ):
+                mirror = mirror or _registry_where(value, "set in uv's configuration")
+    if not mirror:
+        return None
+    families = _py_families(command)
+    if families is None:
+        return mirror  # which installer runs, and what it reads, cannot be told
+    states = {_index_state(pip_main, pip_extras, environ) if family == "pip"
+              else _index_state(uv_main, uv_extras, environ) for family in families}
+    if states == {"mirror"}:
+        return _MIRROR
+    if states == {"public"}:
+        return None  # the installer that runs reads PyPI: checked there
+    return mirror
 
 
 # The registry settings of yarn, bun, pnpm and uv in their own files, read by a plain key search
@@ -1199,13 +1369,13 @@ def _toml_name(text: str) -> str:
     return ".".join(part.strip() for part in text.replace('"', "").replace("'", "").split("."))
 
 
-def _uv_settings(text: str, prefix: str) -> list[str | None]:
+def _uv_settings(text: str, prefix: str, keys: tuple[str, ...] = _UV_KEYS) -> list[str | None]:
     """uv's index settings in a TOML file: at the top of uv.toml (``prefix`` "") or under
-    ``[tool.uv]`` in pyproject.toml (``prefix`` "tool.uv")."""
+    ``[tool.uv]`` in pyproject.toml (``prefix`` "tool.uv"); only ``keys`` of them when given."""
     found: list[str | None] = []
     header = ""
-    wanted = {f"{prefix}.{key}".lstrip(".") for key in _UV_KEYS}
-    wanted |= {f"{prefix}.pip.{key}".lstrip(".") for key in _UV_KEYS}
+    wanted = {f"{prefix}.{key}".lstrip(".") for key in keys}
+    wanted |= {f"{prefix}.pip.{key}".lstrip(".") for key in keys}
     for line in text.splitlines():
         head = _TOML_HEADER.match(line)
         if head:
@@ -1246,9 +1416,13 @@ def _tool_config_files(cwd: Path | None, environ: Mapping[str, str],
     return list(dict.fromkeys(folders))
 
 
-def _tool_configured(tool: str, folders: list[Path]) -> str | None:
+def _tool_configured(tool: str, folders: list[Path],
+                     environ: Mapping[str, str] | None = None) -> str | None:
     """Where ``tool``'s own configuration files send its installs, when that is not the public
-    registry or index or the hook cannot tell."""
+    registry or index or the hook cannot tell; ``_MIRROR`` when every registry they set is the
+    mirror the scan reads."""
+    kind = "pypi" if tool == "uv" else "npm"
+    mirror = False
     for folder in folders:
         for name, read in _TOOL_CONFIGS[tool]:
             path = folder / name
@@ -1259,9 +1433,13 @@ def _tool_configured(tool: str, folders: list[Path]) -> str | None:
             for value in read(text) if text else []:
                 if value is None:
                     return _unknown_where(_file_origin(path))
-                if not _public(value):
-                    return _registry_where(value, _file_origin(path))
-    return None
+                if _public(value):
+                    continue
+                if environ is not None and _is_mirror(value, kind, environ):
+                    mirror = True
+                    continue
+                return _registry_where(value, _file_origin(path))
+    return _MIRROR if mirror else None
 
 
 def _registry_from_config(found: list[Install], cwd: str | None, environ: Mapping[str, str],
@@ -1279,10 +1457,16 @@ def _registry_from_config(found: list[Install], cwd: str | None, environ: Mappin
     tools = [tool for tool, word in _TOOL_WORD.items()
              if (npm if tool != "uv" else py) and word.search(command)]
     folders = _tool_config_files(folder, environ, home) if tools else []
-    tool_where = {tool: _tool_configured(tool, folders) for tool in tools}
-    node_where = next((tool_where[t] for t in ("yarn", "bun", "pnpm") if tool_where.get(t)),
-                      None)
-    py_where = (_py_configured(environ, home) or tool_where.get("uv")) if py else None
+    tool_where = {tool: _tool_configured(tool, folders, environ) for tool in tools}
+    node_where = _combine(*(tool_where.get(t) for t in ("yarn", "bun", "pnpm")))
+    uv_where = tool_where.get("uv")
+    if not py:
+        py_where = None
+    elif uv_where and uv_where != _MIRROR:
+        py_where = uv_where  # another index, or one the hook cannot read, in uv's own files
+    else:
+        py_where = _py_configured(environ, home, command,
+                                  folders if "uv" in tools else None)
     out: list[Install] = []
     for item in found:
         source = item.source or ""
@@ -1290,9 +1474,9 @@ def _registry_from_config(found: list[Install], cwd: str | None, environ: Mappin
         where = None
         if source.startswith("npm:"):
             scope = name.split("/", 1)[0].lower() if name.startswith("@") and "/" in name else ""
-            where = _npm_configured(scope, stacks, environ) or node_where
+            where = _combine(_npm_configured(scope, stacks, environ), node_where)
             versioned = name.count("@") > (1 if name.startswith("@") else 0)
-            if not where and tag is not None and not versioned:
+            if where in (None, _MIRROR) and tag is not None and not versioned:
                 if not tag[0]:
                     item = Install(None, f"{name} at an npm dist-tag SkillTotal could not read "
                                          f"({tag[1]})")
@@ -1300,6 +1484,11 @@ def _registry_from_config(found: list[Install], cwd: str | None, environ: Mappin
                     item = Install(f"{source}@{tag[0]}")
         elif source.startswith("pypi:"):
             where = py_where
+        if where == _MIRROR:
+            # The installer fetches from the mirror the scan reads: checked there.
+            out.append(Install(item.source, item.unverifiable, mirror=True) if item.source
+                       else item)
+            continue
         out.append(Install(None, f"{name} from {where}", registry=True) if where else item)
     return list(dict.fromkeys(out))
 
@@ -4248,7 +4437,9 @@ def _pip_args_source(args: list[str]) -> str | None:
     return None
 
 
-Scan = Callable[[str, float], dict[str, Any]]
+# ``scan(source, timeout)``; ``scan(source, timeout, mirror=True)`` for a package the installer
+# fetches from the registry mirror the scan is configured to read.
+Scan = Callable[..., dict[str, Any]]
 # Claude Code's command tools, and how each one quotes a command line.
 _TOOL_SHELLS = {"Bash": "bash", "PowerShell": "powershell"}
 
@@ -4318,7 +4509,9 @@ def hook_response(
     ``environ`` and ``home`` are the agent's environment and home folder: a registry or index
     they configure (``NPM_CONFIG_REGISTRY``, an ``.npmrc``, ``PIP_INDEX_URL``, a ``pip.conf``)
     is where the installer fetches from, so its packages are asked about like ``--registry``.
-    Without ``environ`` nothing outside the command line is read.
+    When that registry is the mirror ``SKILLTOTAL_NPM_REGISTRY`` / ``SKILLTOTAL_PYPI_INDEX``
+    names, the package is checked there instead (``scan(..., mirror=True)``). Without
+    ``environ`` nothing outside the command line is read.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -4369,7 +4562,10 @@ def hook_response(
             late.append(source)
             continue
         try:
-            report = scan(source, remaining)
+            # Only a package the installer fetches from the mirror is read there; the rest is read
+            # from the public registry, whatever the mirror settings say.
+            report = scan(source, remaining, mirror=True) if item.mirror else scan(
+                source, remaining)
         except CheckInBackground as check:
             asked.append(_background_detail(shown, check, budget_s))
             continue
@@ -4400,15 +4596,16 @@ def hook_response(
         decision = evaluate(report)
         verdict = report.get("verdict") or {}
         label = _clip(_checked_label(source, report))
+        shown = f"{label} (from the registry mirror)" if item.mirror else label
         # The hint names the release that was checked, so `skilltotal scan` reads the same one.
         if verdict.get("has_malicious_indicators"):
-            denied.append(_sentence(f"{label}: {_malicious_detail(report)}"))
+            denied.append(_sentence(f"{shown}: {_malicious_detail(report)}"))
             scanned.append(label)
         elif not decision.allow or _looks_typosquatted(report):
-            asked.append(_sentence(f"{label}: {_ask_detail(report)}"))
+            asked.append(_sentence(f"{shown}: {_ask_detail(report)}"))
             scanned.append(label)
         else:
-            entry = (f"{label}: risk {report.get('risk_score', 0)}/100 "
+            entry = (f"{shown}: risk {report.get('risk_score', 0)}/100 "
                      f"({report.get('risk_level', 'unknown')})")
             gaps = _gaps(report)
             if gaps:  # a low score says nothing about what was not read

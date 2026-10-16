@@ -4,6 +4,35 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+### Added
+- Scanning through a company registry mirror (Artifactory, Nexus, Verdaccio, devpi).
+  `SKILLTOTAL_NPM_REGISTRY` (an npm-protocol registry) and `SKILLTOTAL_PYPI_INDEX` (a PyPI-style
+  JSON API, `<base>/pypi/<name>/json`) send `npm:` and `pypi:` sources, `--provenance` and the
+  hook's release lookups to the mirror. `SKILLTOTAL_REGISTRY_TOKEN` is sent as
+  `Authorization: Bearer` to the mirror's own scheme and host only: never to the public
+  registries, never along a redirect to another host, never into a report or an error. The URL
+  must be https (plain http only to localhost) with no user name, password, query or fragment.
+  Download URLs must stay on the mirror or the public registry's file host, and redirects to
+  plain http are refused. A scan through a mirror gets a `needs_review` note, "Fetched through a
+  registry mirror". Unset, nothing changes. The report schema is unchanged.
+- Claude Code plugin: an install whose configured registry (environment, `.npmrc`, `pip.conf`,
+  tool config files) is that mirror is checked through it instead of counting as unchecked. Any
+  other custom registry, a mirror set only as an extra index, and a registry named on the command
+  line stay unchecked as before (asked about; denied in CI unless `registry` is allowed). Only
+  mirror checks get the mirror settings and the token, and their verdicts are cached apart.
+  For Python the index is the one the running installer reads: pip/pipx use `PIP_INDEX_URL` and
+  `pip.conf`, uv/uvx use `UV_DEFAULT_INDEX`, `UV_INDEX_URL` and uv's files. A mirror that only
+  the other installer reads leaves the package on PyPI. When the installer cannot be told (poetry,
+  pdm, pipenv, or pip and uv in one command reading different indexes), the package stays
+  unchecked.
+
+### Fixed
+- Plugin: every URL of a `pip.conf` `extra-index-url` or `find-links` line is read, not only the
+  first, so `extra-index-url = https://pypi.org/simple https://other.example` counts as a custom
+  index.
+
 ## [0.73.0]
 
 Ruleset 76, report schema 1.9. Fixes from a review of the CLI, the GitHub Action, the plugin and

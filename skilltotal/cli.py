@@ -1253,6 +1253,9 @@ Environment:
   NPM_CONFIG_REGISTRY, PIP_INDEX_URL, PIP_EXTRA_INDEX_URL, UV_INDEX_URL, UV_DEFAULT_INDEX...
                               a registry or index other than the public one (also from .npmrc
                               or pip.conf/pip.ini): its packages are asked about (denied in CI)
+  SKILLTOTAL_NPM_REGISTRY, SKILLTOTAL_PYPI_INDEX, SKILLTOTAL_REGISTRY_TOKEN
+                              a registry mirror: packages whose configured registry is this
+                              mirror are checked through it instead
 
 Exit codes: always 0 (the decision is in the answer; a failure of the hook asks, or denies in
 strict mode); 1 when --protocol asks for a newer protocol than this CLI speaks.
@@ -1418,6 +1421,13 @@ def _hook_settings_note(environ, ceiling: float) -> str:
             value = None
         if value is None or not 1 <= value <= ceiling:
             notes.append(f"{BUDGET_ENV} must be seconds from 1 to {ceiling:g}, not {raw!r}.")
+    from skilltotal.collector import CollectionError, registry_mirror
+
+    for kind in ("npm", "pypi"):
+        try:
+            registry_mirror(kind, environ)
+        except CollectionError as exc:  # the message names the setting, never its value
+            notes.append(f"{exc}; it is not used.")
     return " ".join(notes)
 
 
@@ -1441,7 +1451,7 @@ def _hook_cache_path() -> Path:
     return cache_file()
 
 
-def _hook_scan_cached(source: str, timeout: float) -> dict:
+def _hook_scan_cached(source: str, timeout: float, mirror: bool = False) -> dict:
     """``_hook_scan``, reusing a verdict. Agents run the same ``npx tsc`` again and again, and each
     must not cost a scan.
 
@@ -1449,6 +1459,11 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     serves now (``npm:x@1.2.3``; on PyPI, also the file pip would install) and that is what is
     scanned and remembered, so a clean verdict from this morning never vouches for a release, or a
     file, published this afternoon. A new engine version rescans everything.
+
+    ``mirror`` reads the package from the registry mirror SKILLTOTAL_NPM_REGISTRY /
+    SKILLTOTAL_PYPI_INDEX names, where the installer fetches it; its verdict is kept apart from
+    the public registry's, under the mirror's URL. Without it the public registry is read, even
+    when a mirror is configured.
 
     One artifact is checked once at a time: while a check of it runs, the answer says so instead
     of starting another. A check that outlasts the wait goes on in the background and keeps its
@@ -1461,8 +1476,10 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     # Claude Code lets the command run when the hook outlives its timeout: nothing on this path
     # waits past the budget and a short grace.
     hard = started + timeout + GRACE_S
-    release = _hook_lookup(source, max(1.0, min(5.0, timeout / 2)))
+    release = _hook_lookup(source, max(1.0, min(5.0, timeout / 2)), mirror)
     key = release.key if release else source
+    if mirror:
+        key = f"{key} via {_hook_mirror_base(source)}"
     target = release.source if release else source
     ttl = _hook_cache_ttl(key)
     path = _hook_cache_path()
@@ -1482,7 +1499,8 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     # no marker to track it by, it never runs on alone.
     check = {**job, "token": marker.token} if marker is not None else None
     try:
-        report = _hook_scan(target, timeout - (time.monotonic() - started), check)
+        report = (_hook_scan(target, timeout - (time.monotonic() - started), check, mirror=True)
+                  if mirror else _hook_scan(target, timeout - (time.monotonic() - started), check))
     except ScanContinues as late:
         try:
             # Raises unless the check ended in the meantime.
@@ -1503,16 +1521,36 @@ def _hook_scan_cached(source: str, timeout: float) -> dict:
     return _hook_remember(job, report, deadline=hard)
 
 
-def _hook_lookup(source: str, timeout: float):
+def _hook_mirror_base(source: str) -> str:
+    """The mirror a ``mirror`` check of ``source`` reads, as the cache key names it."""
+    from skilltotal.collector import CollectionError, classify_source, registry_mirror
+
+    try:
+        return registry_mirror(classify_source(source)) or "an unset mirror"
+    except CollectionError:
+        return "an unusable mirror setting"
+
+
+def _hook_mirror_set() -> bool:
+    """Whether this process has a registry mirror setting at all."""
+    from skilltotal.collector import NPM_REGISTRY_ENV, PYPI_INDEX_ENV
+
+    return any(os.environ.get(name, "").strip() for name in (NPM_REGISTRY_ENV, PYPI_INDEX_ENV))
+
+
+def _hook_lookup(source: str, timeout: float, mirror: bool = False):
     """The release ``source`` resolves to, or None when the registry has not answered within
     ``timeout`` seconds, as for a registry that did not answer. A lookup's own timeout covers each
     network step, not a slow name lookup or a trickle of data, so it runs in a thread that this
-    process does not wait for past ``timeout``."""
+    process does not wait for past ``timeout``. The public registry is asked unless ``mirror``."""
     from skilltotal.collector import resolve_release
 
+    # A configured mirror is skipped for a package the installer fetches from the public registry.
+    options = {"use_mirror": False} if not mirror and _hook_mirror_set() else {}
     found: list = []
     lookup = threading.Thread(
-        target=lambda: found.append(resolve_release(source, timeout=timeout)), daemon=True)
+        target=lambda: found.append(resolve_release(source, timeout=timeout, **options)),
+        daemon=True)
     lookup.start()
     lookup.join(timeout)
     return found[0] if found else None
@@ -1703,19 +1741,21 @@ def _number(value: object) -> float:
         return 0.0
 
 
-def _hook_scan(source: str, timeout: float, job: dict | None = None) -> dict:
+def _hook_scan(source: str, timeout: float, job: dict | None = None, *,
+               mirror: bool = False) -> dict:
     """Scan ``source`` in processes of its own and wait up to ``timeout`` seconds for the report.
 
     The scan outlives the wait: past it, this raises ``ScanContinues`` (a TimeoutError) with the
     running check, and the caller hands it over or stops it. ``job`` (what the verdict is recorded
     under, and the check's marker token) lets the check keep its verdict even if this hook goes
     away. The check runs in an empty directory with a temp directory of its own, never in the
-    agent's project (see ``RunningScan.start``).
+    agent's project (see ``RunningScan.start``). Only a ``mirror`` check gets the registry mirror
+    settings and token.
     """
     from skilltotal.hook_scan import GRACE_S, RunningScan
 
     deadline = time.monotonic() + timeout + GRACE_S
-    return RunningScan.start(source, job, deadline).wait(timeout)
+    return RunningScan.start(source, job, deadline, mirror=mirror).wait(timeout)
 
 
 def _cmd_rules(args: argparse.Namespace) -> int:
