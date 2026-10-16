@@ -498,7 +498,7 @@ def _checked_source(source: str) -> str:
         )
     if source.startswith(("\\\\", "//")) or (os.name == "nt" and ":" in source[2:]):
         # A network share (`\\host\share`, `\\localhost\C$\...`), a device path (`\\?\...`,
-        # `\\.\...`, `\\?\GLOBALROOT\...`) or an NTFS stream (`C:\Users\me::$INDEX_ALLOCATION`):
+        # `\\.\...`, `\\?\GLOBALROOT\...`) or an NTFS stream (`C:\work::$INDEX_ALLOCATION`):
         # each can name the home folder, or reach another machine, under a spelling the checks
         # below would not see through.
         raise _RefusedSource(
@@ -523,7 +523,7 @@ def _checked_source(source: str) -> str:
     )
 
 
-_EXAMPLE_PATH = (r"C:\Users\me\.claude\skills\my-skill" if os.name == "nt"
+_EXAMPLE_PATH = (r"D:\work\my-project\.claude\skills\my-skill" if os.name == "nt"
                  else "/home/me/.claude/skills/my-skill")
 
 

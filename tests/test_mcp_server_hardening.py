@@ -241,12 +241,12 @@ _WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="a backslash path is 
 
 @pytest.mark.parametrize("source", [
     pytest.param("\\\\fileserver.invalid\\share\\skill", marks=_WINDOWS_ONLY),
-    pytest.param("\\\\localhost\\C$\\Users\\me", marks=_WINDOWS_ONLY),
-    pytest.param("\\\\127.0.0.1\\c$\\Users\\me", marks=_WINDOWS_ONLY),
-    pytest.param("\\\\?\\C:\\Users\\me", marks=_WINDOWS_ONLY),
-    pytest.param("\\\\.\\C:\\Users\\me", marks=_WINDOWS_ONLY),
-    pytest.param("\\\\?\\UNC\\localhost\\C$\\Users\\me", marks=_WINDOWS_ONLY),
-    pytest.param("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\me",
+    pytest.param("\\\\localhost\\C$\\work", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\127.0.0.1\\c$\\work", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\?\\C:\\work", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\.\\C:\\work", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\?\\UNC\\localhost\\C$\\work", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\work",
                  marks=_WINDOWS_ONLY),
     "//fileserver.invalid/share/skill",
     "//?/C:/",
