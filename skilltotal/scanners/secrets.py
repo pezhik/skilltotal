@@ -189,6 +189,28 @@ def _is_installed_app_oauth_secret(value: str, file_text: str) -> bool:
     return value.startswith(_GOOGLE_OAUTH_PREFIX) and bool(_INSTALLED_APP_CTX.search(file_text))
 
 
+# An OAuth client secret a distributed desktop/CLI client ships in obscured form, beside its public
+# client id: `appEncryptedClientSecret = "…"` next to `appClientID = "…"`. RFC 8252 (section 8.5)
+# says a secret compiled into an app given to many users is not confidential, and the providers
+# treat such clients as public. Both names must say so: the identifier holding the value names an
+# OAuth CLIENT secret stored encrypted/obscured, and the same file declares the client id. A key,
+# token or password is never matched, nor a plain `clientSecret = "…"` (a web app's confidential
+# secret), nor any provider-prefixed key or private key (those are the known-prefix rules above).
+_OBSCURED_CLIENT_SECRET_NAME = re.compile(
+    r"(?i)(?:encrypted|obscured|obfuscated|encoded)[_-]?(?:oauth[_-]?)?client[_-]?secret$"
+)
+_CLIENT_ID_DECL = re.compile(r"(?i)client[_-]?id\w*\s*[:=]\s*['\"][^'\"\s]{4,}['\"]")
+_IDENT_BEFORE = re.compile(r"[A-Za-z0-9_]{0,64}$")
+_NAME_AT = re.compile(r"[A-Za-z0-9_-]*")
+
+
+def _is_obscured_client_secret(text: str, start: int, end_of_name: int) -> bool:
+    """True if the assignment at ``start`` names an obscured OAuth client secret (see above)."""
+    head = _IDENT_BEFORE.search(text, max(0, start - 64), start)
+    name = (head.group(0) if head else "") + text[start:end_of_name]
+    return bool(_OBSCURED_CLIENT_SECRET_NAME.search(name)) and bool(_CLIENT_ID_DECL.search(text))
+
+
 # Client-side TELEMETRY ingestion keys are publishable by design (like a Sentry DSN, Algolia search
 # key, or GA measurement id): they are embedded in an open-source client to POST usage/crash
 # telemetry to the vendor's ingestion endpoint, and can only write to that firehose. Recognising the
@@ -397,6 +419,7 @@ class SecretsScanner(Scanner):
         seen: set[tuple[str, int]] = set()
         docsearch_files: list[str] = []
         installed_oauth_files: list[str] = []
+        obscured_client_files: list[str] = []
         telemetry_files: list[str] = []
         test_cert_files: list[str] = []
         test_secret_files: list[str] = []
@@ -458,6 +481,11 @@ class SecretsScanner(Scanner):
                 if _is_installed_app_oauth_secret(value, f.text):
                     if f.relpath not in installed_oauth_files:
                         installed_oauth_files.append(f.relpath)
+                    continue
+                name_end = m.start() + len(_NAME_AT.match(m.group(0)).group(0))
+                if _is_obscured_client_secret(f.text, m.start(), name_end):
+                    if f.relpath not in obscured_client_files:
+                        obscured_client_files.append(f.relpath)
                     continue
                 self._add(f, m, value, evidence, seen)
 
@@ -591,6 +619,25 @@ class SecretsScanner(Scanner):
                         f"web-application secret: {shown}."
                     ),
                     file=installed_oauth_files[0],
+                )
+            )
+        if obscured_client_files:
+            shown = ", ".join(obscured_client_files[:8])
+            needs_review.append(
+                NeedsReview(
+                    category=CATEGORY,
+                    title=(
+                        f"Obscured OAuth client secret of a distributed app "
+                        f"({len(obscured_client_files)})"
+                    ),
+                    reason=(
+                        "An OAuth client secret stored in obscured form next to the app's public "
+                        "client id. A secret compiled into a desktop or command-line app that is "
+                        "given to many users is not confidential (RFC 8252, section 8.5), so it is "
+                        "flagged for review, not scored - verify it is not a web application's "
+                        f"secret: {shown}."
+                    ),
+                    file=obscured_client_files[0],
                 )
             )
         if telemetry_files:

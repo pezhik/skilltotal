@@ -185,6 +185,45 @@ def _is_write_target(snippet: str) -> bool:
     )
 
 
+# The language runtime a source file runs in, for pairing the two halves of ST-COMBO-EXFIL. A
+# credential read and the request that sends it off must be code one program runs, or the data
+# has no path between them. A Go server that loads its own host key and a Python developer script
+# that talks to localhost are two programs, and the engine has no evidence that anything flows
+# from one to the other. Files outside this table (shell scripts, Makefiles, markdown read by an
+# agent, JSON/YAML config, a file with no suffix) are glue that starts or steers the programs
+# around it, so they pair with any runtime: `cp ~/.ssh/id_rsa /tmp/k && node send.js` is one flow.
+_RUNTIME_BY_SUFFIX: dict[str, str] = {
+    **dict.fromkeys((".py", ".pyw", ".pyi", ".pth"), "python"),
+    **dict.fromkeys(
+        (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte"), "js"
+    ),
+    ".go": "go",
+    ".rs": "rust",
+    **dict.fromkeys((".java", ".kt", ".kts", ".scala", ".groovy"), "jvm"),
+    **dict.fromkeys((".cs", ".fs", ".vb"), "dotnet"),
+    ".rb": "ruby",
+    ".php": "php",
+    **dict.fromkeys((".c", ".h", ".cc", ".cpp", ".cxx", ".hpp", ".m", ".mm"), "native"),
+    ".swift": "swift",
+    ".dart": "dart",
+    **dict.fromkeys((".pl", ".pm"), "perl"),
+    ".lua": "lua",
+    **dict.fromkeys((".ex", ".exs"), "elixir"),
+}
+
+
+def _runtime(relpath: str) -> str | None:
+    name = relpath.rsplit("/", 1)[-1].lower()
+    dot = name.rfind(".")
+    return _RUNTIME_BY_SUFFIX.get(name[dot:]) if dot > 0 else None
+
+
+def _same_runtime(sens: Evidence, net: Evidence) -> bool:
+    """True if a credential reference and a network call could be one program's flow."""
+    a, b = _runtime(sens.file), _runtime(net.file)
+    return a is None or b is None or a == b
+
+
 def _credential_domain(snippet: str) -> str | None:
     """The provider domain a sensitive-path evidence snippet refers to, or None."""
     for pat, dom in _CREDENTIAL_DOMAINS:
@@ -304,6 +343,9 @@ def exfiltration_finding(
     excluded. Off-domain access (an AWS SDK reading ``~/.ssh``), a non-SDK package reading any
     credential path, and embedded secrets (``ST-SECRET-EMBEDDED`` has no path domain) all keep
     firing, so recall for a genuine credential-stealer is preserved.
+
+    The two halves must also be able to belong to one program: a credential reference in one
+    language runtime does not pair with egress that exists only in another (``_same_runtime``).
     """
     provider_domains = _package_provider_domains(component)
     sens_evidence: list[Evidence] = [
@@ -321,6 +363,10 @@ def exfiltration_finding(
         )
     ]
     net_evidence = capabilities.get(Capability.NETWORK_EGRESS, [])
+    # Keep only the pairs one program could form (see ``_same_runtime``).
+    paired_sens = [s for s in sens_evidence if any(_same_runtime(s, n) for n in net_evidence)]
+    net_evidence = [n for n in net_evidence if any(_same_runtime(s, n) for s in paired_sens)]
+    sens_evidence = paired_sens
 
     if not sens_evidence or not net_evidence:
         return None

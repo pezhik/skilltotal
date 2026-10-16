@@ -4,6 +4,22 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.75.0]
+
+Ruleset 77. Report schema 1.9 is unchanged.
+
+### Fixed
+- Three false positives on a Go command-line tool that scored `high` with a critical
+  `ST-COMBO-EXFIL`. `RULES_CHANGELOG.md` (ruleset 77) has the details:
+  - `ST-SENS-PATH` no longer reports a credential path in the help text of a Go option, a
+    multi-line raw string held by a help field such as `Help:`, `Long:` or `Usage:`.
+  - `ST-COMBO-EXFIL` needs the credential reference and the network call in code of the same
+    language, or one of them in a shell script, markdown or configuration file.
+  - An OAuth client secret stored in obscured form next to the app's public client id goes to
+    `needs_review` instead of `ST-SECRET-EMBEDDED`.
+- Go raw strings are read without escapes, so a raw string that ends in a backslash
+  (`` `C:\` ``) no longer runs on into the code and comments after it.
+
 ## [0.74.0]
 
 Ruleset 76 and report schema 1.9 are unchanged: no detection rule changed.

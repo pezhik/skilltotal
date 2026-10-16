@@ -4,6 +4,34 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 77 (engine 0.75.0)
+
+Detection-efficacy corpus: 126 positive / 91 negative samples, 126/126 flagged, 0 false positives.
+
+No rule was added or removed. Three changes narrow what the rules report:
+
+- **Go help text** (`ST-SENS-PATH`): a multi-line Go raw string held by a help or usage field
+  (such as `Help:`, `Long:`, `Short:`, `Usage:`, `Description:` or `Example:`) with at
+  least 12 words of prose is help text shown to a person. A credential path in it, such as
+  `"$HOME/.aws/credentials"` or a quoted `awk ... < ~/.ssh/id_rsa`, goes to `needs_review`. A raw
+  string passed to a call (`exec.Command("sh", "-c", ...)`, `os.ReadFile(...)`), a one-line raw
+  string and a short help value are still reported.
+- **One program per flow** (`ST-COMBO-EXFIL`): the credential reference and the network egress
+  must be in code of the same language runtime (Python, JavaScript/TypeScript, Go, Rust, ...), or
+  one of them must be in a file that starts or steers other programs (a shell script, markdown
+  an agent reads, JSON/YAML configuration). A Go server that names its own host key file and a
+  Python developer script that posts to localhost no longer form an exfiltration path. A shell
+  step that copies `~/.ssh/id_rsa` and a Node.js step that sends it still do. Each half is still
+  reported on its own.
+- **Obscured OAuth client secrets** (`ST-SECRET-EMBEDDED`): a value assigned to a name such as
+  `appEncryptedClientSecret` or `obscured_client_secret`, in a file that also declares the client
+  id, is read as the client secret of a desktop or command-line app. RFC 8252 (section 8.5) says
+  such a secret is not confidential. It goes to `needs_review`. Plain client secrets, keys, tokens,
+  passwords, private keys and provider-prefixed tokens are still reported.
+
+The C-family lexer now reads Go raw strings without escapes, which changes where strings and
+comments end in a Go file that has a backslash before a closing backtick.
+
 ## ruleset 76 (engine 0.73.0)
 
 Detection-efficacy corpus: 125 positive / 89 negative samples, 125/125 flagged, 0 false positives.

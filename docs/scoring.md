@@ -88,6 +88,13 @@ combination (legitimate tools read files and use the network) and is *not* flagg
 to *secret* data combined with an egress channel is. An embedded secret is not an input: a key the
 component ships plus a network call describes no theft, and it is reported as an exposure.
 
+The two halves must also be able to belong to one program. A credential reference in code of one
+language runtime (Python, JavaScript/TypeScript, Go, Rust, ...) pairs only with network egress in
+code of the same runtime. A shell script, markdown an agent reads, or a JSON/YAML configuration file
+starts or steers other programs, so a credential reference or a network call there pairs with any
+runtime: `cp ~/.ssh/id_rsa /tmp/k && node send.js` still forms the path. A Go file that names its
+own host key and a Python script that posts to localhost do not.
+
 ## Other synthesized combinations
 
 `ST-COMBO-EXFIL` is one of four findings the engine synthesizes from combinations of base findings,

@@ -938,6 +938,7 @@ def _c_code_spans(
     regexes: list[tuple[int, int]] = []
     js = suffix in _JS_FAMILY_SUFFIXES
     rust = suffix == ".rs"
+    go = suffix == ".go"
     i, n = 0, len(text)
     while i < n:
         c = text[i]
@@ -965,7 +966,8 @@ def _c_code_spans(
             i += 1
             while i < n:
                 ch = text[i]
-                if ch == "\\":
+                # A Go raw string (`...`) has no escapes: `C:\` ends at its backtick.
+                if ch == "\\" and not (go and c == "`"):
                     i += 2
                     continue
                 if ch == c:

@@ -381,6 +381,19 @@ _PROSE_MIN_WORDS = 5
 _CJK_LETTERS = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
 _PROSE_MIN_CJK = 4
 
+# Go help text: a multi-line raw string (`` `…` ``) held by a help/usage field (`Help: `…``,
+# `Long: `…``). Option help says where credentials live (`Linux/OSX: "$HOME/.aws/credentials"`)
+# or quotes a command for a person to type (`awk … < ~/.ssh/id_rsa`), so one line of it can read
+# as a command. The literal is judged as a whole: several lines of prose under such a field are
+# shown to a person. A raw string passed to a call (`exec.Command("sh", "-c", `…`)`,
+# `os.ReadFile(`…`)`) has no such field in front of it and stays in scope, as does a one-line
+# raw string.
+_GO_HELP_KEY_BEFORE = re.compile(
+    r"(?i)\b(?:help|long|short|usage|description|desc|example|examples|note|notes|doc)"
+    r"\"?\s*:\s*$"
+)
+_GO_HELP_MIN_WORDS = 12
+
 
 def _is_prose_string(literal: str) -> bool:
     body = literal.strip("\"'`")
@@ -389,6 +402,19 @@ def _is_prose_string(literal: str) -> bool:
     return (
         len(_PROSE_WORD.findall(body)) >= _PROSE_MIN_WORDS
         or len(_CJK_LETTERS.findall(body)) >= _PROSE_MIN_CJK
+    )
+
+
+def _is_go_help_text(f, span: tuple[int, int]) -> bool:
+    """True if ``span`` is a multi-line Go raw string held by a help/usage field (see above)."""
+    if f.suffix != ".go" or f.text[span[0] : span[0] + 1] != "`":
+        return False
+    body = f.text[span[0] + 1 : span[1] - 1]
+    if "\n" not in body.strip():
+        return False
+    opener = f.text[f.text.rfind("\n", 0, span[0]) + 1 : span[0]]
+    return bool(_GO_HELP_KEY_BEFORE.search(opener)) and (
+        len(_PROSE_WORD.findall(body)) >= _GO_HELP_MIN_WORDS
     )
 
 
@@ -442,6 +468,8 @@ def _not_a_read(f, start: int, matched: str, line_text: str) -> bool:
         # The key in front of the literal, with its opening quote: `placeholder: "~/.ssh/id_rsa"`.
         ahead = f.text[line_start : span[0] + 1] if span[0] >= line_start else ""
         if _is_prose_string(segment) or _UI_TEXT_KEY_BEFORE.search(ahead):
+            return True
+        if _is_go_help_text(f, span):
             return True
     elif f.is_shell_like:
         quoted = _line_quoted_segment(line_text, col)

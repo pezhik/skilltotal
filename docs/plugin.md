@@ -316,7 +316,7 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
 ## Rolling out to a team
 
 1. **Install the CLI at a pinned version** on each machine, for example
-   `pipx install skilltotal==0.74.0`, with the same version as the plugin.
+   `pipx install skilltotal==0.75.0`, with the same version as the plugin.
 2. **Enable the plugin for everyone** with Claude Code's managed settings file,
    `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
    `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
@@ -326,7 +326,7 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
    {
      "extraKnownMarketplaces": {
        "skilltotal": {
-         "source": { "source": "github", "repo": "pezhik/skilltotal", "ref": "v0.74.0" }
+         "source": { "source": "github", "repo": "pezhik/skilltotal", "ref": "v0.75.0" }
        }
      },
      "enabledPlugins": { "skilltotal@skilltotal": true }
