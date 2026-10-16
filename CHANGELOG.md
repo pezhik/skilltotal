@@ -21,12 +21,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
   tool config files) is that mirror is checked through it instead of counting as unchecked. Any
   other custom registry, a mirror set only as an extra index, and a registry named on the command
   line stay unchecked as before (asked about; denied in CI unless `registry` is allowed). Only
-  mirror checks get the mirror settings and the token, and their verdicts are cached apart.
+  mirror checks get the mirror settings and the token, and their verdicts are cached separately.
   For Python the index is the one the running installer reads: pip/pipx use `PIP_INDEX_URL` and
   `pip.conf`, uv/uvx use `UV_DEFAULT_INDEX`, `UV_INDEX_URL` and uv's files. A mirror that only
-  the other installer reads leaves the package on PyPI. When the installer cannot be told (poetry,
-  pdm, pipenv, or pip and uv in one command reading different indexes), the package stays
-  unchecked.
+  the other installer reads leaves the package on PyPI. When the hook cannot tell which
+  installer runs (poetry, pdm, pipenv, or pip and uv in one command reading different indexes),
+  the package stays unchecked.
 
 ### Fixed
 - Plugin: every URL of a `pip.conf` `extra-index-url` or `find-links` line is read, not only the

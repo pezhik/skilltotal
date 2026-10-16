@@ -334,8 +334,8 @@ positive whole number is an error. The registry mirror settings are described be
 
 ### Scanning through a registry mirror
 
-Behind a company mirror (Artifactory, Nexus, Verdaccio, devpi), scan the copy your installers
-actually get:
+If your installers fetch from a company mirror (Artifactory, Nexus, Verdaccio, devpi), point
+SkillTotal at it to scan the copy they get:
 
 | Variable | Default | What it sets |
 |---|---|---|
@@ -372,7 +372,9 @@ skilltotal scan pypi:requests==2.32.3
 The settings come only from the environment of the process that runs the scan, never from the
 scanned component. Unset, `npm:` and `pypi:` sources are fetched from the public registries as
 before. The Claude Code plugin uses the mirror for installs whose configured registry is that
-mirror (see [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#custom-registries-and-mirrors)). The plugin's own settings are listed in
+mirror (see
+[docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#custom-registries-and-mirrors)).
+The plugin's own settings are listed in
 [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md).
 
 ### Exit codes

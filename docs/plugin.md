@@ -132,12 +132,12 @@ For Python, the hook uses the index of the installer that runs. pip and pipx rea
 `PIP_INDEX_URL` and `pip.conf`. uv and uvx (including `uv pip`) read `UV_DEFAULT_INDEX`,
 `UV_INDEX_URL`, `uv.toml` and `[tool.uv]`. Neither reads the other's settings, so `uv add x` with
 only `PIP_INDEX_URL` on the mirror is checked on PyPI, where uv fetches it. When the hook cannot
-tell which installer runs or what it reads, a package is not checked through the mirror. That
-covers poetry, pdm, pipenv, rye, pixi and similar tools, and a command where both pip and uv
-appear and read different indexes. The package then stays unchecked.
+tell which installer runs or what it reads, the package is not checked through the mirror and
+stays unchecked. That covers poetry, pdm, pipenv, rye, pixi and similar tools, and a command
+where pip and uv both appear and read different indexes.
 
-The mirror counts only when nothing else is configured besides it. These stay unchecked exactly as
-before (asked about, denied in CI unless `registry` is allowed):
+The mirror counts only when no other registry or index is configured alongside it. These stay
+unchecked (asked about, denied in CI unless `registry` is allowed):
 
 - any other registry or index, including another path on the same host
 - a mirror set only as an extra index (`PIP_EXTRA_INDEX_URL`, `extra-index-url`), or a main index
@@ -148,8 +148,8 @@ before (asked about, denied in CI unless `registry` is allowed):
 - a mirror setting that is not a usable URL (the console line says so)
 
 A package whose installer reads the public registry is checked on the public registry, even when a
-mirror is set. Only checks of mirror packages get the mirror settings and the token; a verdict for
-a mirror package is cached apart from the public one, for an hour.
+mirror is set. Only checks of mirror packages get the mirror settings and the token. A verdict for a
+mirror package is cached separately from the public one, for an hour.
 
 ### The console line
 
