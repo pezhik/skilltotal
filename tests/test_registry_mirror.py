@@ -444,6 +444,87 @@ def test_a_python_index_besides_the_mirror_stays_unchecked(tmp_path, environ):
     assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
 
 
+MIRROR_SIMPLE = f"{PYPI_MIRROR}/simple"
+
+
+@pytest.mark.parametrize(("command", "environ", "source"), [
+    # each installer reads its own settings: pip and pipx PIP_*, uv and uvx UV_*
+    ("pip install requests", {"PIP_INDEX_URL": MIRROR_SIMPLE}, "pypi:requests"),
+    ("python -m pip install requests", {"PIP_INDEX_URL": MIRROR_SIMPLE}, "pypi:requests"),
+    ("pipx install black", {"PIP_INDEX_URL": MIRROR_SIMPLE}, "pypi:black"),
+    ("uv add requests", {"UV_DEFAULT_INDEX": MIRROR_SIMPLE}, "pypi:requests"),
+    ("uv add requests", {"UV_INDEX_URL": MIRROR_SIMPLE}, "pypi:requests"),
+    ("uv pip install requests", {"UV_DEFAULT_INDEX": MIRROR_SIMPLE}, "pypi:requests"),
+    ("uvx ruff", {"UV_DEFAULT_INDEX": MIRROR_SIMPLE}, "pypi:ruff"),
+    # both read the mirror: either may run
+    ("pip install requests && uv add httpx",
+     {"PIP_INDEX_URL": MIRROR_SIMPLE, "UV_DEFAULT_INDEX": MIRROR_SIMPLE}, "pypi:requests"),
+])
+def test_the_installer_that_runs_reads_the_mirror(tmp_path, command, environ, source):
+    out, calls = _hook(command, {**environ, PYPI_INDEX_ENV: PYPI_MIRROR}, tmp_path)
+    assert (source, {"mirror": True}) in calls
+    assert all(kwargs == {"mirror": True} for _, kwargs in calls)
+
+
+@pytest.mark.parametrize(("command", "environ", "source"), [
+    ("uv add requests", {"PIP_INDEX_URL": MIRROR_SIMPLE}, "pypi:requests"),
+    ("uvx ruff", {"PIP_INDEX_URL": MIRROR_SIMPLE}, "pypi:ruff"),
+    ("uv pip install requests", {"PIP_INDEX_URL": MIRROR_SIMPLE}, "pypi:requests"),
+    ("pip install requests", {"UV_DEFAULT_INDEX": MIRROR_SIMPLE}, "pypi:requests"),
+    ("pipx install black", {"UV_INDEX_URL": MIRROR_SIMPLE}, "pypi:black"),
+])
+def test_a_mirror_only_another_installer_reads_leaves_pypi(tmp_path, command, environ, source):
+    """`uv add x` with only PIP_INDEX_URL on the mirror installs from PyPI: checked there."""
+    out, calls = _hook(command, {**environ, PYPI_INDEX_ENV: PYPI_MIRROR}, tmp_path)
+    assert calls == [(source, {})]
+    assert "permissionDecision" not in out["hookSpecificOutput"]
+
+
+def test_a_mirror_in_pip_conf_is_not_uvs_index(tmp_path):
+    conf = tmp_path / "pip.conf"
+    conf.write_text(f"[global]\nindex-url = {MIRROR_SIMPLE}\n", encoding="utf-8")
+    environ = {"PIP_CONFIG_FILE": str(conf), PYPI_INDEX_ENV: PYPI_MIRROR}
+    assert _hook("uv add requests", environ, tmp_path)[1] == [("pypi:requests", {})]
+    assert _hook("pip install requests", environ, tmp_path)[1] == [
+        ("pypi:requests", {"mirror": True})]
+
+
+def test_a_mirror_in_uv_toml_is_uvs_index_only(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "uv.toml").write_text(f'index-url = "{MIRROR_SIMPLE}"\n', encoding="utf-8")
+    environ = {PYPI_INDEX_ENV: PYPI_MIRROR}
+    event = {**_bash("uv add requests"), "cwd": str(project)}
+    calls = []
+    hook_response(event, scan=lambda s, t, **k: calls.append((s, k)) or _report(),
+                  environ=environ, home=tmp_path)
+    assert calls == [("pypi:requests", {"mirror": True})]
+    (project / "uv.toml").write_text(f'extra-index-url = ["{MIRROR_SIMPLE}"]\n', encoding="utf-8")
+    calls.clear()
+    out = hook_response(event, scan=lambda s, t, **k: calls.append((s, k)) or _report(),
+                        environ=environ, home=tmp_path)
+    assert calls == []  # uv's main index is PyPI, its extra one the mirror: either may serve it
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+
+
+@pytest.mark.parametrize(("command", "environ"), [
+    # the two installers disagree: one reads the mirror, the other PyPI
+    ("pip install requests && uv add httpx", {"PIP_INDEX_URL": MIRROR_SIMPLE}),
+    # a word that names both (a package called uv)
+    ("pip install uv", {"PIP_INDEX_URL": MIRROR_SIMPLE}),
+    # another Python installer, whose sources the hook does not resolve
+    ("poetry add requests", {"PIP_INDEX_URL": MIRROR_SIMPLE, "UV_DEFAULT_INDEX": MIRROR_SIMPLE}),
+    ("pipenv install requests", {"PIP_INDEX_URL": MIRROR_SIMPLE}),
+])
+def test_when_the_installers_index_cannot_be_told_it_is_asked(tmp_path, command, environ):
+    out, calls = _hook(command, {**environ, PYPI_INDEX_ENV: PYPI_MIRROR}, tmp_path)
+    assert not any(kwargs for _, kwargs in calls)  # nothing is read through the mirror
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    strict, _ = _hook(command, {**environ, PYPI_INDEX_ENV: PYPI_MIRROR}, tmp_path,
+                      strict=True, strict_by="CI")
+    assert strict["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
 def test_every_url_of_a_pip_conf_extra_index_line_counts(tmp_path):
     """Only the first URL of a line was read: a public index first hid the custom one."""
     conf = tmp_path / "pip.conf"

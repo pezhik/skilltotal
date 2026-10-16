@@ -128,6 +128,14 @@ normalization (a trailing slash and letter case in the scheme and host do not ma
 and password in the installer's URL are ignored). For pip and uv, the index may be the mirror's
 base, `<base>/simple` or devpi's `<base>/+simple`.
 
+For Python, the hook uses the index of the installer that runs. pip and pipx read
+`PIP_INDEX_URL` and `pip.conf`. uv and uvx (including `uv pip`) read `UV_DEFAULT_INDEX`,
+`UV_INDEX_URL`, `uv.toml` and `[tool.uv]`. Neither reads the other's settings, so `uv add x` with
+only `PIP_INDEX_URL` on the mirror is checked on PyPI, where uv fetches it. When the hook cannot
+tell which installer runs or what it reads, a package is not checked through the mirror. That
+covers poetry, pdm, pipenv, rye, pixi and similar tools, and a command where both pip and uv
+appear and read different indexes. The package then stays unchecked.
+
 The mirror counts only when nothing else is configured besides it. These stay unchecked exactly as
 before (asked about, denied in CI unless `registry` is allowed):
 
