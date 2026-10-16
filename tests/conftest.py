@@ -46,7 +46,8 @@ def _outside_ci(monkeypatch):
     for name in ("NPM_CONFIG_REGISTRY", "NPM_CONFIG_USERCONFIG", "YARN_REGISTRY",
                  "YARN_NPM_REGISTRY_SERVER", "BUN_CONFIG_REGISTRY", "PIP_INDEX_URL",
                  "PIP_EXTRA_INDEX_URL", "PIP_FIND_LINKS", "PIP_CONFIG_FILE", "UV_INDEX_URL",
-                 "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_INDEX", "UV_FIND_LINKS"):
+                 "UV_DEFAULT_INDEX", "UV_EXTRA_INDEX_URL", "UV_INDEX", "UV_FIND_LINKS",
+                 "SKILLTOTAL_NPM_REGISTRY", "SKILLTOTAL_PYPI_INDEX", "SKILLTOTAL_REGISTRY_TOKEN"):
         monkeypatch.delenv(name, raising=False)
 
 

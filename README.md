@@ -330,7 +330,49 @@ a `needs_review` note suggesting the closest id.
 | `SKILLTOTAL_WORKERS` | up to 4 | Processes a large scan uses (1 for one) |
 
 A source over a limit is refused with its size and the variable to raise. A value that is not a
-positive whole number is an error. The plugin's own settings are listed in
+positive whole number is an error. The registry mirror settings are described below.
+
+### Scanning through a registry mirror
+
+Behind a company mirror (Artifactory, Nexus, Verdaccio, devpi), scan the copy your installers
+actually get:
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `SKILLTOTAL_NPM_REGISTRY` | unset | npm registry mirror that `npm:` sources are fetched from |
+| `SKILLTOTAL_PYPI_INDEX` | unset | PyPI mirror that `pypi:` sources are fetched from |
+| `SKILLTOTAL_REGISTRY_TOKEN` | unset | Token sent to the mirror as `Authorization: Bearer` |
+
+```bash
+export SKILLTOTAL_NPM_REGISTRY=https://artifactory.example.com/artifactory/api/npm/npm-remote
+export SKILLTOTAL_PYPI_INDEX=https://artifactory.example.com/artifactory/api/pypi/pypi-remote
+export SKILLTOTAL_REGISTRY_TOKEN=...   # optional; from your CI secret store
+skilltotal scan npm:left-pad
+skilltotal scan pypi:requests==2.32.3
+```
+
+- `SKILLTOTAL_NPM_REGISTRY` is the base URL of an npm-protocol registry: SkillTotal reads
+  `<base>/<name>/<version or tag>` (or `<base>/<name>`) and downloads `dist.tarball`.
+- `SKILLTOTAL_PYPI_INDEX` is the base of a PyPI-style JSON API: SkillTotal reads
+  `<base>/pypi/<name>/json` (or `<base>/pypi/<name>/<version>/json`), the way pypi.org,
+  Artifactory and devpi serve it. It is not the `/simple` URL pip uses.
+- The URL must be https (plain http only for `localhost`, `127.0.0.1` or `::1`) and must not hold
+  a user name, password, query or fragment. Anything else stops the scan with an error naming the
+  variable.
+- The token is sent only to the mirror's own scheme and host. It is never sent to the public
+  registries, never follows a redirect to another host, and never appears in a report or an
+  error.
+- Download URLs the mirror returns must be on the mirror's host or the public registry's file
+  host (`registry.npmjs.org`, `files.pythonhosted.org`); anything else is refused. Redirects to
+  plain http are refused.
+- The report says where the package came from: `component.download_url` is the mirror's file
+  URL, and a `needs_review` note ("Fetched through a registry mirror") names the mirror.
+  `--provenance` reads the mirror too.
+
+The settings come only from the environment of the process that runs the scan, never from the
+scanned component. Unset, `npm:` and `pypi:` sources are fetched from the public registries as
+before. The Claude Code plugin uses the mirror for installs whose configured registry is that
+mirror (see [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#custom-registries-and-mirrors)). The plugin's own settings are listed in
 [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md).
 
 ### Exit codes
@@ -857,7 +899,8 @@ for:
 - **git URLs:** `git clone --depth 1` of the repository; for github.com, GitHub REST API calls
   (`api.github.com`) first, to check the size of what would be cloned
 - **`npm:` / `pypi:` sources:** package metadata and the package archive from the npm registry
-  (`registry.npmjs.org`) or PyPI (`pypi.org` and its file host)
+  (`registry.npmjs.org`) or PyPI (`pypi.org` and its file host), or from the mirror you set
+  (`SKILLTOTAL_NPM_REGISTRY`, `SKILLTOTAL_PYPI_INDEX`)
 - **`--provenance`:** the package's registry metadata
 - **`inventory`, `guard --installed` and the Claude Code plugin:** the same registries and git
   hosts, for the packages they check
@@ -865,9 +908,8 @@ for:
 There is no telemetry, no account and no LLM call. The MCP server makes the same requests for
 the sources an agent asks it to scan.
 
-`npm:` and `pypi:` sources are always fetched from the public npm registry and PyPI. Scanning
-through a company registry or mirror is not supported yet: download the package archive yourself
-and scan the file.
+`npm:` and `pypi:` sources are fetched from the public npm registry and PyPI unless you set a
+mirror (see [Scanning through a registry mirror](#scanning-through-a-registry-mirror)).
 
 ## Measured, not asserted
 

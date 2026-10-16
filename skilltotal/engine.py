@@ -110,6 +110,10 @@ def analyze(
             report.needs_review.append(NeedsReview(
                 category="coverage", title="One distribution of the release scanned",
                 reason=ctx.distribution_note))
+        if ctx.mirror_note:
+            report.needs_review.append(NeedsReview(
+                category="source", title="Fetched through a registry mirror",
+                reason=ctx.mirror_note))
         return report
 
 

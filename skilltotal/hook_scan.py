@@ -88,6 +88,8 @@ _POLL_S = 0.1
 # it, reading its report, keeping its verdict. Claude Code lets the command run when the hook
 # outlives the hook's timeout, so every wait on that path ends by the budget plus this.
 GRACE_S = 5.0
+# The settings that send a check to a registry mirror, with its token (see collector).
+MIRROR_SETTINGS = ("SKILLTOTAL_NPM_REGISTRY", "SKILLTOTAL_PYPI_INDEX", "SKILLTOTAL_REGISTRY_TOKEN")
 # Windows process creation flags (subprocess has them only on Windows).
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NEW_PROCESS_GROUP = 0x00000200
@@ -418,7 +420,7 @@ class RunningScan:
 
     @classmethod
     def start(cls, source: str, job: dict | None = None,
-              deadline: float | None = None) -> RunningScan:
+              deadline: float | None = None, *, mirror: bool = False) -> RunningScan:
         """Start checking ``source`` in a supervisor that outlives this process.
 
         The check gets a temp directory of its own, removed by whoever finishes last (see the
@@ -430,6 +432,9 @@ class RunningScan:
         key names, when the check started, the engine, and the token of the check's marker). It
         goes to scan.json before the check starts, so a check whose hook goes away keeps its
         verdict all the same; and from now on the marker names the supervisor, not this process.
+
+        The registry mirror settings and token reach the check only for a ``mirror`` check: any
+        other package is read from the public registry, and nothing else gets the token.
         """
         root = tempfile.gettempdir()
         tmp = tempfile.mkdtemp(prefix=_CHECK_PREFIX, dir=root)
@@ -445,6 +450,10 @@ class RunningScan:
             # The supervisor gets this process's temp directory, where it finds the check's.
             env = {**os.environ, **_interpreter()[1], "TMPDIR": root, "TEMP": root, "TMP": root,
                    SECRET_ENV: secret, "PYTHONIOENCODING": "utf-8"}
+            if not mirror:
+                for name in MIRROR_SETTINGS:
+                    for key in [k for k in env if k.upper() == name]:
+                        del env[key]
             proc = _spawn(_role_argv("supervise", tmp), cwd=cwd, env=env, **detached())
         except BaseException:
             remove_tree(tmp)
