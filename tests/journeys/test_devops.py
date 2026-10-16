@@ -1,4 +1,4 @@
-"""A DevOps engineer adds SkillTotal to a pipeline and to developer machines, as the README says.
+"""A DevOps engineer adds SkillTotal to a pipeline and to developer machines, as the docs say.
 
 Each journey is a defect a customer met (or would have) in a 2026-10 customer-path audit: a gate
 that switched itself off, a report that failed a clean build, a hook that gave no reason.
@@ -19,6 +19,10 @@ from skilltotal import __version__
 from tests.journeys.conftest import ROOT, clean_env, git, needs_git, needs_sh
 
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+# The settings table and the full CLI and CI references moved from the README into docs/.
+CONFIGURATION = (ROOT / "docs" / "configuration.md").read_text(encoding="utf-8")
+DOCS = {"README.md": README, **{f"docs/{p.name}": p.read_text(encoding="utf-8")
+                                for p in sorted((ROOT / "docs").glob("*.md"))}}
 
 
 def test_the_installed_cli_is_this_release(skilltotal):
@@ -55,7 +59,7 @@ def test_scanning_twice_into_the_same_folder_stays_clean(skilltotal, fixture_cop
 
 
 def _documented_settings() -> list[str]:
-    table = README.split("**Settings**", 1)[1].split("\n\n", 2)[1]
+    table = CONFIGURATION.split("**Settings**", 1)[1].split("\n\n", 2)[1]
     return re.findall(r"^\| `(SKILLTOTAL_[A-Z_]+)` \|", table, flags=re.M)
 
 
@@ -125,17 +129,21 @@ def test_writing_a_baseline_is_an_adoption_step_that_exits_zero(skilltotal, fixt
     assert skilltotal("scan", ".", "--fail-on-high", "--baseline", "bl.json", cwd=repo).code == 0
 
 
-def test_every_scan_flag_in_the_readme_exists(skilltotal):
-    """A flag the README shows and the CLI rejects is a pipeline that fails on day one."""
+def test_every_scan_flag_in_the_docs_exists(skilltotal):
+    """A flag the README or docs/ show and the CLI rejects is a pipeline that fails on day one."""
     help_text = skilltotal("scan", "--help").out
-    shown = set()
-    for line in README.splitlines():
-        command = re.search(r"\bskilltotal scan\b.*", line)
-        if command:  # flags in front of it are npx's (`npx -y --package=... -- skilltotal scan`)
-            shown.update(re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", command.group()))
-    assert shown, "no scan command found in the README"
-    missing = sorted(flag for flag in shown if flag not in help_text)
-    assert not missing, f"README shows flags the CLI does not have: {missing}"
+    shown: dict[str, set[str]] = {}
+    for doc, text in DOCS.items():
+        for line in text.splitlines():
+            command = re.search(r"\bskilltotal scan\b.*", line)
+            # Flags in front of it are npx's (`npx -y --package=... -- skilltotal scan`).
+            if command:
+                for flag in re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", command.group()):
+                    shown.setdefault(flag, set()).add(doc)
+    assert "skilltotal scan" in README, "no scan command found in the README"
+    assert any("docs/cli.md" in docs for docs in shown.values()), "no scan flag in docs/cli.md"
+    missing = {flag: sorted(docs) for flag, docs in shown.items() if flag not in help_text}
+    assert not missing, f"docs show flags the CLI does not have: {missing}"
 
 
 def test_a_missing_repository_says_so(skilltotal):
@@ -224,7 +232,7 @@ def test_pre_commit_blocks_a_staged_threat_and_ignores_an_untracked_file(tmp_pat
     head = subprocess.run(  # nosec B603 B607 - git with fixed arguments
         ["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True, text=True,
         check=True).stdout.strip()
-    # The README's config, with this checkout as the hook's repository.
+    # The config docs/ci.md shows, with this checkout as the hook's repository.
     (repo / ".pre-commit-config.yaml").write_text(
         f"repos:\n  - repo: {ROOT.as_posix()}\n    rev: {head}\n    hooks:\n"
         "      - id: skilltotal\n        args: [\".\", \"--fail-on-high\"]\n",

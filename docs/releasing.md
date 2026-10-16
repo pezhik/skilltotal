@@ -25,7 +25,9 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
 3. Regenerate the detection-efficacy report with
    `python tests/manual_eval/efficacy.py --out docs/efficacy-report` and update the sample
    counts `README.md` quotes from it. Bump the documented version pins to the new version:
-   `uses: pezhik/skilltotal@vX.Y.Z` and `rev:` in `README.md`, `examples/`, `server.json`,
+   `uses: pezhik/skilltotal@vX.Y.Z`, `rev:`, `skilltotal==X.Y.Z` and `skilltotal@X.Y.Z` in
+   `README.md`, `docs/ci.md`, `docs/cli.md`, `docs/mcp-server.md`, `docs/plugin.md`, `examples/`,
+   `server.json`,
    `plugin/.claude-plugin/plugin.json` and `npm/package.json`. `tests/test_release_hygiene.py`
    fails the release on a stale report or `uses:` pin.
 4. **Review docs that SHIP with the release**: `README.md` is the PyPI long description —
@@ -61,6 +63,6 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
 - [ ] `CHANGELOG.md` / `RULES_CHANGELOG.md` updated (enforced by `tests/test_release_hygiene.py`)
 - [ ] `docs/efficacy-report.{json,md}` regenerated for this version and ruleset, and README quotes
       its sample counts (enforced by `tests/test_release_hygiene.py`)
-- [ ] `README.md` Install/Usage accurate — it becomes the PyPI page (partially enforced by
-      `tests/test_release_hygiene.py`)
+- [ ] `README.md` Install/Quick start accurate: it becomes the PyPI page (partially enforced by
+      `tests/test_release_hygiene.py`); `docs/cli.md` and `docs/ci.md` match the release
 - [ ] Correct version bump per the table above

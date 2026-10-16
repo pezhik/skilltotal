@@ -57,22 +57,27 @@ def test_documented_action_pins_match_the_current_version():
 
 
 def test_documented_install_pins_match_the_current_version():
-    """The README's CI recipes install `skilltotal==X`; X must be the version being released.
+    """The CI recipes install `skilltotal==X`; X must be the version being released.
 
     Those lines are copied into GitLab and Jenkins pipelines as they stand, like the action pins.
+    The README keeps one; the full recipes live in docs/ci.md.
     """
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
-    pins = re.findall(r"skilltotal==(\d+\.\d+\.\d+)", text)
-    assert pins, "README's CI recipes are expected to pin skilltotal==<version>"
-    stale = sorted({v for v in pins if v != skilltotal.__version__})
-    assert not stale, f"README install pins must be {skilltotal.__version__}, found {stale}"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert re.search(r"skilltotal==\d", readme), (
+        "README's CI recipe is expected to pin skilltotal==<version>")
+    stale: list[str] = []
+    for path in [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]:
+        for version in re.findall(r"skilltotal==(\d+\.\d+\.\d+)", path.read_text(encoding="utf-8")):
+            if version != skilltotal.__version__:
+                stale.append(f"{path.relative_to(ROOT)}: {version}")
+    assert not stale, f"install pins must be {skilltotal.__version__}, found {stale}"
 
 
 def test_documented_npx_commands_name_the_current_release():
     """A plain `npx skilltotal` inside a repository runs that repository's
     `node_modules/.bin/skilltotal` if it has one, so the docs name the package with
     `--package=skilltotal@X`, and X is the version being released."""
-    for doc in ("README.md", "npm/README.md"):
+    for doc in ("README.md", "npm/README.md", "docs/cli.md", "docs/mcp-server.md"):
         text = (ROOT / doc).read_text(encoding="utf-8")
         assert not re.search(r"npx\s+(?:-y\s+)?skilltotal\s+(?:scan|mcp|guard|diff|inventory)\b"
                              r"|\"-y\",\s*\"skilltotal\"", text), doc

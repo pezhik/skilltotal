@@ -119,8 +119,8 @@ token or a path. A command that changes the installer's config before it install
 
 **Checking through your mirror.** Set `SKILLTOTAL_NPM_REGISTRY` and/or `SKILLTOTAL_PYPI_INDEX`
 (and `SKILLTOTAL_REGISTRY_TOKEN` if the mirror needs one) in the environment Claude Code runs in;
-see the README's
-[registry mirror section](https://github.com/pezhik/skilltotal#scanning-through-a-registry-mirror).
+see the
+[registry mirror section](configuration.md#scanning-through-a-registry-mirror).
 When the registry an install resolves to through the environment or the config files above is
 that mirror, the hook checks the package there instead of calling it unchecked, and the console
 line says "(from the registry mirror)". The URLs must match in scheme, host, port and path after
@@ -268,8 +268,8 @@ The hook reads these environment variables from the environment Claude Code runs
 | `SKILLTOTAL_CACHE_DIR` | see [the verdict cache](#git-sources-the-verdict-cache-and-timing) | Folder for the verdict cache |
 | `SKILLTOTAL_NPM_REGISTRY`, `SKILLTOTAL_PYPI_INDEX`, `SKILLTOTAL_REGISTRY_TOKEN` | unset | The registry mirror to check mirror packages through (see [Custom registries](#custom-registries-and-mirrors)) |
 
-The scan limits in the README's
-[settings table](https://github.com/pezhik/skilltotal#environment-variables)
+The scan limits in the
+[settings table](configuration.md#environment-variables)
 (`SKILLTOTAL_MAX_ARCHIVE_MB` and the others) apply to the hook's checks too. If one of the
 variables above has a value the hook cannot use, the console line says so. An unknown
 `SKILLTOTAL_STRICT` or `SKILLTOTAL_STRICT_PARTIAL` value is read as on, so a typo cannot loosen

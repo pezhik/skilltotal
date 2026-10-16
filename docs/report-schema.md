@@ -10,6 +10,30 @@ that imports the engine and returns `Report.to_dict()`.
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
 
+## What a report contains
+
+A normalized report containing the component identity, a **risk score (0–100)** and
+**risk level** (low / medium / high / critical), a plain-language **verdict**, detected
+**capabilities** (each evidence-backed), a behavioral **trait fingerprint** (with a CSA / MAESTRO /
+MITRE ATLAS crosswalk), **findings**, **needs_review**, and **metadata**. The shape is below; the score is explained in [scoring.md](scoring.md).
+
+Every finding also carries its **OWASP Agentic Skills Top 10** category ids (`owasp`), emitted in
+both the JSON report and SARIF (native `taxonomies`/`relationships`);
+[docs/owasp-agentic-skills-mapping.md](https://github.com/pezhik/skilltotal/blob/main/docs/owasp-agentic-skills-mapping.md) explains the coverage
+(AST01–AST05) and the honest gaps. For MCP servers,
+[docs/mcp-owasp-mapping.md](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-owasp-mapping.md) maps SkillTotal's checks to the OWASP MCP
+Security Cheat Sheet (and names the runtime controls a static engine can't cover).
+
+The report's **`traits`** array is a behavioral fingerprint: a higher-level projection over the
+findings (e.g. `execution_authority`, `embedded_credential`, `untrusted_perception`, and the
+*emergent* `exfil_correlation` combination), each mapped to the Cloud Security Alliance
+trait-based model, a MAESTRO threat-model layer, and a MITRE ATLAS tactic where there is an honest
+fit. It is descriptive and never affects the score; see
+[docs/trait-crosswalk.md](https://github.com/pezhik/skilltotal/blob/main/docs/trait-crosswalk.md).
+Three of the traits record how the component authenticates its tool calls (an embedded static
+credential, delegated OAuth/OIDC or a least-privilege scoped identity), which shows the blast
+radius of a compromise, not only whether a secret exists.
+
 ## Top-level shape
 
 ```json

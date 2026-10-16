@@ -69,7 +69,7 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
   honored only when scanning a local directory, never in a fetched package or repository.
 
 A finding is evidence of what the code can do, not proof of intent, and a clean report is not
-proof of safety: see the limitations in the [README](README.md#limitations).
+proof of safety: see the [limitations](docs/detection.md#limitations).
 
 ## Supported versions
 
