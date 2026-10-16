@@ -33,7 +33,27 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
    PyPI page until the next release). Check `docs/*` touched by the change too.
 5. `ruff check . && pytest && bandit -r skilltotal` — all green (the release gate runs all
    three; ruff failures have blocked a tag before).
-6. Commit, push, tag `vX.Y.Z`, push the tag — `release.yml` publishes via OIDC.
+6. Commit and push. When CI is green on that commit, create a signed annotated tag
+   (`git tag -s -m vX.Y.Z vX.Y.Z`) and push it. `release.yml` builds the release. Its publish
+   jobs wait until a maintainer approves the `pypi` and `npm` environments in GitHub, and only
+   then publish through OIDC.
+
+## Release cadence and guarantees
+
+- Security fixes ship as a patch or minor release as soon as they pass the release gate. They
+  are listed under Security in `CHANGELOG.md`.
+- Detection changes (a new or changed rule, or a change in which files the rules read) ship in a
+  minor release that bumps `RULESET_VERSION`, at most about once a week. Before the tag, each
+  change is checked against a set of benign components for new false positives.
+- Bug fixes ship in a patch release when ready.
+- A breaking change to the report shape or the public API ships only with a major
+  `REPORT_SCHEMA_VERSION` bump and is described in `CHANGELOG.md`.
+- Every tag points at a commit that passed CI on Python 3.10 to 3.14. That run includes the
+  end-to-end user journeys on Linux and Windows and the GitHub Action's own job.
+- Release tags (`v*`) are signed, only a maintainer can create them, and they are never moved
+  or deleted. A broken release is fixed by the next version. Pin an exact version
+  (`skilltotal==X.Y.Z`, `pezhik/skilltotal@vX.Y.Z`) or, for the Action, the release's commit
+  SHA.
 
 ## Pre-release checklist
 
