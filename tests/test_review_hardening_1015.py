@@ -171,7 +171,9 @@ def test_a_padded_install_command_is_read_quickly(tmp_path):
 
 @pytest.mark.parametrize(("command", "expected"), [
     ("node install", "install.js"),
-    ("node Install", "install.js"),
+    # A case-insensitive file system (Windows, macOS) opens install.js for `Install`.
+    pytest.param("node Install", "install.js", marks=pytest.mark.skipif(
+        sys.platform.startswith("linux"), reason="Linux file names are case-sensitive")),
     ("node .", "main.js"),
     ("sh ./scripts/x.sh", "scripts/x.sh"),
     ("node lib", "lib/index.js"),

@@ -234,14 +234,20 @@ def test_the_home_directory_a_folder_above_it_and_a_root_are_refused(no_scan, tm
     assert "component's own folder" in root
 
 
+# On Linux and macOS a backslash is part of a file name, so the backslash spellings are relative
+# names there, refused as "not an absolute path"; only Windows reads them as a share or a device.
+_WINDOWS_ONLY = pytest.mark.skipif(os.name != "nt", reason="a backslash path is Windows syntax")
+
+
 @pytest.mark.parametrize("source", [
-    "\\\\fileserver.invalid\\share\\skill",
-    "\\\\localhost\\C$\\Users\\me",
-    "\\\\127.0.0.1\\c$\\Users\\me",
-    "\\\\?\\C:\\Users\\me",
-    "\\\\.\\C:\\Users\\me",
-    "\\\\?\\UNC\\localhost\\C$\\Users\\me",
-    "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\me",
+    pytest.param("\\\\fileserver.invalid\\share\\skill", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\localhost\\C$\\Users\\me", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\127.0.0.1\\c$\\Users\\me", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\?\\C:\\Users\\me", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\.\\C:\\Users\\me", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\?\\UNC\\localhost\\C$\\Users\\me", marks=_WINDOWS_ONLY),
+    pytest.param("\\\\?\\GLOBALROOT\\Device\\HarddiskVolume3\\Users\\me",
+                 marks=_WINDOWS_ONLY),
     "//fileserver.invalid/share/skill",
     "//?/C:/",
 ])
