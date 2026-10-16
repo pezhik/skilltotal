@@ -37,7 +37,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/pezhik/skilltotal/main/docs/assets/demo-hook-block-dark.svg">
-    <img alt="A coding agent runs npm install on a test package; the SkillTotal plugin denies it and names the finding and its file and line" src="https://raw.githubusercontent.com/pezhik/skilltotal/main/docs/assets/demo-hook-block-light.svg" width="820">
+    <img alt="A coding agent runs npm install on a test package; the SkillTotal plugin denies it and names the finding and its file and line" src="https://raw.githubusercontent.com/pezhik/skilltotal/main/docs/assets/demo-hook-block-light.svg" width="600">
   </picture>
 </p>
 <p align="center"><sub>The plugin's real answer for a sanitized test package. No real package is shown.</sub></p>

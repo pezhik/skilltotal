@@ -7,7 +7,7 @@ name = "skilltotal"
 # Single source of truth for the version is skilltotal/__init__.py (__version__);
 # a hardcoded copy here once drifted (0.1.0 vs 0.3.0) and nearly shipped mislabeled.
 dynamic = ["version"]
-description = "Scan npm/PyPI packages, MCP servers and agent skills before Claude Code installs them. Static, deterministic, no LLM."
+description = "Static security scanner for npm and PyPI packages, MCP servers and agent skills. Runs locally, never runs the code, no LLM."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
