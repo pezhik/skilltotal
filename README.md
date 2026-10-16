@@ -836,8 +836,6 @@ component could be read` when nothing could be read. That wording does not chang
   from those folders by a literal path (a relative `require`/`import`, a Python import, a
   `package.json` or `pyproject.toml` entry point) is read anyway.
 - **Dependencies are not scanned.** A scan covers the component's own files, not what it installs.
-- **Public registries only.** `npm:` and `pypi:` sources come from the public npm registry and
-  PyPI; a company registry or mirror is not supported yet (see [Network access](#network-access)).
 - **Code that is not in the files is not analyzed:** code fetched or generated at run time, and
   binaries or compiled artifacts (counted in `metadata.files_skipped_binary`).
 - **Languages.** Shell execution, network access, file access and dynamic code are analyzed in
