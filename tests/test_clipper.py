@@ -95,7 +95,7 @@ export function CopyContract() {{
     assert RULE not in _ids(report)
 
 
-def test_validation_without_any_clipboard_write_is_clean(tmp_path):
+def test_a_swap_returned_without_a_clipboard_api_is_malicious(tmp_path):
     report = _scan(tmp_path, "check.js", f"""\
 const ATTACKER = "{ETH}";
 function hijack(clipboard) {{
@@ -104,5 +104,6 @@ function hijack(clipboard) {{
 }}
 module.exports = {{ hijack }};
 """)
-    # No clipboard API: the swap never reaches a clipboard (the red-team sample shape).
-    assert RULE not in _ids(report)
+    # No clipboard API: the caller writes what this returns (the red-team sample shape, flagged
+    # since ruleset 78; see test_ruleset78.py).
+    assert RULE in _ids(report)

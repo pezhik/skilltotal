@@ -4,6 +4,45 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 78 (engine 0.76.0)
+
+Detection-efficacy corpus: 130 positive / 94 negative samples, 130/130 flagged, 0 false positives.
+
+No rule was added or removed. Two rules now catch more:
+
+- **A clipper that returns the swap** (`ST-CLIPPER`): until now the rule fired only when code
+  wrote a fixed address through a clipboard API. A clipper helper can instead hand the swapped
+  text back to whatever writes the clipboard: `if (/^(bc1|0x).../.test(clipboard)) return
+  ATTACKER; return clipboard;`, the same test in a conditional expression, or
+  `text.replace(/0x[a-fA-F0-9]{40}/g, ATTACKER)` / `re.sub(...)`. This is flagged when all of
+  the following hold in one file:
+  - the file handles clipboard text (a clipboard API, `pyperclip`, `pbpaste`, or a name that
+    contains `clipboard`);
+  - a value is tested against an address pattern;
+  - the branch taken on a match returns a fixed address, and the other path returns the tested
+    value unchanged (or every match is replaced with the fixed address);
+  - the fixed address has the shape the pattern looks for. It may be spliced from fragments
+    (`"bc1q" + "..."`).
+
+  The evidence is the test, the swap and the line that holds the address. An address validator,
+  a formatter that shortens an address, a selector that returns one contract address or another,
+  a fallback shown for text that is not an address, and the null address all stay clean.
+- **Linked programs in two languages** (`ST-COMBO-EXFIL`): ruleset 77 required the credential
+  reference and the network egress to be code of one language runtime. That stopped a Go server
+  that names its own host key and an unrelated Python script that posts to localhost from forming
+  an exfiltration path. It also missed a real hand-off between two programs. Two runtimes now
+  pair when the code links them:
+  - a staging file: the file with the credential reference writes a path (`open("/tmp/.k",
+    "w")`, `writeFileSync`, `shutil.copy`, ...), directly or through the name it is bound to, and
+    the file with the egress reads the same path (`fs.readFileSync("/tmp/.k")`, `open(...)`);
+  - a launch: one of the two files starts the other by its file name, inside the arguments of a
+    process call (`subprocess.run(["node", "send.js"])`,
+    `execFileSync("python3", [path.join(__dirname, "collect.py")])`).
+
+  The linking lines join the finding's evidence. A path that both programs only read (a shared
+  settings file), a launch of some other program, a file name outside the launch call, and a path
+  in a comment do not link. The Go server and Python script above still do not pair.
+
 ## ruleset 77 (engine 0.75.0)
 
 Detection-efficacy corpus: 126 positive / 91 negative samples, 126/126 flagged, 0 false positives.

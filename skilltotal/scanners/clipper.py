@@ -10,6 +10,16 @@ the name it is bound to, or as the replacement in ``.replace(...)``), in a file 
 recognizes addresses with a pattern. A wallet or dApp that copies the address a user is looking
 at writes a variable, not a constant, and stays clean; so does code that only validates
 addresses, or only knows a contract address.
+
+A clipper can also leave the clipboard write to its caller and hand back the swapped text: when
+the clipboard text matches an address pattern it returns the fixed address, and otherwise the
+text unchanged (``_returned_swap_evidence``). That form is flagged in a file that handles
+clipboard text, when a value is tested against an address pattern, the branch taken on a match
+returns a fixed address of the shape that pattern looks for, and the tested value itself is what
+the other path returns (or the pattern's matches are replaced with the fixed address). A
+validator returns a boolean, a formatter returns the address shortened, and a chain selector
+returns one fixed address or another: none of them passes the tested text through unchanged
+beside a fixed address, so none of them is a swap.
 """
 
 from __future__ import annotations
@@ -66,10 +76,11 @@ class ClipperScanner(Scanner):
             severity=Severity.HIGH,
             title="Clipboard address swap (clipper)",
             description=(
-                "The code writes a cryptocurrency address fixed in the code to the clipboard, in "
-                "a file that also recognizes addresses with a pattern. This is how a clipper "
-                "replaces an address the user copied, so the user pastes the fixed address "
-                "instead."
+                "The code puts a cryptocurrency address fixed in the code in place of an address "
+                "it recognized with a pattern: it writes the fixed address to the clipboard, or "
+                "returns it for clipboard text that matched while other text passes through "
+                "unchanged. This is how a clipper replaces an address the user copied, so the "
+                "user pastes the fixed address instead."
             ),
             recommendation=(
                 "Code that copies an address should copy the one the user chose, never a fixed "
@@ -85,7 +96,7 @@ class ClipperScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
         for f in index.select(suffixes=_SUFFIXES):
-            evidence.extend(_clipper_evidence(f))
+            evidence.extend(_clipper_evidence(f) or _returned_swap_evidence(f))
         if evidence:
             return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)])
         return ScanResult()
@@ -171,3 +182,190 @@ def _constant_in(code: str, constants: dict[str, int]) -> str | None:
         if re.search(r"(?<![\w$])" + re.escape(key) + r"(?![\w$])", code):
             return key
     return None
+
+
+# --- The swap handed back to the caller ---------------------------------------------------------
+
+# The file handles clipboard text: a clipboard API, a helper package, or a name for it.
+_CLIPBOARD_CONTEXT = re.compile(r"clipboard|pyperclip|\bpbpaste\b|\bxclip\b|\bxsel\b", re.I)
+_IDENT = r"[A-Za-z_$][\w$]*"
+_JS_REGEX = r"/(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n\[])+/[a-z]*"
+_PY_STRING = r"""[rRbBuU]{0,2}(?P<q>["'])(?:\\.|(?!(?P=q))[^\\\n])*(?P=q)"""
+# The tested value: a name, maybe with a property or a no-argument call (`clip.trim()`).
+_SUBJECT = r"(?P<subj>[A-Za-z_$][\w$]*)(?:\.[A-Za-z_$][\w$]*(?:\(\s*\))?)*"
+# A value tested against a pattern: `/re/.test(s)`, `RE.test(s)`, `s.match(/re/)`,
+# `re.match(r"re", s)`, `RE.fullmatch(s)`.
+_PATTERN_TESTS = (
+    re.compile(
+        r"(?<![\w$)\]])(?P<pat>" + _JS_REGEX + "|" + _IDENT + r")\s*\.test\s*\(\s*" + _SUBJECT
+        + r"\s*\)"
+    ),
+    re.compile(
+        r"(?<![\w$.])" + _SUBJECT + r"\s*\.match\s*\(\s*(?P<pat>" + _JS_REGEX + "|" + _IDENT
+        + r")\s*\)"
+    ),
+    re.compile(
+        r"\bre\.(?:match|search|fullmatch)\s*\(\s*(?P<pat>" + _PY_STRING + "|" + _IDENT
+        + r")\s*,\s*" + _SUBJECT + r"\s*(?:,[^()\n]*)?\)"
+    ),
+    re.compile(
+        r"(?<![\w$.])(?P<pat>" + _IDENT + r")\.(?:match|search|fullmatch)\s*\(\s*" + _SUBJECT
+        + r"\s*\)"
+    ),
+)
+# A fixed value: a name, or an address-length string literal.
+_VALUE = r"""(?P<val>[A-Za-z_$][\w$]*|["'`][A-Za-z0-9]{20,90}["'`])"""
+# Replacing what a pattern matched: `s.replace(/re/g, ADDR)`, `re.sub(r"re", ADDR, s)`.
+_PATTERN_REPLACES = (
+    re.compile(
+        r"\.replace(?:All)?\s*\(\s*(?P<pat>" + _JS_REGEX + "|" + _IDENT + r")\s*,\s*" + _VALUE
+        + r"\s*\)"
+    ),
+    re.compile(
+        r"\bre\.sub\s*\(\s*(?P<pat>" + _PY_STRING + "|" + _IDENT + r")\s*,\s*" + _VALUE
+        + r"\s*,"
+    ),
+    re.compile(r"(?<![\w$.])(?P<pat>" + _IDENT + r")\.sub\s*\(\s*" + _VALUE + r"\s*,"),
+)
+# `NAME = <pattern>`: a pattern kept under a name and tested through it.
+_PATTERN_BINDING = re.compile(r"\b(?P<name>" + _IDENT + r")\s*=\s*(?P<rhs>[^\n=][^\n]{0,300})")
+# `NAME = "<string>"`: a fixed value kept under a name (read with spliced literals joined too).
+_BOUND_STRING = re.compile(
+    r"""(?:\b(?:const|let|var)\s+)?\b(?P<name>[A-Za-z_$][\w$]*)\s*(?::\s*[\w.<>]+\s*)?=\s*"""
+    r"""(?P<q>["'`])(?P<value>[A-Za-z0-9]{20,90})(?P=q)"""
+)
+_ANY_RETURN = re.compile(r"\breturn\b")
+_RETURN = re.compile(r"\breturn\s+" + _VALUE + r"\s*(?=[;}#/\r\n]|$)", re.M)
+# A Bitcoin-bech32-like value outside the strict alphabet, accepted only against a pattern that
+# itself looks for `bc1`: the code calls it an address by its own test.
+_LOOSE_BECH32 = re.compile(r"bc1[a-z0-9]{15,87}")
+_NULL_ADDRESS = re.compile(r"0x0{40}")  # the null address is a placeholder, not a payee
+# How many lines the branch taken on a match may span before its `return`.
+_BRANCH_LINES = 3
+
+
+def _returned_swap_evidence(f: IndexedFile) -> list[Evidence]:
+    """The test, the swap and the fixed address, when this file hands back swapped clipboard
+    text: a fixed address in place of a value that matched an address pattern."""
+    text = f.text
+    if not _CLIPBOARD_CONTEXT.search(text) or not _RECOGNIZER.search(text):
+        return []
+    patterns = {
+        m.group("name"): m.group("rhs")
+        for m in _PATTERN_BINDING.finditer(text)
+        if _RECOGNIZER.search(m.group("rhs"))
+    }
+    constants = _bound_strings(f)
+
+    def address_pattern(pat: str) -> str | None:
+        source = patterns.get(pat, pat)
+        return source if _RECOGNIZER.search(source) else None
+
+    def fixed_address(val: str, pattern: str, at: int) -> int | None:
+        """Where the fixed address ``val`` (a literal, or a name bound to one) is written."""
+        if val[0] in "\"'`":
+            value, where = val[1:-1], at
+        elif val in constants:
+            value, where = constants[val]
+        else:
+            return None
+        if _NULL_ADDRESS.fullmatch(value):
+            return None
+        if re.fullmatch(_ADDRESS, value) or (
+            "bc1" in pattern.lower() and _LOOSE_BECH32.fullmatch(value)
+        ):
+            return where
+        return None
+
+    for regex in _PATTERN_TESTS:
+        for test in regex.finditer(text):
+            pattern = address_pattern(test.group("pat"))
+            swap = _swap_after_test(f, test) if pattern is not None else None
+            if pattern is None or swap is None:
+                continue
+            where = fixed_address(swap[0], pattern, swap[1])
+            if where is not None:
+                return _swap_evidence(f, (test.start(), swap[1], where))
+    for regex in _PATTERN_REPLACES:
+        for rep in regex.finditer(text):
+            pattern = address_pattern(rep.group("pat"))
+            where = (
+                fixed_address(rep.group("val"), pattern, rep.start("val"))
+                if pattern is not None else None
+            )
+            if where is not None:
+                return _swap_evidence(f, (rep.start(), where))
+    return []
+
+
+def _swap_after_test(f: IndexedFile, test: re.Match[str]) -> tuple[str, int] | None:
+    """``(fixed value, its offset)`` when the code returns a fixed value for a value that
+    matched the pattern and the value itself when it did not: ``if (RE.test(s)) return ADDR;
+    return s``, ``RE.test(s) ? ADDR : s``, ``ADDR if re.match(p, s) else s``."""
+    text = f.text
+    subject = test.group("subj")
+    line_start, line_end = f.line_bounds(test.start(), test.end())
+    before = text[line_start : test.start()]
+    after = text[test.end() : line_end]
+    passthrough = r"\s*(?P<other>[A-Za-z_$][\w$]*)\s*(?:[;)}\]#/\r]|$)"
+    # A conditional expression on the test's own line.
+    js = re.match(r"\s*\)?\s*\?\s*" + _VALUE + r"\s*:" + passthrough, after)
+    if js and js.group("other") == subject:
+        return js.group("val"), test.end() + js.start("val")
+    py = re.search(_VALUE + r"\s+if\s+(?:\(\s*)?$", before)
+    tail = re.match(r"\s*\)?\s*else" + passthrough, after)
+    if py and tail and tail.group("other") == subject:
+        return py.group("val"), line_start + py.start("val")
+    # An `if` whose branch returns a fixed value, followed by `return <the tested value>`.
+    if not re.search(r"\b(?:if|elif)\s*\(?\s*$", before):
+        return None  # not the whole condition, or a negated one (`if (!RE.test(s))`)
+    # The first `return` after the test is the branch's, the next one the other path's.
+    first = _ANY_RETURN.search(text, test.end(), _line_end_after(text, test.end(), _BRANCH_LINES))
+    swap = _RETURN.match(text, first.start()) if first else None
+    if swap is None or swap.group("val") == subject:
+        return None
+    other = _ANY_RETURN.search(text, swap.end(), _line_end_after(text, swap.end(), _NEAR_LINES))
+    passed = _RETURN.match(text, other.start()) if other else None
+    if passed is not None and passed.group("val") == subject:
+        return swap.group("val"), swap.start("val")
+    return None
+
+
+def _line_end_after(text: str, offset: int, lines: int) -> int:
+    """The offset just past the line ``lines`` lines below the one holding ``offset``."""
+    end = offset
+    for _ in range(lines + 1):
+        newline = text.find("\n", end)
+        if newline < 0:
+            return len(text)
+        end = newline + 1
+    return end
+
+
+def _bound_strings(f: IndexedFile) -> dict[str, tuple[str, int]]:
+    """Every ``NAME = "<address-length string>"``, as written and with spliced literals joined:
+    name -> (value, offset of the value in the source)."""
+    texts: list[tuple[str, Sequence[int] | None]] = [(f.text, None)]
+    folded = f.concat_folded_or_none()
+    if folded is not None:
+        texts.append(folded)
+    bound: dict[str, tuple[str, int]] = {}
+    for body, idx in texts:
+        for m in _BOUND_STRING.finditer(body):
+            start = m.start("value")
+            if idx is not None:
+                start = original_span(idx, start, m.end("value"))[0]
+            bound.setdefault(m.group("name"), (m.group("value"), start))
+    return bound
+
+
+def _swap_evidence(f: IndexedFile, offsets: tuple[int, ...]) -> list[Evidence]:
+    """One evidence line per offset (the test, the swap, the fixed address), each line once."""
+    evidence: list[Evidence] = []
+    lines: set[int] = set()
+    for at in offsets:
+        line = f.line_of_offset(at)
+        if line not in lines:
+            lines.add(line)
+            evidence.append(f.evidence_for_span(at, at + 1))
+    return evidence

@@ -299,7 +299,7 @@ def analyze_directory(
     # `fired` tracks which combinations fired, for that suppression and for the post-phase below.
     fired: set[str] = set()
     for combination in pre_classification():
-        synthesized = combination.synth(findings, capabilities, component, fired)
+        synthesized = combination.synth(findings, capabilities, component, fired, index)
         if synthesized is not None:
             findings.append(synthesized)
             fired.add(combination.id)
@@ -327,7 +327,7 @@ def analyze_directory(
     # classified (RISKY_CONSTRUCT) on construction, so it needs no re-projection. Honor
     # ignore_set at append, as the base findings were dropped above.
     for combination in post_classification():
-        synthesized = combination.synth(findings, capabilities, component, fired)
+        synthesized = combination.synth(findings, capabilities, component, fired, index)
         if synthesized is not None and synthesized.id not in ignore_set:
             findings.append(synthesized)
             fired.add(combination.id)

@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.76.0]
+
+Ruleset 78. Report schema 1.9 is unchanged.
+
+### Added
+- `ST-CLIPPER` also catches a clipper that leaves the clipboard write to its caller. Such code
+  returns a fixed address when the clipboard text matches an address pattern, and any other text
+  unchanged. The rule reads the address even when it is spliced from fragments.
+- `ST-COMBO-EXFIL` pairs a credential read and a network call in two languages again, but only
+  when the code links the two programs. Either the file with the credential read writes a
+  staging file that the sending file reads, or one of the two files starts the other by name.
+  The linking line is added to the evidence. `RULES_CHANGELOG.md` (ruleset 78) has the details.
+
+### Changed
+- `docs/language-scope.md`: detection for Go, Rust, Java, Ruby and PHP is planned, with no date
+  set.
+
 ## [0.75.0]
 
 Ruleset 77. Report schema 1.9 is unchanged.

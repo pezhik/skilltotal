@@ -95,6 +95,14 @@ starts or steers other programs, so a credential reference or a network call the
 runtime: `cp ~/.ssh/id_rsa /tmp/k && node send.js` still forms the path. A Go file that names its
 own host key and a Python script that posts to localhost do not.
 
+Programs in two runtimes also pair when the code links them. One link is a staging file: the file
+with the credential reference writes a path that the file with the network call reads
+(`open("/tmp/.k", "w")` in Python, `fs.readFileSync("/tmp/.k")` in Node.js). The other is a launch:
+one of the two files starts the other by its file name (`subprocess.run(["node", "send.js"])`,
+`execFileSync("python3", ["collect.py"])`). The linking line is added to the finding's evidence.
+A path both programs only read, such as a shared settings file, is not a link, and neither is a
+launch of some other program.
+
 ## Other synthesized combinations
 
 `ST-COMBO-EXFIL` is one of four findings the engine synthesizes from combinations of base findings,

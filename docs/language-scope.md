@@ -39,13 +39,11 @@ zero-dependency constraint rules out (Python’s is the only stdlib parser). The
 regex-based heuristic scanners mirroring the Node.js ones — tractable but a deliberate, separately
 calibrated effort, not a quiet add-on.
 
-## Roadmap (free OSS) + SkillTotal Cloud depth (paid)
+## Roadmap
 
-Per the open-core boundary (`docs/open-core.md`), **all detection rules stay in the free OSS
-engine** — so the language work below is OSS. The paid **SkillTotal Cloud** layer sits *above*
-detection (deeper analysis and interpretation), it does not gate basic detection.
+Detection for these languages is planned, with no date set.
 
-**Free OSS engine — basic multi-language detection (planned):**
+**Basic multi-language detection (planned, no date):**
 1. Regex-based exec/network/deserialization scanners for **Go, Rust, Java** (the main non-Python/
    non-Node AI-component languages), mirroring the Node.js scanner pattern, so the exfil combos can
    fire there too. Java `ObjectInputStream` deserialization is the highest-priority single sink.

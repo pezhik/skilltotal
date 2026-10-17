@@ -32,6 +32,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 
+from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Component, Evidence, Finding
 from skilltotal.scoring import (
     COMBO_FINDING_ID,
@@ -53,9 +54,13 @@ class Phase(str, Enum):
 
 
 # Uniform evaluator signature so the engine can dispatch every combination the same way.
-# ``fired`` is the set of combination ids that have already fired this run (for suppression).
+# ``fired`` is the set of combination ids that have already fired this run (for suppression);
+# ``index`` is the component's files, for a combination that checks how two files are linked.
 Synth = Callable[
-    [list[Finding], dict[Capability, list[Evidence]], "Component | None", "set[str]"],
+    [
+        list[Finding], dict[Capability, list[Evidence]], "Component | None", "set[str]",
+        "FileIndex | None",
+    ],
     "Finding | None",
 ]
 
@@ -70,20 +75,20 @@ class Combination:
     synth: Synth
 
 
-def _exfil(findings, capabilities, component, fired):
-    return exfiltration_finding(findings, capabilities, component)
+def _exfil(findings, capabilities, component, fired, index):
+    return exfiltration_finding(findings, capabilities, component, index)
 
 
-def _trifecta(findings, capabilities, component, fired):
+def _trifecta(findings, capabilities, component, fired, index):
     # Suppressed once the stronger credential-specific combo has fired (same exfil concern).
     return trifecta_finding(findings, capabilities, combo_fired=COMBO_FINDING_ID in fired)
 
 
-def _dropper(findings, capabilities, component, fired):
+def _dropper(findings, capabilities, component, fired, index):
     return install_dropper_finding(findings)
 
 
-def _convergence(findings, capabilities, component, fired):
+def _convergence(findings, capabilities, component, fired, index):
     return convergence_finding(findings)
 
 
