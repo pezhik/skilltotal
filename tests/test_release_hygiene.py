@@ -18,6 +18,10 @@ ROOT = Path(__file__).resolve().parent.parent
 _ACTION_PIN_RE = re.compile(r"uses:\s*[\w.-]+/skilltotal@v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
 
 
+# Folders under the repo root that are not part of this checkout's sources.
+_NOT_THIS_CHECKOUT = {".git", ".venv", "node_modules", ".claude"}
+
+
 def test_changelog_has_section_for_current_version():
     # CHANGELOG.md must describe the version being released.
     text = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
@@ -46,7 +50,10 @@ def test_documented_action_pins_match_the_current_version():
     for path in sorted(ROOT.rglob("*")):
         if path.suffix not in {".md", ".yml", ".yaml"} or not path.is_file():
             continue
-        if any(part in {".git", ".venv", "node_modules"} for part in path.parts):
+        # Parts relative to the repo: a checkout that itself lives under `.claude/worktrees/` must
+        # still be scanned, while agent worktrees nested in this checkout (other branches, other
+        # versions) must not be read as this release's pins (2026-10-19, a deploy gate failure).
+        if set(path.relative_to(ROOT).parts) & _NOT_THIS_CHECKOUT:
             continue
         for match in _ACTION_PIN_RE.finditer(path.read_text(encoding="utf-8")):
             if match.group("version") != skilltotal.__version__:
@@ -142,9 +149,9 @@ def test_no_stdlib_names_newer_than_the_supported_python():
 
     offenders: list[str] = []
     for path in sorted(ROOT.rglob("*.py")):
-        parts = set(path.parts)
+        parts = set(path.relative_to(ROOT).parts)
         # manual_eval/corpus is third-party source fetched by the calibration harness.
-        if parts & {".git", ".venv", "node_modules"} or "corpus" in parts:
+        if parts & _NOT_THIS_CHECKOUT or "corpus" in parts:
             continue
         try:
             tree = ast.parse(path.read_text(encoding="utf-8"))
