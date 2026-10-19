@@ -11,7 +11,7 @@ from __future__ import annotations
 import bisect
 import re
 
-from skilltotal.file_index import FileIndex
+from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -191,6 +191,19 @@ _EXEC_SINK = re.compile(
     r"(?<![\w.])eval\s*\("
 )
 _DECRYPT_EXEC_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
+# Matches looked at per file for one in code; past this a file of comments is not read further.
+_MAX_CODE_TRIES = 200
+
+
+def _first_in_code(f: IndexedFile, pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """The first match of ``pattern`` that is code: not in a comment or a string literal."""
+    for k, m in enumerate(pattern.finditer(f.text)):
+        if k >= _MAX_CODE_TRIES:
+            return None
+        at = m.start()
+        if not (f.in_comment(at) or f.in_string(at) or f.in_c_comment(at) or f.in_c_string(at)):
+            return m
+    return None
 
 _BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
 _HEX_ESCAPES = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){10,}")
@@ -365,8 +378,10 @@ class ObfuscationScanner(Scanner):
         """
         evidence: list[Evidence] = []
         for f in index.select(suffixes=_DECRYPT_EXEC_SUFFIXES):
-            dec = _DECRYPT_CONSTRUCT.search(f.text)
-            sink = _EXEC_SINK.search(f.text)
+            # Each half must be code: a decryption a comment mentions decrypts nothing, so it does
+            # not pair with an unrelated `eval` elsewhere in the file.
+            dec = _first_in_code(f, _DECRYPT_CONSTRUCT)
+            sink = _first_in_code(f, _EXEC_SINK) if dec else None
             if not dec or not sink:
                 continue
             evidence.append(f.evidence_for_span(dec.start(), dec.end()))

@@ -252,13 +252,28 @@ def _is_guardlist_context(relpath: str, line_text: str, matched: str = "") -> bo
     # Leading whitespace goes before the list-element regexes, whose own leading `\s*` runs into a
     # second `\s*` and splits a long indentation every possible way.
     bare = _TRAILING_COMMENT.sub("", line_text).lstrip()
+    before = bare[: bare.find(matched)] if matched in bare else ""
+    # The file's name and a word on the line are the author's to choose: neither turns a line that
+    # hands the path to a read (`readFileSync(...)`, `open(...)`, `cat ~/.ssh/...`) into a list.
+    reads = bool(_READ_CALL.search(bare) or _READ_COMMAND_BEFORE.search(before))
     return (
-        _guard_segment(relpath)
-        or bool(_NAME_COMPARISON.search(bare[: bare.find(matched)] if matched in bare else ""))
-        or bool(_GUARD_KEYWORDS.search(line_text))
+        (not reads and (_guard_segment(relpath) or bool(_GUARD_KEYWORDS.search(line_text))))
+        or bool(_NAME_COMPARISON.search(before))
         or (bool(_BARE_LIST_ELEMENT.match(bare)) and not _json_command_line(relpath, bare))
         or bool(_BARE_REGEX_ELEMENT.match(bare))
     )
+
+
+# A call that reads or copies a file: `readFileSync(`, `read_text(`, Go's `os.ReadFile(`, `open(`,
+# `.read(`. A permission rule's bare `Read(` (`"Read(~/.ssh/**)"`) is a denylist entry, not a call.
+_READ_CALL = re.compile(
+    r"\b(?:[Rr]ead[A-Za-z_]+|read|f?open|createReadStream|copyFile\w*|file_get_contents)\s*\("
+    r"|(?i:\bget-content\s)"
+)
+# A shell command that prints, copies or sends the path that follows on its line.
+_READ_COMMAND_BEFORE = re.compile(
+    r"(?:^|[\s;&|(`$])(?:cat|cp|scp|rsync|curl|wget|tar|zip|base64|gc)\s[^|;&\n]*$"
+)
 
 
 # In a JSON file every string sits on a line of its own shape (`"value",` or `"key": "value"`),

@@ -15,10 +15,12 @@ Commands:
         A config that was applied is named on the console. CLI flags override config. Inline
         `# skilltotal:ignore[ST-ID]` on a finding's line, or on the line above it, suppresses it
         when the source is a local directory (never in a fetched package or repository).
-    skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL] [--no-config]
+    skilltotal diff <old> <new> [--json] [--output FILE] [--fail-on-new LEVEL]
+                                [--fail-on-unanalyzed] [--no-config]
         compare two versions of a component: each side is any scannable source (as in
         `scan`) or a previously saved JSON report. Reports new/resolved findings,
-        evidence-level changes, and capability changes.
+        evidence-level changes, capability changes, and what only the new version's scan
+        could not analyze.
     skilltotal guard <source> [--block-on malicious|high|medium] [--json]
     skilltotal guard --installed [--project DIR] [--block-on ...] [--json]
         pre-install allow/block decision (exit 2 on block): malicious indicators always
@@ -252,6 +254,15 @@ def build_parser() -> argparse.ArgumentParser:
             "on an existing finding) at or above LEVEL severity (low, medium, high, critical). "
             "As with scan --fail-on, malicious indicators trip it at any severity and "
             "capabilities never do."
+        ),
+    )
+    diff.add_argument(
+        "--fail-on-unanalyzed",
+        action="store_true",
+        help=(
+            "Exit with code 2 if the new version has a file, or part of one, that could not be "
+            "analyzed and the old version did not: a finding that disappeared with it may only "
+            "be out of view."
         ),
     )
     diff.add_argument(
@@ -691,7 +702,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
     try:
         config = _load_config(args)
     except ConfigError as exc:  # a gate that would silently be off
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
 
     # A report the scan cannot write is known before the scan, which can take minutes.
@@ -714,7 +725,8 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         try:
             suppress = load_baseline(baseline_path)
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"error: cannot read baseline {baseline_path}: {exc}", file=sys.stderr)
+            print(f"error: cannot read baseline {_one_line(str(baseline_path))}: "
+                  f"{_diagnostic(str(exc))}", file=sys.stderr)
             return EXIT_ERROR
 
     exclude = [*config.exclude, *args.exclude, *_own_report(args.source, args.output)]
@@ -739,17 +751,17 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             )
             report.component.source = args.source  # not the snapshot's temporary path
     except StagedError as exc:
-        print(f"error: --staged: {exc}", file=sys.stderr)
+        print(f"error: --staged: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
     except CollectionError as exc:
         from skilltotal.collector import failure_category
 
         # A repository that does not exist reads as git asking for a password.
         if failure_category(exc) == "repo-not-found":
-            print(f"error: {args.source}: the repository was not found, or it is private "
-                  "(a private repository needs git credentials)", file=sys.stderr)
+            print(f"error: {_one_line(args.source)}: the repository was not found, or it is "
+                  "private (a private repository needs git credentials)", file=sys.stderr)
         else:
-            print(f"error: {exc}", file=sys.stderr)
+            print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         if _joined_by_trailing_backslash(args.source):
             print("hint: a trailing backslash before the closing quote joined your arguments; "
                   "drop the trailing \\ (write '.\\my folder', not '.\\my folder\\')",
@@ -784,7 +796,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         try:
             signals = collect_provenance(args.source)
         except ProvenanceError as exc:
-            print(f"warning: {exc}", file=sys.stderr)
+            print(f"warning: {_diagnostic(str(exc))}", file=sys.stderr)
         else:
             report.needs_review.extend(signals)
             report.metadata["provenance_checked"] = True
@@ -927,7 +939,7 @@ def _cmd_diff(args: argparse.Namespace) -> int:
     try:
         config = _load_config(args)
     except ConfigError as exc:  # a gate that would silently be off
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
     exclude = [*config.exclude, *args.exclude]
     problem = _output_problem(args.output) if args.output else ""
@@ -937,18 +949,24 @@ def _cmd_diff(args: argparse.Namespace) -> int:
         return EXIT_ERROR
 
     try:
-        old_report = _resolve_diff_side(args.old, config, exclude)
-        new_report = _resolve_diff_side(args.new, config, exclude)
+        old_report, old_saved = _resolve_diff_side(args.old, config, exclude)
+        new_report, new_saved = _resolve_diff_side(args.new, config, exclude)
     except CollectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
     except (OSError, json.JSONDecodeError) as exc:
-        print(f"error: cannot read report: {exc}", file=sys.stderr)
+        print(f"error: cannot read report: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
 
     diff = diff_reports(old_report, new_report)
     if config.path is not None:
         print(f"config applied: {_one_line(config.describe())}", file=sys.stderr)
+    # A saved report is taken as it says: whoever wrote the file wrote its findings. The gate
+    # below compares what the file claims, so the log says that no scan stands behind it.
+    for side, source, saved in (("old", args.old, old_saved), ("new", args.new, new_saved)):
+        if saved:
+            print(f"diff: the {side} side ({_one_line(source)}) was read as a saved SkillTotal "
+                  "report, not scanned; its findings are taken as given", file=sys.stderr)
 
     if args.output:
         try:
@@ -969,8 +987,15 @@ def _cmd_diff(args: argparse.Namespace) -> int:
         if tripping:
             first = tripping[0]
             more = f" and {len(tripping) - 1} more" if len(tripping) > 1 else ""
-            print(f"gate: --fail-on-new {args.fail_on_new} tripped by {first['id']} "
-                  f"({first['severity']}){more}", file=sys.stderr)
+            print(f"gate: --fail-on-new {args.fail_on_new} tripped by {_one_line(first['id'])} "
+                  f"({_one_line(first['severity'])}){more}", file=sys.stderr)
+            return EXIT_FAIL_ON_HIGH
+    if diff.coverage_gaps_added:
+        titles = "; ".join(dict.fromkeys(_one_line(str(n.get("title", "")))
+                                         for n in diff.coverage_gaps_added))
+        print(f"Not analyzed in the new version only: {titles}.", file=sys.stderr)
+        if args.fail_on_unanalyzed:
+            print("gate: --fail-on-unanalyzed tripped", file=sys.stderr)
             return EXIT_FAIL_ON_HIGH
     return EXIT_OK
 
@@ -994,19 +1019,20 @@ def _new_risk(diff, level: str) -> list[dict]:
     return tripping
 
 
-def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> dict:
-    """Resolve one diff side: a saved JSON report is loaded, anything else is scanned."""
+def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> tuple[dict, bool]:
+    """Resolve one diff side: a saved JSON report is loaded, anything else is scanned. Returns
+    the report and whether it was a saved one."""
     from skilltotal.engine import analyze
 
     path = Path(source)
     if path.is_file() and path.suffix.lower() == ".json":
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict) and {"component", "risk_score", "findings"} <= data.keys():
-            return data
+            return data, True
         # A .json file that is not a saved report (e.g. a bare package.json) is scanned
         # like any other single-file source.
     report = analyze(source, ignore_rules=config.ignored_rules(), exclude=exclude)
-    return report.to_dict()
+    return report.to_dict(), False
 
 
 def _cmd_guard(args: argparse.Namespace) -> int:
@@ -1023,7 +1049,7 @@ def _cmd_guard(args: argparse.Namespace) -> int:
     try:
         report = analyze(args.source).to_dict()
     except CollectionError as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
     decision = evaluate(report, args.block_on)
     if args.json:
@@ -1803,6 +1829,15 @@ def _one_line(text: str) -> str:
     from skilltotal.report import one_line
 
     return one_line(text)
+
+
+def _diagnostic(text: str) -> str:
+    """An error message that carries text from outside (a git server's `remote:` lines, a
+    registry's answer, a file name): its line breaks are kept, but control characters and CI
+    workflow commands (`::error::`, `##[...]`) are shown as text, as in a report."""
+    from skilltotal.report import _terminal_safe
+
+    return _terminal_safe(text)
 
 
 # A quote inside one argument, then the end of it or what reads as a flag: on Windows, `\"` in a

@@ -635,7 +635,10 @@ def summarize_diff(old: dict[str, Any], new: dict[str, Any],
         "capabilities_removed": diff.get("capabilities_removed") or [],
         "ruleset_mismatch": bool(diff.get("ruleset_mismatch")),
         "summary": diff.get("summary", ""),
-        "not_checked": list(NOT_CHECKED),
+        # What the new version's scan could not read and the old one could: a finding gone with
+        # it may only have gone out of view.
+        "not_checked": [*NOT_CHECKED,
+                        *(_review_line(n) for n in diff.get("coverage_gaps_added") or [])],
         "full_report": "call again with detail=\"full\" for every new, resolved and changed "
                        "finding with all evidence",
     }

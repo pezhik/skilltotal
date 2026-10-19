@@ -1,6 +1,6 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.77.0 · ruleset 78 · Python 3.14 · offline corpus.
+Engine 0.78.0 · ruleset 79 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (130/130 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/94 benign samples wrongly flagged)
@@ -102,7 +102,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-SKILL-FETCH-EXEC-HIDDEN` | AST01, AST02 | 2 | 0 | - | - |
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
 | `ST-PICKLE-REDUCE` | AST01, AST05 | 2 | 0 | - | - |
-| `ST-AGENT-AUTORUN` | AST02 | 2 | 3 | 2/2 | 1/1 |
+| `ST-AGENT-AUTORUN` | AST02 | 3 | 3 | 2/2 | 1/1 |
 | `ST-AGENT-AUTORUN-REMOTE` | AST02 | 5 | 0 | - | - |
 | `ST-AGENT-GITCONFIG-EXEC-REMOTE` | AST02 | 0 | 0 | - | - |
 | `ST-GIT-HOOK-PERSIST` | AST02 | 1 | 0 | - | - |

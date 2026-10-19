@@ -4,6 +4,47 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.78.0]
+
+Ruleset 79. Report schema 1.9 is unchanged. `RULES_CHANGELOG.md` (ruleset 79) lists the
+detection changes.
+
+### Added
+- `skilltotal diff --fail-on-unanalyzed` exits 2 when the new version has a part the scan could not
+  analyze and the old version did not. A finding can disappear because its file became too large,
+  minified or unparseable, and `--fail-on-new` alone passed that. The diff JSON lists these parts
+  as `coverage_gaps_added`, the text report lists them under "Not analyzed in the new version
+  only", and the MCP server's `diff_components` summary adds them to `not_checked`.
+- New `needs_review` notes for analysis that stopped at a limit. Each counts as unanalyzed for
+  `--fail-on-unanalyzed` and for the install hook:
+  - the reading of what `package.json` runs at install time stops after 200 files, 64 words of a
+    command or 100 nested packages. The note uses the "Install script not analyzed" title, so
+    `guard` and the hook do not call such an install clean;
+  - "Frontmatter partly analyzed": a skill or subagent frontmatter longer than 2,000 lines, where
+    hooks or MCP servers declared further down were not read;
+  - "Environment sends partly analyzed": a JavaScript file with more uses of `process.env`, or more
+    calls next to them, than the environment-send check follows.
+- Code loaded by a literal path from a skipped folder is reported as not analyzed when it is a
+  native binary (a `.node` addon) or a file excluded with `--exclude`. An excluded file is no
+  longer read there.
+
+### Changed
+- `skilltotal diff` counts repeated evidence. A second copy of a line the old version already had,
+  in the same file, is now added evidence and can trip `--fail-on-new`.
+- `skilltotal diff` says on the console when a side was read as a saved `--json` report: its
+  findings are taken as the file states them, and no scan stands behind them.
+- The "Folders not analyzed" note says that a package the component loads by name (a bundled
+  dependency) was not read.
+
+### Security
+- The install hook reads cmd's `%NAME%` and `!NAME!` variables as words the shell fills in. `set
+  V=install & npm %V% x` and `npm install %P%` were let through without a check; they are now asked
+  about, like `$V` in bash. `uv pip $V x` and `uv tool $V x` are asked about too.
+- `guard` prints the component's name, version, type, verdict and reasons on one line each.
+  Before, a newline in a package's name could print a line of its choosing above the decision.
+- Error messages that carry outside text (a git server's `remote:` lines, a registry's answer)
+  show control characters and CI workflow commands (`::error::`, `##[...]`) as text.
+
 ## [0.77.0]
 
 Ruleset 78 and report schema 1.9 are unchanged: no detection rule changed.

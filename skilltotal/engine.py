@@ -144,7 +144,8 @@ def analyze_directory(
     # must be scanned there; in a repository they duplicate source that is checked in beside them.
     published = component.type in _PUBLISHED_PACKAGE_TYPES
     # What npm runs on install is read whatever its shape, minified or not: it is the attack.
-    install_scripts = _install_script_files(Path(root))
+    install_limits: list[str] = []
+    install_scripts = _install_script_files(Path(root), install_limits)
     # So is the code the package runs when it is imported or its command is run: a main file padded
     # with one long comment until it looked minified was skipped, and its payload with it.
     index = FileIndex.build(
@@ -161,6 +162,18 @@ def analyze_directory(
     for relpath, script in install_scripts.items():
         if relpath not in indexed:
             needs_review.append(_unanalyzed_install_script(Path(root), relpath, script))
+    if install_limits:
+        # The walk of what install scripts run stopped at a limit: what lies past it runs at
+        # install time and was not followed. The install guard keys on this title.
+        needs_review.append(NeedsReview(
+            category="coverage",
+            title=UNANALYZED_INSTALL_SCRIPT,
+            reason=(
+                "Reading what package.json runs at install time stopped at a limit ("
+                + "; ".join(install_limits) + "). Code past it runs at install time and may "
+                "not have been analyzed, so read the install scripts before installing."
+            ),
+        ))
     if index.minified:
         shown = ", ".join(index.minified[:5])
         more = f" (+{len(index.minified) - 5} more)" if len(index.minified) > 5 else ""
@@ -421,8 +434,11 @@ _UNANALYZED_LANGUAGES = {
 _NPM_INSTALL_SCRIPTS = ("preinstall", "install", "postinstall")
 
 
-def _install_script_files(root: Path) -> dict[str, str]:
+def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[str, str]:
     """Files ``package.json`` runs at install time, as ``{relpath: script name}``.
+
+    Each bound the walk stops at is appended to ``limits`` (when given), in words: what lies past
+    it was not followed, and the report must not call the install clean.
 
     Any word of a ``preinstall`` / ``install`` / ``postinstall`` command that names a file inside
     the component is that file (``node setup.js``, ``sh ./scripts/x.sh``, ``./bin/fetch``), found
@@ -440,7 +456,11 @@ def _install_script_files(root: Path) -> dict[str, str]:
     """
     base = root.resolve()
     queue: list[tuple[Path, str]] = []
-    for manifest in _package_manifests(root):
+    reached: list[str] = []
+    manifests = _package_manifests(root)
+    if len(manifests) > _MAX_PACKAGES:
+        reached.append(f"{_MAX_PACKAGES} packages inside the component")
+    for manifest in manifests:
         try:
             data = bounded_json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
         except (OSError, ValueError):
@@ -453,12 +473,19 @@ def _install_script_files(root: Path) -> dict[str, str]:
             command = scripts.get(script)
             if not isinstance(command, str):
                 continue
-            for word in _install_command_words(package, command):
+            words = _install_command_words(package, command)
+            if len(words) >= _MAX_INSTALL_WORDS:
+                reached.append(f"{_MAX_INSTALL_WORDS} words of the {script} command")
+            for word in words:
                 target = _module_file(base, package, word)
                 if target is not None:
                     queue.append((target, script))
     found: dict[str, str] = {}
-    while queue and len(found) < _MAX_INSTALL_FILES:
+    while queue:
+        if len(found) >= _MAX_INSTALL_FILES:
+            if any(target.relative_to(base).as_posix() not in found for target, _ in queue):
+                reached.append(f"{_MAX_INSTALL_FILES} files")
+            break
         target, script = queue.pop(0)
         relpath = target.relative_to(base).as_posix()
         if relpath in found:
@@ -480,6 +507,8 @@ def _install_script_files(root: Path) -> dict[str, str]:
             loaded = _bundled_module_file(base, target.parent, match.group(2))
             if loaded is not None:
                 queue.append((loaded, script))
+    if limits is not None:
+        limits.extend(dict.fromkeys(reached))
     return found
 
 
@@ -646,7 +675,8 @@ def _skipped_folders_note(index: FileIndex) -> NeedsReview | None:
         reason=(
             f"{len(folders)} folder(s) were not read: {shown}{more}. They hold third-party code "
             "or a build of the component's own. Code the component loads from them by a literal "
-            "path was read and checked; nothing else in them was."
+            "path was read and checked; packages it loads by name (a bundled dependency) and "
+            "everything else in them were not."
         ),
         file=f"{folders[0][0]}/",
     )
@@ -661,9 +691,10 @@ def _unloaded_note(unloaded: list[str]) -> NeedsReview:
         title=UNANALYZED_LOADED_CODE,
         reason=(
             f"The component loads {len(unloaded)} file(s) from a folder the scan otherwise skips, "
-            f"and they could not be read (larger than {MAX_FILE_BYTES // (1024 * 1024)} MiB, "
-            f"unreadable, or past the {MAX_LOADED_FILES}-file limit): {shown}{more}. That code "
-            "runs and nothing in it was checked."
+            f"and they were not read (a native binary, larger than "
+            f"{MAX_FILE_BYTES // (1024 * 1024)} MiB, unreadable, excluded from the scan, or past "
+            f"the {MAX_LOADED_FILES}-file limit): {shown}{more}. That code runs and nothing in it "
+            "was checked."
         ),
         file=unloaded[0],
     )

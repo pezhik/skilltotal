@@ -14,7 +14,7 @@ import re
 from collections.abc import Iterator
 
 from skilltotal import bounded_json
-from skilltotal.autorun import KIND_MCP_SERVER, autorun_commands
+from skilltotal.autorun import KIND_MCP_SERVER, _strip_jsonc, autorun_commands
 from skilltotal.file_index import (
     FileIndex,
     IndexedFile,
@@ -639,9 +639,15 @@ class McpScanner(Scanner):
             try:
                 data, cut = bounded_json.loads_cut(f.text)
             except ValueError as exc:
-                if looks_like_manifest:
+                if not looks_like_manifest:
+                    continue
+                # Editors built on VS Code (Cursor, Windsurf, VS Code itself) read their MCP
+                # configuration as JSON with comments and trailing commas.
+                try:
+                    data, cut = bounded_json.loads_cut(_strip_jsonc(f.text))
+                except ValueError:
                     needs_review.append(_unparseable_manifest(f, exc))
-                continue
+                    continue
             if cut and looks_like_manifest:
                 needs_review.append(deep_json_review(CATEGORY, f.relpath))
 

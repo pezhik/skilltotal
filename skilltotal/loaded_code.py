@@ -26,6 +26,7 @@ from skilltotal.file_index import (
     SKIP_VCS,
     FileIndex,
     IndexedFile,
+    _matches_any,
     is_regular_file,
 )
 
@@ -189,11 +190,11 @@ def _python_targets(f: IndexedFile, roots: list[str]) -> list[str]:
 # --- the follower ---------------------------------------------------------------------------------
 def follow_skipped_references(index: FileIndex) -> tuple[FileIndex, list[str]]:
     """``index`` with the files the component loads from skipped folders added, and the loaded
-    files in skipped folders that could not be read (too large, unreadable, or past
-    ``MAX_LOADED_FILES``).
+    files in skipped folders that were not read: a native binary (an addon Node loads), too large,
+    unreadable, excluded from the scan (``--exclude``), or past ``MAX_LOADED_FILES``.
 
     A loaded file that is minified joins the index's minified list (it is reported as a bundle not
-    analyzed); a binary one (a native addon) cannot be analyzed and is not reported.
+    analyzed).
     """
     # Build output a repository sets aside is a copy of its own source, read where it is written;
     # following `main: dist/index.js` there would count every finding twice.
@@ -222,6 +223,10 @@ def follow_skipped_references(index: FileIndex) -> tuple[FileIndex, list[str]]:
         if rel in known or not skipped(rel):
             return
         known.add(rel)
+        if index.exclude and _matches_any(rel, index.exclude):
+            # The person asked for it not to be read; it still runs, so the report says so.
+            unread.append(rel)
+            return
         if len(extra) >= MAX_LOADED_FILES:
             # Past the bound the code is still loaded; the report must say it was not read.
             unread.append(rel)
@@ -232,8 +237,8 @@ def follow_skipped_references(index: FileIndex) -> tuple[FileIndex, list[str]]:
             queue.append(f)
         elif why == "minified":
             minified.append(rel)
-        elif why in ("large", "unreadable"):
-            unread.append(rel)
+        elif why in ("large", "unreadable", "binary"):
+            unread.append(rel)  # a binary one is native code the scan cannot read
 
     def consider_relpath(rel: str) -> None:
         rel = posixpath.normpath(rel)

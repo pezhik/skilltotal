@@ -33,7 +33,7 @@ repository you are about to scan can ship one (with `--package`, npx runs only t
 `uvx` does not look in the folder at all).
 
 ```bash
-npx -y --package=skilltotal@0.77.0 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.78.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 From source (development):
@@ -116,6 +116,8 @@ skilltotal diff ./old-checkout ./new-checkout --json
 skilltotal diff old-report.json new-report.json
 # CI gate: fail (exit 2) if the new version INTRODUCES a high/critical finding
 skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4 --fail-on-new high
+# ...or has a part the scan could not analyze that the old version did not
+skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4 --fail-on-new high --fail-on-unanalyzed
 
 # Pre-install guard: allow/block decision (exit 2 on block) you can chain before installing
 skilltotal guard npm:some-mcp-server && claude mcp add some-mcp-server -- npx some-mcp-server
@@ -155,6 +157,13 @@ not noise), capability changes, and the risk-score delta. `--fail-on-new LEVEL` 
 on risk the new version *introduces*, counted like `scan --fail-on` (a malicious indicator at any
 severity, never a capability on its own). Existing accepted findings never trip it, so it fits
 upgrade reviews ("is 1.2.4 riskier than the 1.2.3 we already vetted?") without a baseline file.
+A second copy of a line the old version already had counts as new evidence. A finding can also
+disappear because the new version's scan could not read the file it was in (too large, minified,
+unparseable): the diff lists those parts as `coverage_gaps_added` (JSON) and under "Not analyzed
+in the new version only" (text), and `--fail-on-unanalyzed` exits 2 on them. A side given as a
+saved `--json` report is not scanned: its findings are taken as the file states them, and the
+console says so. In CI, scan both sides rather than accept a report file from the change under
+review.
 
 **Guard** is the install-time answer to "should I trust this component right now?".
 Malicious indicators always block; scored risk at/above `--block-on` blocks;
@@ -191,7 +200,7 @@ scan stays component-only.
 |------|---------|
 | 0 | Success: no gate tripped. Also after `--write-baseline` has written its file (no gate is applied) |
 | 1 | Usage, config or collection error (for example an unknown or abbreviated flag, an invalid `.skilltotal.toml` or an unknown rule id in it, a missing path, an `--output` folder that does not exist, a failed clone, a source over a size limit). `guard --installed` also exits 1 when a component could not be checked or none was found, unless `--allow-unchecked` is given |
-| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score`, `--fail-on-unanalyzed`, a `block` policy or `diff --fail-on-new`), or `guard` blocked a component |
+| 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score`, `--fail-on-unanalyzed`, a `block` policy or `diff --fail-on-new`/`--fail-on-unanalyzed`), or `guard` blocked a component |
 
 When a gate trips, stderr gets one `gate:` line per gate, naming the gate, the finding that
 tripped it and why it counts, for example

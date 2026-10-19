@@ -20,11 +20,13 @@ parsing only.
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 from urllib.parse import urlsplit
 
 from skilltotal import bounded_json
+from skilltotal.autorun import _strip_jsonc
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
@@ -48,14 +50,25 @@ _BASE_URL_NAME = re.compile(
 )
 # Host names of this machine, compared with an address (nothing here binds or connects).
 _THIS_MACHINE = frozenset({"localhost", "0.0.0.0", "::1"})  # nosec B104
-# The vendors' own API hosts: not a redirect.
-_OFFICIAL_HOSTS = ("anthropic.com", "openai.com", "googleapis.com", "amazonaws.com", "azure.com",
-                   "openai.azure.com")
+# The vendors' own API hosts: not a redirect. Anthropic and OpenAI run every host under their own
+# domains. On the cloud domains anyone can hold a host (an API Gateway, an EC2 name or an S3 bucket
+# under amazonaws.com, a VM under cloudapp.azure.com, a bucket under storage.googleapis.com), so
+# only the model APIs' own host names count there: Bedrock, Vertex AI, the Gemini API, and Azure
+# OpenAI / AI Foundry resources (the service is Microsoft's; the key goes to it).
+_OFFICIAL_DOMAINS = ("anthropic.com", "openai.com")
+_OFFICIAL_CLOUD_HOST = re.compile(
+    r"bedrock(?:-runtime)?(?:-fips)?\.[a-z0-9-]+\.amazonaws\.com"
+    r"|(?:[a-z0-9-]+-)?aiplatform\.googleapis\.com"
+    r"|generativelanguage\.googleapis\.com"
+    r"|[a-z0-9-]+\.(?:openai|services\.ai|cognitiveservices)\.azure\.com"
+)
 
 _TOML_LINE = re.compile(
     r"""^[ \t]*(?P<key>[A-Za-z_][\w-]*)[ \t]*=[ \t]*(?P<q>["'])(?P<value>[^"'\n]*)(?P=q)""",
     re.MULTILINE,
 )
+# A TOML table header, `[profiles.yolo]` (or an array-of-tables header, `[[x]]`).
+_TOML_HEADER = re.compile(r"^[ \t]*\[\[?([^\[\]\n]+)\]\]?[ \t]*(?:#[^\n]*)?$", re.MULTILINE)
 _ENV_LINE = re.compile(
     r"""^[ \t]*(?:export[ \t]+)?(?P<key>[A-Za-z_]\w*)[ \t]*=[ \t]*"""
     r"""(?P<q>["']?)(?P<value>[^"'\s#]*)(?P=q)""",
@@ -120,7 +133,7 @@ class AgentApprovalScanner(Scanner):
                 if data is not None:
                     approve.extend(_gemini_approvals(f, data))
             elif _VSCODE_SETTINGS.search(path):
-                data = _json(f)
+                data = _json(f, jsonc=True)
                 if data is not None:
                     approve.extend(_vscode_approvals(f, data))
             elif _CODEX_CONFIG.search(path):
@@ -134,12 +147,17 @@ class AgentApprovalScanner(Scanner):
         return ScanResult(findings=findings)
 
 
-def _json(f: IndexedFile) -> dict | None:
-    try:
-        data = bounded_json.loads(f.text)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
+def _json(f: IndexedFile, *, jsonc: bool = False) -> dict | None:
+    """The file's JSON object. ``jsonc``: VS Code reads its settings with comments and trailing
+    commas, so a file that is not plain JSON is read that way too."""
+    texts = (f.text, _strip_jsonc(f.text)) if jsonc else (f.text,)
+    for text in texts:
+        try:
+            data = bounded_json.loads(text)
+        except ValueError:
+            continue
+        return data if isinstance(data, dict) else None
+    return None
 
 
 def _at(f: IndexedFile, pattern: str) -> list[Evidence]:
@@ -190,8 +208,23 @@ def _toml_values(f: IndexedFile) -> list[re.Match[str]]:
 
 
 def _codex_approvals(f: IndexedFile) -> list[Evidence]:
-    """No approvals and no sandbox: every command runs unasked with full access."""
-    values = {m.group("key"): m for m in _toml_values(f)}
+    """No approvals and no sandbox: every command runs unasked with full access.
+
+    Codex reads both settings at the top level, and from the profile ``profile`` selects there,
+    which overrides them. The same keys under any other table (a profile nobody selected) do not
+    apply."""
+    headers = list(_TOML_HEADER.finditer(f.text))
+    starts = [h.start() for h in headers]
+    # Each table's name with quotes and blanks around the dots removed: `profiles."yolo"`.
+    names = [".".join(p.strip().strip("\"'") for p in h.group(1).split(".")) for h in headers]
+    tables: dict[str, dict[str, re.Match[str]]] = {}
+    for m in _toml_values(f):
+        k = bisect.bisect_right(starts, m.start()) - 1
+        tables.setdefault(names[k] if k >= 0 else "", {})[m.group("key")] = m
+    values = dict(tables.get("", {}))
+    selected = values.get("profile")
+    if selected is not None:
+        values.update(tables.get(f"profiles.{selected.group('value')}", {}))
     policy, sandbox = values.get("approval_policy"), values.get("sandbox_mode")
     if policy and sandbox and policy.group("value") == "never" \
             and sandbox.group("value") == "danger-full-access":
@@ -230,4 +263,6 @@ def _elsewhere(url: str) -> bool:
     host = parts.hostname.lower().rstrip(".")
     if host in _THIS_MACHINE or host.startswith("127.") or host.endswith(".localhost"):
         return False
-    return not any(host == h or host.endswith("." + h) for h in _OFFICIAL_HOSTS)
+    if _OFFICIAL_CLOUD_HOST.fullmatch(host):
+        return False
+    return not any(host == h or host.endswith("." + h) for h in _OFFICIAL_DOMAINS)

@@ -99,6 +99,27 @@ _GITHUB_DEST = re.compile(
 _SEGMENT_BREAK = frozenset(";&|\n")
 
 
+# The host of each address in a command: after a scheme (`https://user@host:443/...`), or a bare
+# `host.tld/path` word as curl accepts it. GitHub named anywhere else in the command (a header, a
+# query string, `github.com.example.invalid`) is not where the request goes.
+_URL_HOST = re.compile(r"\b[a-z][a-z0-9+.-]*://(?:[^\s/?#@'\"]*@)?([^\s/?#:'\"]+)", re.IGNORECASE)
+_BARE_HOST = re.compile(
+    r"(?:^|[\s'\"=])((?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*)/(?!/)", re.IGNORECASE
+)
+_GITHUB_HOST = re.compile(
+    r"(?:[a-z0-9-]+\.)*(?:github\.com|githubusercontent\.com|ghcr\.io)", re.IGNORECASE
+)
+
+
+def _to_github(piece: str) -> bool:
+    """Whether a command segment's network destination is GitHub: every address in it is on a
+    GitHub host, or, with no address written out, it names GitHub's host or URL variable."""
+    hosts = [h.rstrip(".") for h in _URL_HOST.findall(piece) + _BARE_HOST.findall(piece)]
+    if hosts:
+        return all(_GITHUB_HOST.fullmatch(h) for h in hosts)
+    return bool(_GITHUB_DEST.search(piece))
+
+
 def _command_segments(command: str) -> list[tuple[int, int]]:
     """``(start, end)`` ranges of the separate commands in ``command``, split on unquoted ``;`` /
     ``&`` / ``|`` / newline. Quotes are honored (a separator inside a quoted string does not split),
@@ -414,7 +435,7 @@ def _secret_exfil_spans(command: str) -> list[tuple[int, int]]:
         client = _NET_CLIENT.search(piece)
         if client is None or not _CI_SECRET.search(piece):
             continue
-        if _GITHUB_DEST.search(piece):
+        if _to_github(piece):
             continue  # the secret is being sent to GitHub, which is legitimate
         spans.append((start + client.start(), start + client.end()))
     return spans

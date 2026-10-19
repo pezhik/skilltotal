@@ -93,7 +93,10 @@ component could be read` when nothing could be read. That wording does not chang
   `vendored-*`), Python virtual environments and installed `site-packages`, and in a repository
   (not a published package) the build output in `dist/` and `build/`. Code the component loads
   from those folders by a literal path (a relative `require`/`import`, a Python import, a
-  `package.json` or `pyproject.toml` entry point) is read anyway.
+  `package.json` or `pyproject.toml` entry point) is read anyway. A package it loads by name (a
+  bundled dependency in its own `node_modules/`) is not. A loaded file that cannot be read there
+  (a native addon, a file over 2 MiB, one you excluded with `--exclude`) gets a `needs_review`
+  note saying it was not analyzed.
 - **Dependencies are not scanned.** A scan covers the component's own files, not what it installs.
 - **Code that is not in the files is not analyzed:** code fetched or generated at run time, and
   binaries or compiled artifacts (counted in `metadata.files_skipped_binary`).

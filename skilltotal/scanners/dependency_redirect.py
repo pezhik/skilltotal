@@ -18,6 +18,7 @@ Detection patterns below are string literals; nothing here executes a command.
 from __future__ import annotations
 
 import re
+from itertools import islice
 
 from skilltotal.file_index import FileIndex, is_doc_path, skill_dirs
 from skilltotal.models import Evidence, NeedsReview, Severity, ThreatClass
@@ -45,6 +46,47 @@ _CONCEALMENT = re.compile(
     r"|(?:don['’]?t|do\s+not)\s+(?:let\s+)?(?:the\s+)?(?:user|developer)\s+(?:know|notice|see)",
     re.IGNORECASE,
 )
+
+# How far apart a redirect and the words hiding it may be, and how many of each are tried.
+_PAIR_WINDOW = 600
+_MAX_PAIR_TRIES = 50
+# A markdown heading, and a fence that opens or closes a code block (where `#` is a comment).
+_HEADING = re.compile(r"^#{1,6}[ \t]")
+_FENCE = re.compile(r"^[ \t]{0,3}(?:```|~~~)")
+
+
+def _heading_offsets(text: str) -> list[int]:
+    """Offsets of the markdown headings in ``text`` that are outside code blocks."""
+    out: list[int] = []
+    fenced = False
+    pos = 0
+    for line in text.splitlines(keepends=True):
+        if _FENCE.match(line):
+            fenced = not fenced
+        elif not fenced and _HEADING.match(line):
+            out.append(pos)
+        pos += len(line)
+    return out
+
+
+def _paired(text: str, first: re.Match[str]) -> tuple[re.Match[str], re.Match[str] | None]:
+    """A redirect and the concealment that goes with it: in the same section (no heading between
+    them) and close by. Words such as "do not mention" in another part of the file are about
+    something else (a commit-message rule), not about the index."""
+    conceals = list(islice(_CONCEALMENT.finditer(text), _MAX_PAIR_TRIES))
+    if not conceals:
+        return first, None
+    headings = _heading_offsets(text)
+    for redirect in islice(_INDEX_REDIRECT.finditer(text), _MAX_PAIR_TRIES):
+        for conceal in conceals:
+            a, b = sorted((redirect.start(), conceal.start()))
+            if b - a > _PAIR_WINDOW + (redirect.end() - redirect.start()):
+                continue
+            if any(a < h <= b for h in headings):
+                continue
+            return redirect, conceal
+    return first, None
+
 
 # Instruction-surface suffixes an agent reads and acts on (markdown/text/mdc). Code files are out
 # of scope here: a `.npmrc` write in code is a different behavior, not an agent instruction.
@@ -92,7 +134,7 @@ class DependencyRedirectScanner(Scanner):
             redirect = _INDEX_REDIRECT.search(f.text)
             if redirect is None:
                 continue
-            conceal = _CONCEALMENT.search(f.text)
+            redirect, conceal = _paired(f.text, redirect)
             if conceal is not None:
                 evidence.append(f.evidence_for_span(redirect.start(), redirect.end()))
                 evidence.append(f.evidence_for_span(conceal.start(), conceal.end()))

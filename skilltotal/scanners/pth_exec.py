@@ -55,6 +55,10 @@ class PthExecScanner(PatternScanner):
                 r"\bsubprocess\b",
                 r"\bos\.system\b",
                 r"\bos\.popen\b",
+                # The same process starts reached through another name for the module (`import os
+                # as o; o.system(...)`, `__import__('os').execv(...)`): no plain .pth calls these.
+                r"\.(?:system|popen|exec(?:l|le|lp|lpe|v|ve|vp|vpe)|spawn(?:l|le|lp|lpe|v|ve|vp|vpe)"
+                r"|posix_spawnp?|startfile)\s*\(",
                 r"\bmarshal\b",
                 r"\bpickle\b",
                 r"\bsocket\b",

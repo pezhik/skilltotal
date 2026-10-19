@@ -13,11 +13,12 @@ gating live in :mod:`skilltotal.cli`.
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
 from skilltotal.baseline import evidence_fingerprint
-from skilltotal.models import Severity
+from skilltotal.models import UNANALYZED_TITLES, Severity
 
 _SEVERITY_ORDER = ("critical", "high", "medium", "low")
 
@@ -42,6 +43,10 @@ class DiffReport:
     # True when the two reports were produced by different rulesets: finding churn may then
     # come from detection changes rather than component changes.
     ruleset_mismatch: bool = False
+    # Notes of the new report that say part of it was not analyzed (models.UNANALYZED_TITLES)
+    # and that the old report did not have. A finding that disappears along with one of these
+    # may have left the scan's view, not the component.
+    coverage_gaps_added: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -56,6 +61,7 @@ class DiffReport:
             "capabilities_added": self.capabilities_added,
             "capabilities_removed": self.capabilities_removed,
             "ruleset_mismatch": self.ruleset_mismatch,
+            "coverage_gaps_added": self.coverage_gaps_added,
             "summary": self.summary,
         }
 
@@ -96,6 +102,7 @@ def diff_reports(old: dict[str, Any], new: dict[str, Any]) -> DiffReport:
             old.get("metadata", {}).get("ruleset_version")
             != new.get("metadata", {}).get("ruleset_version")
         ),
+        coverage_gaps_added=_coverage_gaps_added(old, new),
     )
     diff.summary = _summary(diff, old, new)
     return diff
@@ -117,11 +124,12 @@ def max_new_severity(diff: DiffReport) -> Severity | None:
 def _evidence_delta(
     rule_id: str, old_f: dict[str, Any], new_f: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Evidence-level delta for a rule present in both reports, or None if unchanged."""
-    old_fps = {_fp(rule_id, e): e for e in old_f.get("evidence", [])}
-    new_fps = {_fp(rule_id, e): e for e in new_f.get("evidence", [])}
-    added = [new_fps[k] for k in sorted(new_fps.keys() - old_fps.keys())]
-    removed = [old_fps[k] for k in sorted(old_fps.keys() - new_fps.keys())]
+    """Evidence-level delta for a rule present in both reports, or None if unchanged.
+
+    Occurrences are counted per fingerprint: a second copy of a line the old version already had
+    (the same snippet in the same file) is an added occurrence, not the old one again."""
+    added = _beyond(rule_id, new_f.get("evidence", []), old_f.get("evidence", []))
+    removed = _beyond(rule_id, old_f.get("evidence", []), new_f.get("evidence", []))
     if not added and not removed:
         return None
     return {
@@ -134,8 +142,35 @@ def _evidence_delta(
     }
 
 
+def _beyond(
+    rule_id: str, side: list[dict[str, Any]], other: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The occurrences in ``side`` beyond as many as ``other`` has of each, in fingerprint order."""
+    left = Counter(_fp(rule_id, e) for e in other)
+    extra: list[tuple[str, int, dict[str, Any]]] = []
+    for k, e in enumerate(side):
+        fp = _fp(rule_id, e)
+        if left[fp] > 0:
+            left[fp] -= 1
+        else:
+            extra.append((fp, k, e))
+    return [e for _fp_key, _k, e in sorted(extra, key=lambda item: item[:2])]
+
+
 def _fp(rule_id: str, evidence: dict[str, Any]) -> str:
     return evidence_fingerprint(rule_id, evidence.get("file", ""), evidence.get("snippet", ""))
+
+
+def _coverage_gaps_added(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
+    """The new report's not-analyzed notes that the old report has no copy of (the same title,
+    file and reason)."""
+
+    def gaps(report: dict[str, Any]) -> list[dict[str, Any]]:
+        return [n for n in report.get("needs_review") or []
+                if isinstance(n, dict) and n.get("title") in UNANALYZED_TITLES]
+
+    seen = {(n.get("title"), n.get("file"), n.get("reason")) for n in gaps(old)}
+    return [n for n in gaps(new) if (n.get("title"), n.get("file"), n.get("reason")) not in seen]
 
 
 def _side_summary(report: dict[str, Any]) -> dict[str, Any]:
@@ -175,4 +210,6 @@ def _summary(diff: DiffReport, old: dict[str, Any], new: dict[str, Any]) -> str:
     parts.append(f"{len(diff.new_findings)} new finding(s)")
     parts.append(f"{len(diff.resolved_findings)} resolved")
     parts.append(f"{len(diff.changed_findings)} changed")
+    if diff.coverage_gaps_added:
+        parts.append(f"{len(diff.coverage_gaps_added)} new coverage gap(s)")
     return ": ".join([parts[0], ", ".join(parts[1:])])

@@ -243,6 +243,14 @@ def render_diff_text(diff: DiffReport) -> str:
             lines.append(f"{_INDENT}- {one_line(str(cap))}")
         lines.append("")
 
+    if diff.coverage_gaps_added:
+        # A finding that is gone may only be out of view: say what the new scan could not read.
+        lines.append(f"Not analyzed in the new version only ({len(diff.coverage_gaps_added)}):")
+        for note in diff.coverage_gaps_added:
+            lines.append(f"{_INDENT}! {one_line(str(note.get('title', '')))}: "
+                         f"{one_line(str(note.get('reason', '')))}")
+        lines.append("")
+
     return _terminal_safe("\n".join(lines).rstrip() + "\n")
 
 
@@ -293,29 +301,34 @@ def render_guard_json(source: str, report: dict, decision: GuardDecision) -> str
 
 
 def render_guard_text(source: str, report: dict, decision: GuardDecision) -> str:
+    # The name, version and type come from the package's own manifest: a newline in one would
+    # print a line of its choosing ("Decision  : ALLOW") above the real decision. Every field is
+    # kept on its own line; only the decision line says ALLOW or BLOCK.
     c = report.get("component", {})
+    c = c if isinstance(c, dict) else {}
     verdict = report.get("verdict") or {}
-    version = f" {c['version']}" if c.get("version") else ""
+    version = f" {one_line(str(c['version']))}" if c.get("version") else ""
     lines = [
         "SkillTotal Guard",
         "=" * 16,
-        f"Source    : {source}",
-        f"Component : {c.get('name', '?')}{version} ({c.get('type', '?')})",
-        f"Risk      : {report.get('risk_score', 0)}/100 "
-        f"{str(report.get('risk_level', '')).upper()}",
+        f"Source    : {one_line(source)}",
+        f"Component : {one_line(str(c.get('name', '?')))}{version} "
+        f"({one_line(str(c.get('type', '?')))})",
+        f"Risk      : {one_line(str(report.get('risk_score', 0)))}/100 "
+        f"{one_line(str(report.get('risk_level', ''))).upper()}",
     ]
     if verdict.get("headline"):
-        lines.append(f"Verdict   : {verdict['headline']}")
+        lines.append(f"Verdict   : {one_line(str(verdict['headline']))}")
     caps = sorted(report.get("capabilities", {}))
     if caps:
-        lines.append(f"Capabilities: {', '.join(caps)}")
+        lines.append(f"Capabilities: {', '.join(one_line(str(cap)) for cap in caps)}")
     lines.append("")
     lines.append(f"Decision  : {'ALLOW' if decision.allow else 'BLOCK'}")
     for reason in decision.reasons:
-        lines.append(f"{_INDENT}- {reason}")
+        lines.append(f"{_INDENT}- {one_line(reason)}")
     if not decision.allow:
         lines.append("")
-        lines.append(f"Inspect the full report: skilltotal scan {source}")
+        lines.append(f"Inspect the full report: skilltotal scan {one_line(source)}")
     return _terminal_safe("\n".join(lines) + "\n")
 
 

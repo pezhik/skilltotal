@@ -78,6 +78,8 @@ _MCP_MANIFEST_NAMES = frozenset(
 # Bundles Claude Code unpacks and runs: their code is not in the files this scan reads.
 _BUNDLE_SUFFIXES = (".mcpb", ".dxt")
 MCP_BUNDLE_NOT_ANALYZED = "MCP server bundle not analyzed"
+# A skill's or subagent's frontmatter longer than this reader goes (_MAX_FRONTMATTER_LINES).
+FRONTMATTER_PARTLY_READ = "Frontmatter partly analyzed"
 
 
 @dataclass(frozen=True)
@@ -219,6 +221,9 @@ class _Collector:
             or lower.endswith((_VSCODE_TASKS, _VSCODE_SETTINGS))
             or name in ("mcp.json", "manifest.json")
             or '"mcpServers"' in text
+            # A key written with escapes (`"mcp\u0053ervers"`) is the same name to a JSON
+            # reader, so a file with any escape is parsed and its decoded keys decide.
+            or "\\u" in text
         )
         if not candidate:
             return
@@ -453,7 +458,7 @@ class _Collector:
         ref_data = self._load(ref) if ref is not None else None
         if not isinstance(ref_data, dict) or ref is None:
             return
-        if '"mcpServers"' in ref.text:
+        if isinstance(ref_data.get("mcpServers"), dict):
             return  # read on its own like any file with an `mcpServers` map
         self._servers(ref, _Anchors(ref), ref_data, ORIGIN_PLUGIN, "referenced")
 
@@ -482,9 +487,22 @@ class _Collector:
 
     # -- Markdown frontmatter -----------------------------------------------------------------
     def frontmatter(self, f: IndexedFile, *, skill: bool) -> None:
-        block = _frontmatter_lines(f.text)
+        block, cut = _frontmatter_lines(f.text)
         if not block:
             return
+        if cut:
+            # The agent reads all of it: hooks or servers declared past the limit would run
+            # unchecked, so the report says the rest was not read.
+            self.reviews.append(NeedsReview(
+                category="coverage",
+                title=FRONTMATTER_PARTLY_READ,
+                reason=(
+                    f"The frontmatter is longer than {_MAX_FRONTMATTER_LINES} lines; hooks or MCP "
+                    "servers declared past that were not analyzed. Read the rest before using it."
+                ),
+                file=f.relpath,
+                line=f.line_of_offset(block[-1].start),
+            ))
         found = False
         for kind, origin, piece in _frontmatter_hooks(block):
             found = True
@@ -759,16 +777,17 @@ class _Line:
         return len(self.text) - len(self.text.lstrip(" \t"))
 
 
-def _frontmatter_lines(text: str) -> list[_Line]:
-    """The lines of a leading ``---`` YAML frontmatter block, with their file offsets."""
+def _frontmatter_lines(text: str) -> tuple[list[_Line], bool]:
+    """The lines of a leading ``---`` YAML frontmatter block, with their file offsets, and whether
+    the block goes on past ``_MAX_FRONTMATTER_LINES`` (the rest is not read)."""
     if not text.startswith("---"):
-        return []
+        return [], False
     first_nl = text.find("\n")
     if first_nl < 0:
-        return []
+        return [], False
     end = _FRONTMATTER_END.search(text, first_nl + 1)
     if end is None:
-        return []
+        return [], False
     lines: list[_Line] = []
     pos = first_nl + 1
     while pos < end.start() and len(lines) < _MAX_FRONTMATTER_LINES:
@@ -776,7 +795,7 @@ def _frontmatter_lines(text: str) -> list[_Line]:
         stop = end.start() if nl < 0 else nl
         lines.append(_Line(text[pos:stop].rstrip("\r"), pos))  # a CRLF file reads the same
         pos = stop + 1
-    return lines
+    return lines, pos < end.start()
 
 
 def _yaml_scalar(raw: str, offset: int) -> tuple[str, int, int]:

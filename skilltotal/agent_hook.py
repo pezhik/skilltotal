@@ -193,8 +193,10 @@ _INSTALL_WORDS = re.compile(
     r"(?<![\w.-])(?:install|isntall|i|in|it|add|create|init|innit|exec|x|dlx|tool|run)(?![\w.-]))",
     re.IGNORECASE,
 )
-# A word the shell fills in when it runs: a variable, a substitution, a brace expansion.
-_COMPUTED = re.compile(r"[$`{}]")
+# A word the shell fills in when it runs: a variable, a substitution, a brace expansion, or cmd's
+# `%NAME%` / delayed `!NAME!` (`set V=install & npm %V% x` installs x: read as a plain word, `%V%`
+# was no subcommand the hook knew, and the line went through unasked).
+_COMPUTED = re.compile(r"[$`{}]|%[A-Za-z_][^%\s]*%|![A-Za-z_][^!\s]*!")
 
 
 def _globbed(word: str) -> bool:
@@ -3914,6 +3916,8 @@ def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]
         return [] if _help(args, _PY_HELP) else _lockfile("pyproject.toml")
     if sub == "pip":
         sub2, args2 = _subcommand(args, _PIP_VALUE_FLAGS | _UV_VALUE_FLAGS)
+        if _filled_in(sub2 or ""):
+            return [_NOT_READ]  # `uv pip $V x`: filled in when the line runs
         if sub2 == "sync":  # `uv pip sync requirements.txt`
             if _help(args2, _PY_HELP):
                 return []
@@ -3922,6 +3926,8 @@ def _uv(rest: list[str], shell: str, depth: int, level: _Level) -> list[Install]
         return _pip_install(args2, "uv", index) if sub2 == "install" else []
     if sub == "tool":
         sub2, args2 = _subcommand(args, _UV_VALUE_FLAGS)
+        if _filled_in(sub2 or ""):
+            return [_NOT_READ]
         if sub2 == "install":
             return _first_py(args2, index) + _with_values(args2, index)
         if sub2 == "run":

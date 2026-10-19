@@ -123,9 +123,12 @@ _SDK_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
     "adlfs": frozenset({"azure"}), "fsspec": frozenset({"aws", "gcp", "azure"}),
     # The Firebase CLI keeps its login as an Application Default Credentials file.
     "firebase-tools": frozenset({"gcp"}),
-    # The Azure CLI keeps its configuration and login under ~/.azure. Named exactly: the `azure-`
-    # prefix below is anyone's to publish under, so it does not clear a credential read itself.
+    # The Azure CLI keeps its configuration and login under ~/.azure, and Microsoft's identity and
+    # common SDK packages read it there. Named exactly: the `azure-` prefix is anyone's to publish
+    # under on PyPI, so a name that merely starts with it gets no allowance.
     "azure-cli": frozenset({"azure"}), "azure-cli-core": frozenset({"azure"}),
+    "azure-cli-telemetry": frozenset({"azure"}), "azure-identity": frozenset({"azure"}),
+    "azure-common": frozenset({"azure"}),
     # Package-index clients and upload tools read the index's upload configuration, ~/.pypirc:
     # twine and distlib (its PyPIRCFile), pip and pipenv (both ship distlib vendored), setuptools'
     # bundled distutils upload command, flit and pdm (publish).
@@ -133,7 +136,6 @@ _SDK_PROVIDER_DOMAINS: dict[str, frozenset[str]] = {
     "pipenv": frozenset({"pypi"}), "setuptools": frozenset({"pypi"}), "flit": frozenset({"pypi"}),
     "pdm": frozenset({"pypi"}),
 }
-_AZURE_SDK_PREFIX = "azure-"  # the azure-* SDK family (azure-identity, azure-storage-blob, …)
 # npm scopes belong to one organization, so a scope names its owner as surely as an exact name:
 # only AWS publishes under @aws-sdk/ (the JavaScript SDK v3) and @smithy/ (the toolkit it is built
 # on, whose shared-ini loader reads ~/.aws/credentials and ~/.aws/config).
@@ -416,13 +418,11 @@ def _package_base_name(component: Component) -> str:
     return re.sub(r"-\d+(?:\.\d+)*.*$", "", name)
 
 
-def _package_provider_domains(
-    component: Component | None, *, owned_names_only: bool = False
-) -> frozenset[str]:
+def _package_provider_domains(component: Component | None) -> frozenset[str]:
     """Credential domains this package legitimately accesses as its own documented function.
 
-    ``owned_names_only`` leaves out the ``azure-`` name prefix: anyone can publish a PyPI name
-    that starts with it, while an exact curated name and an npm scope each have one owner.
+    Only an exact curated name or an npm scope counts: each has one owner. A name prefix does not
+    (anyone can publish a PyPI name that starts with ``azure-``).
 
     Only a name the registry gives counts (an ``npm:`` or ``pypi:`` source). A git repository, an
     archive or a folder names itself in its own manifest, which its author writes: a credential
@@ -438,8 +438,6 @@ def _package_provider_domains(
     for scope, domains in _NPM_SCOPE_PROVIDER_DOMAINS.items():
         if name.startswith(scope):
             return domains
-    if not owned_names_only and name.startswith(_AZURE_SDK_PREFIX):
-        return frozenset({"azure"})
     return frozenset()
 
 
@@ -453,7 +451,7 @@ def is_own_provider_read(finding_id: str, evidence: Evidence, component: Compone
     """
     if finding_id not in _SENSITIVE_PATH_IDS:
         return False
-    domains = _package_provider_domains(component, owned_names_only=True)
+    domains = _package_provider_domains(component)
     return bool(domains) and _credential_domain(evidence.snippet) in domains
 
 

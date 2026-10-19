@@ -1,6 +1,6 @@
 {
-  "engine_version": "0.77.0",
-  "ruleset_version": 78,
+  "engine_version": "0.78.0",
+  "ruleset_version": 79,
   "python_version": "3.14",
   "positives": 130,
   "negatives": 94,
@@ -119,7 +119,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 2,
+      "malicious_samples": 3,
       "benign_samples": 3,
       "should_fire": 2,
       "fired": 2,

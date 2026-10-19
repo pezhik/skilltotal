@@ -212,6 +212,8 @@ UNANALYZED_TITLES = frozenset({
     "Deeply nested JSON partly analyzed",
     UNANALYZED_LOADED_CODE,
     "MCP server bundle not analyzed",
+    "Frontmatter partly analyzed",
+    "Environment sends partly analyzed",
 })
 
 

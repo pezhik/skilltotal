@@ -37,10 +37,13 @@ from skilltotal.scanners.base import (
     Scanner,
     ScanResult,
     _finding_from_rule,
+    aggregated_review,
 )
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
 
 RULE_ID = "ST-SECRET-EXFIL"
+# The note for a JavaScript file the environment-send check stopped short in (models.UNANALYZED).
+ENV_SEND_PARTLY_READ = "Environment sends partly analyzed"
 
 # --- commands -------------------------------------------------------------------------------------
 # The home directory written as a variable reads as `~`, so `$HOME/.npmrc` is `~/.npmrc`.
@@ -434,9 +437,16 @@ def _config_lookup(text: str, start: int, pos: int) -> bool:
 
 
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
+    return _js_env_sends(f)[0]
+
+
+def _js_env_sends(f: IndexedFile) -> tuple[list[Evidence], bool]:
+    """Calls in a JavaScript file that send the whole environment, and whether a bound for a
+    crafted file stopped the search short (a file padded with uses or calls before the real one).
+    """
     text = f.text
     if "process.env" not in text:
-        return []
+        return [], False
     whole = [
         m.start() for m in _JS_WHOLE_ENV.finditer(text)
         if _code_offset(f, m.start())
@@ -444,15 +454,18 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
         and not _JS_ENV_NOT_VALUE_AFTER.match(text, m.end())
     ]
     if not whole:
-        return []
-    whole = whole[:_MAX_ENV_USES]
+        return [], False
+    # Every use counts where a call's arguments are checked (a sorted list, searched by bisect);
+    # only the first ones are followed into the variables they are assigned to.
+    truncated = len(whole) > _MAX_ENV_USES
+    seeds = whole[:_MAX_ENV_USES]
     declared = frozenset(_JS_DECLARED.findall(text))
     blocks = _Blocks(f)
     # (name, the block it holds the environment in), in the order the source gives them (dicts
     # keep it; a set's order changes with each process's string hashing), so the cap below always
     # keeps the same ones.
     tainted: dict[tuple[str, tuple[int, int]], None] = {}
-    for pos in whole:
+    for pos in seeds:
         found_at = _assignment(text, pos, declared)
         if found_at:
             tainted[(found_at[0], blocks.around(found_at[1]))] = None
@@ -471,6 +484,7 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
                     if key not in tainted:
                         grown[key] = None
             if len(tainted) + len(grown) >= _MAX_TAINTED:
+                truncated = True
                 break
         if not grown:
             break
@@ -482,6 +496,13 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
         rf"(?<![\w$.])(?:{'|'.join(re.escape(n) for n in sorted(scopes))})(?![\w$])"
     ) if scopes else None
     opens_channel = bool(_JS_OPENS_CHANNEL.search(text))
+    # Where the environment, or a name holding it, appears: a call whose arguments hold none of
+    # these cannot send it, so it is skipped without counting against _MAX_CALLS.
+    marks = sorted({*whole, *(m.start() for m in names.finditer(text))} if names else whole)
+
+    def near(open_at: int) -> bool:
+        k = bisect_right(marks, open_at)
+        return k < len(marks) and marks[k] < open_at + _ARGS_LIMIT
 
     def carries_env(start: int, end: int, url_end: int | None = None) -> bool:
         def sent(pos: int) -> bool:
@@ -489,8 +510,11 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
             # configures the request; it is not what the request carries.
             return url_end is None or pos >= url_end or not _config_lookup(text, start, pos)
 
-        if any(start <= p < end and sent(p) for p in whole):
-            return True
+        k = bisect_right(whole, start - 1)
+        while k < len(whole) and whole[k] < end:
+            if sent(whole[k]):
+                return True
+            k += 1
         if names is None:
             return False
         return any(
@@ -506,8 +530,14 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     ):
         if needs_channel and not opens_channel:
             continue
-        for k, m in enumerate(pattern.finditer(text)):
-            if k >= _MAX_CALLS:
+        calls = 0
+        for m in pattern.finditer(text):
+            open_at = m.end() - 1
+            if not near(open_at):
+                continue
+            calls += 1
+            if calls > _MAX_CALLS:
+                truncated = True
                 break
             if not _code_offset(f, m.start()):
                 continue
@@ -515,7 +545,6 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
                 text, max(0, m.start() - 40), m.start()
             ):
                 continue
-            open_at = m.end() - 1
             close = _call_args(text, open_at)
             if close is None:
                 continue
@@ -532,8 +561,8 @@ def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
             if carries_env(open_at + 1, end, url_end):
                 found.append(f.evidence_for_span(m.start(), close + 1))
                 if len(found) >= MAX_EVIDENCE_SCANNED:
-                    return found
-    return found
+                    return found, False
+    return found, truncated
 
 
 # Python: modules whose calls reach the network, and the calls/methods that send data.
@@ -733,17 +762,32 @@ class SecretExfilScanner(Scanner):
                 ev = _script_evidence(command, by_path)
             if ev is not None:
                 evidence.append(ev)
+        partly: list[tuple[str, int | None]] = []
         for f in index.select(suffixes=_JS_SUFFIXES):
-            evidence.extend(_js_env_dumps(f))
+            sends, truncated = _js_env_sends(f)
+            evidence.extend(sends)
+            if truncated and not sends:
+                partly.append((f.relpath, None))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         for f in index.select(suffixes=(".py", ".pyw")):
             evidence.extend(_py_env_dumps(f))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
+        # A file with more uses of the environment, or more calls beside them, than a real one
+        # has was not searched to its end: say so rather than call it clean.
+        needs_review = [aggregated_review(
+            category="coverage",
+            title=ENV_SEND_PARTLY_READ,
+            places=partly,
+            what="JavaScript file(s) hold more uses of process.env, or more calls beside them, "
+                 "than the check for the environment being sent follows",
+            advice="Part of each was not checked for sending the environment off the machine.",
+        )] if partly else []
         if not evidence:
-            return ScanResult()
-        return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)])
+            return ScanResult(needs_review=needs_review)
+        return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)],
+                          needs_review=needs_review)
 
 
 def _command_evidence(command: AutorunCommand) -> Evidence | None:

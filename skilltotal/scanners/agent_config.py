@@ -912,8 +912,12 @@ class AgentConfigScanner(Scanner):
         findings = []
         if remote:
             findings.append(_finding_from_rule(self._rule(R_AUTORUN_REMOTE), remote))
-        elif autorun:
-            findings.append(_finding_from_rule(self._rule(R_AUTORUN), autorun))
+        # Every other command that runs on its own is a path of its own: hidden behind a remote
+        # one, a hook added beside it changed nothing a report or a diff could see.
+        remote_keys = {(e.file, e.line_start, e.line_end) for e in remote}
+        local = [e for e in autorun if (e.file, e.line_start, e.line_end) not in remote_keys]
+        if local:
+            findings.append(_finding_from_rule(self._rule(R_AUTORUN), local))
         if relay:
             findings.append(_finding_from_rule(self._rule(R_CLI_RELAY), relay))
         if bypass:

@@ -2247,6 +2247,7 @@ class FileIndex:
         large: list[str] | None = None,
         install_scripts: frozenset[str] = frozenset(),
         own_outputs: list[str] | None = None,
+        exclude: tuple[str, ...] = (),
     ):
         self.root = root
         self.files = files
@@ -2272,6 +2273,8 @@ class FileIndex:
         self.install_scripts = install_scripts
         # Relative paths of SkillTotal's own reports and baselines, not read (is_skilltotal_output).
         self.own_outputs = own_outputs or []
+        # The globs the walk was told to skip, honored by anything that reads files after it.
+        self.exclude = exclude
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -2396,7 +2399,7 @@ class FileIndex:
                    links=sorted(links), unreadable=sorted(unreadable),
                    skipped_dirs=sorted(skipped), skip_build_output=skip_build_output,
                    large=sorted(large), install_scripts=always,
-                   own_outputs=sorted(own_outputs))
+                   own_outputs=sorted(own_outputs), exclude=excludes)
 
     def with_files(
         self, extra: list[IndexedFile], minified: list[str] | None = None
@@ -2411,6 +2414,7 @@ class FileIndex:
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
             skip_build_output=self.skip_build_output, large=self.large,
             install_scripts=self.install_scripts, own_outputs=self.own_outputs,
+            exclude=self.exclude,
         )
 
     @staticmethod
