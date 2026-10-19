@@ -96,7 +96,10 @@ TOOLS: list[dict[str, Any]] = [
             "repository, local path or archive) for supply-chain risks, dangerous "
             "capabilities, prompt-injection surfaces, and exfiltration paths. Use this "
             "BEFORE installing or trusting a component. The scan is local, deterministic, "
-            "and never executes the component's code."
+            "and never executes the component's code. A local path is read in place; a git URL "
+            "or npm:/pypi: source is downloaded to a temp folder that is removed afterwards. A "
+            "source over the size limit is refused with an error naming the setting that "
+            "raises it."
             + _HOW_TO_READ + _SUMMARY_SHAPE
             + " Pass detail=\"full\" for the complete report."
         ),
@@ -104,7 +107,13 @@ TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "source": {"type": "string", "minLength": 1, "description": _SOURCE_DESCRIPTION,
-                           "examples": ["npm:mcp-remote"]},
+                           "examples": [
+                               "npm:mcp-remote",
+                               "pypi:mcp-server-fetch",
+                               "https://github.com/modelcontextprotocol/servers/tree/main/src/"
+                               "filesystem",
+                               "/home/user/skills/pdf-tool",
+                           ]},
                 "detail": _DETAIL_PROPERTY,
             },
             "required": ["source"],
@@ -144,8 +153,12 @@ TOOLS: list[dict[str, Any]] = [
         "title": "List detection rules",
         "description": (
             "List SkillTotal detection rules: id, severity, category, title, threat class "
-            "and capability. Narrow it with ids (exact rule ids) or query (text in a rule's id "
-            "or title); pass verbose=true for each rule's description and recommendation."
+            "and capability. Use it to look up a rule id from a scan_component or "
+            "diff_components result, or to see what SkillTotal checks before scanning. It reads "
+            "the rule list bundled with this engine: offline, instant, no side effects. With no "
+            "arguments it returns every rule. ids and query narrow the list and combine (a rule "
+            "must match both); no match returns an empty array []. Pass verbose=true for each "
+            "rule's description and recommendation."
         ),
         "inputSchema": {
             "type": "object",
@@ -158,13 +171,15 @@ TOOLS: list[dict[str, Any]] = [
                 "ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Only these rule ids (case-insensitive).",
+                    "description": "Only these rule ids, as a finding's rule field shows them "
+                                   "(case-insensitive). Unknown ids are skipped, not an error.",
                     "examples": [["ST-SHELL-PIPE-EXEC"]],
                 },
                 "query": {
                     "type": "string",
                     "description": "Only rules whose id or title contains this text "
-                                   "(case-insensitive).",
+                                   "(case-insensitive substring; descriptions are not "
+                                   "searched).",
                     "examples": ["prompt injection"],
                 },
             },

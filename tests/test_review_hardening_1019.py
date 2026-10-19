@@ -12,14 +12,14 @@ from pathlib import Path
 
 import pytest
 
-from skilltotal import cli
+from skilltotal import cli, engine
 from skilltotal.agent_hook import parse_installs
 from skilltotal.autorun import autorun_commands
 from skilltotal.diff import diff_reports
 from skilltotal.engine import analyze_directory
 from skilltotal.file_index import FileIndex
 from skilltotal.guard import evaluate
-from skilltotal.models import UNANALYZED_TITLES, Component
+from skilltotal.models import UNANALYZED_INSTALL_SCRIPT, UNANALYZED_TITLES, Component
 from skilltotal.report import render_guard_text
 
 
@@ -462,3 +462,26 @@ def test_unrelated_do_not_mention_does_not_join_a_registry_line(tmp_path: Path):
     report = _scan(tmp_path)
     assert "ST-SKILL-DEP-REDIRECT" not in _ids(report)
     assert "Skill instruction sets a non-default package index" in _titles(report)
+
+
+def test_a_large_monorepo_is_not_cut_short_by_the_package_limit(tmp_path):
+    # A few hundred workspace packages is a real monorepo, not a reason to ask before install.
+    (tmp_path / "package.json").write_text('{"name": "root", "private": true}', encoding="utf-8")
+    for n in range(150):
+        pkg = tmp_path / "packages" / f"p{n}"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text(f'{{"name": "p{n}"}}', encoding="utf-8")
+    report = analyze_directory(tmp_path, Component(name="mono", type="repository", source="local"))
+    assert not [n for n in report.needs_review if n.title == UNANALYZED_INSTALL_SCRIPT]
+
+
+def test_the_package_limit_still_says_install_was_not_fully_read(tmp_path, monkeypatch):
+    monkeypatch.setattr(engine, "_MAX_PACKAGES", 3)
+    (tmp_path / "package.json").write_text('{"name": "root"}', encoding="utf-8")
+    for n in range(5):
+        pkg = tmp_path / "packages" / f"p{n}"
+        pkg.mkdir(parents=True)
+        (pkg / "package.json").write_text(f'{{"name": "p{n}"}}', encoding="utf-8")
+    report = analyze_directory(tmp_path, Component(name="mono", type="repository", source="local"))
+    notes = [n for n in report.needs_review if n.title == UNANALYZED_INSTALL_SCRIPT]
+    assert notes and "3 packages inside the component" in notes[0].reason

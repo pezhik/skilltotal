@@ -11,7 +11,7 @@ Detection-efficacy corpus: 130 positive / 94 negative samples, 130/130 flagged, 
 No rule was added or removed. These rules read more, or decide on narrower grounds:
 
 - **Model API hosts on cloud domains** (`ST-AGENT-API-REDIRECT`): any host under `amazonaws.com`,
-  `azure.com` or `googleapis.com` counted as the vendor's API. Anyone can hold a host there (an
+  `azure.com` or `googleapis.com` counted as the vendor's API. Anyone can get a host there (an
   API Gateway or EC2 name, an S3 or Cloud Storage bucket, a VM under `cloudapp.azure.com`). Only
   the model APIs' own host names now count: Bedrock (`bedrock-runtime.<region>.amazonaws.com`),
   Vertex AI (`<region>-aiplatform.googleapis.com`), the Gemini API
@@ -19,8 +19,8 @@ No rule was added or removed. These rules read more, or decide on narrower groun
   (`<resource>.openai.azure.com`, `.services.ai.azure.com`, `.cognitiveservices.azure.com`). Every
   host under `anthropic.com` and `openai.com` still counts.
 - **Agent settings as the agent reads them** (`ST-AGENT-AUTO-APPROVE`): VS Code's
-  `.vscode/settings.json` is read as JSON with comments and trailing commas, as VS Code reads it;
-  a comment used to make the file unreadable and the setting unseen. In `.codex/config.toml`,
+  `.vscode/settings.json` is read as JSON with comments and trailing commas, as VS Code reads it.
+  Before, one comment made the file unparseable and hid the setting. In `.codex/config.toml`,
   `approval_policy` and `sandbox_mode` are read at the top level and from the profile that
   `profile` selects. A value under another table (a profile nobody selected) no longer decides the
   result either way.
@@ -29,32 +29,32 @@ No rule was added or removed. These rules read more, or decide on narrower groun
   Windsurf and VS Code read their MCP files that way.
 - **Auto-run commands** (`ST-AGENT-AUTORUN`, `ST-MCP-SERVER-EXEC`, `ST-SECRET-EXFIL`): a JSON file
   whose `mcpServers` key is written with escapes (`"mcp\u0053ervers"`) is read. So is a server file
-  a plugin manifest names, whatever its other keys contain; it used to be skipped when it held the
-  word `mcpServers` anywhere.
+  named in a plugin manifest, whatever its other keys contain. Such a file used to be skipped when
+  the word `mcpServers` appeared anywhere in it.
 - **A second auto-run path** (`ST-AGENT-AUTORUN`): when a hook or task fetches and runs code
-  (`ST-AGENT-AUTORUN-REMOTE`), the other commands that run on their own are reported too. They
-  were hidden behind the remote one, so a hook added next to it changed nothing in a report or a
-  diff.
+  (`ST-AGENT-AUTORUN-REMOTE`), the other commands that run on their own are reported too. Before,
+  the remote one hid them, so adding a hook next to it changed nothing in a report or a diff.
 - **Process starts in `.pth` files** (`ST-PTH-EXEC`): a `.pth` line that starts a process through
-  another name for the module (`import os as o; o.system(...)`, `__import__('os').execv(...)`,
-  `posix_spawn`, `spawnv`, `startfile`) is flagged like `os.system`.
+  another name for the module (`import os as o; o.system(...)`, `__import__('os').execv(...)`) or
+  through `posix_spawn`, `spawnv` or `startfile` is flagged like `os.system`.
 - **CI tokens sent from composite actions** (`ST-ACTION-SECRET-EXFIL`): a command counted as
   talking to GitHub when it named a GitHub host anywhere, such as in a header, a query string or
-  `github.com.collector.example`. It now counts only when every address in the command is on a
-  GitHub host, or, with no address written out, when it names GitHub's host or URL variable.
+  `github.com.collector.example`. Now it counts only when every address in the command is on a
+  GitHub host. A command with no address written out counts when it uses GitHub's host or URL
+  variable.
 - **Provider SDK allowance** (`ST-COMBO-EXFIL`, own-provider demotion): a PyPI name that starts
-  with `azure-` no longer clears a read of `~/.azure`, since anyone can publish such a name. The
-  allowance goes to exact names: `azure-cli`, `azure-cli-core`, `azure-cli-telemetry`,
+  with `azure-` no longer clears a read of `~/.azure`, since anyone can publish such a name. Only
+  these exact names keep the allowance: `azure-cli`, `azure-cli-core`, `azure-cli-telemetry`,
   `azure-identity` and `azure-common`.
 - **Credential reads in guard-named files** (`ST-SENS-PATH`): a file named like guard code
   (`security.js`, `policy/`, `sandbox.py`) or a guard word on the line (`// sensitive`) made a
-  credential path read as a denylist entry. Neither does so now when the line hands the path to a
-  read (`readFileSync(`, `open(`, `read_text(`, `cat`, `curl`, ...). List entries, comparisons and
-  permission rules such as `Read(~/.ssh/**)` in those files stay demoted.
+  credential path count as a denylist entry. Neither does so now when the line passes the path to
+  a read (`readFileSync(`, `open(`, `read_text(`, `cat`, `curl`, ...). List entries, comparisons
+  and permission rules such as `Read(~/.ssh/**)` in those files stay demoted.
 - **Environment sends after padding** (`ST-SECRET-EXFIL`): the JavaScript check counted every
   `fetch(`, `.send(` or `exec(` toward its 2,000-call limit and followed only the first 200 uses
-  of `process.env`. Calls with no environment use in their arguments are now skipped without
-  counting, and every use is checked inside a call's arguments. When a limit is still reached, the
+  of `process.env`. Calls with no `process.env` use in their arguments are now skipped without
+  counting, and every use inside a call's arguments is checked. When a limit is still reached, the
   file gets an "Environment sends partly analyzed" note.
 - **Decrypt-and-execute** (`ST-OBF-DECRYPT-EXEC`): both halves must be code. A decryption named in
   a comment or a string no longer pairs with an unrelated `eval` in the same file.

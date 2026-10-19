@@ -545,9 +545,11 @@ def _install_command_words(package: Path, command: str) -> list[str]:
 _MAX_INSTALL_WORDS = 64
 # An install-time dropper is a handful of files; this only bounds a pathological require graph.
 _MAX_INSTALL_FILES = 200
-# Packages inside a component: how deep and how many are read (a monorepo has tens).
+# Packages inside a component: how deep and how many are read. A large monorepo has a few
+# hundred; a package.json is small, so the count only bounds a pathological tree. Reaching it
+# makes the install guard ask, so it must sit above what real repositories hold.
 _MAX_PACKAGE_DEPTH = 6
-_MAX_PACKAGES = 100
+_MAX_PACKAGES = 2000
 
 
 # How many entry points of the component's own package.json are read whatever their shape.
