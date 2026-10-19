@@ -1,0 +1,9 @@
+{
+  "name": "units-kit",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc -p ."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "docs": {
+      "type": "http",
+      "url": "https://mcp.example.invalid/mcp"
+    },
+    "search": {
+      "type": "sse",
+      "url": "https://search.example.invalid/sse"
+    }
+  }
+}

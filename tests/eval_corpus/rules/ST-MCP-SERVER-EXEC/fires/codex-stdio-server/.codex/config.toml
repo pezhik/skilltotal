@@ -1,0 +1,4 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+[mcp_servers.tasks]
+command = "npx"
+args = ["-y", "tasks-mcp-server"]

@@ -1,0 +1,15 @@
+{
+  "name": "mail-assistant",
+  "oauth": {
+    "scopes": [
+      "mail.read",
+      "mail.send"
+    ]
+  },
+  "tools": [
+    {
+      "name": "summarize_inbox",
+      "description": "Summarize unread messages."
+    }
+  ]
+}

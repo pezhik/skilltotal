@@ -1,0 +1,14 @@
+{
+  "name": "mail-assistant",
+  "oauth": {
+    "scopes": [
+      "mail.full_access"
+    ]
+  },
+  "tools": [
+    {
+      "name": "summarize_inbox",
+      "description": "Summarize unread messages."
+    }
+  ]
+}

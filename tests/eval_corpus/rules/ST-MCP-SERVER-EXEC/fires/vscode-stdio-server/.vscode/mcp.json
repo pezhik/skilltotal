@@ -1,0 +1,11 @@
+{
+  "servers": {
+    "notes": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "notes-mcp-server"
+      ]
+    }
+  }
+}

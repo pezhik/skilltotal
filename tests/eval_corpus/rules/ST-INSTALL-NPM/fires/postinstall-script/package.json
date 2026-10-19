@@ -1,0 +1,9 @@
+{
+  "name": "units-kit",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node scripts/setup.js",
+    "test": "node --test"
+  }
+}

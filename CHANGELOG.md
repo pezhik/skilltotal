@@ -4,6 +4,32 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.77.0]
+
+Ruleset 78 and report schema 1.9 are unchanged: no detection rule changed.
+
+### Added
+- Per-rule samples in the detection benchmark. Recall is judged per sample, so it cannot measure
+  a rule that does not flag a sample on its own. Most rules behind the OWASP class counts in the
+  MCP registry survey are like that: `ST-MCP-DANGEROUS-TOOL` and `ST-MCP-SERVER-EXEC`, which
+  produce 99.2% of the AST03 rule hits there, are capability rules that score zero.
+  `tests/eval_corpus/rules/<rule>/` now holds 45 samples for 17 rules: `fires/` samples that must
+  trigger the rule and `silent/` look-alikes that must not. They cover the 15 rules behind the
+  survey's class counts, plus `ST-AGENT-AUTO-APPROVE` and `ST-MCP-OVERBROAD-SCOPE`, the two AST03
+  rules that had fired on no sample. `tests/test_efficacy_floor.py` fails when a sample
+  misses its expectation or when a rule behind a survey class count has no samples. Raised by
+  @ossumpossum in OWASP/www-project-agentic-skills-top-10#94.
+- `docs/efficacy-report.{md,json}`: a rule coverage table (`rule_coverage` and `rule_misses` in
+  the JSON). For each rule mapped to an OWASP class it gives the malicious and benign samples the
+  rule fired on and the results of its own samples. 53 of the 63 mapped rules fire on at least one
+  sample, and the report names the other 10. Recall and precision are computed as before, on the
+  same 130 malicious and 94 benign samples.
+
+### Changed
+- `docs/mcp-registry-survey.md` links the efficacy report shipped with 0.49.0, the engine the
+  survey finished with. That report has no AST03 sample, and the survey's class counts count rule
+  presence, which its recall does not measure.
+
 ## [0.76.0]
 
 Ruleset 78. Report schema 1.9 is unchanged.

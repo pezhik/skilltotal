@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "workspace": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "workspace-mcp-server"
+      ],
+      "autoApprove": [],
+      "disabled": false
+    }
+  }
+}

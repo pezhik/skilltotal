@@ -62,6 +62,13 @@ technique + per OWASP class), precision / false-positive rate, and a per-languag
 commit (alongside the smoke floor in `tests/test_offline_calibration.py`). The current numbers and
 the coverage matrix are published in `docs/efficacy-report.md`.
 
+Recall is per sample, so it cannot measure a rule that does not flag a sample on its own, such as
+a capability rule. The report also has a rule coverage table: for each rule mapped to an OWASP class,
+the samples it fired on, plus labeled per-rule samples under `tests/eval_corpus/rules/<rule>/`
+(`fires/` must trigger the rule, `silent/` must not). Every rule behind an OWASP class count in
+`docs/mcp-registry-survey.md` has such samples, and the floor test holds them to their
+expectation.
+
 Detection depth varies by language (Python AST + Node/TS/shell regex + cross-language signals; Go/
 Rust/Java/Ruby/PHP semantic exec/network/deser is a documented gap). See `docs/language-scope.md`.
 

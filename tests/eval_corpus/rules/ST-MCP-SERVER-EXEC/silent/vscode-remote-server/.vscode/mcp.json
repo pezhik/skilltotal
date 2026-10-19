@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "issues": {
+      "type": "http",
+      "url": "https://issues.example.invalid/mcp"
+    }
+  }
+}

@@ -57,6 +57,26 @@ ids = sorted({f.id for f in r.findings})
 - A **negative** sample is correct iff `malicious is False` **AND** `risk` is not
   `high`/`critical` **AND** neither `ST-COMBO-EXFIL` nor `ST-FLOW-TRIFECTA` is present.
 
+## Per-rule samples
+
+Recall is judged per sample. It does not show which rule flagged a sample, and it cannot measure
+a rule that does not flag a sample on its own. Most rules behind the OWASP class counts in the
+registry survey are like that. `ST-MCP-DANGEROUS-TOOL` and `ST-MCP-SERVER-EXEC`, for example, are
+capability rules that add nothing to the score, so a sample carrying only them is never flagged,
+by design. These rules are tested one at a time:
+
+```
+rules/<RULE-ID>/fires/<variant>/    # must trigger RULE-ID
+rules/<RULE-ID>/silent/<variant>/   # look-alike that must not trigger RULE-ID
+```
+
+The leaf `<variant>/` is again the component root. Rule samples are not part of recall or
+precision; the efficacy report lists them in its rule coverage table.
+`tests/test_efficacy_floor.py` requires every sample to meet its expectation, both `fires/` and
+`silent/` for each rule, and samples for every rule behind an OWASP class count in
+`docs/mcp-registry-survey.json`. A rule sample shows that a rule matches what it describes. It
+does not estimate how often the rule fires on benign code in the wild.
+
 ## Maintenance
 
 - Keep samples minimal (1–3 small files) and inert. Never weaken a sample just to pass.

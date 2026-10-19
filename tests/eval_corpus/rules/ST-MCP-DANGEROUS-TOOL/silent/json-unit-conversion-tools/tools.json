@@ -1,0 +1,35 @@
+{
+  "tools": [
+    {
+      "name": "convert_units",
+      "description": "Convert a quantity between metric and imperial units.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "number"
+          },
+          "from_unit": {
+            "type": "string"
+          },
+          "to_unit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "from_unit",
+          "to_unit"
+        ]
+      }
+    },
+    {
+      "name": "list_units",
+      "description": "List the unit names this server understands.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}

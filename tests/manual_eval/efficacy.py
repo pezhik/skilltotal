@@ -12,6 +12,12 @@ Walks ``tests/eval_corpus/{positive,negative}/<AST-class>/<technique>/<variant>/
   *honest* about deferred languages: Go/Rust/Java/Ruby/PHP appear with their real counts (often
   zero), because semantic exec/network/deserialization detection for them is a documented gap
   (see ``docs/language-scope.md``).
+- **rule coverage** — for every rule mapped to an OWASP class, on how many corpus samples it fired,
+  and whether it met its expectation on the labeled per-rule samples under
+  ``tests/eval_corpus/rules/<RULE-ID>/{fires,silent}/<variant>/``. Recall above is per sample, so a
+  class row does not say which rules flagged it; this table does. Rule samples are kept out of
+  recall and precision: most of them are not "flagged" by design (a capability rule scores zero,
+  and one risky construct alone usually stays below high risk).
 
 Zero network, zero runtime deps. Importable as an API (used by ``tests/test_efficacy_floor.py``
 and release gates) and runnable as a script that writes ``docs/efficacy-report.{md,json}``.
@@ -30,8 +36,13 @@ from pathlib import Path
 
 from skilltotal import ENGINE_VERSION, RULESET_VERSION, engine
 from skilltotal.collector import detect_component
+from skilltotal.owasp import OWASP_BY_RULE
 
 CORPUS_ROOT = Path(__file__).resolve().parent.parent / "eval_corpus"
+# Per-rule samples: rules/<RULE-ID>/fires/<variant>/ must fire that rule, .../silent/<variant>/
+# must not.
+RULE_SAMPLES_DIR = "rules"
+_EXPECTATIONS = ("fires", "silent")
 
 # Synthesized exfil findings that must never fire on a benign sample (precision invariants,
 # mirroring tests/test_offline_calibration.py::test_benign_fp_shape_is_not_elevated).
@@ -71,6 +82,22 @@ class Result:
     exfil_fired: bool
 
 
+@dataclass(frozen=True)
+class RuleSample:
+    """One per-rule sample: a component that must fire (or must not fire) one named rule."""
+
+    path: Path
+    rule_id: str
+    expect: str  # "fires" | "silent"
+    variant: str
+
+
+@dataclass
+class RuleResult:
+    sample: RuleSample
+    fired: bool
+
+
 @dataclass
 class Metrics:
     positives: int = 0
@@ -81,6 +108,9 @@ class Metrics:
     recall_by_technique: dict[str, float] = field(default_factory=dict)
     recall_by_class: dict[str, float] = field(default_factory=dict)
     coverage_matrix: dict[str, dict[str, int]] = field(default_factory=dict)  # class -> lang -> n
+    # rule id -> counts, for every rule mapped to an OWASP class (see compute_rule_coverage)
+    rule_coverage: dict[str, dict] = field(default_factory=dict)
+    rule_misses: list[str] = field(default_factory=list)  # rule samples that missed expectation
 
     @property
     def recall(self) -> float:
@@ -141,11 +171,44 @@ def discover(root: Path = CORPUS_ROOT) -> list[Sample]:
     return samples
 
 
+def discover_rule_samples(root: Path = CORPUS_ROOT) -> list[RuleSample]:
+    """Find every sample under ``root/rules/<RULE-ID>/{fires,silent}/<variant>/``."""
+    samples: list[RuleSample] = []
+    base = root / RULE_SAMPLES_DIR
+    if not base.is_dir():
+        return samples
+    for rule_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+        for expect in _EXPECTATIONS:
+            exp_dir = rule_dir / expect
+            if not exp_dir.is_dir():
+                continue
+            for variant_dir in sorted(p for p in exp_dir.iterdir() if p.is_dir()):
+                samples.append(
+                    RuleSample(
+                        path=variant_dir, rule_id=rule_dir.name, expect=expect,
+                        variant=variant_dir.name,
+                    )
+                )
+    return samples
+
+
+def _analyze(path: Path):
+    return engine.analyze_directory(path, detect_component(path, source=str(path)))
+
+
+def evaluate_rule_samples(samples: list[RuleSample]) -> list[RuleResult]:
+    """Run the static engine on each per-rule sample and record whether its rule fired."""
+    return [
+        RuleResult(sample=s, fired=any(f.id == s.rule_id for f in _analyze(s.path).findings))
+        for s in samples
+    ]
+
+
 def evaluate(samples: list[Sample]) -> list[Result]:
     """Run the static engine on each sample (offline) and capture the verdict."""
     results: list[Result] = []
     for s in samples:
-        report = engine.analyze_directory(s.path, detect_component(s.path, source=str(s.path)))
+        report = _analyze(s.path)
         verdict = report.verdict or {}
         has_mal = bool(verdict.get("has_malicious_indicators"))
         elevated = report.risk_level.value in ("high", "critical")
@@ -198,9 +261,62 @@ def compute_metrics(results: list[Result]) -> Metrics:
     return m
 
 
+def _rule_label(sample: RuleSample) -> str:
+    return f"{RULE_SAMPLES_DIR}/{sample.rule_id}/{sample.expect}/{sample.variant}"
+
+
+def compute_rule_coverage(
+    results: list[Result], rule_results: list[RuleResult]
+) -> tuple[dict[str, dict], list[str]]:
+    """Per-rule coverage for every rule mapped to an OWASP class (plus any rule with samples).
+
+    ``malicious_samples`` / ``benign_samples`` count the positive / negative samples the rule fired
+    on (a rule firing on a benign sample is not a false positive by itself: precision is judged on
+    the verdict). ``should_fire``/``fired`` and ``should_stay_silent``/``stayed_silent`` count the
+    labeled per-rule samples and how many met their expectation; the misses are returned as labels.
+    """
+    rule_ids = {r for r, classes in OWASP_BY_RULE.items() if classes}
+    rule_ids |= {rr.sample.rule_id for rr in rule_results}
+    coverage = {
+        r: {
+            "owasp": list(OWASP_BY_RULE.get(r, ())),
+            "malicious_samples": 0,
+            "benign_samples": 0,
+            "should_fire": 0,
+            "fired": 0,
+            "should_stay_silent": 0,
+            "stayed_silent": 0,
+        }
+        for r in sorted(rule_ids)
+    }
+    for res in results:
+        key = "malicious_samples" if res.sample.polarity == "positive" else "benign_samples"
+        for rule_id in res.finding_ids:
+            if rule_id in coverage:
+                coverage[rule_id][key] += 1
+    misses: list[str] = []
+    for rr in rule_results:
+        row = coverage[rr.sample.rule_id]
+        if rr.sample.expect == "fires":
+            row["should_fire"] += 1
+            row["fired"] += int(rr.fired)
+            ok = rr.fired
+        else:
+            row["should_stay_silent"] += 1
+            row["stayed_silent"] += int(not rr.fired)
+            ok = not rr.fired
+        if not ok:
+            misses.append(_rule_label(rr.sample))
+    return coverage, misses
+
+
 def run(root: Path = CORPUS_ROOT) -> tuple[list[Result], Metrics]:
     results = evaluate(discover(root))
-    return results, compute_metrics(results)
+    metrics = compute_metrics(results)
+    metrics.rule_coverage, metrics.rule_misses = compute_rule_coverage(
+        results, evaluate_rule_samples(discover_rule_samples(root))
+    )
+    return results, metrics
 
 
 def to_dict(metrics: Metrics) -> dict:
@@ -220,7 +336,54 @@ def to_dict(metrics: Metrics) -> dict:
         "recall_by_class": metrics.recall_by_class,
         "recall_by_technique": metrics.recall_by_technique,
         "coverage_matrix": metrics.coverage_matrix,
+        "rule_coverage": metrics.rule_coverage,
+        "rule_misses": metrics.rule_misses,
     }
+
+
+def _ratio(hit: int, total: int) -> str:
+    return f"{hit}/{total}" if total else "-"
+
+
+def _rule_coverage_markdown(coverage: dict[str, dict], misses: list[str]) -> list[str]:
+    lines = [
+        "## Rule coverage (rules mapped to an OWASP class)",
+        "",
+        "Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule samples "
+        "under `tests/eval_corpus/rules/<rule>/` test the rule itself: a `fires/` sample must "
+        "trigger it and a `silent/` look-alike must not. Rule samples are not part of recall or "
+        "precision: a capability rule adds nothing to the score, and one risky construct alone "
+        "usually stays below high risk, so most rule samples are not flagged, by design. A rule "
+        "firing on a "
+        "benign sample is not a false positive by itself, because precision is judged on the "
+        "verdict. Rule samples show that a rule matches what it describes. They do not estimate "
+        "how often it fires on benign code in the wild.",
+        "",
+        "| rule | class | fired on malicious samples | fired on benign samples "
+        "| rule samples: fired | rule samples: stayed silent |",
+        "|---|---|---|---|---|---|",
+    ]
+    rows = sorted(coverage.items(), key=lambda kv: (kv[1]["owasp"], kv[0]))
+    for rule_id, c in rows:
+        lines.append(
+            f"| `{rule_id}` | {', '.join(c['owasp']) or '-'} | {c['malicious_samples']} "
+            f"| {c['benign_samples']} | {_ratio(c['fired'], c['should_fire'])} "
+            f"| {_ratio(c['stayed_silent'], c['should_stay_silent'])} |"
+        )
+    unexercised = [
+        r for r, c in rows if not (c["malicious_samples"] or c["benign_samples"] or c["fired"])
+    ]
+    lines += [
+        "",
+        f"{len(rows) - len(unexercised)} of {len(rows)} rules fire on at least one sample.",
+    ]
+    if unexercised:
+        lines.append("Fired on no sample: " + ", ".join(f"`{r}`" for r in unexercised) + ".")
+    lines.append("")
+    if misses:
+        lines += ["## Rule samples that missed their expectation", ""]
+        lines += [f"- {x}" for x in misses] + [""]
+    return lines
 
 
 def to_markdown(metrics: Metrics) -> str:
@@ -243,6 +406,11 @@ def to_markdown(metrics: Metrics) -> str:
         "|---|---|",
     ]
     lines += [f"| {c} | {v * 100:.0f}% |" for c, v in d["recall_by_class"].items()]
+    lines += [
+        "",
+        "> A class row counts the malicious samples filed under that class and flagged by any "
+        "rule. It does not show which rules did the work; the rule coverage table below does.",
+    ]
     lines += ["", "## Recall by technique", "", "| technique | recall |", "|---|---|"]
     lines += [f"| {t} | {v * 100:.0f}% |" for t, v in d["recall_by_technique"].items()]
     lines += ["", "## Coverage matrix (positive samples: class x language)", ""]
@@ -259,6 +427,7 @@ def to_markdown(metrics: Metrics) -> str:
         "Ruby, PHP) are a documented gap — see `docs/language-scope.md`.",
         "",
     ]
+    lines += _rule_coverage_markdown(metrics.rule_coverage, metrics.rule_misses)
     if metrics.false_negatives:
         lines += ["## Missed (false negatives)", ""] + [f"- {x}" for x in metrics.false_negatives]
     return "\n".join(lines) + "\n"

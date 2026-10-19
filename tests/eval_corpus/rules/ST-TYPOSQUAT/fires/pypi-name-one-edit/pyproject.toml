@@ -1,0 +1,4 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+[project]
+name = "reqests"
+version = "1.0.0"

@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "workspace": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "workspace-mcp-server"
+      ],
+      "alwaysAllow": [
+        "run_command",
+        "write_file"
+      ]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+approval_policy = "never"
+sandbox_mode = "read-only"

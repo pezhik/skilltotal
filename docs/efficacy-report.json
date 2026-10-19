@@ -1,5 +1,5 @@
 {
-  "engine_version": "0.76.0",
+  "engine_version": "0.77.0",
   "ruleset_version": 78,
   "python_version": "3.14",
   "positives": 130,
@@ -80,5 +80,707 @@
     "AST05": {
       "python": 4
     }
-  }
+  },
+  "rule_coverage": {
+    "ST-ACTION-SECRET-EXFIL": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-API-REDIRECT": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-AUTO-APPROVE": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
+    },
+    "ST-AGENT-AUTORUN": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 3,
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-AGENT-AUTORUN-REMOTE": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 5,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-CLI-BYPASS": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 2,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-AGENT-CLI-RELAY": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-CONFIG-INJECT": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 1,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-CONFIG-PERSIST": {
+      "owasp": [
+        "AST01",
+        "AST04"
+      ],
+      "malicious_samples": 6,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-GITCONFIG-EXEC-REMOTE": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-ARCHIVE-PASSWORD-EXTRACT": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-CLIPPER": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 3,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-COMBO-EXFIL": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 24,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-CONVERGENCE": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 4,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-DESERIALIZE-PY": {
+      "owasp": [
+        "AST05"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-EMAIL-BCC-EXFIL": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-ENCRYPTED-ARCHIVE": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-FLOW-TRIFECTA": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-GIT-HOOK-PERSIST": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-HIDDEN-ANSI": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-HIDDEN-UNICODE": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 6,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-HIDDEN-UNICODE-AMBIG": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-INSTALL-DROPPER": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 8,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-INSTALL-GYP": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-INSTALL-NPM": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 17,
+      "benign_samples": 5,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-INSTALL-NPM-PREPARE": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 3,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-INSTALL-NPM-REMOTE-EXEC": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 4,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-INSTALL-PY": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-MCP-AUTO-APPROVE": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-MCP-DANGEROUS-TOOL": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 3,
+      "fired": 3,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
+    },
+    "ST-MCP-ELICIT-SECRET": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-MCP-OVERBROAD-SCOPE": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-MCP-SAMPLING-INJECTION": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-MCP-SERVER-EXEC": {
+      "owasp": [
+        "AST03"
+      ],
+      "malicious_samples": 5,
+      "benign_samples": 3,
+      "should_fire": 3,
+      "fired": 3,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
+    },
+    "ST-MCP-SERVER-HIDDEN-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-MCP-TOOL-POISONING": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 12,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-MCP-TOOL-SHADOWING": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-NPM-GIT-DEP": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-NPM-INSTALL-PUBLISH": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-NPM-URL-DEP": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-OBF-DECODE-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 15,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-OBF-DECODE-EXEC-PY": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-OBF-DECODE-EXEC-SH": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 8,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-OBF-DECRYPT-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-OBF-DYNAMIC-DECODE-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PICKLE-REDUCE": {
+      "owasp": [
+        "AST01",
+        "AST05"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PROMPT-INJECTION": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 17,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PROMPT-WEAK": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PS-DOWNLOAD-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PTH-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PTH-IMPORT-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SECRET-EXFIL": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 9,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SHELL-EVASION": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-SHELL-PIPE-EXEC": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 2,
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-SHELL-PIPE-EXEC-NODE": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 3,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SHELL-PIPE-EXEC-PY": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SKILL-CAP-MISMATCH": {
+      "owasp": [
+        "AST03",
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 2,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SKILL-DEP-REDIRECT": {
+      "owasp": [
+        "AST02",
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SKILL-DYNAMIC-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SKILL-FETCH-EXEC": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 3,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SKILL-FETCH-EXEC-HIDDEN": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-TAINT-DESERIAL-PY": {
+      "owasp": [
+        "AST05"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-TYPOSQUAT": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    }
+  },
+  "rule_misses": []
 }

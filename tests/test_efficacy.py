@@ -77,3 +77,57 @@ def test_report_serialization_shape(tmp_path: Path):
     md = efficacy.to_markdown(m)
     assert "detection-efficacy report" in md
     assert "Coverage matrix" in md
+
+
+def _mk_rule(root: Path, rule_id: str, expect: str, variant: str, files: dict[str, str]):
+    d = root / "rules" / rule_id / expect / variant
+    d.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (d / name).write_text(content, encoding="utf-8", newline="")
+
+
+_SERVER_EXEC = '{\n  "mcpServers": {\n    "s": {"command": "node", "args": ["server.js"]}\n  }\n}\n'
+_REMOTE_ONLY = (
+    '{\n  "mcpServers": {\n    "s": {"type": "http", "url": "https://x.invalid/mcp"}\n  }\n}\n'
+)
+
+
+def test_rule_samples_are_scored_per_rule_and_kept_out_of_recall(tmp_path: Path):
+    _mk_rule(tmp_path, "ST-MCP-SERVER-EXEC", "fires", "local", {".mcp.json": _SERVER_EXEC})
+    _mk_rule(tmp_path, "ST-MCP-SERVER-EXEC", "silent", "remote", {".mcp.json": _REMOTE_ONLY})
+    samples = efficacy.discover_rule_samples(tmp_path)
+    assert {(s.rule_id, s.expect, s.variant) for s in samples} == {
+        ("ST-MCP-SERVER-EXEC", "fires", "local"), ("ST-MCP-SERVER-EXEC", "silent", "remote")}
+
+    _, m = efficacy.run(tmp_path)
+    assert m.positives == 0 and m.negatives == 0  # rule samples never enter recall/precision
+    assert m.rule_misses == []
+    row = m.rule_coverage["ST-MCP-SERVER-EXEC"]
+    assert row["owasp"] == ["AST03"]
+    assert (row["should_fire"], row["fired"]) == (1, 1)
+    assert (row["should_stay_silent"], row["stayed_silent"]) == (1, 1)
+    d = efficacy.to_dict(m)
+    assert d["rule_coverage"]["ST-MCP-SERVER-EXEC"] == row and d["rule_misses"] == []
+    assert "Rule coverage" in efficacy.to_markdown(m)
+
+
+def test_rule_sample_that_misses_its_expectation_is_reported(tmp_path: Path):
+    # A fires/ sample whose rule does not fire, and a silent/ sample whose rule does, are misses.
+    _mk_rule(tmp_path, "ST-MCP-SERVER-EXEC", "fires", "remote", {".mcp.json": _REMOTE_ONLY})
+    _mk_rule(tmp_path, "ST-MCP-SERVER-EXEC", "silent", "local", {".mcp.json": _SERVER_EXEC})
+    _, m = efficacy.run(tmp_path)
+    assert m.rule_misses == [
+        "rules/ST-MCP-SERVER-EXEC/fires/remote", "rules/ST-MCP-SERVER-EXEC/silent/local"]
+    md = efficacy.to_markdown(m)
+    assert "missed their expectation" in md
+
+
+def test_rule_coverage_counts_firings_on_labeled_samples(tmp_path: Path):
+    _mk(tmp_path, "positive", "AST01", "decode-exec", "py-b64-exec",
+        {"m.py": "import base64\nexec(base64.b64decode(b'cHJpbnQoMSk='))\n"})
+    results, m = efficacy.run(tmp_path)
+    mapped = [i for i in results[0].finding_ids if i in m.rule_coverage]
+    assert mapped, "the decode-exec sample should fire at least one OWASP-mapped rule"
+    assert all(m.rule_coverage[i]["malicious_samples"] == 1 for i in mapped)
+    # every rule mapped to an OWASP class gets a row, fired or not
+    assert m.rule_coverage["ST-MCP-DANGEROUS-TOOL"]["malicious_samples"] == 0

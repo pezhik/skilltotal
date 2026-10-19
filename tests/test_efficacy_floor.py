@@ -10,6 +10,9 @@ three floors on every commit:
   malicious verdict, no high/critical risk, and no synthesized exfil finding.
 - **coverage symmetry** — every technique under test carries BOTH a positive and a negative
   sample, so a detector is always exercised against its benign look-alike.
+- **rule floor** — every per-rule sample under ``tests/eval_corpus/rules/`` meets its expectation
+  (``fires/`` triggers the rule, ``silent/`` does not), and every rule behind an OWASP class count
+  in ``docs/mcp-registry-survey.json`` has such samples.
 
 This complements (does not replace) ``test_offline_calibration.py``: that file is a fast smoke
 floor on hand-picked fixtures; this one quantifies recall/precision across a labeled corpus.
@@ -18,9 +21,13 @@ floor on hand-picked fixtures; this one quantifies recall/precision across a lab
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from collections import defaultdict
 from pathlib import Path
+
+from skilltotal.owasp import owasp_for
+from skilltotal.rules import get_rules
 
 _EFFICACY = Path(__file__).resolve().parent / "manual_eval" / "efficacy.py"
 _spec = importlib.util.spec_from_file_location("efficacy", _EFFICACY)
@@ -65,3 +72,39 @@ def test_coverage_symmetry() -> None:
         if pols != {"positive", "negative"}
     }
     assert not missing, f"each technique needs BOTH a positive and a negative; missing: {missing}"
+
+
+# --- per-rule samples (tests/eval_corpus/rules/<RULE-ID>/{fires,silent}/<variant>/) ---------------
+
+_RULE_SAMPLES = efficacy.discover_rule_samples()
+_SURVEY = Path(__file__).resolve().parent.parent / "docs" / "mcp-registry-survey.json"
+
+
+def test_rule_samples_meet_their_expectation() -> None:
+    assert _RULE_SAMPLES, "no per-rule samples found under tests/eval_corpus/rules/"
+    assert not _METRICS.rule_misses, (
+        "RULE REGRESSION: per-rule sample(s) did not meet their expectation (a fires/ sample "
+        f"must trigger its rule, a silent/ look-alike must not): {_METRICS.rule_misses}"
+    )
+
+
+def test_rule_samples_name_real_rules_and_cover_both_sides() -> None:
+    known = {r.id for r in get_rules()}
+    sides: dict[str, set[str]] = defaultdict(set)
+    for s in _RULE_SAMPLES:
+        sides[s.rule_id].add(s.expect)
+    unknown = sorted(set(sides) - known)
+    assert not unknown, f"rule sample directories name unknown rule ids: {unknown}"
+    one_sided = {r: sorted({"fires", "silent"} - e) for r, e in sides.items() if len(e) < 2}
+    assert not one_sided, f"each rule needs BOTH fires/ and silent/ samples; missing: {one_sided}"
+
+
+def test_every_rule_behind_a_survey_class_count_has_rule_samples() -> None:
+    # The registry survey counts an OWASP class by rule presence, not by the malware verdict, and
+    # most of the rules behind those counts are capability rules that never flag a sample.
+    # Malicious recall cannot measure them, so each one must carry its own fires/silent samples.
+    top_rules = json.loads(_SURVEY.read_text(encoding="utf-8"))["summary"]["top_rules"]
+    behind_classes = {r for r in top_rules if owasp_for(r)}
+    sampled = {s.rule_id for s in _RULE_SAMPLES}
+    missing = sorted(behind_classes - sampled)
+    assert not missing, f"rules behind the survey's OWASP class counts lack rule samples: {missing}"
