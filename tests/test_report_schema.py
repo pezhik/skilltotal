@@ -9,12 +9,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import jsonschema  # a dev dependency: missing, the contract test fails rather than skips
 import pytest
 
 from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION
 from tests.conftest import analyze_fixture
-
-jsonschema = pytest.importorskip("jsonschema")
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "docs" / "report.schema.json"
 FIXTURES = [

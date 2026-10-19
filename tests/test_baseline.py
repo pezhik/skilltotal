@@ -94,9 +94,11 @@ def test_end_to_end_suppression_zeroes_score():
     fps = {fp for f in full.findings for fp in finding_fingerprints(f)}
     suppressed = analyze_directory(root, component, suppress=fps)
 
-    # The synthesized combo finding may re-derive from any surviving evidence; assert the
-    # score strictly drops and originally-detected rule findings are gone.
-    assert suppressed.risk_score < full.risk_score
+    # Every fingerprint is suppressed, synthesized findings included: no evidence survives for a
+    # combination to re-derive from, so nothing is left to score.
+    assert full.risk_score > 0
+    assert suppressed.risk_score == 0
+    assert suppressed.findings == []
     assert suppressed.metadata["suppressed_count"] > 0
     assert suppressed.metadata["baseline_suppressed_count"] == (
         suppressed.metadata["suppressed_count"])

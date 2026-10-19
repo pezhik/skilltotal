@@ -171,3 +171,45 @@ def test_no_stdlib_names_newer_than_the_supported_python():
         "these names do not exist on Python 3.10, which pyproject still supports: "
         + "; ".join(offenders)
     )
+
+
+# Stdlib modules newer than the oldest supported Python: `sys.stdlib_module_names` on 3.10 does not
+# list them, and the engine imports each one under `try`, with a fallback.
+_STDLIB_AFTER_310 = {"tomllib"}
+
+
+def test_the_engine_has_no_runtime_dependencies():
+    """Zero runtime dependencies is a promise the README and pyproject make: pyproject declares
+    none, and every module the package imports is the standard library or the package itself. A
+    third-party import would install cleanly from a dev checkout and fail on a customer's
+    machine."""
+    import ast
+    import sys
+
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10: read the one line instead
+        match = re.search(r"^dependencies\s*=\s*\[(.*?)\]", (ROOT / "pyproject.toml").read_text(
+            encoding="utf-8"), flags=re.M | re.S)
+        assert match, "pyproject.toml declares no `dependencies` list"
+        assert not re.sub(r"#.*", "", match.group(1)).strip(), "pyproject declares dependencies"
+    else:
+        project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+        assert project["dependencies"] == [], f"runtime dependencies: {project['dependencies']}"
+
+    allowed = set(sys.stdlib_module_names) | _STDLIB_AFTER_310 | {"skilltotal", "__future__"}
+    offenders: list[str] = []
+    for path in sorted((ROOT / "skilltotal").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                names = [node.module]
+            else:
+                continue  # a relative import stays inside the package
+            for name in names:
+                if name.split(".")[0] not in allowed:
+                    offenders.append(f"{path.relative_to(ROOT)}:{node.lineno} imports {name}")
+    assert not offenders, "the engine must import only the standard library: " + "; ".join(
+        offenders)

@@ -89,12 +89,17 @@ def test_write_baseline_then_suppress(tmp_path: Path, capsys):
     capsys.readouterr()
     assert baseline.exists()
 
-    # 2. Re-scan with the baseline: findings are suppressed, score drops below critical.
+    # 2. Re-scan without and with the baseline: every finding it recorded is suppressed, so the
+    # score falls from the fixture's real risk to zero.
+    main(["scan", target, "--json"])
+    full = json.loads(capsys.readouterr().out)
     main(["scan", target, "--baseline", str(baseline), "--json"])
     out = capsys.readouterr().out
     data = json.loads(out)
     assert data["metadata"]["suppressed_count"] > 0
-    assert data["risk_score"] < 100
+    assert full["risk_score"] > 0
+    assert data["risk_score"] == 0
+    assert data["findings"] == []
 
 
 def test_baseline_with_fail_on_high_passes_after_suppression(tmp_path: Path, capsys):

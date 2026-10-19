@@ -39,10 +39,21 @@ _spec.loader.exec_module(efficacy)
 _RESULTS, _METRICS = efficacy.run()
 
 
-def test_corpus_is_non_trivial() -> None:
-    # Guard against an empty/misplaced corpus silently making the floors vacuous.
-    assert _METRICS.positives >= 15, f"too few positive samples: {_METRICS.positives}"
-    assert _METRICS.negatives >= 10, f"too few negative samples: {_METRICS.negatives}"
+_REPORT = Path(__file__).resolve().parent.parent / "docs" / "efficacy-report.json"
+
+
+def test_corpus_is_the_one_the_published_report_counts() -> None:
+    # Guard against a missing, misplaced or partly skipped corpus making the floors vacuous: the
+    # run must see exactly the samples the published report (and the README) counts. A sample
+    # added or removed is a new report, regenerated with it.
+    report = json.loads(_REPORT.read_text(encoding="utf-8"))
+    regenerate = "regenerate: python tests/manual_eval/efficacy.py --out docs/efficacy-report"
+    assert _METRICS.positives == report["positives"], (
+        f"{_METRICS.positives} positive samples, the report counts {report['positives']}; "
+        f"{regenerate}")
+    assert _METRICS.negatives == report["negatives"], (
+        f"{_METRICS.negatives} negative samples, the report counts {report['negatives']}; "
+        f"{regenerate}")
 
 
 def test_recall_floor() -> None:

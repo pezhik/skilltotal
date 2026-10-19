@@ -37,7 +37,10 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
    three; ruff failures have blocked a tag before).
 6. Commit and push. When CI is green on that commit, create a signed annotated tag
    (`git tag -s -m vX.Y.Z vX.Y.Z`) and push it. `release.yml` builds the release and publishes
-   it through OIDC from the `pypi` and `npm` environments, which accept only `v*` tags.
+   it through OIDC from the `pypi` and `npm` environments, which accept only `v*` tags. Before
+   it publishes, it waits for a finished `ci.yml` run on the tagged commit with every required
+   job green, and installs the built wheel and sdist into fresh environments on Linux, Windows
+   and macOS (Python 3.10 and 3.14) to run the user journeys against them.
 
 ## Release cadence and guarantees
 
@@ -49,8 +52,9 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
 - Bug fixes ship in a patch release when ready.
 - A breaking change to the report shape or the public API ships only with a major
   `REPORT_SCHEMA_VERSION` bump and is described in `CHANGELOG.md`.
-- Every tag points at a commit that passed CI on Python 3.10 to 3.14. That run includes the
-  end-to-end user journeys on Linux and Windows and the GitHub Action's own job.
+- Every tag points at a commit that passed CI on Python 3.10 to 3.14 and on Windows; the release
+  workflow checks this before it publishes. That run includes the end-to-end user journeys on
+  Linux, Windows and macOS and the GitHub Action's own job.
 - Release tags (`v*`) are signed, only a maintainer can create them, and they are never moved
   or deleted. A broken release is fixed by the next version. Pin an exact version
   (`skilltotal==X.Y.Z`, `pezhik/skilltotal@vX.Y.Z`) or, for the Action, the release's commit

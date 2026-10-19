@@ -34,15 +34,32 @@ jobs:
       - name: Test
         run: pytest
 
+  test-windows:
+    # The full unit suite once on Windows, where paths, line endings, console encodings and file
+    # locking differ from the Linux matrix above, and where many customers run the CLI and hook.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Test
+        run: pytest
+
   journeys:
     # Customer journeys (tests/journeys) against the wheel a customer installs: built here,
     # installed with pipx as the README says, and driven as a pipeline, a developer machine and a
-    # security team drive it. Linux is where pipelines run, so it runs everything; Windows runs the
-    # same journeys except the pre-commit one.
+    # security team drive it. Linux is where pipelines run, so it runs everything; Windows and macOS
+    # run the same journeys except the pre-commit one. The weekly run adds the live journeys, which
+    # scan pinned npm, PyPI and GitHub sources over the network.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -62,6 +79,9 @@ jobs:
       - name: Pre-commit journey on Linux
         if: runner.os == 'Linux'
         run: echo "SKILLTOTAL_JOURNEY_PRE_COMMIT=1" >> "$GITHUB_ENV"
+      - name: Live sources journey on the weekly run
+        if: github.event_name == 'schedule'
+        run: echo "SKILLTOTAL_JOURNEY_LIVE=1" >> "$GITHUB_ENV"
       - name: Journeys
         run: |
           git config --global user.email ci@example.invalid
