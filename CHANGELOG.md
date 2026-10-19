@@ -4,6 +4,32 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.78.1]
+
+Ruleset 79 and report schema 1.9 are unchanged.
+
+### Changed
+- The Claude Code plugin is served from the `stable` branch. That branch moves to a release tag
+  only after the release is published, so installs and updates no longer pick up plugin changes
+  merged to `main` before a release. The install commands are unchanged. The plugin is fetched
+  over https, so it needs no GitHub ssh key. `docs/plugin.md` shows how a team holds the plugin
+  at one release.
+
+### Fixed
+- A whole repository scanned by its git URL, with no `package.json` or `pyproject.toml` to name
+  it, is now reported under the repository's name. Before, it was reported as `repo`, the name of
+  the temporary checkout folder.
+
+### Release checks
+- A tag publishes to PyPI only after CI passed on its commit, including the unit tests on Windows
+  and the journeys on Linux, Windows and macOS.
+- Before publishing, the exact wheel and sdist are installed into clean environments on Linux,
+  Windows and macOS with Python 3.10 and 3.14, and the journeys run against them.
+- New tests: a baseline written by 0.78.0 still matches; no shipped rule id disappears; SARIF
+  output validates against the SARIF 2.1.0 schema; the MCP server works through the installed
+  command; every `skilltotal` command in the docs parses; the engine imports only the standard
+  library.
+
 ## [0.78.0]
 
 Ruleset 79. Report schema 1.9 is unchanged. `RULES_CHANGELOG.md` (ruleset 79) lists the

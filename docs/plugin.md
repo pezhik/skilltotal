@@ -316,7 +316,7 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
 ## Rolling out to a team
 
 1. **Install the CLI at a pinned version** on each machine, for example
-   `pipx install skilltotal==0.78.0`, with the same version as the plugin.
+   `pipx install skilltotal==0.78.1`, with the same version as the plugin.
 2. **Enable the plugin for everyone** with Claude Code's managed settings file,
    `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
    `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
@@ -326,17 +326,40 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
    {
      "extraKnownMarketplaces": {
        "skilltotal": {
-         "source": { "source": "github", "repo": "pezhik/skilltotal", "ref": "v0.78.0" }
+         "source": { "source": "github", "repo": "pezhik/skilltotal" }
        }
      },
      "enabledPlugins": { "skilltotal@skilltotal": true }
    }
    ```
 
-3. **Pin the plugin to a release.** Without `ref`, the marketplace follows the repository's
-   default branch, so the plugin can change before you update the CLI. With `ref` set to a
-   release tag, the plugin and the CLI move together when you change both. To control every
-   change, fork or mirror the marketplace and point `repo` at your copy. See Claude Code's
+3. **Hold the plugin at a release.** The marketplace serves the plugin from the repository's
+   `stable` branch. That branch moves to a release tag only after the release is published, so an
+   update never brings unreleased plugin code. A machine updates when someone runs
+   `claude plugin update skilltotal@skilltotal` or turns on auto-update for the marketplace. To
+   keep every machine on one release until you move it, host your own marketplace. It is a
+   repository with a `.claude-plugin/marketplace.json` that names the release tag, and you
+   register it in step 2 in place of `pezhik/skilltotal`:
+
+   ```json
+   {
+     "name": "skilltotal",
+     "owner": { "name": "Your team" },
+     "plugins": [
+       {
+         "name": "skilltotal",
+         "source": {
+           "source": "git-subdir",
+           "url": "https://github.com/pezhik/skilltotal.git",
+           "path": "plugin",
+           "ref": "v0.78.1"
+         }
+       }
+     ]
+   }
+   ```
+
+   Change `ref` when you change the CLI version from step 1. See Claude Code's
    [plugin marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference)
    and [managed settings](https://code.claude.com/docs/en/managed-settings) for the details.
 4. **Allow internal packages.** Set `SKILLTOTAL_NPM_REGISTRY` / `SKILLTOTAL_PYPI_INDEX` (and

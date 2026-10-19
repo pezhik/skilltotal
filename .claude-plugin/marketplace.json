@@ -8,7 +8,12 @@
   "plugins": [
     {
       "name": "skilltotal",
-      "source": "./plugin",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/pezhik/skilltotal.git",
+        "path": "plugin",
+        "ref": "stable"
+      },
       "description": "Scan packages before the agent installs them."
     }
   ]

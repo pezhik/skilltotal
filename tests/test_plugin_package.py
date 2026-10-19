@@ -52,7 +52,15 @@ def test_the_marketplace_serves_only_the_plugin_folder():
     engine's test fixtures and detection signatures in front of it, which read as secrets."""
     (entry,) = MARKETPLACE["plugins"]
     assert entry["name"] == PLUGIN["name"] == MARKETPLACE["name"] == "skilltotal"
-    assert entry["source"] == "./plugin"
+    # Users get the plugin as released, not main: `stable` only moves to a release tag once
+    # that release is published. https, because the owner/repo shorthand clones over ssh and
+    # fails for anyone without a GitHub ssh key.
+    assert entry["source"] == {
+        "source": "git-subdir",
+        "url": "https://github.com/pezhik/skilltotal.git",
+        "path": "plugin",
+        "ref": "stable",
+    }
     shipped = {p.relative_to(PLUGIN_ROOT).as_posix() for p in PLUGIN_ROOT.rglob("*") if p.is_file()}
     assert shipped == {
         ".claude-plugin/plugin.json",
