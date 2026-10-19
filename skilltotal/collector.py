@@ -841,8 +841,18 @@ def _collect_remote(
             raise CollectionError(f"path '{subpath}' not found in repository {clone_url}")
         root = candidate
 
-    component = detect_component(root, source=url)
+    # A whole repository is checked out into a temp folder named "repo": with no manifest to
+    # name it, the repository's own name stands in for that folder name.
+    default_name = None if subpath else _repo_name(clone_url)
+    component = detect_component(root, source=url, default_name=default_name)
     return SourceContext(root=root, component=component, _tempdir=tmp, note=note)
+
+
+def _repo_name(clone_url: str) -> str | None:
+    """The repository name a clone URL ends in (``owner/name.git`` -> ``name``), if any."""
+    tail = re.split(r"[/:]", clone_url.strip().rstrip("/"))[-1]
+    tail = tail[:-4] if tail.lower().endswith(".git") else tail
+    return tail or None
 
 
 # --------------------------------------------------------------- package registries

@@ -198,3 +198,29 @@ def test_watchdog_aborts_oversized_clone(monkeypatch, tmp_path):
     dest.mkdir()
     with pytest.raises(CollectionError, match="exceeds"):
         collector._run_git(["git", "clone", "x", str(dest)], dest, {}, "https://github.com/o/r")
+
+
+@pytest.mark.parametrize("clone_url, expected", [
+    ("https://github.com/github/gitignore.git", "gitignore"),
+    ("https://github.com/github/gitignore", "gitignore"),
+    ("https://gitlab.com/group/sub/project.git/", "project"),
+    ("git@github.com:owner/tool.git", "tool"),
+])
+def test_repo_name_is_read_from_the_clone_url(clone_url, expected):
+    assert collector._repo_name(clone_url) == expected
+
+
+def test_a_whole_repository_without_a_manifest_is_named_after_the_repository(tmp_path, monkeypatch):
+    # The checkout lands in a temp folder called "repo"; the report must not call it that.
+    def fake_clone(clone_url, ref, subpath, dest, env, url):
+        dest.mkdir(parents=True)
+        (dest / "README.md").write_text("# rules\n", encoding="utf-8")
+
+    monkeypatch.setattr(collector, "_git_program", lambda: "git")
+    monkeypatch.setattr(collector, "_reject_if_too_large", lambda *a, **k: None)
+    monkeypatch.setattr(collector, "_clone", fake_clone)
+    ctx = collector._collect_remote("https://github.com/github/gitignore")
+    try:
+        assert ctx.component.name == "gitignore"
+    finally:
+        ctx.cleanup()
