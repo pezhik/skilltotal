@@ -365,6 +365,12 @@
   "ST-NET-NODE",
   "ST-SENS-PATH"
  ],
+ "positive/AST01/credential-exfil/skill-reference-file-python-helper": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SENS-PATH-PY"
+ ],
  "positive/AST01/decode-exec/node-eval-atob": [
   "ST-DYN-NODE",
   "ST-OBF-DECODE-EXEC"
@@ -466,6 +472,9 @@
   "ST-HIDDEN-ANSI"
  ],
  "positive/AST01/hidden-unicode/skill-sneaky-bits": [
+  "ST-HIDDEN-UNICODE"
+ ],
+ "positive/AST01/hidden-unicode/skill-tag-chars-smuggled-instructions": [
   "ST-HIDDEN-UNICODE"
  ],
  "positive/AST01/hidden-unicode/skill-tagchars": [
@@ -615,6 +624,12 @@
   "ST-INSTALL-PY",
   "ST-OBF-DECODE-EXEC"
  ],
+ "positive/AST02/install-dropper/setup-py-base64-exec": [
+  "ST-DYN-PY",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-PY",
+  "ST-OBF-DECODE-EXEC"
+ ],
  "positive/AST02/mcp-launch-command/codex-config-fetch-run": [
   "ST-AGENT-AUTORUN-REMOTE",
   "ST-MCP-DETECTED",
@@ -639,6 +654,15 @@
  "positive/AST02/npm-lifecycle-remote-exec/install-wget-escaped-pipe": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-curl-sh-credential-post": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-NODE-READ",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-NET-NODE",
+  "ST-SENS-PATH"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-node-base64-eval": [
   "ST-INSTALL-NPM",

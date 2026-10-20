@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.79.1]
+
+Ruleset 79 and report schema 1.9 are unchanged.
+
+### Added
+- Four new samples in the eval corpus model the bypass shapes from the Trail of Bits post "The sorry
+  state of skill distribution" (June 2026) and the Cloud Security Alliance note that followed:
+  instructions smuggled in Unicode tag characters inside `SKILL.md`; a credential read and upload
+  moved out of `SKILL.md` into a reference file plus a helper script; a base64 blob decoded and
+  executed from `setup.py`; and an npm `postinstall` that reads credential files and posts them.
+  All four are synthetic and inert. The efficacy report now counts 134 malicious and 94 benign
+  samples, and recall and precision stay at 100%.
+
 ## [0.79.0]
 
 Ruleset 79 and report schema 1.9 are unchanged.

@@ -1,8 +1,8 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.79.0 · ruleset 79 · Python 3.14 · offline corpus.
+Engine 0.79.1 · ruleset 79 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (130/130 malicious samples flagged)
+- **recall: 100.0%** (134/134 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/94 benign samples wrongly flagged)
 
 ## Recall by OWASP class
@@ -64,8 +64,8 @@ Engine 0.79.0 · ruleset 79 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 17 | 26 | 18 | 2 |
-| AST02 | 20 | 11 | 2 | 1 |
+| AST01 | 18 | 26 | 19 | 2 |
+| AST02 | 20 | 12 | 3 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
 | AST04 | 17 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
@@ -81,13 +81,13 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 3 | 0 | - | - |
-| `ST-COMBO-EXFIL` | AST01 | 24 | 0 | 1/1 | 1/1 |
+| `ST-COMBO-EXFIL` | AST01 | 26 | 0 | 1/1 | 1/1 |
 | `ST-CONVERGENCE` | AST01 | 4 | 0 | - | - |
 | `ST-EMAIL-BCC-EXFIL` | AST01 | 1 | 0 | 1/1 | 1/1 |
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
 | `ST-FLOW-TRIFECTA` | AST01 | 1 | 0 | - | - |
 | `ST-MCP-SERVER-HIDDEN-EXEC` | AST01 | 1 | 0 | - | - |
-| `ST-OBF-DECODE-EXEC` | AST01 | 15 | 0 | - | - |
+| `ST-OBF-DECODE-EXEC` | AST01 | 16 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-PY` | AST01 | 2 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-SH` | AST01 | 8 | 0 | - | - |
 | `ST-OBF-DECRYPT-EXEC` | AST01 | 1 | 0 | - | - |
@@ -98,7 +98,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-SECRET-EXFIL` | AST01 | 9 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 4 | 0 | - | - |
+| `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 5 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC-HIDDEN` | AST01, AST02 | 2 | 0 | - | - |
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
 | `ST-PICKLE-REDUCE` | AST01, AST05 | 2 | 0 | - | - |
@@ -106,11 +106,11 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-AGENT-AUTORUN-REMOTE` | AST02 | 5 | 0 | - | - |
 | `ST-AGENT-GITCONFIG-EXEC-REMOTE` | AST02 | 0 | 0 | - | - |
 | `ST-GIT-HOOK-PERSIST` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-DROPPER` | AST02 | 8 | 0 | 1/1 | 1/1 |
+| `ST-INSTALL-DROPPER` | AST02 | 10 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 17 | 5 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 18 | 5 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-PREPARE` | AST02 | 0 | 3 | 1/1 | 1/1 |
-| `ST-INSTALL-PY` | AST02 | 2 | 0 | 1/1 | 1/1 |
+| `ST-INSTALL-PY` | AST02 | 3 | 0 | 1/1 | 1/1 |
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | - | - |
 | `ST-NPM-INSTALL-PUBLISH` | AST02 | 2 | 0 | - | - |
 | `ST-NPM-URL-DEP` | AST02 | 0 | 0 | - | - |
@@ -131,7 +131,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
 | `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 1 | - | - |
 | `ST-HIDDEN-ANSI` | AST04 | 2 | 0 | - | - |
-| `ST-HIDDEN-UNICODE` | AST04 | 6 | 0 | - | - |
+| `ST-HIDDEN-UNICODE` | AST04 | 7 | 0 | - | - |
 | `ST-HIDDEN-UNICODE-AMBIG` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-ELICIT-SECRET` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-SAMPLING-INJECTION` | AST04 | 1 | 0 | - | - |

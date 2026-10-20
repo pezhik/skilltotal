@@ -1,8 +1,8 @@
 {
-  "engine_version": "0.79.0",
+  "engine_version": "0.79.1",
   "ruleset_version": 79,
   "python_version": "3.14",
-  "positives": 130,
+  "positives": 134,
   "negatives": 94,
   "recall": 1.0,
   "precision": 1.0,
@@ -59,14 +59,14 @@
   "coverage_matrix": {
     "AST01": {
       "node": 26,
-      "manifest/text": 17,
-      "python": 18,
+      "manifest/text": 18,
+      "python": 19,
       "shell": 2
     },
     "AST02": {
       "manifest/text": 20,
-      "node": 11,
-      "python": 2,
+      "node": 12,
+      "python": 3,
       "shell": 1
     },
     "AST03": {
@@ -219,7 +219,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 24,
+      "malicious_samples": 26,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -307,7 +307,7 @@
       "owasp": [
         "AST04"
       ],
-      "malicious_samples": 6,
+      "malicious_samples": 7,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -329,7 +329,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 8,
+      "malicious_samples": 10,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -351,7 +351,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 17,
+      "malicious_samples": 18,
       "benign_samples": 5,
       "should_fire": 1,
       "fired": 1,
@@ -374,7 +374,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 4,
+      "malicious_samples": 5,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -385,7 +385,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 2,
+      "malicious_samples": 3,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -528,7 +528,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 15,
+      "malicious_samples": 16,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
