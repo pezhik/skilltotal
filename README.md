@@ -61,7 +61,7 @@ skilltotal scan npm:express     # or pypi:name, a git URL, a folder, an archive
 ([full example with permissions](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md)):
 
 ```yaml
-      - uses: pezhik/skilltotal@v0.78.1
+      - uses: pezhik/skilltotal@v0.79.0
         with: { source: ., fail-on: high }
 ```
 
@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pezhik/skilltotal@v0.78.1
+      - uses: pezhik/skilltotal@v0.79.0
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail on a high/critical risk finding (or 'none')
@@ -218,7 +218,7 @@ out on an existing repository. Anywhere else Python 3.10+ runs, install a pinned
 on the exit code (0 passed, 2 a gate tripped, 1 the scan could not run):
 
 ```bash
-pip install skilltotal==0.78.1      # in a virtual environment outside the checkout
+pip install skilltotal==0.79.0      # in a virtual environment outside the checkout
 skilltotal scan . --fail-on high
 ```
 
@@ -276,7 +276,7 @@ With npx (it needs uv, pipx, or Python 3.11+ with `skilltotal` installed), name 
 `--package` so npx does not run a `skilltotal` from the scanned repository's `node_modules/.bin`:
 
 ```bash
-npx -y --package=skilltotal@0.78.1 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.79.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 ## Measured, not asserted
@@ -306,7 +306,11 @@ npx -y --package=skilltotal@0.78.1 -- skilltotal scan https://github.com/owner/r
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
   download-and-run, decode-and-run and evasion idioms. Other languages get only the secret,
   sensitive-path and hidden-Unicode checks.
-- **The default gate does not count unread code** unless you add `--fail-on-unanalyzed`.
+- **The default gate does not count unread code**, and unread code never passes in silence: the
+  log names it (`Not everything was analyzed: ...`), the verdict reads "Partially analyzed", and
+  `--fail-on-unanalyzed` fails on it. That covers files over 2 MiB, minified bundles, code in
+  languages not analyzed for behavior, and compiled code shipped without its source (a `.pyc`,
+  `.pyo` or `.class` with no `.py` or `.java` of the same name beside it).
 - **Detection is at the call/import level.** A capability shows the code is there, not that it is
   misused. SkillTotal does not replace a sandbox, a penetration test or a manual code review.
 

@@ -8,6 +8,7 @@ keys on the needs_review titles in `UNANALYZED_TITLES`.
 from __future__ import annotations
 
 import ast
+import importlib.util
 import json
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from skilltotal.config import ConfigError, _fallback_parse, load_config
 from skilltotal.engine import analyze_directory
 from skilltotal.file_index import MAX_FILE_BYTES
 from skilltotal.models import (
+    COMPILED_WITHOUT_SOURCE,
     NOTHING_READ,
     UNANALYZED_INSTALL_SCRIPT,
     UNANALYZED_LOADED_CODE,
@@ -142,7 +144,8 @@ def test_every_title_in_the_set_is_one_the_engine_writes():
         if path.name != "models.py":
             written |= _string_literals(path)
     # Titles defined as constants in models.py are written through the constant's name.
-    constants = {UNANALYZED_INSTALL_SCRIPT, NOTHING_READ, UNANALYZED_LOADED_CODE}
+    constants = {UNANALYZED_INSTALL_SCRIPT, NOTHING_READ, UNANALYZED_LOADED_CODE,
+                 COMPILED_WITHOUT_SOURCE}
     for title in UNANALYZED_TITLES - constants:
         assert title in written, title
     users = [p for p in package.rglob("*.py") if p.name != "models.py"]
@@ -181,6 +184,59 @@ def test_a_text_file_too_large_to_read_gets_a_note_and_fails_the_gate(tmp_path: 
     capsys.readouterr()
     assert _scan(root, "--fail-on-unanalyzed") == EXIT_FAIL_ON_HIGH
     assert "Files too large to analyze" in capsys.readouterr().err
+
+
+def _bytecode() -> bytes:
+    # A real CPython magic number, then a header and body of NULs: binary to the sniff.
+    return importlib.util.MAGIC_NUMBER + b"\x00" * 60
+
+
+def test_bytecode_shipped_without_source_is_named_and_fails_the_gate(tmp_path: Path, capsys):
+    """A payload shipped only as a .pyc is invisible to a scanner that reads source. It used to
+    be a counter (files_skipped_binary) and nothing else: no note, no log line, a clean low
+    verdict. Now it is a coverage gap the report, the log and the gate all name."""
+    root = Path(_component(tmp_path, {"x.py": "x = 1\n", "SKILL.md": "name: s\n"}))
+    (root / "helper.pyc").write_bytes(_bytecode())
+    report = _scan_report(root)
+    (note,) = [n for n in report.needs_review if n.title == COMPILED_WITHOUT_SOURCE]
+    assert note.category == "coverage"
+    assert "helper.pyc" in note.reason
+    assert report.verdict["headline"].startswith("Partially analyzed")
+    assert "1 compiled code file shipped without source not read" in report.verdict["headline"]
+    assert report.risk_score == 0  # a gap is not evidence of risk
+    capsys.readouterr()
+    assert _scan(str(root)) == EXIT_OK  # the gate itself stays opt-in ...
+    assert "Not everything was analyzed: Compiled code shipped without source." in (
+        capsys.readouterr().err)  # ... but the log never passes it in silence
+    assert _scan(str(root), "--fail-on-unanalyzed") == EXIT_FAIL_ON_HIGH
+    assert "--fail-on-unanalyzed tripped" in capsys.readouterr().err
+
+
+def test_bytecode_beside_its_source_is_a_build_artifact(tmp_path: Path):
+    root = Path(_component(tmp_path, {"x.py": "x = 1\n"}))
+    (root / "x.pyc").write_bytes(_bytecode())
+    (root / "pkg").mkdir()
+    (root / "pkg" / "mod.py").write_text("y = 2\n", encoding="utf-8")
+    (root / "pkg" / "mod.pyc").write_bytes(_bytecode())
+    titles = [n.title for n in _scan_report(root).needs_review]
+    assert COMPILED_WITHOUT_SOURCE not in titles
+
+
+def test_a_class_file_counts_its_outer_source(tmp_path: Path):
+    root = Path(_component(tmp_path, {"App.java": "class App {}\n"}))
+    (root / "App$Inner.class").write_bytes(b"\xca\xfe\xba\xbe" + b"\x00" * 60)
+    (root / "Orphan.class").write_bytes(b"\xca\xfe\xba\xbe" + b"\x00" * 60)
+    (note,) = [n for n in _scan_report(root).needs_review if n.title == COMPILED_WITHOUT_SOURCE]
+    assert "Orphan.class" in note.reason and "App$Inner.class" not in note.reason
+
+
+def test_unread_code_is_named_in_the_log_without_the_gate(tmp_path: Path, capsys):
+    root = _component(tmp_path, {"x.py": "x = 1\n", "big.js": BIG})
+    capsys.readouterr()
+    assert _scan(root) == EXIT_OK
+    err = capsys.readouterr().err
+    assert "Not everything was analyzed: Files too large to analyze." in err
+    assert "gate:" not in err
 
 
 def test_a_large_binary_file_stays_silent(tmp_path: Path):

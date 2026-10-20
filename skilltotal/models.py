@@ -196,11 +196,17 @@ SKIPPED_FOLDERS = "Folders not analyzed"
 # part of the component left unanalyzed.
 OWN_OUTPUTS_SKIPPED = "SkillTotal output files not analyzed"
 
+# The needs_review title listing compiled code (Python bytecode, Java class files) shipped with no
+# source file beside it. Bytecode is never read, so a payload shipped only as a .pyc is invisible
+# to every scanner that reads source; the note makes it a gap the gate and the hook see.
+COMPILED_WITHOUT_SOURCE = "Compiled code shipped without source"
+
 # The needs_review titles that say a file, or a part of one, was not analyzed: what
 # `scan --fail-on-unanalyzed` fails on. Every other note is a signal to read, not a gap in the scan.
 UNANALYZED_TITLES = frozenset({
     UNANALYZED_INSTALL_SCRIPT,
     NOTHING_READ,
+    COMPILED_WITHOUT_SOURCE,
     "Files could not be read",
     "Files too large to analyze",
     "Links not followed",

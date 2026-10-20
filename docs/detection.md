@@ -109,9 +109,13 @@ component could be read` when nothing could be read. That wording does not chang
   [docs/language-scope.md](https://github.com/pezhik/skilltotal/blob/main/docs/language-scope.md).
 - **Symbolic links and junctions** in a scanned folder are not followed, and links inside an
   archive are not extracted.
-- **The default gate does not count unread code.** `--fail-on` (and the action's `fail-on`) pass a
-  component whose code was partly not analyzed, unless you add `--fail-on-unanalyzed` (action:
-  `fail-on-unanalyzed: 'true'`).
+- **The default gate does not count unread code, and unread code never passes in silence.**
+  `--fail-on` (and the action's `fail-on`) pass a component with code the scan could not analyze,
+  unless you add `--fail-on-unanalyzed` (action: `fail-on-unanalyzed: 'true'`). Either way the log
+  says `Not everything was analyzed: ...`, the report carries a coverage note naming the files, and
+  a low verdict reads "Partially analyzed". Compiled code shipped without its source (a `.pyc`,
+  `.pyo` or `.class` with no `.py` or `.java` of the same name beside it) is one such gap:
+  bytecode is never read, so a payload shipped only as bytecode is reported as not analyzed.
 - **Detection is at the call/import level.** A capability used through an *unrecognized*
   higher-level library (a git library that writes files internally, a browser library) may not be
   flagged as a raw filesystem/shell call. Capabilities indicate *presence*, not proven misuse.

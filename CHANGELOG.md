@@ -4,6 +4,26 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.79.0]
+
+Ruleset 79 and report schema 1.9 are unchanged.
+
+### Added
+- Compiled code shipped without its source is reported as not analyzed. A `.pyc`, `.pyo` or
+  `.class` file with no `.py` or `.java` of the same name beside it used to be counted in
+  `files_skipped_binary` and nothing more: the report had no note, the log no line, and the
+  verdict stayed low. It now produces a coverage note ("Compiled code shipped without source")
+  naming the files, the verdict reads "Partially analyzed", `--fail-on-unanalyzed` fails on it,
+  and the Claude Code hook treats the package as partly analyzed. Bytecode is never read, so a
+  payload shipped only as bytecode is now a named gap in the report. Bytecode beside its source
+  is a build artifact and stays silent.
+
+### Changed
+- `scan` always writes what it could not read to the log (`Not everything was analyzed: ...`),
+  not only when `--fail-on-unanalyzed` is set. With `--json` or `--sarif` stdout carries only
+  the report, so a file the scan did not read would otherwise pass unnoticed. The gate itself
+  stays opt-in. The GitHub Action turns the line into a warning annotation.
+
 ## [0.78.1]
 
 Ruleset 79 and report schema 1.9 are unchanged.

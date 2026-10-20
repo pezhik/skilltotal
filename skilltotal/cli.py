@@ -865,14 +865,15 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         return EXIT_OK
 
     gate = _scan_gate(args, config)
-    gaps = _unanalyzed(report) if gate.unanalyzed else []
+    gaps = _unanalyzed(report)
     if gaps:
-        # With --json or --sarif the report is all stdout carries (SARIF has no needs_review):
-        # say in the log what was not analyzed.
+        # Always said in the log, whether or not a gate counts it: with --json or --sarif the
+        # report is all stdout carries (SARIF has no needs_review), and a file the scan did not
+        # read must never pass in silence. Only failing on it is opt-in.
         print(f"Not everything was analyzed: {'; '.join(gaps)}.", file=sys.stderr)
     failures = _gate_failures(report, gate.level, gate.score, gate.policy,
                               level_label=gate.level_label, score_label=gate.score_label)
-    if gaps:
+    if gaps and gate.unanalyzed:
         failures.insert(0, f"{gate.unanalyzed_label} tripped")
     for failure in failures:
         print(f"gate: {failure}", file=sys.stderr)

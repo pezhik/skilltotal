@@ -7,6 +7,7 @@ is a folder in a temporary workspace. The snippets are inert detection fixtures.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
@@ -158,6 +159,21 @@ def test_a_sarif_file_in_a_folder_that_does_not_exist_is_written(tmp_path):
     assert outputs["sarif-written"] == "true"
     assert json.loads((ws / "out" / "reports" / "st.sarif").read_text(encoding="utf-8"))["runs"]
     assert "did not write the SARIF report" not in log
+
+
+def test_unread_code_is_a_warning_annotation_not_a_failed_gate(tmp_path):
+    # Bytecode with no source beside it: the gate stays opt-in (exit 0), but the file is named
+    # in the log and as a warning annotation, never passed over in silence.
+    ws = _workspace(tmp_path)
+    (ws / "fx-pyc").mkdir()
+    (ws / "fx-pyc" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (ws / "fx-pyc" / "helper.pyc").write_bytes(importlib.util.MAGIC_NUMBER + b"\x00" * 60)
+    outputs, log = _run(ws, tmp_path, source="fx-pyc")
+    assert outputs["gate-exit"] == "0"
+    assert "Not everything was analyzed: Compiled code shipped without source." in log
+    assert ("::warning::SkillTotal: Not everything was analyzed: Compiled code shipped without "
+            "source.") in _after_resume(log)
+    assert "::error::SkillTotal gate" not in log
 
 
 def test_a_sarif_report_that_cannot_be_written_is_a_warning_with_the_reason(tmp_path):

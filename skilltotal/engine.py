@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__, bounded_json
 from skilltotal.agent_skill import skill_capability_mismatch
@@ -49,6 +49,7 @@ from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
 from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
 from skilltotal.loaded_code import module_file as _module_file
 from skilltotal.models import (
+    COMPILED_WITHOUT_SOURCE,
     NOTHING_READ,
     OWN_OUTPUTS_SKIPPED,
     SKIPPED_FOLDERS,
@@ -216,6 +217,16 @@ def analyze_directory(
     unanalyzed = _unanalyzed_code(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
+    compiled = _compiled_without_source(index)
+    if compiled:
+        needs_review.append(aggregated_review(
+            category="coverage",
+            title=COMPILED_WITHOUT_SOURCE,
+            places=[(p, None) for p in compiled],
+            what="compiled code file(s) shipped without their source were not read",
+            advice="Bytecode is not analyzed, so what it does was not checked. Ask for the "
+                   "source, or treat the component as unverified.",
+        ))
     skipped_code = _skipped_code_files(index)
     def checked(number: int) -> None:
         if progress is not None:
@@ -362,7 +373,8 @@ def analyze_directory(
         risk_level=level,
         summary=_summary(level, score, findings, capabilities, needs_review),
         verdict=_verdict(
-            findings, level, unanalyzed, nothing_read=not index.files, skipped_code=skipped_code
+            findings, level, unanalyzed, nothing_read=not index.files, skipped_code=skipped_code,
+            compiled=len(compiled),
         ),
         capabilities=capabilities,
         traits=traits,
@@ -749,6 +761,20 @@ def _skipped_code_files(index: FileIndex) -> dict[str, int]:
     return {reason: n for reason, n in counts.items() if n}
 
 
+def _compiled_without_source(index: FileIndex) -> list[str]:
+    """The bytecode files the walk found with no source file of the same name beside them: a
+    ``.pyc`` or ``.pyo`` without its ``.py``, a ``.class`` (inner classes included) without its
+    ``.java``. Beside its source, bytecode is a build artifact the source already answers for."""
+    out = []
+    for relpath in index.compiled:
+        path = PurePosixPath(relpath)
+        stem = path.stem.split("$", 1)[0] if path.suffix.lower() == ".class" else path.stem
+        source = ".java" if path.suffix.lower() == ".class" else ".py"
+        if not (index.root / path.parent / f"{stem}{source}").is_file():
+            out.append(relpath)
+    return out
+
+
 def _skipped_code_phrase(skipped: dict[str, int]) -> str:
     total = sum(skipped.values())
     reasons = " and ".join(
@@ -839,6 +865,7 @@ def _verdict(
     *,
     nothing_read: bool = False,
     skipped_code: dict[str, int] | None = None,
+    compiled: int = 0,
 ) -> dict:
     """Plain-language top-line answer, mapped to the two real user fears:
 
@@ -888,11 +915,11 @@ def _verdict(
     else:
         vlevel, headline = "low", "No significant risks found"
 
-    if (unanalyzed or skipped_code) and vlevel == "low":
+    if (unanalyzed or skipped_code or compiled) and vlevel == "low":
         # Never a reassuring headline over code nothing read: the level and score stay as they
         # are (unread code is not evidence of risk), only the wording stops implying "checked".
-        # That covers code in a language no scanner reads for behavior, and code files that were
-        # not read at all (too large, or a minified bundle).
+        # That covers code in a language no scanner reads for behavior, code files that were
+        # not read at all (too large, or a minified bundle), and bytecode shipped without source.
         parts = []
         if unanalyzed:
             parts.append(
@@ -900,6 +927,11 @@ def _verdict(
             )
         if skipped_code:
             parts.append(_skipped_code_phrase(skipped_code))
+        if compiled:
+            parts.append(
+                f"{compiled} compiled code file{'s' if compiled != 1 else ''} shipped without "
+                "source not read"
+            )
         headline = "Partially analyzed - " + "; ".join(parts)
     if nothing_read and vlevel == "low":
         # Nothing was read, so nothing could be found: the level and score stay as they are, and

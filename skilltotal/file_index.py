@@ -1537,6 +1537,11 @@ def neutralize_hidden(text: str) -> str:
 
 # Files larger than this are not loaded as text (still recorded in stats).
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
+
+# Compiled code a scanner of source cannot read. Shipped without the source beside it, it is a
+# place a payload can hide in plain sight (a .pyc dropped next to the SKILL.md), so the engine
+# reports it as not analyzed; beside its source it is a build artifact.
+BYTECODE_SUFFIXES = frozenset({".pyc", ".pyo", ".class"})
 # Binary sniff window, git's convention: a NUL within the first 8,000 bytes marks a binary.
 # Checking the WHOLE file dropped bundled `dist/*.js` that carried a single NUL inside a string
 # literal deep in the file -- and with the file, every finding in it, including the MCP surface.
@@ -2248,10 +2253,13 @@ class FileIndex:
         install_scripts: frozenset[str] = frozenset(),
         own_outputs: list[str] | None = None,
         exclude: tuple[str, ...] = (),
+        compiled: list[str] | None = None,
     ):
         self.root = root
         self.files = files
         self.stats = stats
+        # Relative paths of bytecode files (BYTECODE_SUFFIXES) the walk found; binary, so not read.
+        self.compiled = compiled or []
         # `.git/config`, read for the GitSpawn check only and kept out of `files`: it belongs to
         # whoever cloned the project (their remote URL, maybe with a token in it), not to what the
         # component ships, so no other rule may treat it as component content.
@@ -2315,6 +2323,7 @@ class FileIndex:
         skipped: list[tuple[str, str]] = []
         large: list[str] = []
         own_outputs: list[str] = []
+        compiled: list[str] = []
 
         for path in cls._walk(root, excludes, skip_build_output=skip_build_output,
                               links=links, unreadable=unreadable, skipped=skipped):
@@ -2337,6 +2346,10 @@ class FileIndex:
             text = _sniffed_text(path.name, raw)  # git-style sniff; see the constant
             if text is None:
                 stats["skipped_binary"] += 1
+                # Bytecode outside __pycache__ (which the walk never enters) is listed: the
+                # engine reports it as unanalyzed when no source file stands beside it.
+                if path.suffix.lower() in BYTECODE_SUFFIXES:
+                    compiled.append(path.relative_to(root).as_posix())
                 continue
             # Strip a leading UTF-8 BOM (common in Windows-authored configs). Left in, it breaks
             # JSON parsing of manifests (e.g. an MCP config → missed ST-MCP-* findings) and is
@@ -2399,7 +2412,8 @@ class FileIndex:
                    links=sorted(links), unreadable=sorted(unreadable),
                    skipped_dirs=sorted(skipped), skip_build_output=skip_build_output,
                    large=sorted(large), install_scripts=always,
-                   own_outputs=sorted(own_outputs), exclude=excludes)
+                   own_outputs=sorted(own_outputs), exclude=excludes,
+                   compiled=sorted(compiled))
 
     def with_files(
         self, extra: list[IndexedFile], minified: list[str] | None = None
@@ -2414,7 +2428,7 @@ class FileIndex:
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
             skip_build_output=self.skip_build_output, large=self.large,
             install_scripts=self.install_scripts, own_outputs=self.own_outputs,
-            exclude=self.exclude,
+            exclude=self.exclude, compiled=self.compiled,
         )
 
     @staticmethod

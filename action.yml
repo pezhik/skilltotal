@@ -332,6 +332,11 @@ runs:
         with open(annotations_path, 'a', encoding='utf-8') as f:
             for line in gate_lines:
                 f.write('::error::SkillTotal gate: ' + safe(line).replace('%', '%25') + '\n')
+            # What the scan could not read is named whether or not fail-on-unanalyzed gates it:
+            # a file passed over in silence would read as checked.
+            for line in lines:
+                if line.startswith('Not everything was analyzed:'):
+                    f.write('::warning::SkillTotal: ' + safe(line).replace('%', '%25') + '\n')
 
         order = {'critical': 0, 'high': 1, 'medium': 2, 'low': 3, 'info': 4}
         risk.sort(key=lambda f: (f.get('threat_class') != 'malicious_indicator', order.get(f.get('severity'), 5)))
