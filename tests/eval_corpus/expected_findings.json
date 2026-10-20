@@ -12,6 +12,8 @@
   "ST-INSTALL-NPM"
  ],
  "negative/AST01/agent-config-persist/scaffold-build-task": [],
+ "negative/AST01/agent-cred-helper-exec/static-key-helper": [],
+ "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
  "negative/AST01/clipboard-swap/address-validator-lib": [],
  "negative/AST01/clipboard-swap/dapp-copy-contract": [],
  "negative/AST01/clipboard-swap/wallet-copy-own-address": [],
@@ -110,6 +112,10 @@
  "negative/AST01/mcp-sampling-sysprompt/task-scoped-ts": [
   "ST-MCP-DETECTED"
  ],
+ "negative/AST01/mcp-static-auth-exec/env-token-server": [
+  "ST-MCP-DETECTED",
+  "ST-SHELL-PY"
+ ],
  "negative/AST01/password-archive/test-fixture-extract": [],
  "negative/AST01/powershell-download-exec/local-iex-and-plain-fetch": [],
  "negative/AST01/prompt-split-exfil/dashboard-sync": [],
@@ -125,10 +131,12 @@
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST01/skill-dynamic-exec/benign-dynamic-context": [],
+ "negative/AST01/stdlib-shadow/local-struct-helper": [],
  "negative/AST01/wallet-key-exfil/local-signer": [
   "ST-SECRET-ENV"
  ],
  "negative/AST01/wallet-key-exfil/solana-path-denylist": [],
+ "negative/AST01/workflow-history-exfil/legit-secret-scan": [],
  "negative/AST02/action-run-exec/commented-bootstrap-note": [],
  "negative/AST02/action-run-exec/setup-tool-installer": [
   "ST-SHELL-PIPE-EXEC"
@@ -272,6 +280,12 @@
  "positive/AST01/agent-config-persist/vscode-folderopen": [
   "ST-AGENT-CONFIG-PERSIST",
   "ST-INSTALL-NPM"
+ ],
+ "positive/AST01/agent-cred-helper-exec/provider-card": [
+  "ST-AGENT-CRED-HELPER-EXEC"
+ ],
+ "positive/AST01/agent-dotenv-exec/gemini-proxy-command": [
+  "ST-AGENT-DOTENV-EXEC"
  ],
  "positive/AST01/clipboard-swap/node-clipboardy": [
   "ST-CLIPPER"
@@ -511,6 +525,11 @@
   "ST-MCP-DETECTED",
   "ST-MCP-SAMPLING-SYSPROMPT"
  ],
+ "positive/AST01/mcp-static-auth-exec/exec-session": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-STATIC-AUTH-EXEC",
+  "ST-SHELL-PY"
+ ],
  "positive/AST01/password-archive/skill-download-protected-zip": [
   "ST-ARCHIVE-PASSWORD-EXTRACT"
  ],
@@ -549,6 +568,10 @@
  "positive/AST01/skill-dynamic-exec/clawsights-skill": [
   "ST-SKILL-DYNAMIC-EXEC"
  ],
+ "positive/AST01/stdlib-shadow/struct-import-exec": [
+  "ST-PY-STDLIB-SHADOW",
+  "ST-SHELL-PY"
+ ],
  "positive/AST01/wallet-key-exfil/env-wallet-key": [
   "ST-COMBO-EXFIL",
   "ST-NET-NODE",
@@ -559,6 +582,9 @@
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
   "ST-SENS-PATH"
+ ],
+ "positive/AST01/workflow-history-exfil/security-audit": [
+  "ST-WORKFLOW-HISTORY-EXFIL"
  ],
  "positive/AST02/action-run-exec/composite-block-decode": [
   "ST-OBF-DECODE-EXEC-SH"

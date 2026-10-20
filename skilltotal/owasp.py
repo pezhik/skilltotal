@@ -52,6 +52,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-EMAIL-BCC-EXFIL": ("AST01",),
     "ST-SECRET-EXFIL": ("AST01",),
     "ST-ACTION-SECRET-EXFIL": ("AST01",),
+    "ST-WORKFLOW-HISTORY-EXFIL": ("AST01",),
     "ST-ENCRYPTED-ARCHIVE": ("AST01",),
     "ST-FLOW-TRIFECTA": ("AST01",),
     "ST-OBF-DECODE-EXEC": ("AST01",),
@@ -69,6 +70,10 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-OBF-DECODE-SPAWN": ("AST01", "AST02"),
     "ST-PTH-IMPORT-EXEC": ("AST01",),
     "ST-AGENT-CONFIG-PERSIST": ("AST01", "AST04"),
+    "ST-AGENT-CRED-HELPER-EXEC": ("AST01", "AST04"),
+    "ST-AGENT-DOTENV-EXEC": ("AST01", "AST04"),
+    "ST-PY-STDLIB-SHADOW": ("AST01",),
+    "ST-MCP-STATIC-AUTH-EXEC": ("AST01",),
     "ST-CLIPPER": ("AST01",),
     "ST-SHELL-EVASION": ("AST01",),
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.

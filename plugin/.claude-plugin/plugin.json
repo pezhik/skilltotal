@@ -1,7 +1,7 @@
 {
   "name": "skilltotal",
   "displayName": "SkillTotal",
-  "version": "0.80.0",
+  "version": "0.81.0",
   "description": "Checks each package the agent is about to install and shows a line for every install, checked or not. Denies packages with malicious indicators and asks you about high-risk ones, look-alike names and anything it could not check (refused in CI).",
   "author": {
     "name": "SkillTotal",

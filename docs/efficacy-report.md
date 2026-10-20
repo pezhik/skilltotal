@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.80.0 · ruleset 80 · Python 3.14 · offline corpus.
+Engine 0.81.0 · ruleset 81 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (139/139 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/101 benign samples wrongly flagged)
+- **recall: 100.0%** (144/144 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/106 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -24,6 +24,8 @@ Engine 0.80.0 · ruleset 80 · Python 3.14 · offline corpus.
 | action-run-exec | 100% |
 | agent-config-autorun | 100% |
 | agent-config-persist | 100% |
+| agent-cred-helper-exec | 100% |
+| agent-dotenv-exec | 100% |
 | cli-relay | 100% |
 | clipboard-swap | 100% |
 | credential-exfil | 100% |
@@ -48,6 +50,7 @@ Engine 0.80.0 · ruleset 80 · Python 3.14 · offline corpus.
 | mcp-oauth-endpoint-injection | 100% |
 | mcp-sampling-injection | 100% |
 | mcp-sampling-sysprompt | 100% |
+| mcp-static-auth-exec | 100% |
 | mcp-tool-poisoning | 100% |
 | npm-lifecycle-remote-exec | 100% |
 | npm-worm | 100% |
@@ -62,14 +65,16 @@ Engine 0.80.0 · ruleset 80 · Python 3.14 · offline corpus.
 | skill-dynamic-exec | 100% |
 | skill-fetch-exec | 100% |
 | startup-hook-exec | 100% |
+| stdlib-shadow | 100% |
 | typosquat-dropper | 100% |
 | wallet-key-exfil | 100% |
+| workflow-history-exfil | 100% |
 
 ## Coverage matrix (positive samples: class x language)
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 19 | 27 | 19 | 2 |
+| AST01 | 22 | 27 | 21 | 2 |
 | AST02 | 20 | 13 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
 | AST04 | 18 | 3 | 8 | 0 |
@@ -92,6 +97,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
 | `ST-FLOW-TRIFECTA` | AST01 | 1 | 0 | - | - |
 | `ST-MCP-SERVER-HIDDEN-EXEC` | AST01 | 1 | 0 | - | - |
+| `ST-MCP-STATIC-AUTH-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC` | AST01 | 16 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-PY` | AST01 | 2 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-SH` | AST01 | 8 | 0 | - | - |
@@ -100,14 +106,18 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-PS-DOWNLOAD-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-IMPORT-EXEC` | AST01 | 1 | 0 | - | - |
+| `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
 | `ST-SECRET-EXFIL` | AST01 | 9 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
+| `ST-WORKFLOW-HISTORY-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 5 | 0 | - | - |
 | `ST-OBF-DECODE-SPAWN` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC-HIDDEN` | AST01, AST02 | 2 | 0 | - | - |
 | `ST-STARTUP-HOOK-EXEC` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
+| `ST-AGENT-CRED-HELPER-EXEC` | AST01, AST04 | 1 | 0 | - | - |
+| `ST-AGENT-DOTENV-EXEC` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-MCP-OAUTH-ENDPOINT-INJECTION` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-MCP-SAMPLING-SYSPROMPT` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PROMPT-SPLIT-EXFIL` | AST01, AST04 | 1 | 0 | - | - |
@@ -152,6 +162,6 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-DESERIALIZE-PY` | AST05 | 0 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-58 of 68 rules fire on at least one sample.
+63 of 73 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-NPM-GIT-DEP`, `ST-NPM-URL-DEP`, `ST-SHELL-PIPE-EXEC-PY`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

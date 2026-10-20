@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.80.0",
-  "ruleset_version": 80,
+  "engine_version": "0.81.0",
+  "ruleset_version": 81,
   "python_version": "3.14",
-  "positives": 139,
-  "negatives": 101,
+  "positives": 144,
+  "negatives": 106,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -20,6 +20,8 @@
     "action-run-exec": 1.0,
     "agent-config-autorun": 1.0,
     "agent-config-persist": 1.0,
+    "agent-cred-helper-exec": 1.0,
+    "agent-dotenv-exec": 1.0,
     "cli-relay": 1.0,
     "clipboard-swap": 1.0,
     "credential-exfil": 1.0,
@@ -44,6 +46,7 @@
     "mcp-oauth-endpoint-injection": 1.0,
     "mcp-sampling-injection": 1.0,
     "mcp-sampling-sysprompt": 1.0,
+    "mcp-static-auth-exec": 1.0,
     "mcp-tool-poisoning": 1.0,
     "npm-lifecycle-remote-exec": 1.0,
     "npm-worm": 1.0,
@@ -58,14 +61,16 @@
     "skill-dynamic-exec": 1.0,
     "skill-fetch-exec": 1.0,
     "startup-hook-exec": 1.0,
+    "stdlib-shadow": 1.0,
     "typosquat-dropper": 1.0,
-    "wallet-key-exfil": 1.0
+    "wallet-key-exfil": 1.0,
+    "workflow-history-exfil": 1.0
   },
   "coverage_matrix": {
     "AST01": {
       "node": 27,
-      "manifest/text": 19,
-      "python": 19,
+      "manifest/text": 22,
+      "python": 21,
       "shell": 2
     },
     "AST02": {
@@ -181,6 +186,30 @@
         "AST04"
       ],
       "malicious_samples": 6,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-CRED-HELPER-EXEC": {
+      "owasp": [
+        "AST01",
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-AGENT-DOTENV-EXEC": {
+      "owasp": [
+        "AST01",
+        "AST04"
+      ],
+      "malicious_samples": 1,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -498,6 +527,17 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-MCP-STATIC-AUTH-EXEC": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-MCP-TOOL-POISONING": {
       "owasp": [
         "AST04"
@@ -699,6 +739,17 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-PY-STDLIB-SHADOW": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-SECRET-EXFIL": {
       "owasp": [
         "AST01"
@@ -845,6 +896,17 @@
       "fired": 2,
       "should_stay_silent": 1,
       "stayed_silent": 1
+    },
+    "ST-WORKFLOW-HISTORY-EXFIL": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
     }
   },
   "rule_misses": []

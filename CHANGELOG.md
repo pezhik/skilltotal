@@ -4,6 +4,30 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.81.0]
+
+Ruleset 81 adds five rules for AI-tooling attack techniques. Each one is a high-severity malicious
+indicator with a positive sample in the eval corpus and a benign look-alike that stays clean.
+Report schema 1.9 is unchanged. `RULES_CHANGELOG.md` (ruleset 81) has the detection details.
+
+### Added
+- `ST-AGENT-CRED-HELPER-EXEC`: a distributable config (a provider card, a profile bundle, a shipped
+  `settings.json`) whose Claude Code credential helper fetches and runs code, or reads a credential
+  and sends it off the host.
+- `ST-AGENT-DOTENV-EXEC`: a per-agent `.env` whose sandbox or proxy-command variable carries shell
+  metacharacters, which the launcher runs on the host before the sandbox starts.
+- `ST-PY-STDLIB-SHADOW`: a Python file named after a standard-library module that runs a shell,
+  network or dynamic-exec call at import time, or re-exports the real module through `sys.modules`.
+- `ST-MCP-STATIC-AUTH-EXEC`: an MCP server that runs host commands behind a hard-coded token.
+- `ST-WORKFLOW-HISTORY-EXFIL`: a GitHub Actions workflow that searches for provider-key prefixes and
+  posts what it finds off GitHub.
+- New scanners `config_exec`, `stdlib_shadow` and `workflow_exfil` implement these rules.
+
+### Changed
+- A small set of CI-config rules (`engine._CI_SCORED_RULES`) keep their `.github/workflows/`
+  evidence scored instead of demoting it, because that workflow runs on the scanned repository's
+  own CI with its secrets.
+
 ## [0.80.0]
 
 Ruleset 80 adds five rules. Each one is a high-severity malicious indicator with a positive sample

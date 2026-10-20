@@ -31,6 +31,8 @@ Thumbs.db
 .env
 .env.*
 *.env
+# Eval-corpus samples of a planted agent dotenv (fake values only) are part of the sample.
+!tests/eval_corpus/**/.env
 *.pem
 *.key
 *.p12

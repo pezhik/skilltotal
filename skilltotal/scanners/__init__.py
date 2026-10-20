@@ -11,6 +11,7 @@ from skilltotal.scanners.agent_approval import AgentApprovalScanner
 from skilltotal.scanners.agent_config import AgentConfigScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.clipper import ClipperScanner
+from skilltotal.scanners.config_exec import ConfigExecScanner
 from skilltotal.scanners.dependency_redirect import DependencyRedirectScanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
@@ -38,6 +39,8 @@ from skilltotal.scanners.shell_evasion import ShellEvasionScanner
 from skilltotal.scanners.shell_exec import ShellExecScanner
 from skilltotal.scanners.shell_script import ShellScriptScanner
 from skilltotal.scanners.skill_fetch_exec import SkillFetchExecScanner
+from skilltotal.scanners.stdlib_shadow import StdlibShadowScanner
+from skilltotal.scanners.workflow_exfil import WorkflowExfilScanner
 
 SCANNERS: list[Scanner] = [
     PythonAstScanner(),
@@ -63,6 +66,8 @@ SCANNERS: list[Scanner] = [
     EmailExfilScanner(),
     SecretExfilScanner(),
     AgentConfigScanner(),
+    ConfigExecScanner(),
+    StdlibShadowScanner(),
     ClipperScanner(),
     NpmSupplyScanner(),
     AgentApprovalScanner(),
@@ -70,6 +75,7 @@ SCANNERS: list[Scanner] = [
     McpPinningScanner(),
     McpElicitationScanner(),
     DependencyRedirectScanner(),
+    WorkflowExfilScanner(),
 ]
 
 

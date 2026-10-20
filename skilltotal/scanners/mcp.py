@@ -209,6 +209,26 @@ _SHADOWING = alternation(
 # tool calls removes the human confirmation gate for everything the server exposes.
 _AUTO_APPROVE_KEYS = ("autoApprove", "alwaysAllow")
 
+# --- MCP exec-session tool gated by a hard-coded static token (Gentlemen RaaS affiliate, Oct
+# 2026) -------------------------------------------------------------------------------------
+# An operator ran a loopback MCP service whose tool runs arbitrary commands in a persistent shell
+# session, authenticated by a hard-coded bearer token; companion scripts drive it directly. The
+# tell, inside a file that defines an MCP server, is a host-command sink together with a static
+# credential the request's authorization is compared against -- not a token read from the
+# environment or a secret store. An honest server reads its token from os.environ / a secret file.
+_SHELL_CALL = re.compile(
+    r"\bsubprocess\.(?:Popen|run|call|check_output|check_call)\b"
+    r"|\bos\.(?:system|popen|spawn\w*)\b"
+    r"|\bchild_process\b|\bexecSync\b|\bspawnSync\b|\.exec(?:File)?(?:Sync)?\s*\(",
+    re.IGNORECASE,
+)
+_STATIC_AUTH = re.compile(
+    r"""["']Bearer\s+[^"'\s]{4,}["']"""
+    r"""|\b(?:authorization|auth|token|bearer|api[_-]?key)\b\s*[!=]=\s*["'][^"']{6,}["']"""
+    r"""|["'][^"']{6,}["']\s*[!=]=\s*\b(?:authorization|auth|token|bearer)\b""",
+    re.IGNORECASE,
+)
+
 
 def _concealed_launch_path(value: str) -> str | None:
     """Return the launch target if it is a *concealed* local path, else None.
@@ -568,6 +588,28 @@ class McpScanner(Scanner):
             code_context="strings_and_comments",
         ),
         RuleSpec(
+            id="ST-MCP-STATIC-AUTH-EXEC",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="MCP server runs host commands behind a hard-coded static token",
+            description=(
+                "A file that defines an MCP server both runs host commands (a free-form "
+                "command/session-exec tool: subprocess / os.system / child_process) and compares "
+                "the request's authorization to a hard-coded token literal (e.g. a 'Bearer ...' "
+                "string in source). A constant token in source is not a secret: anyone with the "
+                "source can drive the command channel, and companion scripts can POST tools/call "
+                "to the loopback endpoint with that literal token, with no model involved. This is "
+                "the exec-session-as-C2 shape (CloudSEK, Oct 2026)."
+            ),
+            recommendation=(
+                "Do not run this server. Never authenticate a command-executing tool with a "
+                "constant token baked into source; read a per-install secret from the environment "
+                "or a secret store, and constrain or remove the free-form exec tool."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
+        RuleSpec(
             id="ST-MCP-SAMPLING-INJECTION",
             category=CATEGORY,
             severity=Severity.HIGH,
@@ -750,6 +792,7 @@ class McpScanner(Scanner):
         self._scan_code_phrases(index, _SHADOWING, shadowing)
         sampling = self._scan_sampling_prompts(index)
         sampling_sysprompt = self._scan_sampling_sysprompt(index)
+        static_auth_exec = self._scan_static_auth_exec(index)
 
         findings: list[Finding] = []
         if dangerous:
@@ -775,6 +818,8 @@ class McpScanner(Scanner):
             findings.append(self._finding("ST-MCP-SAMPLING-INJECTION", sampling))
         if sampling_sysprompt:
             findings.append(self._finding("ST-MCP-SAMPLING-SYSPROMPT", sampling_sysprompt))
+        if static_auth_exec:
+            findings.append(self._finding("ST-MCP-STATIC-AUTH-EXEC", static_auth_exec))
         if shadowing:
             files = []
             for ev in shadowing:
@@ -805,6 +850,24 @@ class McpScanner(Scanner):
         self._flag_exfiltration_surface(dangerous_categories, dangerous, needs_review)
 
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    @staticmethod
+    def _scan_static_auth_exec(index: FileIndex) -> list[Evidence]:
+        """Evidence for an MCP-server file that runs host commands and gates them on a static,
+        source-embedded token (vs. a token read from the environment / a secret store)."""
+        evidence: list[Evidence] = []
+        for f in index.select(suffixes=CODE_SUFFIXES):
+            if not exposes_mcp_surface(f.text):
+                continue
+            shell = _SHELL_CALL.search(f.text)
+            auth = _STATIC_AUTH.search(f.text)
+            if shell is None or auth is None:
+                continue
+            evidence.append(f.evidence_for_span(auth.start(), auth.end()))
+            evidence.append(f.evidence_for_span(shell.start(), shell.end()))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                break
+        return evidence
 
     @staticmethod
     def _scan_sampling_prompts(index: FileIndex) -> list[Evidence]:

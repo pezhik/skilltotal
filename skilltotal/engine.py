@@ -1495,6 +1495,12 @@ def _split_ci_evidence(
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
+        # A few rules describe malice that lives IN the CI config and runs on the scanned
+        # repository's own CI (a credential-harvesting workflow pushed to a victim repo), not the
+        # project operating its own trusted infrastructure — those keep their CI evidence.
+        if finding.id in _CI_SCORED_RULES:
+            kept.append(finding)
+            continue
         prod = [e for e in finding.evidence if not is_ci_path(e.file)]
         ci = [e for e in finding.evidence if is_ci_path(e.file)]
         if prod:
@@ -1502,6 +1508,11 @@ def _split_ci_evidence(
         if ci:
             review.append(_demoted_review(finding, ci, "CI/CD pipeline configuration only"))
     return kept, review
+
+
+# Rules whose evidence in CI config is still scored (see _split_ci_evidence): the CI job is the
+# payload, running on the scanned repo's own CI with its secrets, not the project's trusted build.
+_CI_SCORED_RULES = frozenset({"ST-WORKFLOW-HISTORY-EXFIL"})
 
 
 def _split_code_context_evidence(

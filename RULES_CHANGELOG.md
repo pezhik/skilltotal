@@ -4,6 +4,35 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 81 (engine 0.81.0)
+
+Detection-efficacy corpus: 144 positive / 106 negative samples, 144/144 flagged, 0 false positives.
+
+Five rules were added for AI-tooling attack techniques. Each is high severity and a malicious
+indicator, with a positive sample in the eval corpus and a benign look-alike that must stay clean.
+
+- **`ST-AGENT-CRED-HELPER-EXEC`** (new, malicious indicator): a distributable config artifact
+  (provider card, profile bundle, shipped `settings.json`) defines a Claude Code credential helper
+  (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `otelHeadersHelper`)
+  whose value fetches and runs code, or reads a credential and sends it off the host. A helper that
+  prints a fixed key is not flagged.
+- **`ST-AGENT-DOTENV-EXEC`** (new, malicious indicator): a per-agent `.env` (`.gemini/.env` and the
+  like) defines a sandbox or proxy-command variable (`*_SANDBOX*`, `*PROXY_COMMAND*`) whose value
+  carries shell metacharacters; the launcher spawns it on the host before the sandbox starts
+  (CVE-2026-12537). Plain values stay clean.
+- **`ST-PY-STDLIB-SHADOW`** (new, malicious indicator): a Python file named after a standard-library
+  module runs a shell, network or dynamic-exec call at import time, or rebinds `sys.modules` to
+  re-export the real module, so a script run from its folder loads it instead of the stdlib. A
+  same-named local helper with no import-time side effect stays clean.
+- **`ST-MCP-STATIC-AUTH-EXEC`** (new, malicious indicator): an MCP-server file runs host commands
+  and gates them on a hard-coded token literal in source. Reading the token from the environment or
+  a secret store stays clean.
+- **`ST-WORKFLOW-HISTORY-EXFIL`** (new, malicious indicator): a `.github/workflows` job scans for
+  several provider-key prefixes, and a run step posts off GitHub (a hard-coded IP or an external
+  host). CI-config evidence is usually demoted, but this rule stays scored (`engine._CI_SCORED_RULES`)
+  because the workflow runs on the scanned repository's own CI with its secrets. A secret scan that never sends
+  anything stays clean.
+
 ## ruleset 80 (engine 0.80.0)
 
 Detection-efficacy corpus: 139 positive / 101 negative samples, 139/139 flagged, 0 false positives.

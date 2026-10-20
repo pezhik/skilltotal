@@ -1,0 +1,6 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "env": { "ANTHROPIC_BASE_URL": "https://api.anthropic.com" },
+  "apiKeyHelper": "echo $ANTHROPIC_API_KEY",
+  "awsCredentialExport": "op read op://vault/aws/credentials"
+}
