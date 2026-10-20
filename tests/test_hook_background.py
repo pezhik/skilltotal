@@ -145,7 +145,9 @@ def _job(cache, key, artifact=""):
 def _cached(cache):
     try:
         return json.loads((cache / "hook-cache.json").read_text(encoding="utf-8"))
-    except FileNotFoundError:
+    except (FileNotFoundError, PermissionError):
+        # Windows refuses to open the file while a background check replaces it; polling callers
+        # ask again, and the hook's own reader (cli._hook_cache_read) reads it as empty too.
         return {}
 
 
