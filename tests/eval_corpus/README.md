@@ -80,6 +80,10 @@ does not estimate how often the rule fires on benign code in the wild.
 ## Maintenance
 
 - Keep samples minimal (1–3 small files) and inert. Never weaken a sample just to pass.
+- `expected_findings.json` lists the rule ids that each positive and negative sample reports.
+  `tests/test_efficacy_floor.py` fails when any of them changes, even if the verdict stays
+  the same. After an intended detection change, regenerate it with
+  `python tests/manual_eval/efficacy.py --write-expected` and review its diff.
 - If a realistic positive cannot reach the bar on the current engine, leave the negative,
   keep the positive, and record it as a detection gap for a hardening phase — do not fake it.
 - Adding a new technique: create both a `positive/` (ideally a base case plus an evasion

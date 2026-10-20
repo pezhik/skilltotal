@@ -91,6 +91,30 @@ _RULE_SAMPLES = efficacy.discover_rule_samples()
 _SURVEY = Path(__file__).resolve().parent.parent / "docs" / "mcp-registry-survey.json"
 
 
+def test_every_sample_reports_exactly_its_expected_findings() -> None:
+    # Recall and precision judge a sample by its verdict alone. A rule that stops firing on a
+    # positive still flagged by another rule, or a new low finding on a benign look-alike, changes
+    # neither. The committed rule ids per sample make every such change fail here, and a
+    # deliberate one becomes a reviewed diff of expected_findings.json.
+    expected = json.loads(efficacy.EXPECTED_FINDINGS.read_text(encoding="utf-8"))
+    actual = efficacy.expected_findings(_RESULTS)
+    changes = []
+    for path in sorted(set(expected) | set(actual)):
+        if path not in actual:
+            changes.append(f"{path}: sample gone")
+        elif path not in expected:
+            changes.append(f"{path}: new sample, reports {actual[path]}")
+        elif expected[path] != actual[path]:
+            lost = sorted(set(expected[path]) - set(actual[path]))
+            new = sorted(set(actual[path]) - set(expected[path]))
+            changes.append(f"{path}: lost {lost}, new {new}")
+    assert not changes, (
+        "the findings on eval-corpus samples changed:\n  " + "\n  ".join(changes)
+        + "\nIf the change is intended: python tests/manual_eval/efficacy.py --write-expected,"
+        " then review the diff of tests/eval_corpus/expected_findings.json."
+    )
+
+
 def test_rule_samples_meet_their_expectation() -> None:
     assert _RULE_SAMPLES, "no per-rule samples found under tests/eval_corpus/rules/"
     assert not _METRICS.rule_misses, (

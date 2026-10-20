@@ -39,6 +39,8 @@ from skilltotal.collector import detect_component
 from skilltotal.owasp import OWASP_BY_RULE
 
 CORPUS_ROOT = Path(__file__).resolve().parent.parent / "eval_corpus"
+# The rule ids each recall/precision sample reports, as committed: see expected_findings().
+EXPECTED_FINDINGS = CORPUS_ROOT / "expected_findings.json"
 # Per-rule samples: rules/<RULE-ID>/fires/<variant>/ must fire that rule, .../silent/<variant>/
 # must not.
 RULE_SAMPLES_DIR = "rules"
@@ -224,6 +226,14 @@ def evaluate(samples: list[Sample]) -> list[Result]:
             )
         )
     return results
+
+
+def expected_findings(results: list[Result], root: Path = CORPUS_ROOT) -> dict[str, list[str]]:
+    """Sample path (relative to the corpus, posix) -> the rule ids the engine reports for it."""
+    return {
+        r.sample.path.relative_to(root).as_posix(): list(r.finding_ids)
+        for r in sorted(results, key=lambda r: r.sample.path.as_posix())
+    }
 
 
 def compute_metrics(results: list[Result]) -> Metrics:
@@ -437,9 +447,18 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Offline detection-efficacy benchmark.")
     ap.add_argument("--corpus", type=Path, default=CORPUS_ROOT)
     ap.add_argument("--out", type=Path, help="output prefix; writes <prefix>.json and .md")
+    ap.add_argument(
+        "--write-expected", action="store_true",
+        help=f"rewrite {EXPECTED_FINDINGS.name} from this run (after an intended detection change)",
+    )
     args = ap.parse_args()
 
-    _, metrics = run(args.corpus)
+    results, metrics = run(args.corpus)
+    if args.write_expected:
+        EXPECTED_FINDINGS.write_text(
+            json.dumps(expected_findings(results, args.corpus), indent=1) + "\n", encoding="utf-8",
+            newline="\n",
+        )
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.with_suffix(".json").write_text(
