@@ -314,6 +314,7 @@ npx -y --package=skilltotal@0.79.1 -- skilltotal scan https://github.com/owner/r
 - **Detection is at the call/import level.** A capability shows the code is there, not that it is
   misused. SkillTotal does not replace a sandbox, a penetration test or a manual code review.
 
+For how the four bypasses published in June 2026 fare against this engine, see [What we catch](https://www.skilltotal.ai/what-we-catch).
 The full list is in [docs/detection.md](https://github.com/pezhik/skilltotal/blob/main/docs/detection.md#limitations).
 
 ## Configuration
