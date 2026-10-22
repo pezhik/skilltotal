@@ -565,12 +565,20 @@ def _dir_size_bytes(root: Path, *, skip_git: bool = False) -> int:
 
 
 def _github_api(url: str) -> dict | None:
-    """One GitHub REST call; ``None`` when rate-limited, private, offline or not JSON."""
+    """One GitHub REST call; ``None`` when rate-limited, private, offline or not JSON.
+
+    With ``SKILLTOTAL_GITHUB_TOKEN`` set the call is authenticated: 5000 an hour instead of the 60
+    an address gets, after which the size check before a clone is skipped. The token goes to
+    api.github.com only, and never along a redirect.
+    """
     try:
         req = urllib.request.Request(
             url,
             headers={"User-Agent": "skilltotal-scanner", "Accept": "application/vnd.github+json"},
         )
+        token = os.environ.get("SKILLTOTAL_GITHUB_TOKEN", "").strip()
+        if token and urlparse(url).hostname == "api.github.com":
+            req.add_unredirected_header("Authorization", f"Bearer {token}")
         with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:  # nosec B310 - https
             data = bounded_json.loads(resp.read(_MAX_ARCHIVE_BYTES + 1))
     except (OSError, ValueError):

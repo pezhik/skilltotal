@@ -355,3 +355,43 @@ def test_the_work_limit_cannot_fire_on_its_own_by_default(monkeypatch):
     _mock_github(monkeypatch, history_kb=1024,
                  tree=[_blob(f"src/mod{i}.ts", MB) for i in range(cap)])
     collector._reject_if_too_large("https://github.com/o/r.git")  # no raise
+
+
+def _capture_github_request(monkeypatch) -> dict:
+    seen: dict = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, *_):
+            return b"{}"
+
+    def urlopen(req, timeout=None):  # noqa: ARG001
+        seen["req"] = req
+        return _Resp()
+
+    monkeypatch.setattr(collector.urllib.request, "urlopen", urlopen)
+    return seen
+
+
+def test_a_github_token_authenticates_the_size_check_and_never_follows_a_redirect(monkeypatch):
+    seen = _capture_github_request(monkeypatch)
+    monkeypatch.setenv("SKILLTOTAL_GITHUB_TOKEN", "test-token-value")
+    collector._github_api("https://api.github.com/repos/acme/widget")
+    req = seen["req"]
+    assert req.unredirected_hdrs.get("Authorization") == "Bearer test-token-value"
+    assert "Authorization" not in req.headers
+
+
+def test_no_token_means_an_anonymous_call_and_no_other_host_ever_gets_one(monkeypatch):
+    seen = _capture_github_request(monkeypatch)
+    monkeypatch.delenv("SKILLTOTAL_GITHUB_TOKEN", raising=False)
+    collector._github_api("https://api.github.com/repos/acme/widget")
+    assert "Authorization" not in seen["req"].unredirected_hdrs
+    monkeypatch.setenv("SKILLTOTAL_GITHUB_TOKEN", "test-token-value")
+    collector._github_api("https://example.test/repos/acme/widget")
+    assert "Authorization" not in seen["req"].unredirected_hdrs

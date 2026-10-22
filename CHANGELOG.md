@@ -4,6 +4,22 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.79.2]
+
+Ruleset 79 and report schema 1.9 are unchanged.
+
+### Added
+- `SKILLTOTAL_GITHUB_TOKEN` sets a GitHub token for the size check that runs before a GitHub
+  repository is cloned. Without a token GitHub allows 60 of these requests an hour per address.
+  Past that, the check was skipped and only the size limit during the clone itself applied, so
+  an oversized repository was downloaded before it was refused. With a token the limit is 5000
+  requests an hour. The token is sent only to `api.github.com`, never along a redirect. A
+  fine-grained token with no permissions is enough.
+
+### Security
+- Development dependencies now require virtualenv 21.14.9 or later (CVE-2026-113722,
+  CVE-2026-113725, CVE-2026-113726). The engine still has no runtime dependencies.
+
 ## [0.79.1]
 
 Ruleset 79 and report schema 1.9 are unchanged.

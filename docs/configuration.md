@@ -74,6 +74,13 @@ a `needs_review` note suggesting the closest id.
 A source over a limit is refused with its size and the variable to raise. A value that is not a
 positive whole number is an error. The registry mirror settings are described below.
 
+`SKILLTOTAL_GITHUB_TOKEN` (unset by default): before cloning a GitHub repository, SkillTotal asks
+the GitHub API how large the checkout will be. Without a token GitHub allows 60 such requests an
+hour per address. Past that, the size check is skipped and only the size limit applied during
+the clone itself is left, so an oversized repository is downloaded before it is refused. With a
+token the limit is 5000 requests an hour. A fine-grained token with no permissions is enough.
+SkillTotal sends it only to `api.github.com` and never along a redirect.
+
 ## Scanning through a registry mirror
 
 If your installers fetch from a company mirror (Artifactory, Nexus, Verdaccio, devpi), point
