@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.79.2 · ruleset 79 · Python 3.14 · offline corpus.
+Engine 0.80.0 · ruleset 80 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (134/134 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/94 benign samples wrongly flagged)
+- **recall: 100.0%** (139/139 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/99 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -28,6 +28,7 @@ Engine 0.79.2 · ruleset 79 · Python 3.14 · offline corpus.
 | clipboard-swap | 100% |
 | credential-exfil | 100% |
 | decode-exec | 100% |
+| decode-spawn | 100% |
 | decrypt-and-execute | 100% |
 | dep-redirect | 100% |
 | deserialize-exec | 100% |
@@ -44,7 +45,9 @@ Engine 0.79.2 · ruleset 79 · Python 3.14 · offline corpus.
 | mcp-config-inject | 100% |
 | mcp-hidden-dotpath-launcher | 100% |
 | mcp-launch-command | 100% |
+| mcp-oauth-endpoint-injection | 100% |
 | mcp-sampling-injection | 100% |
+| mcp-sampling-sysprompt | 100% |
 | mcp-tool-poisoning | 100% |
 | npm-lifecycle-remote-exec | 100% |
 | npm-worm | 100% |
@@ -53,10 +56,12 @@ Engine 0.79.2 · ruleset 79 · Python 3.14 · offline corpus.
 | plugin-hook-trojan | 100% |
 | powershell-download-exec | 100% |
 | prompt-injection | 100% |
+| prompt-split-exfil | 100% |
 | pth-persistence | 100% |
 | shell-decode-exec | 100% |
 | skill-dynamic-exec | 100% |
 | skill-fetch-exec | 100% |
+| startup-hook-exec | 100% |
 | typosquat-dropper | 100% |
 | wallet-key-exfil | 100% |
 
@@ -64,10 +69,10 @@ Engine 0.79.2 · ruleset 79 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 18 | 26 | 19 | 2 |
-| AST02 | 20 | 12 | 3 | 1 |
+| AST01 | 19 | 27 | 19 | 2 |
+| AST02 | 20 | 13 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
-| AST04 | 17 | 3 | 8 | 0 |
+| AST04 | 18 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -99,8 +104,13 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 5 | 0 | - | - |
+| `ST-OBF-DECODE-SPAWN` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC-HIDDEN` | AST01, AST02 | 2 | 0 | - | - |
+| `ST-STARTUP-HOOK-EXEC` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
+| `ST-MCP-OAUTH-ENDPOINT-INJECTION` | AST01, AST04 | 1 | 0 | - | - |
+| `ST-MCP-SAMPLING-SYSPROMPT` | AST01, AST04 | 1 | 0 | - | - |
+| `ST-PROMPT-SPLIT-EXFIL` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PICKLE-REDUCE` | AST01, AST05 | 2 | 0 | - | - |
 | `ST-AGENT-AUTORUN` | AST02 | 3 | 3 | 2/2 | 1/1 |
 | `ST-AGENT-AUTORUN-REMOTE` | AST02 | 5 | 0 | - | - |
@@ -142,6 +152,6 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-DESERIALIZE-PY` | AST05 | 0 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-53 of 63 rules fire on at least one sample.
+58 of 68 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-NPM-GIT-DEP`, `ST-NPM-URL-DEP`, `ST-SHELL-PIPE-EXEC-PY`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

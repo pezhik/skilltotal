@@ -168,6 +168,28 @@ _SAMPLING_ASKS = {
     ),
 }
 
+# A server-supplied system prompt for a sampling request, and the instruction-override phrasing
+# that turns it into a confused-deputy attack. MCP sampling lets the server pass its OWN
+# systemPrompt to the client's model; a benign one scopes the task ("You are a concise
+# summarizer"). An override one countermands the client's own system prompt - that is the abuse
+# documented in the MCP sampling research: the server, not the user, decides what the user's model
+# becomes. A finding needs BOTH the systemPrompt field and an override phrase in the same sampling
+# region, so an ordinary task-scoping systemPrompt stays clean.
+_SAMPLING_SYSPROMPT_FIELD = re.compile(r"\bsystem_?[Pp]rompt\b")
+_SYSPROMPT_OVERRIDE = re.compile(
+    r"ignore\s+(?:all\s+)?(?:the\s+)?(?:previous|earlier|prior|above)\s+"
+    r"(?:instructions?|prompts?|system\s+prompt)"
+    r"|disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior|earlier)\s+"
+    r"(?:instructions?|prompts?|system\s+prompt)"
+    r"|override\s+(?:the\s+)?(?:developer|system|previous|prior|earlier)\s+(?:instructions?|prompt)"
+    r"|no\s+(?:content\s+policy|restrictions?|safety\s+(?:guidelines?|filters?)|guardrails?)"
+    r"|unrestricted\s+(?:assistant|mode|ai|model)"
+    r"|do\s+anything\s+now|\bDAN\s+mode\b"
+    r"|comply\s+with\s+(?:every|all|any)\s+(?:instruction|request|command)"
+    r"|without\s+(?:warning|refusing|telling|informing)\b",
+    re.IGNORECASE,
+)
+
 # Tool-shadowing signatures: a tool's description steering the agent's use of OTHER
 # tools — redirecting calls to itself, overriding another tool, or forbidding one.
 # Distinct from _POISONING (hidden imperatives about *this* tool / fake authority).
@@ -561,6 +583,26 @@ class McpScanner(Scanner):
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
+        RuleSpec(
+            id="ST-MCP-SAMPLING-SYSPROMPT",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="MCP sampling request overrides the client model's system prompt",
+            description=(
+                "A function that uses MCP sampling supplies its own systemPrompt that overrides "
+                "the client's system prompt with an instruction-override / jailbreak directive "
+                "(e.g. 'ignore all previous instructions', 'unrestricted assistant', 'comply with "
+                "every instruction'). Sampling runs on the client's model with the client's trust, "
+                "so a server-chosen system prompt can turn the user's model into the server's "
+                "confused deputy without the user seeing it."
+            ),
+            recommendation=(
+                "Do not approve sampling requests from this server. A server has no honest reason "
+                "to replace the client's system prompt with one that removes its restrictions."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
         # Listed for `rules list`; routed to needs_review (NOT scored). Steering the agent
         # between tools ("use X instead", "do not use the Y tool") is a real shadowing vector
         # but is indistinguishable by pattern from legitimate intra-server routing
@@ -704,6 +746,7 @@ class McpScanner(Scanner):
         self._scan_frontmatter_descriptions(index, poisoning)
         self._scan_code_phrases(index, _SHADOWING, shadowing)
         sampling = self._scan_sampling_prompts(index)
+        sampling_sysprompt = self._scan_sampling_sysprompt(index)
 
         findings: list[Finding] = []
         if dangerous:
@@ -727,6 +770,8 @@ class McpScanner(Scanner):
             findings.append(self._finding("ST-MCP-TOOL-POISONING", poisoning))
         if sampling:
             findings.append(self._finding("ST-MCP-SAMPLING-INJECTION", sampling))
+        if sampling_sysprompt:
+            findings.append(self._finding("ST-MCP-SAMPLING-SYSPROMPT", sampling_sysprompt))
         if shadowing:
             files = []
             for ev in shadowing:
@@ -773,6 +818,22 @@ class McpScanner(Scanner):
                     continue
                 for m in sorted(hits, key=lambda h: h.start()):
                     evidence.append(f.evidence_for_span(m.start(), m.end()))
+                if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                    return evidence[:MAX_EVIDENCE_SCANNED]
+        return evidence
+
+    @staticmethod
+    def _scan_sampling_sysprompt(index: FileIndex) -> list[Evidence]:
+        """Evidence for a sampling systemPrompt that overrides the client model's system prompt."""
+        evidence: list[Evidence] = []
+        for f in index.select(suffixes=CODE_SUFFIXES):
+            for start, end in f.sampling_regions():
+                if _SAMPLING_SYSPROMPT_FIELD.search(f.text, start, end) is None:
+                    continue
+                m = _SYSPROMPT_OVERRIDE.search(f.text, start, end)
+                if m is None:
+                    continue
+                evidence.append(f.evidence_for_span(m.start(), m.end()))
                 if len(evidence) >= MAX_EVIDENCE_SCANNED:
                     return evidence[:MAX_EVIDENCE_SCANNED]
         return evidence

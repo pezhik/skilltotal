@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.79.2",
-  "ruleset_version": 79,
+  "engine_version": "0.80.0",
+  "ruleset_version": 80,
   "python_version": "3.14",
-  "positives": 134,
-  "negatives": 94,
+  "positives": 139,
+  "negatives": 99,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -24,6 +24,7 @@
     "clipboard-swap": 1.0,
     "credential-exfil": 1.0,
     "decode-exec": 1.0,
+    "decode-spawn": 1.0,
     "decrypt-and-execute": 1.0,
     "dep-redirect": 1.0,
     "deserialize-exec": 1.0,
@@ -40,7 +41,9 @@
     "mcp-config-inject": 1.0,
     "mcp-hidden-dotpath-launcher": 1.0,
     "mcp-launch-command": 1.0,
+    "mcp-oauth-endpoint-injection": 1.0,
     "mcp-sampling-injection": 1.0,
+    "mcp-sampling-sysprompt": 1.0,
     "mcp-tool-poisoning": 1.0,
     "npm-lifecycle-remote-exec": 1.0,
     "npm-worm": 1.0,
@@ -49,24 +52,26 @@
     "plugin-hook-trojan": 1.0,
     "powershell-download-exec": 1.0,
     "prompt-injection": 1.0,
+    "prompt-split-exfil": 1.0,
     "pth-persistence": 1.0,
     "shell-decode-exec": 1.0,
     "skill-dynamic-exec": 1.0,
     "skill-fetch-exec": 1.0,
+    "startup-hook-exec": 1.0,
     "typosquat-dropper": 1.0,
     "wallet-key-exfil": 1.0
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 26,
-      "manifest/text": 18,
+      "node": 27,
+      "manifest/text": 19,
       "python": 19,
       "shell": 2
     },
     "AST02": {
       "manifest/text": 20,
-      "node": 12,
-      "python": 3,
+      "node": 13,
+      "python": 4,
       "shell": 1
     },
     "AST03": {
@@ -74,8 +79,8 @@
     },
     "AST04": {
       "node": 3,
-      "python": 8,
-      "manifest/text": 17
+      "manifest/text": 18,
+      "python": 8
     },
     "AST05": {
       "python": 4
@@ -425,6 +430,18 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-MCP-OAUTH-ENDPOINT-INJECTION": {
+      "owasp": [
+        "AST01",
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-MCP-OVERBROAD-SCOPE": {
       "owasp": [
         "AST03"
@@ -438,6 +455,18 @@
     },
     "ST-MCP-SAMPLING-INJECTION": {
       "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-MCP-SAMPLING-SYSPROMPT": {
+      "owasp": [
+        "AST01",
         "AST04"
       ],
       "malicious_samples": 1,
@@ -557,6 +586,18 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-OBF-DECODE-SPAWN": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-OBF-DECRYPT-EXEC": {
       "owasp": [
         "AST01"
@@ -596,6 +637,18 @@
         "AST04"
       ],
       "malicious_samples": 17,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PROMPT-SPLIT-EXFIL": {
+      "owasp": [
+        "AST01",
+        "AST04"
+      ],
+      "malicious_samples": 1,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -753,6 +806,18 @@
         "AST02"
       ],
       "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-STARTUP-HOOK-EXEC": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,

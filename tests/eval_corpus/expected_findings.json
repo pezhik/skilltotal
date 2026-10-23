@@ -107,8 +107,12 @@
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
  ],
+ "negative/AST01/mcp-sampling-sysprompt/task-scoped-ts": [
+  "ST-MCP-DETECTED"
+ ],
  "negative/AST01/password-archive/test-fixture-extract": [],
  "negative/AST01/powershell-download-exec/local-iex-and-plain-fetch": [],
+ "negative/AST01/prompt-split-exfil/dashboard-sync": [],
  "negative/AST01/pth-persistence/ordinary-path": [],
  "negative/AST01/pth-persistence/pth-imports-defining-module": [
   "ST-SHELL-PY"
@@ -137,6 +141,9 @@
  ],
  "negative/AST02/agent-config-autorun/lint-hook-status-line": [
   "ST-AGENT-AUTORUN"
+ ],
+ "negative/AST02/decode-spawn/spawn-worker-file": [
+  "ST-SHELL-NODE"
  ],
  "negative/AST02/dep-redirect/private-registry-skill": [],
  "negative/AST02/git-hook-persistence/husky-local": [
@@ -181,6 +188,7 @@
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
  ],
+ "negative/AST02/startup-hook-exec/sitecustomize-setpath": [],
  "negative/AST02/typosquat-dropper/normal-name-build": [
   "ST-INSTALL-NPM-PREPARE"
  ],
@@ -193,6 +201,7 @@
  "negative/AST04/mcp-config-inject/reads-client-config": [
   "ST-FS-NODE-READ"
  ],
+ "negative/AST04/mcp-oauth-endpoint-injection/clean-discovery": [],
  "negative/AST04/mcp-sampling-injection/python-benign-summarizer": [
   "ST-MCP-DETECTED"
  ],
@@ -494,6 +503,10 @@
   "ST-MCP-SERVER-EXEC",
   "ST-MCP-SERVER-HIDDEN-EXEC"
  ],
+ "positive/AST01/mcp-sampling-sysprompt/override-ts": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-SAMPLING-SYSPROMPT"
+ ],
  "positive/AST01/password-archive/skill-download-protected-zip": [
   "ST-ARCHIVE-PASSWORD-EXTRACT"
  ],
@@ -502,6 +515,9 @@
  ],
  "positive/AST01/powershell-download-exec/irm-variable": [
   "ST-PS-DOWNLOAD-EXEC"
+ ],
+ "positive/AST01/prompt-split-exfil/repo-health-chain": [
+  "ST-PROMPT-SPLIT-EXFIL"
  ],
  "positive/AST01/pth-persistence/decode-exec-pth": [
   "ST-CONVERGENCE",
@@ -574,6 +590,10 @@
   "ST-AGENT-AUTORUN",
   "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
+ ],
+ "positive/AST02/decode-spawn/gunzip-detached-worker": [
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-NODE"
  ],
  "positive/AST02/dep-redirect/skill-hidden-index": [
   "ST-SKILL-DEP-REDIRECT"
@@ -707,6 +727,10 @@
  "positive/AST02/skill-fetch-exec/html-comment-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"
  ],
+ "positive/AST02/startup-hook-exec/sitecustomize-fork-net": [
+  "ST-NET-PY",
+  "ST-STARTUP-HOOK-EXEC"
+ ],
  "positive/AST02/typosquat-dropper/npm-reqests-dropper": [
   "ST-DYN-NODE",
   "ST-INSTALL-DROPPER",
@@ -731,6 +755,9 @@
   "ST-FS-NODE-WRITE",
   "ST-NET-NODE",
   "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-oauth-endpoint-injection/authz-command-sub": [
+  "ST-MCP-OAUTH-ENDPOINT-INJECTION"
  ],
  "positive/AST04/mcp-sampling-injection/python-sampling-abuse": [
   "ST-MCP-DETECTED",

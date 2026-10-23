@@ -4,6 +4,25 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.80.0]
+
+Ruleset 80 (report schema 1.9 unchanged). Five detections for AI-tooling attack techniques
+published in the last ~45 days; see `RULES_CHANGELOG.md` for the full list.
+
+### Added
+- `ST-STARTUP-HOOK-EXEC`: a `sitecustomize.py` / `usercustomize.py` startup hook that spawns,
+  forks, reaches the network, or decodes a payload — the startup-persistence vector of the
+  October 2026 litellm PyPI credential-stealer compromise, alongside the existing `.pth` rule.
+- `ST-OBF-DECODE-SPAWN`: a file that decodes an embedded blob (gzip/brotli/base64/hex) and runs
+  it through a spawned interpreter (`spawn(execPath, ['-e', stage])`, `node -e`, `python -c`) —
+  the import-time detached worker of the subql npm ecosystem compromise.
+- `ST-PROMPT-SPLIT-EXFIL`: an instruction file whose credential-read, external-send and
+  concealment steps are spread across the file so no single sentence looks malicious.
+- `ST-MCP-OAUTH-ENDPOINT-INJECTION`: an OAuth/OIDC discovery document whose endpoint URL carries
+  shell metacharacters — the discovery-driven command injection patched in MCP OAuth clients.
+- `ST-MCP-SAMPLING-SYSPROMPT`: an MCP sampling request that overrides the client model's system
+  prompt with a jailbreak / instruction-override directive.
+
 ## [0.79.2]
 
 Ruleset 79 and report schema 1.9 are unchanged.

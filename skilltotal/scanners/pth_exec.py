@@ -19,6 +19,28 @@ from skilltotal.models import Capability, Severity, ThreatClass
 from skilltotal.scanners.base import PatternScanner, RuleSpec, alternation
 
 R_PTH_EXEC = "ST-PTH-EXEC"
+R_STARTUP_HOOK = "ST-STARTUP-HOOK-EXEC"
+
+# Payload tokens that mark a startup auto-import hook as a dropper rather than ordinary plumbing:
+# a process start, a network client, or a decode/deserialize. Shared with the .pth rule; a
+# ``sitecustomize.py`` / ``usercustomize.py`` carries these only when it is weaponized.
+_STARTUP_PAYLOAD = alternation(
+    r"\bbase64\b",
+    r"\bb64decode\b",
+    r"\bbytes\.fromhex\b",
+    r"\bcodecs\.decode\b",
+    r"\bmarshal\b",
+    r"\bpickle\b",
+    r"\bsubprocess\b",
+    r"\bos\.system\b",
+    r"\bos\.popen\b",
+    r"\bos\.fork\b",
+    r"\.(?:system|popen|fork|exec(?:l|le|lp|lpe|v|ve|vp|vpe)|spawn(?:l|le|lp|lpe|v|ve|vp|vpe)"
+    r"|posix_spawnp?|startfile)\s*\(",
+    r"\bsocket\b",
+    r"\burllib\.request\b",
+    r"\brequests\.",
+)
 
 
 class PthExecScanner(PatternScanner):
@@ -65,5 +87,30 @@ class PthExecScanner(PatternScanner):
                 r"\burllib\.request\b",
                 r"\brequests\.",
             ),
+        ),
+        RuleSpec(
+            id=R_STARTUP_HOOK,
+            category="obfuscation",
+            severity=Severity.HIGH,
+            title="Auto-executing startup hook module (sitecustomize/usercustomize)",
+            description=(
+                "A sitecustomize.py / usercustomize.py module spawns a process, forks, reaches "
+                "the network, or decodes/deserializes a payload. CPython imports these modules "
+                "automatically at every interpreter startup (the `site` machinery), so the code "
+                "runs with no import of the package and unreviewed - the same startup-persistence "
+                "vector as an auto-executing .pth file, used by recent PyPI credential-stealer "
+                "compromises that ship the hook as maturin/wheel data."
+            ),
+            recommendation=(
+                "A legitimate sitecustomize/usercustomize sets sys.path or the default encoding. "
+                "Treat process/network/decode code in one as malicious; remove the package and "
+                "rotate any secrets the interpreter could reach."
+            ),
+            capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            names=("sitecustomize.py", "usercustomize.py"),
+            # A payload token in a comment is description, not behavior; demote it.
+            code_context="comments",
+            pattern=_STARTUP_PAYLOAD,
         ),
     ]

@@ -4,6 +4,36 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 80 (engine 0.80.0)
+
+Five rules added for AI-component attack techniques published in the last ~45 days. Each ships
+with a positive eval-corpus sample and an honest look-alike that must stay clean.
+
+- **Startup-hook auto-exec** (`ST-STARTUP-HOOK-EXEC`): CPython imports `sitecustomize.py` /
+  `usercustomize.py` at every interpreter start. A hook that spawns/forks, reaches the network, or
+  decodes/deserializes a payload is the same startup-persistence dropper as an auto-executing
+  `.pth` file (litellm PyPI compromise, October 2026, shipped as maturin/wheel data). A hook that
+  only sets `sys.path` or the default encoding stays clean.
+- **Decode-and-spawn** (`ST-OBF-DECODE-SPAWN`): a JS/TS file that decodes an embedded blob
+  (gzip/brotli/base64/hex) and launches a child process with an inline-code flag (`-e`/`--eval`/
+  `-c`) runs the decoded text out of process — the same obfuscated execution as `eval(atob(...))`.
+  Both halves must be code in one file (subql npm ecosystem compromise, import-time detached
+  worker). Spawning a plain command, or gunzipping an asset without a spawned interpreter, stays
+  clean.
+- **Split-objective credential exfiltration** (`ST-PROMPT-SPLIT-EXFIL`): an instruction file
+  (skill/agent prompt) that directs reading a credential location, sending data to an external
+  URL, and hiding the upload — with the three steps spread across the file rather than one
+  sentence. Needs all three, none negated/hypothetical/attacker-attributed. Reading an ordinary
+  project file, or posting a result without concealment, stays clean.
+- **OAuth discovery endpoint injection** (`ST-MCP-OAUTH-ENDPOINT-INJECTION`): an OAuth 2.0 / OIDC
+  discovery document whose endpoint URL value carries shell metacharacters (command substitution,
+  chaining, a piped/chained shell command). The discovery-driven command injection patched in MCP
+  OAuth clients in 2026. A document with ordinary URLs stays clean.
+- **Sampling system-prompt override** (`ST-MCP-SAMPLING-SYSPROMPT`): an MCP sampling request whose
+  server-supplied `systemPrompt` overrides the client model's system prompt with an
+  instruction-override / jailbreak directive. A task-scoping `systemPrompt` ("you are a concise
+  summarizer") stays clean.
+
 ## ruleset 79 (engine 0.78.0)
 
 Detection-efficacy corpus: 130 positive / 94 negative samples, 130/130 flagged, 0 false positives.

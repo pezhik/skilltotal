@@ -190,6 +190,26 @@ _EXEC_SINK = re.compile(
     r"\bnew\s+vm\s*\.\s*Script\s*\(|"
     r"(?<![\w.])eval\s*\("
 )
+# Decode-and-run-as-a-subprocess (JavaScript/TypeScript): the loader decodes an embedded blob
+# (gzip/brotli/base64/hex) and launches it as code through a child process -- `spawn(execPath,
+# ["-e", stage])`, `execFile(..., ["--eval", ...])`, a `node -e` / `python -c`. _DECODE_EXEC and
+# the decoded-variable flow only recognize in-process sinks (eval / new Function / vm); a spawned
+# interpreter running the decoded text is the same decode-and-execute with an out-of-process sink,
+# the shape of the subql npm compromise's import-time detached worker. Both halves must be present
+# in one file and be code (not a comment/string literal).
+_JS_DECODE_SOURCE = re.compile(
+    r"\b(?:gunzipSync|gunzip|inflateSync|inflate|brotliDecompressSync|unzipSync)\s*\(|"
+    r"\bBuffer\.from\s*\([^;\n]{0,200}?['\"](?:base64|hex)['\"]|"
+    r"(?:window\.|globalThis\.)?\batob\s*\("
+)
+# A child-process launch whose argument list carries an inline-code flag -- what makes the spawned
+# process a code sink rather than an ordinary command. `-e`/`--eval` (node), `-c` (python/sh),
+# `-Command`/`-EncodedCommand` (powershell), `-p`/`--print` (node).
+_JS_SPAWN_EVAL = re.compile(
+    r"\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\("
+    r"[^;]{0,200}?['\"](?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)['\"]"
+)
+_DECODE_SPAWN_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _DECRYPT_EXEC_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 # Matches looked at per file for one in code; past this a file of comments is not read further.
 _MAX_CODE_TRIES = 200
@@ -300,6 +320,29 @@ class ObfuscationScanner(Scanner):
             # behavior — same reasoning as ST-OBF-DECODE-EXEC.
             code_context="strings_and_comments_all",
         ),
+        RuleSpec(
+            id="ST-OBF-DECODE-SPAWN",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Decode-and-spawn (obfuscated payload run as a subprocess)",
+            description=(
+                "A file decodes an embedded blob (gzip/brotli/base64/hex) and, in the same file, "
+                "launches a child process with an inline-code flag (e.g. spawn(execPath, "
+                "['-e', stage]) or node -e / python -c). Running decoded text as a spawned "
+                "interpreter hides behavior from review exactly like eval(atob(...)), with the "
+                "execution moved out of process."
+            ),
+            recommendation=(
+                "Decode the payload offline and inspect what it does before trusting this "
+                "component. Shipping code only as a decoded blob run through a spawned "
+                "interpreter has no honest purpose that shipping it in the clear cannot meet."
+            ),
+            capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # A match inside a string/comment is a pattern literal or doc example, never live
+            # behavior — same reasoning as ST-OBF-DECODE-EXEC.
+            code_context="strings_and_comments_all",
+        ),
         # The following are listed for `rules list`; they emit needs_review only.
         RuleSpec(
             id="ST-OBF-BASE64-BLOB",
@@ -346,6 +389,19 @@ class ObfuscationScanner(Scanner):
             findings = [f for f in findings if f.id != rule.id]
             findings.insert(0, _finding_from_rule(rule, evidence[:MAX_EVIDENCE_SCANNED]))
 
+        decode_spawn = self._decode_spawn(index)
+        if decode_spawn:
+            rule = next(r for r in self.rules if r.id == "ST-OBF-DECODE-SPAWN")
+            findings.append(
+                Finding(
+                    id=rule.id, severity=rule.severity, category=rule.category,
+                    title=rule.title, description=rule.description,
+                    evidence=decode_spawn[:MAX_EVIDENCE_SCANNED],
+                    recommendation=rule.recommendation,
+                    threat_class=rule.threat_class,
+                )
+            )
+
         decrypt_exec = self._decrypt_exec(index)
         if decrypt_exec:
             rule = next(r for r in self.rules if r.id == "ST-OBF-DECRYPT-EXEC")
@@ -366,6 +422,26 @@ class ObfuscationScanner(Scanner):
                         "Excessive hex escaping", "run(s) of hex escape sequences", needs_review)
         self._minified(index, needs_review)
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    @staticmethod
+    def _decode_spawn(index: FileIndex) -> list[Evidence]:
+        """Evidence when one JS/TS file both decodes a blob and spawns an interpreter on it.
+
+        Requires BOTH signals in the same file and both as code (a decode a comment mentions
+        decodes nothing; a spawn in a string literal runs nothing), so a security tool listing
+        the patterns, or a doc example, is not flagged.
+        """
+        evidence: list[Evidence] = []
+        for f in index.select(suffixes=_DECODE_SPAWN_SUFFIXES):
+            dec = _first_in_code(f, _JS_DECODE_SOURCE)
+            sink = _first_in_code(f, _JS_SPAWN_EVAL) if dec else None
+            if not dec or not sink:
+                continue
+            evidence.append(f.evidence_for_span(dec.start(), dec.end()))
+            evidence.append(f.evidence_for_span(sink.start(), sink.end()))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                break
+        return evidence
 
     @staticmethod
     def _decrypt_exec(index: FileIndex) -> list[Evidence]:

@@ -373,6 +373,67 @@ _PARAGRAPH_REACH = 800
 _DESTINATION_REACH = 120
 
 
+# A read verb that pulls a file's contents into the agent's context.
+_READ_VERB = re.compile(
+    r"(?i)\b(?:read|open|cat|load|dump|gather|collect|retrieve|copy|copies|grab|fetch|access|"
+    r"print|display|show|include)(?:s|ed|ing)?\b"
+)
+_HTTP_DESTINATION = re.compile(r"(?i)https?://")
+_SPLIT_READ_REACH = 90
+
+
+def _split_objective_exfil(text: str) -> list[tuple[int, int]]:
+    """Spans for a split-objective credential-exfiltration chain in one instruction file.
+
+    Some poisoned skills spread the lethal objective across numbered steps so no single sentence
+    reads credentials, sends them off-host AND hides the upload: step 1 reads ``~/.aws/credentials``
+    into a variable, step 2 encodes it, step 3 posts that *benign-named* variable to a URL and tells
+    the agent not to mention it. ``_covert_credential_sends`` keys on one sentence and misses this.
+    This detector is file-scoped but still strict: it needs all three parts present - a *credential-
+    path* read directive, a send to an external URL, and concealment from the user - none of them
+    negated, hypothetical, or attributed to a third-party attacker. A skill that reads an ordinary
+    project file, or posts a result without concealment, has no credential path and does not match.
+    """
+    # Fast reject: all three ingredients must be in the file before anything is scanned in detail.
+    if not (_SEND_VERB.search(text) and _CONCEALMENT.search(text) and _STRONG_PATHS.search(text)):
+        return []
+    read_span: tuple[int, int] | None = None
+    for cred in _STRONG_PATHS.finditer(text):
+        clause = text[max(0, cred.start() - _SPLIT_READ_REACH) : cred.start()]
+        if not _READ_VERB.search(clause):
+            continue
+        if (
+            _NEGATED_CLAUSE.search(clause)
+            or _HYPOTHETICAL_CLAUSE.search(clause)
+            or _describes_attacker(clause)
+        ):
+            continue
+        read_span = (cred.start(), cred.end())
+        break
+    if read_span is None:
+        return []
+    send_span: tuple[int, int] | None = None
+    for verb in _SEND_VERB.finditer(text):
+        dest = _HTTP_DESTINATION.search(text, verb.end(), verb.end() + _DESTINATION_REACH)
+        if dest is None:
+            continue
+        clause = text[max(0, verb.start() - _CLAUSE_REACH) : verb.start()]
+        if (
+            _NEGATED_CLAUSE.search(clause)
+            or _HYPOTHETICAL_CLAUSE.search(clause)
+            or _describes_attacker(clause)
+        ):
+            continue
+        send_span = (verb.start(), dest.end())
+        break
+    if send_span is None:
+        return []
+    conceal = _CONCEALMENT.search(text)
+    if conceal is None:
+        return []
+    return [read_span, send_span, (conceal.start(), conceal.end())]
+
+
 def _any_between(offsets: list[int], start: int, end: int) -> bool:
     """True if the sorted ``offsets`` hold one in ``[start, end)``."""
     k = bisect.bisect_left(offsets, start)
@@ -592,6 +653,26 @@ class PromptSurfaceScanner(Scanner):
             code_context="strings_and_comments_all",
             pattern=_STRONG,
         ),
+        RuleSpec(
+            id="ST-PROMPT-SPLIT-EXFIL",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Split-objective credential exfiltration in an instruction file",
+            description=(
+                "An instruction file (skill/agent prompt) directs the agent to read a credential "
+                "location, send data to an external URL, and hide the upload from the user - with "
+                "the three steps spread across the file rather than in one sentence, so each step "
+                "reads as a routine action on its own. Together they form a credential-"
+                "exfiltration chain."
+            ),
+            recommendation=(
+                "Treat embedded multi-step instructions as untrusted. A legitimate skill does not "
+                "read credential files, forward them off-host, and instruct the agent to conceal "
+                "it. Remove the skill and rotate any credentials it could reach."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
         # Listed for `rules list`; routed to needs_review, never a confirmed finding.
         RuleSpec(
             id="ST-PROMPT-WEAK",
@@ -688,6 +769,32 @@ class PromptSurfaceScanner(Scanner):
                         classify(f, start, end, f.evidence_for_span(start, end))
 
         findings = [_finding_from_rule(inj_rule, evidence)] if evidence else []
+
+        # Split-objective credential exfiltration: the three steps live in different sentences, so
+        # the per-sentence _STRONG patterns miss it. File-scoped, prose/instruction files only.
+        split_rule = next(r for r in self.rules if r.id == "ST-PROMPT-SPLIT-EXFIL")
+        split_evidence: list[Evidence] = []
+        split_seen: set[tuple[str, int, int]] = set()
+        for f in index.files:
+            if not _is_prose(f):
+                continue
+            spans = list(_split_objective_exfil(f.text))
+            folded = f.normalized_or_none()
+            if folded is not None:
+                norm, idx = folded
+                for nstart, nend in _split_objective_exfil(norm):
+                    ostart, oend = original_span(idx, nstart, nend)
+                    if ostart < oend:
+                        spans.append((ostart, oend))
+            for start, end in spans:
+                ev = f.evidence_for_span(start, end)
+                key = (ev.file, ev.line_start, ev.line_end)
+                if key in split_seen:
+                    continue
+                split_seen.add(key)
+                split_evidence.append(ev)
+        if split_evidence:
+            findings.append(_finding_from_rule(split_rule, split_evidence[:MAX_EVIDENCE_SCANNED]))
 
         for _f, m, ev in index.search(_WEAK):
             key = (ev.file, ev.line_start)
