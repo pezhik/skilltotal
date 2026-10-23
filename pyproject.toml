@@ -75,7 +75,7 @@ version = { attr = "skilltotal.__version__" }
 testpaths = ["tests"]
 # manual_eval holds the manual calibration harness, generators, and a cloned third-party
 # corpus (with its own tests) — none of it should be collected by our test run.
-addopts = "-q --ignore=tests/manual_eval"
+addopts = "-q --ignore=tests/manual_eval --ignore=tests/eval_corpus"
 
 [tool.bandit]
 # Scan the engine package; fixtures/corpus/tests are not shipped code.
