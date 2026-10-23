@@ -195,19 +195,29 @@ _EXEC_SINK = re.compile(
 # ["-e", stage])`, `execFile(..., ["--eval", ...])`, a `node -e` / `python -c`. _DECODE_EXEC and
 # the decoded-variable flow only recognize in-process sinks (eval / new Function / vm); a spawned
 # interpreter running the decoded text is the same decode-and-execute with an out-of-process sink,
-# the shape of the subql npm compromise's import-time detached worker. Both halves must be present
-# in one file and be code (not a comment/string literal).
+# the shape of an import-time detached worker in a compromised npm package. Both halves must be
+# present in one file and be code (not a comment/string literal).
 _JS_DECODE_SOURCE = re.compile(
     r"\b(?:gunzipSync|gunzip|inflateSync|inflate|brotliDecompressSync|unzipSync)\s*\(|"
     r"\bBuffer\.from\s*\([^;\n]{0,200}?['\"](?:base64|hex)['\"]|"
     r"(?:window\.|globalThis\.)?\batob\s*\("
 )
-# A child-process launch whose argument list carries an inline-code flag -- what makes the spawned
-# process a code sink rather than an ordinary command. `-e`/`--eval` (node), `-c` (python/sh),
-# `-Command`/`-EncodedCommand` (powershell), `-p`/`--print` (node).
+# A launch of a code INTERPRETER (node / python / powershell, or this node binary itself) with an
+# inline-code flag -- what makes the child process a code sink rather than an ordinary command.
+# The interpreter is required: `-c`, `-e` and `-p` are also ordinary flags of everyday commands
+# (`git -c key=val`, `grep -e pat`, `mkdir -p dir`, `sh -c cmd`), and a CLI that decodes a base64
+# token and runs git is not a dropper. Shell pipelines of decoded text are ST-OBF-DECODE-EXEC-SH.
+_JS_INTERPRETER = (
+    r"(?:process\.execPath|process\.argv\[0\]|"
+    r"['\"`](?:[\w.:/\\-]*[/\\])?(?:node|nodejs|python[\d.]*|pwsh|powershell)(?:\.exe)?['\"`])"
+)
 _JS_SPAWN_EVAL = re.compile(
-    r"\b(?:spawn|spawnSync|exec|execSync|execFile|execFileSync|fork)\s*\("
-    r"[^;]{0,200}?['\"](?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)['\"]"
+    r"\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*" + _JS_INTERPRETER
+    + r"[^;]{0,200}?['\"](?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)['\"]"
+    # The one-string form: exec(`node -e ${stage}`), execSync("python -c " + stage).
+    + r"|\b(?:exec|execSync)\s*\(\s*['\"`](?:[\w.:/\\-]*[/\\])?"
+    r"(?:node|nodejs|python[\d.]*|pwsh|powershell)(?:\.exe)?\s+"
+    r"(?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)\b"
 )
 _DECODE_SPAWN_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _DECRYPT_EXEC_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")

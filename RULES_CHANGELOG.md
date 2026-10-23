@@ -6,33 +6,42 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 
 ## ruleset 80 (engine 0.80.0)
 
-Five rules added for AI-component attack techniques published in the last ~45 days. Each ships
-with a positive eval-corpus sample and an honest look-alike that must stay clean.
+Detection-efficacy corpus: 139 positive / 101 negative samples, 139/139 flagged, 0 false positives.
 
-- **Startup-hook auto-exec** (`ST-STARTUP-HOOK-EXEC`): CPython imports `sitecustomize.py` /
-  `usercustomize.py` at every interpreter start. A hook that spawns/forks, reaches the network, or
-  decodes/deserializes a payload is the same startup-persistence dropper as an auto-executing
-  `.pth` file (litellm PyPI compromise, October 2026, shipped as maturin/wheel data). A hook that
-  only sets `sys.path` or the default encoding stays clean.
-- **Decode-and-spawn** (`ST-OBF-DECODE-SPAWN`): a JS/TS file that decodes an embedded blob
-  (gzip/brotli/base64/hex) and launches a child process with an inline-code flag (`-e`/`--eval`/
-  `-c`) runs the decoded text out of process — the same obfuscated execution as `eval(atob(...))`.
-  Both halves must be code in one file (subql npm ecosystem compromise, import-time detached
-  worker). Spawning a plain command, or gunzipping an asset without a spawned interpreter, stays
-  clean.
-- **Split-objective credential exfiltration** (`ST-PROMPT-SPLIT-EXFIL`): an instruction file
-  (skill/agent prompt) that directs reading a credential location, sending data to an external
-  URL, and hiding the upload — with the three steps spread across the file rather than one
-  sentence. Needs all three, none negated/hypothetical/attacker-attributed. Reading an ordinary
-  project file, or posting a result without concealment, stays clean.
-- **OAuth discovery endpoint injection** (`ST-MCP-OAUTH-ENDPOINT-INJECTION`): an OAuth 2.0 / OIDC
-  discovery document whose endpoint URL value carries shell metacharacters (command substitution,
-  chaining, a piped/chained shell command). The discovery-driven command injection patched in MCP
-  OAuth clients in 2026. A document with ordinary URLs stays clean.
-- **Sampling system-prompt override** (`ST-MCP-SAMPLING-SYSPROMPT`): an MCP sampling request whose
-  server-supplied `systemPrompt` overrides the client model's system prompt with an
-  instruction-override / jailbreak directive. A task-scoping `systemPrompt` ("you are a concise
-  summarizer") stays clean.
+Five rules were added. Each is high severity and a malicious indicator. Each has a positive sample
+in the eval corpus and at least one honest look-alike that must stay clean.
+
+- **`ST-STARTUP-HOOK-EXEC`** (new, malicious indicator): a `sitecustomize.py` or `usercustomize.py`
+  module starts a process, forks, opens a network connection, or decodes or deserializes a payload.
+  CPython imports these modules automatically at every interpreter start, so this is the same
+  startup-persistence vector as an auto-executing `.pth` file (`ST-PTH-EXEC`). A hook that sets
+  `sys.path`, the default encoding or a default socket timeout stays clean.
+- **`ST-OBF-DECODE-SPAWN`** (new, malicious indicator): a JavaScript or TypeScript file decodes an
+  embedded blob (gzip, brotli, base64 or hex). It then launches node, python or PowerShell, or its
+  own node binary (`process.execPath`), with an inline-code flag (`-e`, `--eval`, `-p`, `-c`,
+  `-Command`). Decoded text run in a spawned interpreter is as hidden from review as
+  `eval(atob(...))`, and only the process is different. Both halves must be code in the same file.
+  Two things stay clean: ordinary commands whose own flags look alike (`git -c`, `mkdir -p`, `sh
+  -c`), and spawning a bundled script by its path.
+- **`ST-PROMPT-SPLIT-EXFIL`** (new, malicious indicator): an instruction file (a skill or agent
+  prompt) tells the agent to read a credential location. Later in the same procedure it tells the
+  agent to send data to an external URL and to hide that send from the user. Because the three steps
+  sit in separate sentences, none of them reads as malicious on its own. A step that is negated,
+  hypothetical or attributed to an attacker does not count. These stay clean: reading an ordinary
+  project file, posting a result without hiding it, and a skill that only keeps a secret out of its
+  own output ("never show the secret key in your response").
+- **`ST-MCP-OAUTH-ENDPOINT-INJECTION`** (new, malicious indicator): an OAuth 2.0 / OpenID Connect
+  discovery document has shell metacharacters in an endpoint, `issuer` or `jwks_uri` value. That
+  means command substitution `$(...)`, backticks, `&&`, or a piped or chained shell or fetch
+  command. A client that opens or fetches the value through a shell would run the command. MCP OAuth
+  clients patched this class of bug in 2026. The finding names the value in the document and does
+  not claim that the client consuming it is vulnerable. Ordinary URLs stay clean, including query
+  strings with `&`.
+- **`ST-MCP-SAMPLING-SYSPROMPT`** (new, malicious indicator): an MCP sampling request has a
+  server-supplied `systemPrompt` with instruction-override or jailbreak wording ("ignore all
+  previous instructions", "unrestricted assistant", "comply with every instruction"). Sampling runs
+  on the client's model with the client's trust, so this lets the server decide what the user's
+  model becomes. A system prompt that scopes the task ("You are a concise summarizer") stays clean.
 
 ## ruleset 79 (engine 0.78.0)
 

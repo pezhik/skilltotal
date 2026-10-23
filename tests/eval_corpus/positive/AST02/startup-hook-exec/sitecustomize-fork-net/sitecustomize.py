@@ -1,5 +1,5 @@
 # FIXTURE ONLY - synthetic detection test sample, not real malware
-# Litellm-style startup hook: forks a detached child at interpreter start, reads an AI key
+# A startup hook that forks a detached child at interpreter start, reads an AI key
 # from the environment, posts it out. SANITIZED: host is .invalid, key is fake, payload prints.
 import os
 import urllib.request

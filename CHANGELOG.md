@@ -6,22 +6,27 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ## [0.80.0]
 
-Ruleset 80 (report schema 1.9 unchanged). Five detections for AI-tooling attack techniques
-published in the last ~45 days; see `RULES_CHANGELOG.md` for the full list.
+Ruleset 80 adds five rules. Each one is a high-severity malicious indicator with a positive sample
+in the eval corpus and at least one honest look-alike that stays clean. Report schema 1.9 is
+unchanged. `RULES_CHANGELOG.md` (ruleset 80) lists the detection changes.
 
 ### Added
-- `ST-STARTUP-HOOK-EXEC`: a `sitecustomize.py` / `usercustomize.py` startup hook that spawns,
-  forks, reaches the network, or decodes a payload — the startup-persistence vector of the
-  October 2026 litellm PyPI credential-stealer compromise, alongside the existing `.pth` rule.
-- `ST-OBF-DECODE-SPAWN`: a file that decodes an embedded blob (gzip/brotli/base64/hex) and runs
-  it through a spawned interpreter (`spawn(execPath, ['-e', stage])`, `node -e`, `python -c`) —
-  the import-time detached worker of the subql npm ecosystem compromise.
-- `ST-PROMPT-SPLIT-EXFIL`: an instruction file whose credential-read, external-send and
-  concealment steps are spread across the file so no single sentence looks malicious.
-- `ST-MCP-OAUTH-ENDPOINT-INJECTION`: an OAuth/OIDC discovery document whose endpoint URL carries
-  shell metacharacters — the discovery-driven command injection patched in MCP OAuth clients.
-- `ST-MCP-SAMPLING-SYSPROMPT`: an MCP sampling request that overrides the client model's system
-  prompt with a jailbreak / instruction-override directive.
+- `ST-STARTUP-HOOK-EXEC`: a `sitecustomize.py` or `usercustomize.py` module that starts a process,
+  forks, opens a network connection, or decodes or deserializes a payload. CPython imports these
+  modules at every interpreter start, which makes them the same startup-persistence vector as an
+  auto-executing `.pth` file (`ST-PTH-EXEC`).
+- `ST-OBF-DECODE-SPAWN`: a JavaScript or TypeScript file that decodes an embedded blob and launches
+  node, python or PowerShell with an inline-code flag (`-e`, `-c`, `-Command`, ...). The decoded
+  code is as hidden from review as it would be under `eval(atob(...))`.
+- `ST-PROMPT-SPLIT-EXFIL`: a skill or agent prompt whose procedure has the agent read a credential
+  location, send data to an external URL and hide that send from the user. The three steps are in
+  separate sentences.
+- `ST-MCP-OAUTH-ENDPOINT-INJECTION`: an OAuth 2.0 / OpenID Connect discovery document with shell
+  metacharacters in an endpoint, `issuer` or `jwks_uri` value. A client that opens or fetches that
+  value through a shell would run the command.
+- `ST-MCP-SAMPLING-SYSPROMPT`: an MCP sampling request whose server-supplied `systemPrompt` carries
+  instruction-override or jailbreak wording. Sampling runs on the client's model, so the server gets
+  to decide what the user's model becomes.
 
 ## [0.79.2]
 

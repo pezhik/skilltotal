@@ -3,7 +3,7 @@
 Engine 0.80.0 · ruleset 80 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (139/139 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/99 benign samples wrongly flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/101 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 

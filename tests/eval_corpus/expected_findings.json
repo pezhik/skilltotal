@@ -113,6 +113,7 @@
  "negative/AST01/password-archive/test-fixture-extract": [],
  "negative/AST01/powershell-download-exec/local-iex-and-plain-fetch": [],
  "negative/AST01/prompt-split-exfil/dashboard-sync": [],
+ "negative/AST01/prompt-split-exfil/deploy-keeps-secret": [],
  "negative/AST01/pth-persistence/ordinary-path": [],
  "negative/AST01/pth-persistence/pth-imports-defining-module": [
   "ST-SHELL-PY"
@@ -141,6 +142,9 @@
  ],
  "negative/AST02/agent-config-autorun/lint-hook-status-line": [
   "ST-AGENT-AUTORUN"
+ ],
+ "negative/AST02/decode-spawn/cli-token-git": [
+  "ST-SHELL-NODE"
  ],
  "negative/AST02/decode-spawn/spawn-worker-file": [
   "ST-SHELL-NODE"

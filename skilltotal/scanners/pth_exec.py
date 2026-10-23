@@ -22,8 +22,10 @@ R_PTH_EXEC = "ST-PTH-EXEC"
 R_STARTUP_HOOK = "ST-STARTUP-HOOK-EXEC"
 
 # Payload tokens that mark a startup auto-import hook as a dropper rather than ordinary plumbing:
-# a process start, a network client, or a decode/deserialize. Shared with the .pth rule; a
-# ``sitecustomize.py`` / ``usercustomize.py`` carries these only when it is weaponized.
+# a process start, a network client, or a decode/deserialize -- the .pth rule's tokens plus fork.
+# A ``sitecustomize.py`` / ``usercustomize.py`` carries these only when it is weaponized. Unlike a
+# .pth line, a site hook may legitimately `import socket` to set a default timeout, so only a
+# connection counts there.
 _STARTUP_PAYLOAD = alternation(
     r"\bbase64\b",
     r"\bb64decode\b",
@@ -37,8 +39,9 @@ _STARTUP_PAYLOAD = alternation(
     r"\bos\.fork\b",
     r"\.(?:system|popen|fork|exec(?:l|le|lp|lpe|v|ve|vp|vpe)|spawn(?:l|le|lp|lpe|v|ve|vp|vpe)"
     r"|posix_spawnp?|startfile)\s*\(",
-    r"\bsocket\b",
+    r"\bsocket\.(?:socket|create_connection)\s*\(",
     r"\burllib\.request\b",
+    r"\bhttp\.client\b",
     r"\brequests\.",
 )
 

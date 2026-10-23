@@ -4,8 +4,8 @@ An MCP client (and other agent tooling) that speaks OAuth 2.0 fetches the server
 document (``.well-known/oauth-authorization-server`` / ``oauth-protected-resource`` /
 ``openid-configuration``) and reads endpoint URLs from it. A client that then hands one of those
 URLs to a shell - to ``open`` it in a browser, to ``curl`` it - without validation lets a hostile
-server put a command where a URL belongs. OpenCode patched exactly this in 2026 (a critical
-discovery-driven command injection). The server-controlled document is untrusted input: an
+server put a command where a URL belongs; MCP OAuth clients patched this class of bug in 2026. The
+server-controlled document is untrusted input: an
 endpoint value that carries shell metacharacters (``$(...)``, backticks, ``&&``, a piped or
 chained ``sh``/``curl``) is never a real URL - it is a command waiting for a vulnerable client.
 
@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 
-from skilltotal.models import Capability, Severity, ThreatClass
+from skilltotal.models import Severity, ThreatClass
 from skilltotal.scanners.base import PatternScanner, RuleSpec
 
 R_OAUTH_ENDPOINT_INJECTION = "ST-MCP-OAUTH-ENDPOINT-INJECTION"
@@ -60,7 +60,8 @@ class OAuthDiscoveryInjectionScanner(PatternScanner):
                 "never publishes a shell command in an endpoint; reject this server and ensure "
                 "the client validates endpoint URLs before dereferencing them."
             ),
-            capability=Capability.SHELL_EXECUTION,
+            # A published document, not something this component runs: the shell is the client's.
+            capability=None,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             pattern=re.compile(
                 rf'"(?:{_ENDPOINT_KEY})_endpoint"\s*:\s*"[^"\n]*?(?:{_SHELL_META})'

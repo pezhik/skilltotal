@@ -380,6 +380,48 @@ _READ_VERB = re.compile(
 )
 _HTTP_DESTINATION = re.compile(r"(?i)https?://")
 _SPLIT_READ_REACH = 90
+# Read -> send: the steps of one procedure, not two unrelated sections of a long document.
+_SPLIT_CHAIN_REACH = 2500
+# Credential-path mentions looked at per file; past this a file is a reference list, not a recipe.
+_MAX_SPLIT_READS = 50
+
+
+def _qualified_clause(clause: str) -> bool:
+    """True if the text before a step negates it, is hypothetical, or describes an attacker."""
+    return bool(
+        _NEGATED_CLAUSE.search(clause)
+        or _HYPOTHETICAL_CLAUSE.search(clause)
+        or _describes_attacker(clause)
+    )
+
+
+def _split_send_after(text: str, start: int, end: int) -> tuple[int, int] | None:
+    """The first unqualified send-to-an-external-URL directive in ``[start, end)``."""
+    for verb in _SEND_VERB.finditer(text, start, end):
+        dest = _HTTP_DESTINATION.search(text, verb.end(), verb.end() + _DESTINATION_REACH)
+        if dest is None:
+            continue
+        if _qualified_clause(text[max(0, verb.start() - _CLAUSE_REACH) : verb.start()]):
+            continue
+        return verb.start(), dest.end()
+    return None
+
+
+def _split_concealment_near(text: str, send: tuple[int, int]) -> tuple[int, int] | None:
+    """Concealment around the send that hides the SEND, not a secret kept out of the output.
+
+    "Never show the token in your response" protects a credential; a deploy skill that reads
+    ``~/.aws/credentials`` and posts a build says it honestly. It is concealment of the upload only
+    when the phrase names no credential, or names the send itself ("do not tell the user about the
+    token upload").
+    """
+    lo = max(0, send[0] - _PARAGRAPH_REACH)
+    for conceal in _CONCEALMENT.finditer(text, lo, send[1] + _PARAGRAPH_REACH):
+        phrase = conceal.group(0)
+        if _CREDENTIAL_NOUN.search(phrase) and not _SEND_VERB.search(phrase):
+            continue
+        return conceal.start(), conceal.end()
+    return None
 
 
 def _split_objective_exfil(text: str) -> list[tuple[int, int]]:
@@ -389,49 +431,29 @@ def _split_objective_exfil(text: str) -> list[tuple[int, int]]:
     reads credentials, sends them off-host AND hides the upload: step 1 reads ``~/.aws/credentials``
     into a variable, step 2 encodes it, step 3 posts that *benign-named* variable to a URL and tells
     the agent not to mention it. ``_covert_credential_sends`` keys on one sentence and misses this.
-    This detector is file-scoped but still strict: it needs all three parts present - a *credential-
-    path* read directive, a send to an external URL, and concealment from the user - none of them
-    negated, hypothetical, or attributed to a third-party attacker. A skill that reads an ordinary
-    project file, or posts a result without concealment, has no credential path and does not match.
+    The chain must read like one procedure: a *credential-path* read directive, then (within
+    ``_SPLIT_CHAIN_REACH``) a send to an external URL, with concealment of that send around it -
+    none of them negated, hypothetical, or attributed to a third-party attacker. A skill that reads
+    an ordinary project file, posts a result without concealment, or only keeps a secret out of its
+    output does not match.
     """
     # Fast reject: all three ingredients must be in the file before anything is scanned in detail.
     if not (_SEND_VERB.search(text) and _CONCEALMENT.search(text) and _STRONG_PATHS.search(text)):
         return []
-    read_span: tuple[int, int] | None = None
-    for cred in _STRONG_PATHS.finditer(text):
+    for k, cred in enumerate(_STRONG_PATHS.finditer(text)):
+        if k >= _MAX_SPLIT_READS:
+            break
         clause = text[max(0, cred.start() - _SPLIT_READ_REACH) : cred.start()]
-        if not _READ_VERB.search(clause):
+        if not _READ_VERB.search(clause) or _qualified_clause(clause):
             continue
-        if (
-            _NEGATED_CLAUSE.search(clause)
-            or _HYPOTHETICAL_CLAUSE.search(clause)
-            or _describes_attacker(clause)
-        ):
+        send = _split_send_after(text, cred.end(), cred.end() + _SPLIT_CHAIN_REACH)
+        if send is None:
             continue
-        read_span = (cred.start(), cred.end())
-        break
-    if read_span is None:
-        return []
-    send_span: tuple[int, int] | None = None
-    for verb in _SEND_VERB.finditer(text):
-        dest = _HTTP_DESTINATION.search(text, verb.end(), verb.end() + _DESTINATION_REACH)
-        if dest is None:
+        conceal = _split_concealment_near(text, send)
+        if conceal is None:
             continue
-        clause = text[max(0, verb.start() - _CLAUSE_REACH) : verb.start()]
-        if (
-            _NEGATED_CLAUSE.search(clause)
-            or _HYPOTHETICAL_CLAUSE.search(clause)
-            or _describes_attacker(clause)
-        ):
-            continue
-        send_span = (verb.start(), dest.end())
-        break
-    if send_span is None:
-        return []
-    conceal = _CONCEALMENT.search(text)
-    if conceal is None:
-        return []
-    return [read_span, send_span, (conceal.start(), conceal.end())]
+        return [(cred.start(), cred.end()), send, conceal]
+    return []
 
 
 def _any_between(offsets: list[int], start: int, end: int) -> bool:

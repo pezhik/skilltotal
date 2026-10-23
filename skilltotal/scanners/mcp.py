@@ -182,11 +182,14 @@ _SYSPROMPT_OVERRIDE = re.compile(
     r"|disregard\s+(?:all\s+)?(?:the\s+)?(?:previous|above|prior|earlier)\s+"
     r"(?:instructions?|prompts?|system\s+prompt)"
     r"|override\s+(?:the\s+)?(?:developer|system|previous|prior|earlier)\s+(?:instructions?|prompt)"
-    r"|no\s+(?:content\s+policy|restrictions?|safety\s+(?:guidelines?|filters?)|guardrails?)"
+    # Not "no restrictions" or "without warning": the sampling region spans ~6 KB of ordinary code
+    # ("no restrictions on length", "overwrites without warning"), and concealment is already
+    # ST-MCP-SAMPLING-INJECTION's.
+    r"|no\s+(?:content\s+policy|safety\s+(?:guidelines?|filters?)|guardrails?)"
     r"|unrestricted\s+(?:assistant|mode|ai|model)"
     r"|do\s+anything\s+now|\bDAN\s+mode\b"
     r"|comply\s+with\s+(?:every|all|any)\s+(?:instruction|request|command)"
-    r"|without\s+(?:warning|refusing|telling|informing)\b",
+    r"|without\s+refusing\b",
     re.IGNORECASE,
 )
 
