@@ -301,3 +301,21 @@ def test_parallel_rows_give_the_same_report_in_row_order(tmp_path):
     assert reports[1] == reports[3]
     classes = [r["cls"] for r in reports[3]["results"]]
     assert classes == ["benign-baseline", "malicious", "malicious", "malicious"]
+
+
+def test_progress_goes_to_a_file_when_asked(tmp_path):
+    import subprocess  # nosec B404 - the harness itself, fixed argv
+
+    benign = tmp_path / "benign"
+    _write(benign, "ok.py", "def add(a, b):\n    return a + b\n")
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(f"class,ecosystem,source,version,notes\nbenign-baseline,local,{benign},,clean\n",
+                        encoding="utf-8")
+    progress = tmp_path / "progress.txt"
+    done = subprocess.run(  # nosec B603
+        [sys.executable, str(_CAL), "--dataset", str(csv_path), "--progress", str(progress)],
+        capture_output=True, text=True, timeout=300, cwd=str(_CAL.parents[2]),
+    )
+    assert done.returncode == 0, done.stderr[-2000:]
+    assert progress.read_text(encoding="utf-8").startswith("[1/1] ")
+    assert "[1/1]" not in done.stderr

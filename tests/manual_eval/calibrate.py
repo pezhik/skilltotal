@@ -30,6 +30,7 @@ module ships only the harness + a tiny synthetic sample for the unit test.
 
 Usage:
     python tests/manual_eval/calibrate.py --dataset <file.csv> [--out <prefix>] [--jobs N]
+                                          [--progress <file>]
 
 ``--jobs N`` scans N rows at once, each in a process of its own (default 1). Rows are
 independent and almost all of the time is the scan itself, not the download, so a 750-row run
@@ -355,6 +356,9 @@ def main() -> None:
     ap.add_argument(
         "--jobs", type=int, default=1, help="rows scanned at once, each in its own process"
     )
+    ap.add_argument(
+        "--progress", type=Path, help="write the [i/N] progress lines here instead of stderr"
+    )
     args = ap.parse_args()
 
     # Compiling the scanned third-party Python emits SyntaxWarnings (invalid escapes in a
@@ -363,7 +367,11 @@ def main() -> None:
     warnings.filterwarnings("ignore", category=SyntaxWarning)
     # Progress goes to stderr, flushed per row: stdout carries the markdown report, and a piped
     # stdout is block-buffered, so progress printed there would arrive in chunks.
-    results, summary = calibrate(args.dataset, progress=sys.stderr, jobs=max(1, args.jobs))
+    if args.progress:
+        with args.progress.open("w", encoding="utf-8") as progress:
+            results, summary = calibrate(args.dataset, progress=progress, jobs=max(1, args.jobs))
+    else:
+        results, summary = calibrate(args.dataset, progress=sys.stderr, jobs=max(1, args.jobs))
     payload = {"summary": summary, "results": [asdict(r) for r in results]}
 
     if args.out:
