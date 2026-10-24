@@ -29,7 +29,13 @@ decisions are made by a human. The real labeled dataset is maintained separately
 module ships only the harness + a tiny synthetic sample for the unit test.
 
 Usage:
-    python tests/manual_eval/calibrate.py --dataset <file.csv> [--out <prefix>]
+    python tests/manual_eval/calibrate.py --dataset <file.csv> [--out <prefix>] [--jobs N]
+
+``--jobs N`` scans N rows at once, each in a process of its own (default 1). Rows are
+independent and almost all of the time is the scan itself, not the download, so a 750-row run
+goes from hours to well under one on an 8-core machine. Results come back in row order, so the
+report is the same as with one process; the ``[i/N]`` progress lines then count rows as they
+finish, not as they start.
 """
 
 from __future__ import annotations
@@ -39,6 +45,7 @@ import csv
 import json
 import sys
 import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TextIO
@@ -305,21 +312,49 @@ def load_rows(path: Path) -> list[tuple[str, str, str, str, list[str], list[str]
     return rows
 
 
-def calibrate(dataset: Path, progress: TextIO | None = None) -> tuple[list[RowResult], dict]:
-    """Run every row. With ``progress``, write ``[i/N] <source>`` there as each row starts."""
+def calibrate(
+    dataset: Path, progress: TextIO | None = None, jobs: int = 1
+) -> tuple[list[RowResult], dict]:
+    """Run every row. With ``progress``, write ``[i/N] <source>`` there as each row starts
+    (one process) or finishes (``jobs`` > 1, see the module docstring)."""
     rows = load_rows(dataset)
-    results = []
-    for i, (c, s, v, exp, ef, ff) in enumerate(rows, 1):
-        if progress is not None:
-            print(f"[{i}/{len(rows)}] {s}", file=progress, flush=True)
-        results.append(run_row(c, s, v, exp, ef, ff))
+    if jobs <= 1:
+        results = []
+        for i, (c, s, v, exp, ef, ff) in enumerate(rows, 1):
+            if progress is not None:
+                print(f"[{i}/{len(rows)}] {s}", file=progress, flush=True)
+            results.append(run_row(c, s, v, exp, ef, ff))
+        return results, summarize(results)
+
+    out: list[RowResult | None] = [None] * len(rows)
+    with ProcessPoolExecutor(max_workers=jobs, initializer=_quiet_worker) as pool:
+        pending = {pool.submit(run_row, *row): i for i, row in enumerate(rows)}
+        for done, fut in enumerate(as_completed(pending), 1):
+            i = pending[fut]
+            try:
+                out[i] = fut.result()
+            except Exception as exc:  # noqa: BLE001 - a dead worker is one row's error, not the run's
+                out[i] = RowResult(
+                    cls=rows[i][0], source=rows[i][1], status="error", detail=repr(exc)
+                )
+            if progress is not None:
+                print(f"[{done}/{len(rows)}] {rows[i][1]}", file=progress, flush=True)
+    results = [r for r in out if r is not None]
     return results, summarize(results)
+
+
+def _quiet_worker() -> None:
+    # Each worker compiles third-party Python too (see main).
+    warnings.filterwarnings("ignore", category=SyntaxWarning)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run engine calibration over a labeled CSV.")
     ap.add_argument("--dataset", required=True, type=Path)
     ap.add_argument("--out", type=Path, help="output prefix; writes <prefix>.json and .md")
+    ap.add_argument(
+        "--jobs", type=int, default=1, help="rows scanned at once, each in its own process"
+    )
     args = ap.parse_args()
 
     # Compiling the scanned third-party Python emits SyntaxWarnings (invalid escapes in a
@@ -328,7 +363,7 @@ def main() -> None:
     warnings.filterwarnings("ignore", category=SyntaxWarning)
     # Progress goes to stderr, flushed per row: stdout carries the markdown report, and a piped
     # stdout is block-buffered, so progress printed there would arrive in chunks.
-    results, summary = calibrate(args.dataset, progress=sys.stderr)
+    results, summary = calibrate(args.dataset, progress=sys.stderr, jobs=max(1, args.jobs))
     payload = {"summary": summary, "results": [asdict(r) for r in results]}
 
     if args.out:

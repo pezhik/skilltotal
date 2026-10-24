@@ -51,10 +51,11 @@ dev = [
     # Direct floor pins on transitive deps: urllib3 (via twine/detect-secrets) fixes
     # CVE-2026-97687 / CVE-2026-97688 / CVE-2026-97689; virtualenv (via pre-commit) fixes
     # PYSEC-2026-4011 / 4012 / 4013 / 4014 and, from 21.14.9, CVE-2026-113722 / 113725 / 113726;
-    # filelock (via virtualenv) 4.2.1 fixes CVE-2026-112907 / 112913 / 112940.
+    # filelock (via virtualenv) 4.2.1 fixes CVE-2026-112907 / 112913 / 112940; it needs Python 3.11,
+    # so on 3.10 the pin does not apply.
     "urllib3>=2.8.0",
     "virtualenv>=21.14.9",
-    "filelock>=4.2.1",
+    "filelock>=4.2.1; python_version >= '3.11'",
 ]
 
 [project.scripts]
