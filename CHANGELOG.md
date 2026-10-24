@@ -4,13 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.82.0]
 
-Ruleset 82. Report schema 1.9 is unchanged.
+Ruleset 82 narrows two ruleset-81 rules that flagged ordinary package code. The attack shapes they
+were written for still fire. Report schema 1.9 is unchanged. `RULES_CHANGELOG.md` (ruleset 82) has
+the details.
 
 ### Fixed
-- `ST-PY-STDLIB-SHADOW` no longer marks a package malicious for `exec` of a string literal that
-  only imports or defines a function, or for reading its own `sys.modules[__name__]` entry.
+- `ST-PY-STDLIB-SHADOW` no longer flags `exec` of a string literal that only imports or defines a
+  function, or code that reads its own `sys.modules[__name__]` entry. Only a write to `sys.modules`
+  counts as re-exporting the real module.
 - `ST-MCP-STATIC-AUTH-EXEC` no longer treats a `"Bearer <token>"` or `"Bearer $MY_TOKEN"`
   placeholder as a hard-coded token.
 

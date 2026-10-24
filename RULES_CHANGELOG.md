@@ -4,23 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
-## ruleset 82 (unreleased)
+## ruleset 82 (engine 0.82.0)
 
 Detection-efficacy corpus unchanged: 144 positive / 106 negative samples, 144/144 flagged, 0 false
 positives.
 
-Two ruleset-81 rules no longer flag ordinary constructs in popular packages. The attack shapes
-they were written for still fire.
+Two ruleset-81 rules flagged constructs that are ordinary in package code. Both are narrowed. The
+attack shapes they were written for still fire.
 
 - **`ST-PY-STDLIB-SHADOW`** (narrowed): `exec`/`eval` of a string literal is judged by what the
-  literal runs at import time. `exec("from pkg import *", ns)` or a literal that only defines a
-  function stays clean. A literal that calls a shell, the network or a dynamic import, or one that
-  does not parse, still counts. `exec` of anything that is not a literal still counts. Only a write
-  to `sys.modules` (`sys.modules[name] = ...`, `del`, `.update`, `.setdefault`) counts as the
+  literal runs at import time. A literal that only imports (`exec("from pkg import *", ns)`) or only
+  defines a function stays clean. A literal that calls a shell, the network or a dynamic import, or
+  that does not parse, still counts, and so does `exec` of anything that is not a literal. Only a
+  write to `sys.modules` (`sys.modules[name] = ...`, `del`, `.update`, `.setdefault`) counts as the
   re-export tell. Reading the module's own entry (`setattr(sys.modules[__name__], ...)`) does not.
 - **`ST-MCP-STATIC-AUTH-EXEC`** (narrowed): a `"Bearer ..."` literal counts only when its value is
   made of token characters (RFC 6750 token68). Placeholders such as `"Bearer <token>"` in a
-  log-redaction table and `"Bearer $MY_TOKEN"` / `"Bearer ${VAR}"` in help text are not hard-coded
+  log-redaction table and `"Bearer $MY_TOKEN"` or `"Bearer ${VAR}"` in help text are not hard-coded
   credentials.
 
 ## ruleset 81 (engine 0.81.0)
