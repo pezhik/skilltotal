@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # rc/v<version>: the release commit, pushed before the release calibration so this runs in
+    # parallel with it; the release gate then reads this run instead of waiting for main's.
+    branches: [main, "rc/**"]
   pull_request:
   schedule:
     # Weekly, with no commit needed: the journeys and the action job on GitHub's current runner
@@ -32,7 +34,9 @@ jobs:
       - name: Lint
         run: ruff check .
       - name: Test
-        run: pytest
+        # pytest-xdist, one worker per core: the suite runs about 2.5x faster, and the release
+        # gate waits for this job.
+        run: pytest -n auto
 
   test-windows:
     # The full unit suite once on Windows, where paths, line endings, console encodings and file
@@ -48,7 +52,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
       - name: Test
-        run: pytest
+        # pytest-xdist, one worker per core: the suite runs about 2.5x faster, and the release
+        # gate waits for this job.
+        run: pytest -n auto
 
   journeys:
     # Customer journeys (tests/journeys) against the wheel a customer installs: built here,

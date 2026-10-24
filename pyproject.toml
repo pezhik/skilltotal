@@ -41,6 +41,7 @@ dependencies = []
 # conform to docs/report.schema.json (the engine<->consumer contract).
 dev = [
     "pytest>=7.0",
+    "pytest-xdist>=3.6",
     "ruff>=0.4",
     "jsonschema>=4.0",
     "bandit>=1.7",
