@@ -57,18 +57,56 @@ def _is_danger_call(node: ast.Call) -> bool:
     if isinstance(func, ast.Attribute):
         return func.attr in _DANGER_ATTRS
     if isinstance(func, ast.Name):
-        return func.id in _DANGER_NAMES
+        if func.id not in _DANGER_NAMES:
+            return False
+        if func.id in ("exec", "eval") and node.args and isinstance(node.args[0], ast.Constant) \
+                and isinstance(node.args[0].value, str):
+            return _literal_runs_danger(node.args[0].value)
+        return True
+    return False
+
+
+def _literal_runs_danger(source: str) -> bool:
+    """``exec``/``eval`` of a string literal is judged by what the literal itself runs.
+
+    ``exec("from pkg import *", ns)`` (sympy/abc.py) or a py2/py3 compatibility ``exec`` that only
+    defines a function (execnet/script/socketserver.py) runs nothing dangerous; a literal that
+    calls a shell, the network or a dynamic import does, and so does one that does not parse.
+    """
+    try:
+        tree = ast.parse(source)
+    except (SyntaxError, ValueError):
+        return True
+    # The literal runs where it is exec'd, so the same import-time view applies: a function it
+    # only defines does not run.
+    return _toplevel_danger(tree) is not None
+
+
+def _is_sys_modules(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "modules" \
+        and isinstance(node.value, ast.Name) and node.value.id == "sys"
+
+
+_SYS_MODULES_WRITERS = frozenset({"update", "setdefault", "__setitem__"})
+
+
+def _is_sys_modules_write(sub: ast.AST) -> bool:
+    if isinstance(sub, ast.Subscript) and _is_sys_modules(sub.value):
+        return isinstance(sub.ctx, (ast.Store, ast.Del))
+    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute):
+        return sub.func.attr in _SYS_MODULES_WRITERS and _is_sys_modules(sub.func.value)
     return False
 
 
 def _rebinds_sys_modules(node: ast.AST) -> bool:
-    """A statement that writes to or reads ``sys.modules`` -- the re-export tell of a shadow."""
-    for sub in ast.walk(node):
-        if isinstance(sub, ast.Subscript) and isinstance(sub.value, ast.Attribute):
-            if sub.value.attr == "modules" and isinstance(sub.value.value, ast.Name) \
-                    and sub.value.value.id == "sys":
-                return True
-    return False
+    """A statement that writes an entry of ``sys.modules`` -- the re-export tell of a shadow.
+
+    Only a write counts (``sys.modules[name] = ...``, ``del``, ``.update``/``.setdefault``).
+    Reading the module's own entry (``setattr(sys.modules[__name__], ...)``, as
+    google-cloud-pubsub's ``types.py`` does to publish generated message classes) replaces
+    nothing and is ordinary package code.
+    """
+    return any(_is_sys_modules_write(sub) for sub in ast.walk(node))
 
 
 def _toplevel_danger(tree: ast.Module) -> ast.AST | None:

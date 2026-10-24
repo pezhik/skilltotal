@@ -4,6 +4,16 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+Ruleset 82. Report schema 1.9 is unchanged.
+
+### Fixed
+- `ST-PY-STDLIB-SHADOW` no longer marks a package malicious for `exec` of a string literal that
+  only imports or defines a function, or for reading its own `sys.modules[__name__]` entry.
+- `ST-MCP-STATIC-AUTH-EXEC` no longer treats a `"Bearer <token>"` or `"Bearer $MY_TOKEN"`
+  placeholder as a hard-coded token.
+
 ## [0.81.0]
 
 Ruleset 81 adds five rules for AI-tooling attack techniques. Each one is a high-severity malicious

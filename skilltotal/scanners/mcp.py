@@ -222,8 +222,12 @@ _SHELL_CALL = re.compile(
     r"|\bchild_process\b|\bexecSync\b|\bspawnSync\b|\.exec(?:File)?(?:Sync)?\s*\(",
     re.IGNORECASE,
 )
+# The Bearer value must be a literal token (RFC 6750 token68 characters): a placeholder such as
+# "Bearer <token>" in a log-redaction table, or "Bearer $MY_TOKEN" / "Bearer ${VAR}" in help text
+# that tells users to read the token from the environment, is not a hard-coded credential
+# (@anthropic-ai/claude-agent-sdk ships both).
 _STATIC_AUTH = re.compile(
-    r"""["']Bearer\s+[^"'\s]{4,}["']"""
+    r"""["']Bearer\s+[A-Za-z0-9._~+/=-]{4,}["']"""
     r"""|\b(?:authorization|auth|token|bearer|api[_-]?key)\b\s*[!=]=\s*["'][^"']{6,}["']"""
     r"""|["'][^"']{6,}["']\s*[!=]=\s*\b(?:authorization|auth|token|bearer)\b""",
     re.IGNORECASE,
