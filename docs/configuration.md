@@ -13,7 +13,7 @@ fail_on_score = 50         # or gate on the 0-100 risk score
 fail_on_unanalyzed = true  # or when part of the component could not be analyzed (true/false)
 exclude = ["vendor/*", "*.min.js"]
 ignore = ["ST-NET-PY"]     # rule ids to drop
-baseline = ".skilltotal-baseline.json"   # relative to this file
+baseline = ".skilltotal-baseline.json"   # relative to this file; write it first (--write-baseline)
 
 # Per-rule policy: reviewable gate decisions that live in the repo, not in a dashboard.
 [policy]
@@ -28,8 +28,8 @@ The config is read from the directory you run `skilltotal` in (not from the scan
 from the file `--config` names; `--no-config` ignores it. A config it cannot honor stops the scan
 with exit code 1, so a typo can't turn a gate off: invalid TOML, an unknown key, a value of the
 wrong kind, an unknown policy action, a rule id in `ignore` or `[policy]` that no rule has (the
-error suggests the closest id), or a `--config` path that does not exist. A relative `baseline`
-path is resolved against the config file's folder.
+error suggests the closest id), a `--config` path that does not exist, or a `baseline` file that
+does not exist yet. A relative `baseline` path is resolved against the config file's folder.
 
 An applied config is always named: on a `Config    :` line in the text report, as a
 `config applied: ...` line on stderr with `--json` or `--sarif`, and in the report's

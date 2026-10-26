@@ -476,6 +476,9 @@ class ShellScriptScanner(Scanner):
             capability=Capability.DYNAMIC_CODE_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             suffixes=SHELL_SUFFIXES,
+            # A `# … | base64 -d | sh` comment describes the idiom (a hook that looks for it); it
+            # runs nothing. Demoted like the pipe-to-shell rule below (engine code-context).
+            code_context="comments",
             pattern=DECODE_EXEC_SH,
         ),
         RuleSpec(

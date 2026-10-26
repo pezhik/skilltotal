@@ -765,7 +765,7 @@ class AgentConfigScanner(Scanner):
                 remote.append(ev)
                 continue
             script = self._referenced_script(text, by_path, command.file.relpath)
-            m = _REMOTE_EXEC.search(script.text) if script is not None else None
+            m = _first_outside_comments(script, _REMOTE_EXEC) if script is not None else None
             if m and script is not None:
                 ev = command.evidence()
                 autorun.append(ev)
@@ -1112,6 +1112,23 @@ class AgentConfigScanner(Scanner):
                 if candidate in by_path:
                     return by_path[candidate]
         return None
+
+
+# Matches looked at per script; past this a script of comments is not read further.
+_MAX_COMMENT_SKIPS = 200
+
+
+def _first_outside_comments(f: IndexedFile, pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """The first match of ``pattern`` in the script ``f`` that is not inside a comment. A hook
+    script that names the idiom it guards against (``# … | base64 -d | sh``) runs nothing; a match
+    in a string literal still counts, since a script hands strings to a shell."""
+    for k, m in enumerate(pattern.finditer(f.text)):
+        if k >= _MAX_COMMENT_SKIPS:
+            return None
+        at = m.start()
+        if not (f.in_shell_comment(at) or f.in_comment(at) or f.in_c_comment(at)):
+            return m
+    return None
 
 
 def _is_remote_url(url: str) -> bool:

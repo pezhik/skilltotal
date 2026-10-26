@@ -4,6 +4,29 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 83 (engine 0.83.0)
+
+Detection-efficacy corpus unchanged: 144 positive / 106 negative samples, 144/144 flagged, 0 false
+positives.
+
+A scan of SkillTotal's own repository rated it malicious (critical, 100/100). Three rules read the
+scanner's guards and patterns as the attacks they describe. All three are narrowed and still flag
+the real construct.
+
+- **`ST-OBF-DECODE-EXEC-SH`** (narrowed): a match inside a shell comment is demoted to needs-review
+  (`code_context="comments"`, as `ST-SHELL-PIPE-EXEC` and `ST-ARCHIVE-PASSWORD-EXTRACT` already
+  were). The plugin hook's `# A command decoded and run: ... | base64 -d | sh` describes what it
+  checks for and runs nothing. The same pipe as a command still fires.
+- **`ST-AGENT-AUTORUN-REMOTE`** (narrowed): in the script a hook, MCP server or agent config runs,
+  the fetch-and-run or decode-and-run idiom counts only outside comments (shell `#`, Python `#`,
+  C-family `//` and `/* */`). A match inside a string literal still counts, because scripts hand
+  strings to a shell.
+- **`ST-SENS-PATH-PY`** (narrowed): text that holds a regex group opener (`(?`) is not a path. A
+  detector's pattern built by concatenation (`r"(?i)~/\.aws|\.aws/credentials|" + rest`) was read
+  as a credential path built from segments, and with the scanner's own network code it produced
+  `ST-COMBO-EXFIL`. `os.path.expanduser("~") + "/.aws/credentials"` and the other built-path forms
+  still fire.
+
 ## ruleset 82 (engine 0.82.0)
 
 Detection-efficacy corpus unchanged: 144 positive / 106 negative samples, 144/144 flagged, 0 false

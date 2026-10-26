@@ -2026,7 +2026,13 @@ _NON_NETWORK_MODULES = ("urllib.parse", "urllib.error", "urllib.robotparser")
 
 
 def _is_credential_path(value: str) -> bool:
-    """A strong credential path, except an instance-metadata URL that asks for no credentials."""
+    """A strong credential path, except an instance-metadata URL that asks for no credentials.
+
+    Regex text that names a credential path is a detector's pattern, not a path: a path never holds
+    a regex group opener, and a pattern built by concatenation (``r"(?i)~/\\.aws|" + rest``) read as
+    a path built from segments made a security tool's own rules a credential read."""
+    if "(?" in value:
+        return False
     m = _STRONG_PATHS.search(value)
     return bool(m) and not is_metadata_without_credentials(m.group(0), value)
 

@@ -4,6 +4,28 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.83.0]
+
+Ruleset 83 stops three rules from reading a security tool's own guards and patterns as an attack.
+Before this release, a scan of this repository rated it malicious (critical, 100/100). It now rates
+low. Each rule still fires on the construct it was written for. Report schema 1.9 is unchanged.
+`RULES_CHANGELOG.md` (ruleset 83) has the details.
+
+### Fixed
+- `ST-OBF-DECODE-EXEC-SH` no longer fires on a shell comment that names the idiom
+  (`# ... | base64 -d | sh`). As with `ST-SHELL-PIPE-EXEC`, a match in a comment goes to
+  needs-review.
+- `ST-AGENT-AUTORUN-REMOTE` no longer counts a fetch-and-run or decode-and-run idiom that appears
+  only in a comment of the script a hook runs. A match in a string literal still counts.
+- `ST-SENS-PATH-PY` no longer reads a regex that names credential paths and is built by
+  concatenation (`r"(?i)~/\.aws|" + rest`) as a credential path built from segments. A path built
+  onto the home directory still fires, and so does the `ST-COMBO-EXFIL` that rests on it.
+
+### Changed
+- CI runs pytest in parallel (`pytest -n auto`; pytest-xdist is in the dev dependencies) and also
+  runs on `rc/**` branches. `tests/manual_eval/calibrate.py` writes progress lines to a file with
+  `--progress FILE`.
+
 ## [0.82.0]
 
 Ruleset 82 narrows two ruleset-81 rules that flagged ordinary package code. The attack shapes they
