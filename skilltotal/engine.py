@@ -240,9 +240,18 @@ def analyze_directory(
         needs_review.extend(result.needs_review)
         regex_only.update(result.regex_only_files)
 
+    before = {f.id: len(f.evidence) for f in findings}
     findings, suppressed_count = apply_suppressions(findings, suppress or set())
     # Reported apart from the inline markers' share, so the report can say what the baseline hid.
     baseline_count = suppressed_count if suppress else None
+    # A baseline that accepts a malicious indicator turns the verdict it should stop into "low":
+    # the report names those rules next to the count, since the gate no longer sees them.
+    after = {f.id: len(f.evidence) for f in findings}
+    baseline_malicious = sorted(
+        rule_id for rule_id, count in before.items()
+        if after.get(rule_id, 0) < count
+        and _THREAT_CLASS_BY_ID.get(rule_id) is ThreatClass.MALICIOUS_INDICATOR
+    ) if suppress else []
     ignore_set = {r for r in ignore_rules} if ignore_rules else set()
     if ignore_set:
         # Drop early so ignored base findings don't feed the synthesized rules below.
@@ -380,7 +389,7 @@ def analyze_directory(
         traits=traits,
         findings=_sort_findings(findings),
         needs_review=needs_review,
-        metadata=_metadata(index, findings, suppressed_count, baseline_count),
+        metadata=_metadata(index, findings, suppressed_count, baseline_count, baseline_malicious),
     )
     return report
 
@@ -1679,12 +1688,16 @@ def _summary(level, score, findings, capabilities, needs_review) -> str:
 def _metadata(
     index: FileIndex, findings: list[Finding], suppressed_count: int,
     baseline_count: int | None = None,
+    baseline_malicious: list[str] | None = None,
 ) -> dict:
     by_severity = {s.value: 0 for s in Severity}
     for f in findings:
         by_severity[f.severity.value] += 1
-    # Only when a baseline was given: how many of the suppressed occurrences it accounted for.
+    # Only when a baseline was given: how many of the suppressed occurrences it accounted for,
+    # and which malicious-indicator rules it silenced (only when it silenced one).
     baseline = {} if baseline_count is None else {"baseline_suppressed_count": baseline_count}
+    if baseline_malicious:
+        baseline["baseline_suppressed_malicious"] = list(baseline_malicious)
     return {
         "skilltotal_version": __version__,
         "schema_version": REPORT_SCHEMA_VERSION,

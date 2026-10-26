@@ -149,7 +149,10 @@ an error, not `--output`.
 Suppressed findings are removed before scoring and do not affect the risk score. Writing a baseline
 is how you adopt the tool on existing code: `--write-baseline` writes the file and exits 0,
 whatever it found, and warns on stderr when the baseline accepts a malicious indicator. A scan
-with a baseline says how many occurrences it suppressed on a `Baseline  :` line.
+with a baseline says how many occurrences it suppressed on a `Baseline  :` line; when the baseline
+hides a malicious indicator, that line names the rule, the CLI warns on stderr (so a CI log shows
+it even with `--json` or `--sarif`), and the report's `metadata.baseline_suppressed_malicious`
+lists it. The verdict and the exit-code gates do not see a hidden finding.
 
 **Diff** reports new / resolved / changed findings, evidence-level additions and removals
 (matched by the same line-independent fingerprint as the baseline, so pure line shifts are

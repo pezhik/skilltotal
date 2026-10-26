@@ -158,6 +158,7 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `suppressed_count` | integer | Evidence occurrences removed via `--baseline` or an inline `skilltotal:ignore` marker (honored only for `scan` of a local directory; a marker never removes a malicious indicator) |
 | `baseline` | string | Optional; present only when `scan` applied a baseline file (`--baseline`, or `baseline` in `.skilltotal.toml`): its path (added in 1.9) |
 | `baseline_suppressed_count` | integer | Optional; present only when a baseline was applied: how many of the `suppressed_count` occurrences the baseline removed. The rest were inline markers (added in 1.9) |
+| `baseline_suppressed_malicious` | array of string | Optional; present only when the baseline removed evidence of a malicious-indicator rule: those rule ids, sorted. The verdict and the gates no longer see them; the text report names them on its `Baseline` line and the CLI warns on stderr |
 | `config_applied` | object | Optional; present only when `scan` applied a `.skilltotal.toml`: `path`, and the number of `exclude` globs, `ignore` rule ids and `policy` entries it set, plus `fail_on` / `fail_on_score` when it sets them (added in 1.8), and `baseline`, the path as the config writes it (added in 1.9) |
 
 ## Alternative format: SARIF

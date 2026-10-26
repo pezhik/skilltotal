@@ -155,3 +155,57 @@ def test_a_baseline_from_the_config_is_named_on_the_config_line(tmp_path: Path, 
     config_line = next(line for line in out.splitlines() if line.startswith("Config    :"))
     assert "baseline = bl.json" in config_line
     assert f"suppressed by baseline {tmp_path / 'bl.json'}" in out
+
+
+# --- A baseline that hides a malicious indicator says so at scan time (2026-10-26) ----------------
+
+
+def _scan_with_baseline(tmp_path: Path, code: str, *extra: str) -> tuple[int, str, str]:
+    """Write a package, baseline it, then scan it against that baseline (text report)."""
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    from skilltotal.cli import main
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir(exist_ok=True)
+    (pkg / "index.js").write_text(code, encoding="utf-8")
+    baseline = tmp_path / "bl.json"
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        main(["scan", str(pkg), "--write-baseline", str(baseline), "--no-config"])
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        code_ = main(["scan", str(pkg), "--baseline", str(baseline), "--no-config", *extra])
+    return code_, out.getvalue(), err.getvalue()
+
+
+def test_a_baseline_hiding_a_malicious_indicator_is_named_on_the_baseline_line(tmp_path: Path):
+    code, out, err = _scan_with_baseline(tmp_path, _DROPPER, "--fail-on-high")
+    assert code == 0  # the gate no longer sees it: that is exactly why the report must say so
+    baseline_line = next(line for line in out.splitlines() if line.startswith("Baseline  :"))
+    assert "among them malicious indicator(s) ST-OBF-DECODE-EXEC" in baseline_line
+    assert "hides malicious indicator(s) ST-OBF-DECODE-EXEC" in err
+    assert "the verdict and the gate do not see them" in err
+
+
+def test_the_warning_reaches_a_ci_log_with_json_output(tmp_path: Path):
+    import json
+
+    code, out, err = _scan_with_baseline(tmp_path, _DROPPER, "--json")
+    assert code == 0
+    report = json.loads(out)
+    assert report["metadata"]["baseline_suppressed_malicious"] == ["ST-OBF-DECODE-EXEC"]
+    assert "warning: baseline" in err and "ST-OBF-DECODE-EXEC" in err
+
+
+def test_a_baseline_of_accepted_noise_adds_no_warning(tmp_path: Path):
+    # A risky construct, not a malicious indicator: child_process.exec of a fixed command.
+    code, out, err = _scan_with_baseline(
+        tmp_path, 'require("child_process").exec("ls -la");\n', "--json"
+    )
+    import json
+
+    report = json.loads(out)
+    assert report["metadata"]["baseline_suppressed_count"] > 0
+    assert "baseline_suppressed_malicious" not in report["metadata"]
+    assert "warning" not in err

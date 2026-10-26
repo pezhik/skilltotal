@@ -113,6 +113,12 @@
           "minimum": 0,
           "description": "Added in 1.9. Present only when a baseline was applied: how many of the suppressed evidence occurrences it suppressed (the rest were inline skilltotal:ignore markers)."
         },
+        "baseline_suppressed_malicious": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "Present only when the applied baseline suppressed evidence of a malicious-indicator rule: those rule ids, sorted. The verdict and the exit-code gates no longer see them."
+        },
         "baseline": {
           "type": "string",
           "description": "Added in 1.9. Present only when scan applied a baseline file (--baseline, or baseline in .skilltotal.toml): its path."

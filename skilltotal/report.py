@@ -174,7 +174,11 @@ def _header_lines(report: Report) -> list[str]:
         # Next to the verdict: a clean verdict after a baseline is clean of what it did not hide.
         baseline = report.metadata.get("baseline")
         by = f"baseline {one_line(str(baseline))}" if baseline else "the baseline"
-        lines.append(f"Baseline  : {hidden} finding occurrence(s) suppressed by {by}")
+        silenced = report.metadata.get("baseline_suppressed_malicious") or []
+        # Named next to the count: a baseline that hides a malicious indicator makes the verdict
+        # below read "low", and nothing else on the page would say why.
+        note = f", among them malicious indicator(s) {', '.join(silenced)}" if silenced else ""
+        lines.append(f"Baseline  : {hidden} finding occurrence(s) suppressed by {by}{note}")
     lines.append(f"Risk      : {report.risk_level.value.upper()}  (score {report.risk_score}/100)")
     lines.append("")
     lines.append(report.summary)

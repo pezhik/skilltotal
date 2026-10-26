@@ -787,6 +787,13 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         }
     if baseline_path:
         report.metadata["baseline"] = str(baseline_path)
+        silenced = report.metadata.get("baseline_suppressed_malicious") or []
+        if silenced:
+            # The text report says this on its Baseline line; --json and --sarif output would
+            # not, and a CI log has to show that the gate was passed with an indicator hidden.
+            print(f"warning: baseline {_one_line(str(baseline_path))} hides malicious "
+                  f"indicator(s) {', '.join(silenced)}; the verdict and the gate do not see them",
+                  file=sys.stderr)
 
     if args.provenance:
         # Provenance is deliberately a CLI-layer add-on: the engine stays component-only,
