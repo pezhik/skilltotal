@@ -298,6 +298,11 @@ def test_parallel_rows_give_the_same_report_in_row_order(tmp_path):
         assert done.returncode == 0, done.stderr[-2000:]
         assert done.stderr.count("[") >= 4  # one progress line per row
         reports[jobs] = json.loads(out.with_suffix(".json").read_text(encoding="utf-8"))
+    timing = {"seconds", "fetch_seconds", "scan_seconds"}
+    for report in reports.values():  # wall time differs between runs; nothing else may
+        report["summary"].pop("scan_seconds", None)
+        report["results"] = [{k: v for k, v in r.items() if k not in timing}
+                             for r in report["results"]]
     assert reports[1] == reports[3]
     classes = [r["cls"] for r in reports[3]["results"]]
     assert classes == ["benign-baseline", "malicious", "malicious", "malicious"]
