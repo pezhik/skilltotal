@@ -131,6 +131,7 @@
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST01/skill-dynamic-exec/benign-dynamic-context": [],
+ "negative/AST01/skill-writes-agent-memory-files-persistence/memory-file-reference": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/open-memory-notes": [],
  "negative/AST01/stdlib-shadow/local-struct-helper": [],

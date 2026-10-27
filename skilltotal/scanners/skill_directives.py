@@ -24,7 +24,9 @@ from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
 R_AUDIT_OVERRIDE = "ST-SKILL-AUDIT-OVERRIDE"
 R_MEMORY_HIDDEN = "ST-SKILL-MEMORY-WRITE-HIDDEN"
 
-_PARAGRAPH = re.compile(r"[^\n]+(?:\n(?![ \t]*\n)[^\n]*)*")
+# A blank line ends a paragraph, also in a CRLF file (a Windows checkout): without \r here a whole
+# CRLF file was one paragraph, pairing a mention in one section with a word from another.
+_PARAGRAPH = re.compile(r"[^\n]+(?:\n(?![ \t\r]*\n)[^\n]*)*")
 _REVIEWER = (
     r"(?:scanners?|auditors?|reviewers?|analy[sz]ers?|security\s+(?:tools?|checks?|reviewers?)"
     r"|(?:ai|llm)\s+(?:judges?|reviewers?|scanners?))"
@@ -49,9 +51,16 @@ _THIS_COMPONENT = re.compile(
 
 _MEMORY_FILE = r"(?<![\w.-])(?:MEMORY|SOUL|AGENTS|CLAUDE|GEMINI)\.md(?![\w.-])"
 _WRITE_VERB = r"\b(?:append|add|write|save|store|insert|put|persist|inject|plant)\w*\b"
+# The file is where the text goes ("append ... to MEMORY.md", "open CLAUDE.md and add"), not a
+# file the instructions point the reader at ("see AGENTS.md "Pacing GitHub writes"", "a write loop
+# paced by AGENTS.md").
+_QUOTE = r"[`'\"*]*"
 _MEMORY_WRITE = re.compile(
-    _WRITE_VERB + r"[^\n]{0,200}?" + _MEMORY_FILE
-    + r"|" + _MEMORY_FILE + r"[^\n]{0,120}?" + _WRITE_VERB,
+    _WRITE_VERB + r"[^\n]{0,200}?\b(?:to|into|inside|in)\s+"
+    r"(?:(?:the|your|its|each|every|global|local|project(?:['’]s)?|user(?:['’]s)?)\s+)*"
+    + _QUOTE + _MEMORY_FILE
+    + r"|" + _MEMORY_FILE + _QUOTE + r"(?:\s+file)?\s*(?:,|:|\band\b|\bthen\b)\s*(?:then\s+)?"
+    + _WRITE_VERB,
     re.IGNORECASE,
 )
 _HIDE_FROM_USER = re.compile(

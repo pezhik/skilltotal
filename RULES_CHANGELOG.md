@@ -16,8 +16,10 @@ rules) and each has an honest look-alike in the eval corpus that stays clean.
   security skill that says when to mark a finding safe, does not fire.
 - **`ST-SKILL-MEMORY-WRITE-HIDDEN`** (new, high): an instruction to write into `MEMORY.md`,
   `SOUL.md`, `AGENTS.md`, `CLAUDE.md` or `GEMINI.md` that, in the same paragraph, says to do it
-  silently, without telling the user, or never to mention it. An open memory write, or a
-  "never mention internal paths" rule beside a save, does not fire.
+  silently, without telling the user, or never to mention it. The file has to be where the text
+  goes ("append ... to MEMORY.md"); a pointer to a section of `AGENTS.md`, an open memory write,
+  or a "never mention internal paths" rule beside a save does not fire. A blank line ends a
+  paragraph in CRLF files too.
 
 Not added: a fake prerequisite step (`curl ... | bash` from a named host in a SKILL.md). It is
 indistinguishable from an honest setup step, so it stays `ST-SKILL-FETCH-EXEC` (review).
