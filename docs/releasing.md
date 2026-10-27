@@ -9,6 +9,7 @@ contract.
 | Change | Bump | Also |
 |--------|------|------|
 | New detection rule / scanner; better detection | **MINOR** | `RULESET_VERSION` += 1, `RULES_CHANGELOG.md` |
+| New optional report field (backward compatible) | **MINOR** | `REPORT_SCHEMA_VERSION` minor (1.9 → 1.10), `docs/report.schema.json` `$id` + "Added in", `docs/report-schema.md`, `CHANGELOG.md` |
 | Bugfix that doesn't change the report shape or public API | **PATCH** | `CHANGELOG.md` |
 | **Breaking** change to `report.schema.json` or the public API (`analyze`, `analyze_directory`, models) | **MAJOR** | `REPORT_SCHEMA_VERSION`, `docs/report.schema.json`, `CHANGELOG.md` |
 
