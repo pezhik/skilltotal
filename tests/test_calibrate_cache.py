@@ -116,9 +116,10 @@ def test_identity_of_a_git_source_is_the_commit_ls_remote_reports(monkeypatch):
     def fake_run(argv, **kwargs):
         calls.append(argv)
         assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+        assert kwargs["env"]["GCM_INTERACTIVE"] == "never"
         return Done()
 
-    monkeypatch.setattr(calibrate.subprocess, "run", fake_run)
+    monkeypatch.setattr(calibrate, "run_bounded", fake_run)
     monkeypatch.setattr(calibrate, "find_program", lambda name: "/usr/bin/git")
     clone_url = calibrate.parse_git_url("https://github.com/acme/widgets")[0]
     ident = calibrate.component_identity("https://github.com/acme/widgets")

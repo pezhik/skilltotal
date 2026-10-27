@@ -89,8 +89,8 @@ _TAR_FILTER: dict[str, str] = {"filter": "data"} if hasattr(tarfile, "data_filte
 # records per member. Past _MAX_EXTRACT_BYTES plus this much, inflating stops (see _BoundedReader).
 _TAR_OVERHEAD_PER_MEMBER = 4096
 # Bound a git clone so a slow/huge remote can't hang the caller (a long-lived server holds a
-# request the whole time); overridable via env. GIT_TERMINAL_PROMPT=0 prevents a clone from
-# blocking forever on an interactive credential prompt for a private/typo'd URL.
+# request the whole time); overridable via env. noninteractive_git_env() keeps a clone from
+# blocking forever on a credential prompt for a private/typo'd URL.
 _CLONE_TIMEOUT = _env_int("SKILLTOTAL_CLONE_TIMEOUT", 300)
 # Reject repositories larger than this (MB). Checked before cloning (GitHub API) and again
 # during the clone (a watchdog kills git if the working tree blows past the cap) so a huge repo
@@ -745,8 +745,7 @@ def _run_git(args: list[str], dest: Path, env: dict, url: str) -> None:
     try:
         _, stderr = proc.communicate(timeout=_CLONE_TIMEOUT)
     except subprocess.TimeoutExpired as exc:
-        proc.kill()
-        proc.communicate()
+        _kill_and_drain(proc)
         raise CollectionError(f"git clone timed out after {_CLONE_TIMEOUT}s for {url}") from exc
     finally:
         watcher.join(timeout=2)
@@ -774,11 +773,50 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 def _git(dest: Path, args: list[str], env: dict, *, timeout: int) -> None:
     """A bounded, non-interactive git command inside ``dest`` (errors surface to the caller)."""
-    subprocess.run(  # nosec B603
-        [_git_program(), *_GIT_LONG_PATHS, "-C", str(dest), *args],
-        check=True, capture_output=True, text=True, timeout=timeout, env=env,
+    argv = [_git_program(), *_GIT_LONG_PATHS, "-C", str(dest), *args]
+    done = run_bounded(argv, env=env, timeout=timeout)
+    if done.returncode != 0:
+        raise subprocess.CalledProcessError(done.returncode, argv, done.stdout, done.stderr)
+
+
+def noninteractive_git_env() -> dict[str, str]:
+    """The environment for every git command run on a scanned URL: no credential prompt, neither
+    in the terminal nor from Git Credential Manager's own window (a private or deleted repository
+    would otherwise wait for a login nobody gives), and no LFS download."""
+    return {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
+            "GIT_LFS_SKIP_SMUDGE": "1"}
+
+
+# How long the output of a killed program is still read. Git for Windows' git.exe is a launcher:
+# killing it leaves the real git, git-remote-https and a credential helper running with the same
+# output pipes, and a read to the end of them waits as long as they live.
+_DRAIN_AFTER_KILL_SECONDS = 5
+
+
+def _kill_and_drain(proc: subprocess.Popen) -> None:
+    proc.kill()
+    try:
+        proc.communicate(timeout=_DRAIN_AFTER_KILL_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass  # the readers are daemon threads; what is left of the output is dropped
+
+
+def run_bounded(argv: list[str], *, env: dict, timeout: float) -> subprocess.CompletedProcess:
+    """``subprocess.run(argv, capture_output=True, text=True, timeout=timeout)`` that returns or
+    raises ``TimeoutExpired`` within about ``timeout`` seconds. On Windows ``subprocess.run`` kills
+    the program on timeout and then reads its output to the end with no limit, which on
+    2026-10-27 held a calibration run for four hours on a credential prompt (see _kill_and_drain).
+    """
+    proc = subprocess.Popen(  # nosec B603 - argv list, no shell; callers pass fixed git arguments
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
         creationflags=_NO_WINDOW,
     )
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_and_drain(proc)
+        raise
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
 def _clone(clone_url: str, ref: str | None, subpath: str | None, dest: Path, env: dict,
@@ -828,10 +866,8 @@ def _collect_remote(
     # Non-interactive (no credential prompt that could block) and bounded in time + size. LFS
     # objects are left as pointer files: fetching them would download from wherever the scanned
     # repository's own .lfsconfig points, and the scan reads source, not large binaries.
-    clone_env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never",
-                 "GIT_LFS_SKIP_SMUDGE": "1"}
     try:
-        _clone(clone_url, ref, subpath, dest, clone_env, url)
+        _clone(clone_url, ref, subpath, dest, noninteractive_git_env(), url)
     except CollectionError:
         tmp.cleanup()
         raise

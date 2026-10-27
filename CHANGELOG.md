@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.84.1]
+
+A git command that times out no longer leaves a scan waiting on Windows. Ruleset 83 is unchanged: no detection rule changed. Report schema 1.10 is unchanged.
+
+### Fixed
+- On Windows, a git command that timed out while scanning a git URL could keep the scan waiting with no limit. Python's `subprocess.run` kills the program on timeout, then reads its output to the end with no limit. Git for Windows' `git.exe` is a launcher, so killing it leaves the real git, `git-remote-https` and a credential helper running with the same output pipe. The read after the kill is now bounded too (about 5 seconds), so the clone, fetch and checkout timeouts hold.
+- `tests/manual_eval/calibrate.py` looked up a git row's commit with `git ls-remote` without `GCM_INTERACTIVE=never`. A deleted or private repository then waited for a Git Credential Manager login. It now uses the engine's own non-interactive git environment and the same bounded run.
+
 ## [0.84.0]
 
 A baseline that hides a malicious indicator now says so. Ruleset 83 is unchanged: no detection rule

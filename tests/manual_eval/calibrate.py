@@ -61,7 +61,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess  # nosec B404 - git ls-remote with a fixed argv, see _git_identity
 import sys
 import time
 import urllib.request
@@ -79,9 +78,11 @@ from skilltotal.collector import (
     classify_source,
     detect_component,
     find_program,
+    noninteractive_git_env,
     npm_package_spec,
     parse_git_url,
     pypi_package_spec,
+    run_bounded,
 )
 
 # Expected-class -> what counts as a correct outcome.
@@ -401,10 +402,13 @@ def _git_identity(spec: str) -> str | None:
         git = find_program("git")
         if not git:
             return None
-        done = subprocess.run(  # nosec B603 - fixed argv, no shell
+        # The engine's own non-interactive environment and bounded run: with only
+        # GIT_TERMINAL_PROMPT=0, a deleted repository waited for a Git Credential Manager login,
+        # and on Windows subprocess.run's timeout then waited for the pipe for four hours
+        # (tripwire, 2026-10-27).
+        done = run_bounded(
             [git, "ls-remote", "--exit-code", clone_url, ref or "HEAD"],
-            capture_output=True, text=True, timeout=_LOOKUP_TIMEOUT,
-            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            env=noninteractive_git_env(), timeout=_LOOKUP_TIMEOUT,
         )
         first = done.stdout.split("\n", 1)[0].split("\t", 1)[0].strip()
         if done.returncode != 0 or not _SHA1.match(first):
