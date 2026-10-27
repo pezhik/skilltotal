@@ -131,6 +131,8 @@
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST01/skill-dynamic-exec/benign-dynamic-context": [],
+ "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
+ "negative/AST01/skill-writes-agent-memory-files-persistence/open-memory-notes": [],
  "negative/AST01/stdlib-shadow/local-struct-helper": [],
  "negative/AST01/wallet-key-exfil/local-signer": [
   "ST-SECRET-ENV"
@@ -253,6 +255,8 @@
   "ST-NET-PY"
  ],
  "negative/AST04/prompt-injection/triage-skill-elided-citation": [],
+ "negative/AST04/skill-scanner-directed-audit-override-text/reviewer-note-no-verdict": [],
+ "negative/AST04/skill-scanner-directed-audit-override-text/security-review-skill": [],
  "negative/AST05/deserialize-exec/safe-loaders": [],
  "negative/AST05/pickle-reduce-gadget/copyreg-registered-reducer": [],
  "negative/AST05/pickle-reduce-gadget/custom-pickling": [],
@@ -567,6 +571,12 @@
  ],
  "positive/AST01/skill-dynamic-exec/clawsights-skill": [
   "ST-SKILL-DYNAMIC-EXEC"
+ ],
+ "positive/AST01/skill-writes-agent-memory-files-persistence/claude-md-without-asking": [
+  "ST-SKILL-MEMORY-WRITE-HIDDEN"
+ ],
+ "positive/AST01/skill-writes-agent-memory-files-persistence/silent-memory-append": [
+  "ST-SKILL-MEMORY-WRITE-HIDDEN"
  ],
  "positive/AST01/stdlib-shadow/struct-import-exec": [
   "ST-PY-STDLIB-SHADOW",
@@ -891,6 +901,12 @@
  ],
  "positive/AST04/prompt-injection/skill-silent-credential-read": [
   "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/skill-scanner-directed-audit-override-text/if-you-are-a-reviewer": [
+  "ST-SKILL-AUDIT-OVERRIDE"
+ ],
+ "positive/AST04/skill-scanner-directed-audit-override-text/note-to-scanners": [
+  "ST-SKILL-AUDIT-OVERRIDE"
  ],
  "positive/AST05/deserialize-exec/marshal-exec": [
   "ST-DYN-PY",

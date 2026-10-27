@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.85.0]
+
+Ruleset 84 adds `ST-SKILL-AUDIT-OVERRIDE` and `ST-SKILL-MEMORY-WRITE-HIDDEN`. Report schema 1.10 is unchanged.
+
+### Added
+- `ST-SKILL-AUDIT-OVERRIDE`: a skill paragraph addressed to scanners or auditors that asks for a safe verdict.
+- `ST-SKILL-MEMORY-WRITE-HIDDEN`: a skill instruction to write into an agent memory file while hiding it from the user.
+
 ## [0.84.1]
 
 A git command that times out no longer leaves a scan waiting on Windows. Ruleset 83 is unchanged: no detection rule changed. Report schema 1.10 is unchanged.

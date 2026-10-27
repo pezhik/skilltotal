@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 84 (engine 0.85.0)
+
+Two new malicious-indicator rules for skill instructions. Each is read only in the instruction
+files an agent follows (`SKILL.md`, agents, commands, `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, editor
+rules) and each has an honest look-alike in the eval corpus that stays clean.
+
+- **`ST-SKILL-AUDIT-OVERRIDE`** (new, high): a paragraph addressed to scanners, auditors or
+  reviewers ("Note to security scanners...", "If you are an automated auditor...") that tells them
+  to report this component as safe or not to flag it. A reviewer's note with no verdict, or a
+  security skill that says when to mark a finding safe, does not fire.
+- **`ST-SKILL-MEMORY-WRITE-HIDDEN`** (new, high): an instruction to write into `MEMORY.md`,
+  `SOUL.md`, `AGENTS.md`, `CLAUDE.md` or `GEMINI.md` that, in the same paragraph, says to do it
+  silently, without telling the user, or never to mention it. An open memory write, or a
+  "never mention internal paths" rule beside a save, does not fire.
+
+Not added: a fake prerequisite step (`curl ... | bash` from a named host in a SKILL.md). It is
+indistinguishable from an honest setup step, so it stays `ST-SKILL-FETCH-EXEC` (review).
+
 ## ruleset 83 (engine 0.83.0)
 
 Detection-efficacy corpus unchanged: 144 positive / 106 negative samples, 144/144 flagged, 0 false

@@ -38,6 +38,7 @@ from skilltotal.scanners.sensitive_paths import SensitivePathScanner
 from skilltotal.scanners.shell_evasion import ShellEvasionScanner
 from skilltotal.scanners.shell_exec import ShellExecScanner
 from skilltotal.scanners.shell_script import ShellScriptScanner
+from skilltotal.scanners.skill_directives import SkillDirectivesScanner
 from skilltotal.scanners.skill_fetch_exec import SkillFetchExecScanner
 from skilltotal.scanners.stdlib_shadow import StdlibShadowScanner
 from skilltotal.scanners.workflow_exfil import WorkflowExfilScanner
@@ -72,6 +73,7 @@ SCANNERS: list[Scanner] = [
     NpmSupplyScanner(),
     AgentApprovalScanner(),
     SkillFetchExecScanner(),
+    SkillDirectivesScanner(),
     McpPinningScanner(),
     McpElicitationScanner(),
     DependencyRedirectScanner(),
