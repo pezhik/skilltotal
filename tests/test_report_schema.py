@@ -57,6 +57,25 @@ def test_a_report_with_a_baseline_from_a_config_validates(tmp_path, capsys):
     jsonschema.validate(instance=report, schema=_schema())
 
 
+def test_a_report_whose_baseline_hides_a_malicious_indicator_validates(tmp_path, capsys):
+    # Schema 1.10: metadata.baseline_suppressed_malicious.
+    from skilltotal.cli import main
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    # A decode-and-eval dropper (inert payload: console.log(1)), a malicious indicator.
+    (root / "index.js").write_text(
+        'eval(Buffer.from("Y29uc29sZS5sb2coMSk=", "base64").toString());\n', encoding="utf-8"
+    )
+    baseline = tmp_path / "bl.json"
+    main(["scan", str(root), "--write-baseline", str(baseline), "--no-config"])
+    capsys.readouterr()
+    main(["scan", str(root), "--json", "--baseline", str(baseline), "--no-config"])
+    report = json.loads(capsys.readouterr().out)
+    assert report["metadata"]["baseline_suppressed_malicious"]
+    jsonschema.validate(instance=report, schema=_schema())
+
+
 def test_metadata_carries_contract_versions():
     meta = analyze_fixture("malicious_npm_pkg").to_dict()["metadata"]
     assert meta["schema_version"] == REPORT_SCHEMA_VERSION

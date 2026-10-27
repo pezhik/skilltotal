@@ -4,6 +4,30 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.84.0]
+
+A baseline that hides a malicious indicator now says so. Ruleset 83 is unchanged: no detection rule
+changed. Report schema 1.10 adds one optional field.
+
+### Changed
+- When a baseline removes evidence of a malicious-indicator rule, the scan names the rule ids in
+  three places: the text report's `Baseline` line, a warning on stderr, and the JSON report's
+  `metadata.baseline_suppressed_malicious`. The verdict and the exit-code gates still do not see
+  the suppressed evidence. A baseline that accepts only other findings, such as
+  `child_process.exec`, adds no warning and no field.
+- `tests/manual_eval/calibrate.py` can cache results with `--cache-dir`. The cache key is the
+  engine's own files plus the component's exact version, so a rerun with an unchanged engine
+  replays the rows it already scanned. Each row records how long it took, and `--previous REPORT`
+  starts the slowest rows first.
+- A test scans this repository and fails if the scan finds a malicious indicator in it.
+- The release build pins setuptools 84.1.0, which fixes a path escape in legacy wheel installs on
+  Windows (a GitHub security advisory).
+
+### Report schema 1.10
+- New optional field: `metadata.baseline_suppressed_malicious`, the sorted ids of the
+  malicious-indicator rules whose evidence the applied baseline removed. See
+  `docs/report-schema.md`.
+
 ## [0.83.0]
 
 Ruleset 83 stops three rules from reading a security tool's own guards and patterns as an attack.

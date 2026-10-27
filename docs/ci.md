@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pezhik/skilltotal@v0.83.0
+      - uses: pezhik/skilltotal@v0.84.0
         id: skilltotal
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
@@ -114,7 +114,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: read }
     steps:
-      - uses: pezhik/skilltotal@v0.83.0
+      - uses: pezhik/skilltotal@v0.84.0
         with:
           source: npm:some-mcp-server@1.4.2
           config: none         # this repository's .skilltotal.toml is not about that package
@@ -128,7 +128,7 @@ Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
 # .pre-commit-config.yaml
 repos:
   - repo: https://github.com/pezhik/skilltotal
-    rev: v0.83.0
+    rev: v0.84.0
     hooks:
       - id: skilltotal
         args: [".", "--fail-on-high"]   # scan the repo; block the commit on a high/critical finding
@@ -153,12 +153,12 @@ A shell step (a virtual environment outside the checkout, so it is not scanned):
 
 ```bash
 python3 -m venv "$HOME/.skilltotal-venv"
-"$HOME/.skilltotal-venv/bin/pip" install skilltotal==0.83.0
+"$HOME/.skilltotal-venv/bin/pip" install skilltotal==0.84.0
 OUT="$(mktemp -d)"
 "$HOME/.skilltotal-venv/bin/skilltotal" scan . --sarif --output "$OUT/skilltotal.sarif" --fail-on high
 ```
 
-Where pipx is on `PATH`, `pipx run --spec skilltotal==0.83.0 skilltotal` followed by the same
+Where pipx is on `PATH`, `pipx run --spec skilltotal==0.84.0 skilltotal` followed by the same
 arguments runs the pinned CLI without a virtual environment. The `python:*-slim` images do not
 include pipx.
 
@@ -168,7 +168,7 @@ GitLab CI (`allow_failure: exit_codes: [2]` would turn the gate into a warning):
 skilltotal:
   image: python:3.12-slim
   script:
-    - pip install skilltotal==0.83.0
+    - pip install skilltotal==0.84.0
     - mkdir -p skilltotal-reports
     - skilltotal scan . --exclude "skilltotal-reports/*" --sarif --output skilltotal-reports/skilltotal.sarif --fail-on high
   artifacts:
@@ -184,7 +184,7 @@ stage('SkillTotal') {
   steps {
     sh '''
       python -m venv .skilltotal-venv    # a virtual environment is not scanned
-      .skilltotal-venv/bin/pip install skilltotal==0.83.0
+      .skilltotal-venv/bin/pip install skilltotal==0.84.0
       mkdir -p skilltotal-reports
       .skilltotal-venv/bin/skilltotal scan . --exclude "skilltotal-reports/*" --sarif --output skilltotal-reports/skilltotal.sarif --fail-on high
     '''

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.9.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.10.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.9 (1.8 + metadata.baseline, metadata.baseline_suppressed_count and metadata.config_applied.baseline); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.10 (1.9 + metadata.baseline_suppressed_malicious); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -117,7 +117,7 @@
           "type": "array",
           "items": { "type": "string" },
           "minItems": 1,
-          "description": "Present only when the applied baseline suppressed evidence of a malicious-indicator rule: those rule ids, sorted. The verdict and the exit-code gates no longer see them."
+          "description": "Added in 1.10. Present only when the applied baseline suppressed evidence of a malicious-indicator rule: those rule ids, sorted. The verdict and the exit-code gates no longer see them."
         },
         "baseline": {
           "type": "string",
