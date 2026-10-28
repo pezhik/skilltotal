@@ -51,9 +51,10 @@ _BUDGET_S = 2.0
 
 
 def _timed(call) -> None:
-    start = time.perf_counter()
+    # CPU time, not wall time: under parallel test workers the wall clock counts the others too.
+    start = time.process_time()
     call()
-    took = time.perf_counter() - start
+    took = time.process_time() - start
     assert took < _BUDGET_S, f"took {took:.1f}s"
 
 

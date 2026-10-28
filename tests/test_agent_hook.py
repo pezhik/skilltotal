@@ -1112,10 +1112,11 @@ def test_the_parser_stays_fast_on_adversarial_command_lines():
         "a=(" * 30_000 + "npm i evil-pkg" + ")" * 30_000,
     ]
     for line in lines:
-        started = clock.monotonic()
+        # CPU time, not wall time: under parallel test workers the wall clock counts the others too.
+        started = clock.process_time()
         parse_installs(line)
         parse_installs(line, shell="powershell")
-        assert clock.monotonic() - started < 5, line[:40]
+        assert clock.process_time() - started < 5, line[:40]
 
 
 # --- Scaffolders: `npm create x` runs the package create-x ------------------------------------
@@ -2313,11 +2314,12 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
         *((p.search, None) for p in hook._VARIABLE.values()),
         *((p.search, None) for p in hook._COMPUTED_HEAD.values()),
     ]
+    # CPU time, not wall time: under parallel test workers the wall clock counts the others too.
     for run, first in patterns:
-        started = clock.monotonic()
+        started = clock.process_time()
         for text in hostile:
             run(first, text) if first is not None else run(text)
-        assert clock.monotonic() - started < 2, run
+        assert clock.process_time() - started < 2, run
     # And what reads the configuration files a repository can ship (.npmrc, uv.toml, ...),
     # with runs of spaces between the parts a key or a header is made of.
     readers = [
@@ -2331,10 +2333,10 @@ def test_every_pattern_that_reads_command_text_runs_in_linear_time():
     spaced = ["a" + " " * n + "b", "[" + " " * n, "a" + ". " * (n // 2), "& " + " " * n,
               "a" + " " * n + "=", "'" + " " * n]
     for run in readers:
-        started = clock.monotonic()
+        started = clock.process_time()
         for text in hostile + spaced:
             run(text)
-        assert clock.monotonic() - started < 2, run
+        assert clock.process_time() - started < 2, run
 
 
 def test_parentheses_that_are_not_arithmetic_do_not_stall_the_hook():
