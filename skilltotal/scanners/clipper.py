@@ -43,8 +43,10 @@ _ADDRESS = (
 )
 _ADDRESS_LITERAL = re.compile(r"""(?P<q>["'`])(?P<addr>""" + _ADDRESS + r""")(?P=q)""")
 # `NAME = "<address>"` (const/let/var or a Python assignment): the name the address is bound to.
+# A name starts where no identifier character precedes it: with `\b` a run like `const$const$...`
+# began a name after every `$` and read it to the end of the run, quadratic in the line's length.
 _BOUND_ADDRESS = re.compile(
-    r"""(?:\b(?:const|let|var)\s+)?\b(?P<name>[A-Za-z_$][\w$]*)\s*(?::\s*[\w.<>]+\s*)?=\s*"""
+    r"""(?:\b(?:const|let|var)\s+)?(?<![\w$])(?P<name>[A-Za-z_$][\w$]*)\s*(?::\s*[\w.<>]+\s*)?=\s*"""
     r"""(?P<q>["'`])(?P<addr>""" + _ADDRESS + r""")(?P=q)"""
 )
 # Code that recognizes an address: a pattern anchored on an address prefix or using the base58
@@ -63,7 +65,7 @@ _CLIPBOARD_WRITE = re.compile(
 )
 # `swapped = text.replace(PATTERN, ATTACKER)`: a name holding a replacement, written later.
 _REPLACED_INTO = re.compile(
-    r"\b(?P<name>[A-Za-z_$][\w$]*)\s*=\s*[^\n=]{0,200}?\.replace\s*\((?P<call>[^\n]{0,200})"
+    r"(?<![\w$])(?P<name>[A-Za-z_$][\w$]*)\s*=\s*[^\n=]{0,200}?\.replace\s*\((?P<call>[^\n]{0,200})"
 )
 
 
@@ -228,10 +230,12 @@ _PATTERN_REPLACES = (
     re.compile(r"(?<![\w$.])(?P<pat>" + _IDENT + r")\.sub\s*\(\s*" + _VALUE + r"\s*,"),
 )
 # `NAME = <pattern>`: a pattern kept under a name and tested through it.
-_PATTERN_BINDING = re.compile(r"\b(?P<name>" + _IDENT + r")\s*=\s*(?P<rhs>[^\n=][^\n]{0,300})")
+_PATTERN_BINDING = re.compile(
+    r"(?<![\w$])(?P<name>" + _IDENT + r")\s*=\s*(?P<rhs>[^\n=][^\n]{0,300})"
+)
 # `NAME = "<string>"`: a fixed value kept under a name (read with spliced literals joined too).
 _BOUND_STRING = re.compile(
-    r"""(?:\b(?:const|let|var)\s+)?\b(?P<name>[A-Za-z_$][\w$]*)\s*(?::\s*[\w.<>]+\s*)?=\s*"""
+    r"""(?:\b(?:const|let|var)\s+)?(?<![\w$])(?P<name>[A-Za-z_$][\w$]*)\s*(?::\s*[\w.<>]+\s*)?=\s*"""
     r"""(?P<q>["'`])(?P<value>[A-Za-z0-9]{20,90})(?P=q)"""
 )
 _ANY_RETURN = re.compile(r"\breturn\b")

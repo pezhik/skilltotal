@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.85.1]
+
+A file built to slow the clipboard-hijacker check no longer stalls a scan. Ruleset 84 is unchanged: no detection rule changed. Report schema 1.10 is unchanged.
+
+### Fixed
+- `ST-CLIPPER` tried to start a variable name at every `$` inside a long run of identifier characters such as `const$const$...`, so its time grew with the square of the line's length. A 16,000-character line in a file that writes the clipboard and tests an address took about 14 seconds. A name now starts only where no identifier character precedes it. What the rule finds is unchanged.
+- Three timing tests now measure CPU time instead of wall time, so parallel test workers no longer make them fail.
+
 ## [0.85.0]
 
 Ruleset 84 adds `ST-SKILL-AUDIT-OVERRIDE` and `ST-SKILL-MEMORY-WRITE-HIDDEN`. Report schema 1.10 is unchanged.

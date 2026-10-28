@@ -19,6 +19,7 @@ from skilltotal.engine import analyze_directory
 from skilltotal.models import Component
 from skilltotal.scanners import (
     agent_config,
+    clipper,
     exposure,
     mcp,
     mcp_elicitation,
@@ -70,6 +71,12 @@ CASES = {
     "secrets._TELEMETRY_INGEST_CTX (repeated)": lambda: secrets._TELEMETRY_INGEST_CTX.search(
         "telemetry." * (N // 10)
     ),
+    # 2026-10-28 (the ops regex timing check): a name could start after every `$` of an identifier
+    # run and read it to the end; 16,000 characters took 14 s of a scan.
+    "clipper._BOUND_ADDRESS": lambda: list(clipper._BOUND_ADDRESS.finditer("const$" * (N // 6))),
+    "clipper._BOUND_STRING": lambda: list(clipper._BOUND_STRING.finditer("const$" * (N // 6))),
+    "clipper._PATTERN_BINDING": lambda: list(clipper._PATTERN_BINDING.finditer("name$" * (N // 5))),
+    "clipper._REPLACED_INTO": lambda: list(clipper._REPLACED_INTO.finditer("replace$" * (N // 8))),
 }
 
 
@@ -88,6 +95,16 @@ def test_a_name_followed_by_many_blank_lines_does_not_stall_the_scan(tmp_path: P
     started = time.perf_counter()
     analyze_directory(tmp_path, Component(name="x", type="local", source=str(tmp_path)))
     assert time.perf_counter() - started < 20
+
+
+def test_a_clipper_shaped_file_of_identifier_runs_does_not_stall_the_scan(tmp_path: Path):
+    # The scanner reads these only in a file that writes the clipboard and tests an address.
+    head = "navigator.clipboard.writeText(a);\nif (/^(bc1|0x)/.test(t)) {}\n"
+    lines = "".join(unit * (15_000 // len(unit)) + "\n" for unit in ("const$", "name$", "replace$"))
+    (tmp_path / "index.js").write_text(head + lines * 2, encoding="utf-8")
+    started = time.process_time()
+    analyze_directory(tmp_path, Component(name="x", type="local", source=str(tmp_path)))
+    assert time.process_time() - started < 20
 
 
 def test_bounded_patterns_still_match_what_they_matched():
@@ -113,6 +130,16 @@ def test_bounded_patterns_still_match_what_they_matched():
     assert sensitive_paths._BARE_REGEX_ELEMENT.match(r"/\.ssh\/id_rsa/i ,")
     assert secrets._TELEMETRY_INGEST_CTX.search("https://x.client-telemetry.example/enqueue")
     assert secrets._TELEMETRY_INGEST_CTX.search("https://telemetry-in.example.test/ingest")
+    address = "0x" + "a" * 40
+    for line, name in ((f'const wallet = "{address}"', "wallet"),
+                       (f"let w$1: string = '{address}'", "w$1"),
+                       (f'cfg.target = "{address}"', "target"), (f'$addr="{address}"', "$addr")):
+        m = clipper._BOUND_ADDRESS.search(line)
+        assert m and m.group("name") == name, line
+    assert clipper._BOUND_STRING.search('const k = "' + "A" * 30 + '"').group("name") == "k"
+    assert clipper._PATTERN_BINDING.search("re = /^(bc1|0x)/").group("name") == "re"
+    m = clipper._REPLACED_INTO.search("out = text.replace(re, ATTACKER)")
+    assert m and m.group("name") == "out"
 
 
 # --- security review, 2026-10-15 ----------------------------------------------------------------
