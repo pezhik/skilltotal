@@ -33,7 +33,7 @@ repository you are about to scan can ship one (with `--package`, npx runs only t
 `uvx` does not look in the folder at all).
 
 ```bash
-npx -y --package=skilltotal@0.85.1 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.86.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 From source (development):

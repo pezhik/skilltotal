@@ -18,6 +18,7 @@ from skilltotal.scanners.email_exfil import EmailExfilScanner
 from skilltotal.scanners.encrypted_archive import EncryptedArchiveScanner
 from skilltotal.scanners.exposure import ExposureScanner
 from skilltotal.scanners.filesystem import FilesystemScanner
+from skilltotal.scanners.html_file_exfil import HtmlFileExfilScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
 from skilltotal.scanners.mcp import McpScanner
@@ -78,6 +79,7 @@ SCANNERS: list[Scanner] = [
     McpElicitationScanner(),
     DependencyRedirectScanner(),
     WorkflowExfilScanner(),
+    HtmlFileExfilScanner(),
 ]
 
 

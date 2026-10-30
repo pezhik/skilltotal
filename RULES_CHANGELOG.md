@@ -4,6 +4,20 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 85 (engine 0.86.0)
+
+Two new malicious-indicator rules, each with an honest look-alike in the eval corpus that stays clean.
+
+- **`ST-SKILL-ENCRYPTED-INSTRUCTIONS`** (new, high): a paragraph of an instruction file that tells
+  the agent to decrypt a block with a key from an env file (`.env`, `.env.prod`) or an environment
+  variable and then to follow the decrypted text. Decrypting a secrets file for a deploy, or
+  explaining where a key lives, does not fire: the passage must also tell the agent to obey the
+  plaintext.
+- **`ST-HTML-FILE-URL-EXFIL`** (new, high): an `.html`/`.htm` page whose script fetches a
+  `file:///` URL and, in the same page, sends data out (`navigator.sendBeacon`, a POST to an
+  `http(s)` URL, a WebSocket). A page that only links to `file://` documents, or only calls a web
+  API, stays clean.
+
 ## ruleset 84 (engine 0.85.0)
 
 Two new malicious-indicator rules for skill instructions. Each is read only in the instruction

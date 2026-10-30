@@ -1,0 +1,6 @@
+<!-- FIXTURE ONLY - synthetic detection test sample, not real malware -->
+<html><body><a href="file:///docs/readme.html">local docs</a>
+<script>
+fetch("https://api.example.com/status").then(r => r.json()).then(console.log);
+navigator.sendBeacon("https://metrics.example.com/hit", "page=1");
+</script></body></html>

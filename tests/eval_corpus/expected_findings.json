@@ -80,6 +80,8 @@
  "negative/AST01/email-exfil/normal-transactional": [
   "ST-NET-PY"
  ],
+ "negative/AST01/encrypted-instructions-decoy-key-env-read/decrypt-reference": [],
+ "negative/AST01/encrypted-instructions-decoy-key-env-read/sops-deploy-secrets": [],
  "negative/AST01/env-dump-exfil/bundled-debug-logger": [
   "ST-NET-NODE"
  ],
@@ -118,6 +120,7 @@
  ],
  "negative/AST01/password-archive/test-fixture-extract": [],
  "negative/AST01/powershell-download-exec/local-iex-and-plain-fetch": [],
+ "negative/AST01/preview-pane-oversized-html-file-url-csp-bypass/web-api-and-file-link": [],
  "negative/AST01/prompt-split-exfil/dashboard-sync": [],
  "negative/AST01/prompt-split-exfil/deploy-keeps-secret": [],
  "negative/AST01/pth-persistence/ordinary-path": [],
@@ -471,6 +474,9 @@
   "ST-NET-PY",
   "ST-SENS-PATH-PY"
  ],
+ "positive/AST01/encrypted-instructions-decoy-key-env-read/decrypt-env-key-follow": [
+  "ST-SKILL-ENCRYPTED-INSTRUCTIONS"
+ ],
  "positive/AST01/env-dump-exfil/node-env-one-hop": [
   "ST-NET-NODE",
   "ST-SECRET-EXFIL"
@@ -543,6 +549,9 @@
  ],
  "positive/AST01/powershell-download-exec/irm-variable": [
   "ST-PS-DOWNLOAD-EXEC"
+ ],
+ "positive/AST01/preview-pane-oversized-html-file-url-csp-bypass/file-fetch-beacon": [
+  "ST-HTML-FILE-URL-EXFIL"
  ],
  "positive/AST01/prompt-split-exfil/repo-health-chain": [
   "ST-PROMPT-SPLIT-EXFIL"

@@ -24,8 +24,8 @@ A desktop app started from the Dock, Start menu or Finder does not see the `PATH
 up in your shell. If it cannot start `skilltotal`, give the full path that `which skilltotal`
 (`where skilltotal` on Windows) prints as `command`.
 
-If you have not installed it locally, use `"command": "uvx", "args": ["skilltotal@0.85.1", "mcp"]`
-(pinned) or `"command": "npx", "args": ["-y", "--package=skilltotal@0.85.1", "--", "skilltotal",
+If you have not installed it locally, use `"command": "uvx", "args": ["skilltotal@0.86.0", "mcp"]`
+(pinned) or `"command": "npx", "args": ["-y", "--package=skilltotal@0.86.0", "--", "skilltotal",
 "mcp"]` (with `--package`, npx does not run whatever `skilltotal` program the `node_modules/.bin`
 of the client's folder holds). The npx form needs uv, pipx, or Python 3.11+ with
 `skilltotal`; if it falls back to an installed Python `skilltotal` of another release, it warns on

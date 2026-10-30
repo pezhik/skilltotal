@@ -4,6 +4,14 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.86.0]
+
+Ruleset 85 adds `ST-SKILL-ENCRYPTED-INSTRUCTIONS` and `ST-HTML-FILE-URL-EXFIL`. Report schema 1.10 is unchanged.
+
+### Added
+- `ST-SKILL-ENCRYPTED-INSTRUCTIONS`: a skill paragraph that has the agent decrypt a block with a key from an env file or environment variable and follow the result.
+- `ST-HTML-FILE-URL-EXFIL`: an HTML page that reads a `file:///` URL and sends data out in the same page.
+
 ## [0.85.1]
 
 A file built to slow the clipboard-hijacker check no longer stalls a scan. Ruleset 84 is unchanged: no detection rule changed. Report schema 1.10 is unchanged.

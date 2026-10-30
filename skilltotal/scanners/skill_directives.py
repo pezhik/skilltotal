@@ -23,6 +23,7 @@ from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
 
 R_AUDIT_OVERRIDE = "ST-SKILL-AUDIT-OVERRIDE"
 R_MEMORY_HIDDEN = "ST-SKILL-MEMORY-WRITE-HIDDEN"
+R_ENCRYPTED_INSTRUCTIONS = "ST-SKILL-ENCRYPTED-INSTRUCTIONS"
 
 # A blank line ends a paragraph, also in a CRLF file (a Windows checkout): without \r here a whole
 # CRLF file was one paragraph, pairing a mention in one section with a word from another.
@@ -70,6 +71,23 @@ _HIDE_FROM_USER = re.compile(
     r"(?:this|it|that|these|the\s+(?:change|edit|update|entry|line|instruction)s?)\b",
     re.IGNORECASE,
 )
+# Instructions kept encrypted so that no reader of the file sees them: the passage tells the agent
+# to decrypt a block with a key taken from an env file or an environment variable and then to
+# follow the decrypted text. Decrypting a secrets file for a deploy does not tell the agent to
+# obey the plaintext.
+_DECRYPT = re.compile(r"\bdecrypt\w*", re.IGNORECASE)
+_ENV_KEY_SOURCE = re.compile(
+    r"(?<![\w.-])\.env(?:\.[\w-]{1,20})?(?![\w-])"
+    r"|\benviron(?:ment)?\s+(?:variable|file)s?\b|\bos\.environ\b|\bprocess\.env\b",
+    re.IGNORECASE,
+)
+_OBEY_PLAINTEXT = re.compile(
+    r"\b(?:follow|obey|execute|carry\s+out|perform)\b[^\n.]{0,60}?"
+    r"\b(?:decrypted|plaintext|deciphered)\b"
+    r"|\b(?:decrypted|deciphered)\s+(?:instructions?|commands?|directives?|steps)\b"
+    r"[^\n.]{0,40}?\b(?:exactly|verbatim|immediately|as\s+written)\b",
+    re.IGNORECASE,
+)
 
 
 class SkillDirectivesScanner(Scanner):
@@ -110,11 +128,30 @@ class SkillDirectivesScanner(Scanner):
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
+        RuleSpec(
+            id=R_ENCRYPTED_INSTRUCTIONS,
+            category="agent_instructions",
+            severity=Severity.HIGH,
+            title="Instruction file has the agent decrypt hidden instructions with an env key",
+            description=(
+                "A passage in an instruction file tells the agent to decrypt a block with a key "
+                "read from an env file or an environment variable and then to follow the "
+                "decrypted text. The instructions are not visible to a person or a scanner "
+                "reading the file; what they say is only known once the agent runs them."
+            ),
+            recommendation=(
+                "Do not install this skill. A skill's instructions should be readable as "
+                "shipped; never let an agent follow text that is decrypted at run time."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
         override: list[Evidence] = []
         memory: list[Evidence] = []
+        encrypted: list[Evidence] = []
         for f in index.files:
             if not _INSTRUCTION_FILE.search(f.relpath):
                 continue
@@ -133,6 +170,14 @@ class SkillDirectivesScanner(Scanner):
                     if hide:
                         memory.append(f.evidence_for_span(base + write.start(),
                                                           base + max(write.end(), hide.end())))
+                decrypt = _DECRYPT.search(text)
+                if decrypt and _ENV_KEY_SOURCE.search(text):
+                    obey = _OBEY_PLAINTEXT.search(text)
+                    if obey:
+                        encrypted.append(f.evidence_for_span(
+                            base + min(decrypt.start(), obey.start()),
+                            base + max(decrypt.end(), obey.end())))
         findings = [_finding_from_rule(rule, ev)
-                    for rule, ev in zip(self.rules, (override, memory), strict=True) if ev]
+                    for rule, ev in zip(self.rules, (override, memory, encrypted), strict=True)
+                    if ev]
         return ScanResult(findings=findings)
