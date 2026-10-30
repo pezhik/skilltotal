@@ -39,20 +39,3 @@ zero) positive-sample counts rather than hiding the gap.
 zero-dependency constraint rules out (Python’s is the only stdlib parser). The realistic path is
 regex-based heuristic scanners mirroring the Node.js ones — tractable but a deliberate, separately
 calibrated effort, not a quiet add-on.
-
-## Roadmap
-
-Detection for these languages is planned, with no date set.
-
-**Basic multi-language detection (planned, no date):**
-1. Regex-based exec/network/deserialization scanners for **Go, Rust, Java** (the main non-Python/
-   non-Node AI-component languages), mirroring the Node.js scanner pattern, so the exfil combos can
-   fire there too. Java `ObjectInputStream` deserialization is the highest-priority single sink.
-2. Then **Ruby, PHP**.
-3. Each language ships with its own positive/negative samples in `tests/eval_corpus/` and must hold
-   the recall floor (`tests/test_efficacy_floor.py`) and the false-positive floor before release.
-
-**SkillTotal Cloud (paid) — multi-language depth, above the free detector:** cross-language
-semantic / dataflow taint analysis, sandbox-confirmed exploitability of a flagged sink, and
-interpretation/prioritization of multi-language findings. This is the “WHY it matters / WHAT
-HAPPENS WHEN RUN” layer — a Cloud differentiator that never removes detection from the OSS engine.

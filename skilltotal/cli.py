@@ -7,8 +7,9 @@ Commands:
                              [--exclude GLOB ...] [--config FILE | --no-config] [--staged]
                              [--baseline FILE | --write-baseline FILE]
                              [--sarif-uri-prefix PATH] [--sarif-category NAME]
-        <source>: a local directory, a project archive (.zip/.tar.gz/.tgz/.tar) or a single
-        file, a git URL, or an npm:<name> / pypi:<name> package spec.
+        <source>: a local directory, an archive (.zip/.tar.gz/.tgz/.tar/.tar.bz2/.tar.xz,
+        or a .mcpb/.dxt/.whl/.vsix package) or a single file, a git URL, or an
+        npm:<name> / pypi:<name> package spec.
         Optional project config: .skilltotal.toml (fail_on, fail_on_score, fail_on_unanalyzed,
         exclude, ignore, baseline, and a per-rule [policy] table with block/warn/ignore
         actions), read from the current directory (or --config FILE; --no-config ignores it).
@@ -110,8 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument(
         "source",
         help=(
-            "Local directory, project archive (.zip/.tar.gz/.tgz/.tar) or single file, "
-            "git URL, or npm:<name> / pypi:<name>."
+            "Local directory, archive (.zip/.tar.gz/.tgz/.tar/.tar.bz2/.tar.xz, "
+            ".mcpb/.dxt/.whl/.vsix) or single file, git URL, or npm:<name> / pypi:<name>."
         ),
     )
     output_format = scan.add_mutually_exclusive_group()
