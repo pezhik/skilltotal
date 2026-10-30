@@ -20,9 +20,10 @@ from skilltotal.agent_skill import skill_capability_mismatch
 from skilltotal.autorun import autorun_commands
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
-from skilltotal.collector import collect
+from skilltotal.collector import collect, vscode_extension_package
 from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
+    MAX_ENTRY_POINT_BYTES,
     MAX_FILE_BYTES,
     SKIP_BUILD_OUTPUT,
     SKIP_DEPENDENCIES,
@@ -31,6 +32,7 @@ from skilltotal.file_index import (
     SKIP_VIRTUALENV,
     FileIndex,
     IndexedFile,
+    _is_minified,
     agent_prompt_dirs,
     is_build_output_path,
     is_ci_path,
@@ -77,8 +79,13 @@ from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID, package_name_typosqua
 
 # Component types produced by fetching a PUBLISHED artifact from a package registry (collector.
 # _collect_archive). Everything else — a git clone, a local directory, an uploaded project — keeps
-# its sources, so its build output is a duplicate rather than the only shipped code.
-_PUBLISHED_PACKAGE_TYPES = frozenset({"npm_package", "python_package"})
+# its sources, so its build output is a duplicate rather than the only shipped code. A VS Code
+# extension ships its bundle (`dist/extension.js`) and runs it on activation, so its build output
+# is the code that runs.
+_PUBLISHED_PACKAGE_TYPES = frozenset({"npm_package", "python_package", "vscode_extension"})
+# Bundled the way a published package's build output is: a VS Code extension's entry points are
+# minified bundles of the extension and its dependencies wherever they are filed.
+_BUNDLED_ENTRY_POINT_TYPES = frozenset({"vscode_extension"})
 
 
 def analyze(
@@ -153,10 +160,19 @@ def analyze_directory(
     install_scripts = _install_script_files(Path(root), install_limits)
     # So is the code the package runs when it is imported or its command is run: a main file padded
     # with one long comment until it looked minified was skipped, and its payload with it.
+    bundled = component.type in _BUNDLED_ENTRY_POINT_TYPES
+    package = vscode_extension_package(Path(root)) if component.type == "vscode_extension" else None
+    entry_points = _entry_point_files(Path(root), package)
     index = FileIndex.build(
         Path(root), exclude=exclude, skip_build_output=not published, always_index=install_scripts,
-        keep_minified=_entry_point_files(Path(root)),
+        keep_minified=entry_points,
+        keep_max_bytes=MAX_ENTRY_POINT_BYTES if bundled else MAX_FILE_BYTES,
     )
+    # An extension's entry point read only because it is one is a bundle: judged like build output.
+    bundles = frozenset(
+        f.relpath for f in index.files
+        if f.relpath in entry_points and _is_minified(f.name, f.text)
+    ) if bundled else frozenset()
     # Code the component loads by a literal path from a folder the walk passed over (its own
     # `lib/env/`, `src/vendor/`, ...) is read too: it runs whatever folder it is filed under.
     index, unloaded = follow_skipped_references(index)
@@ -317,7 +333,9 @@ def analyze_directory(
     findings, provider_review = _split_own_provider_reads(findings, component)
     needs_review.extend(provider_review)
     if published:
-        findings, build_review = _hold_out(install_files, _split_build_output_evidence, findings)
+        findings, build_review = _hold_out(
+            install_files, _split_build_output_evidence, findings, bundles,
+        )
         needs_review.extend(build_review)
     else:
         findings, env_review = _split_unpublished_env_evidence(findings)
@@ -593,14 +611,18 @@ _MAX_PACKAGES = 2000
 _MAX_ENTRY_POINTS = 32
 
 
-def _entry_point_files(root: Path) -> set[str]:
+def _entry_point_files(root: Path, package: Path | None = None) -> set[str]:
     """The files the component's own ``package.json`` names as what runs: ``main``, ``module``,
     ``browser`` (a string), every ``bin`` and the file targets of ``exports``, found the way Node
     finds them and only inside the component. These are read even when they look minified, like
     the install scripts: they are the code that runs, so their shape cannot exempt them (security
     review, 2026-10-15: a padded main file hid an exfiltration from the scan and from guard).
+
+    ``package`` is the folder of that ``package.json`` when it is not ``root``: the ``extension/``
+    folder of an unpacked .vsix. Paths are returned relative to ``root`` either way.
     """
-    manifest = root / "package.json"
+    package = package or root
+    manifest = package / "package.json"
     if not is_regular_file(manifest):
         return set()
     try:
@@ -631,13 +653,14 @@ def _entry_point_files(root: Path) -> set[str]:
 
     targets(data.get("exports"))
     base = root.resolve()
+    start = package.resolve()
     found: set[str] = set()
     for spec in specs:
         if len(found) >= _MAX_ENTRY_POINTS:
             break
         if "*" in spec:  # a subpath pattern names many files, not one entry point
             continue
-        target = _module_file(base, base, spec)
+        target = _module_file(base, start, spec)
         if target is not None:
             found.add(target.relative_to(base).as_posix())
     return found
@@ -1316,11 +1339,20 @@ def _split_unpublished_env_evidence(
 # exists because bundling inlines third-party code and destroys the path signals other layers rely
 # on — reasoning that has nothing to say about a whole file the packer copied in. A `.env` under
 # `build/` ships to every installer exactly like one at the root, so it stays scored.
-_BUILD_OUTPUT_EXEMPT: frozenset[str] = frozenset({"ST-ENV-SHIPPED"})
+# The post-exploitation tactic rules stay scored too: each is a conjunction of shapes (a reverse
+# tunnel to the local SSH port, a literal key written into authorized_keys, a vendor-named
+# LaunchAgent the code writes) that a bundled test or pattern list does not produce by accident,
+# and a trojanized extension or package carries exactly these inside its bundle.
+_BUILD_OUTPUT_EXEMPT: frozenset[str] = frozenset({
+    "ST-ENV-SHIPPED",
+    "ST-POSTEX-REMOTE-ACCESS", "ST-POSTEX-PERSIST", "ST-POSTEX-MASQUERADE", "ST-POSTEX-BEACON",
+    "ST-POSTEX-EVASION",
+})
 
 
 def _split_build_output_evidence(
     findings: list[Finding],
+    bundles: frozenset[str] = frozenset(),
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """In a published package's build output, keep capability findings and demote risk claims.
 
@@ -1341,7 +1373,13 @@ def _split_build_output_evidence(
 
     Demoted evidence lands in needs_review, so it is disclosed rather than dropped, and it runs
     before synthesis so a demoted secret cannot feed ``ST-COMBO-EXFIL``.
+
+    ``bundles`` are further files to judge the same way wherever they are filed: the minified
+    entry points of a VS Code extension (``extension.js`` at the package root).
     """
+    def built_output(e: Evidence) -> bool:
+        return e.file in bundles or is_build_output_path(e.file)
+
     kept: list[Finding] = []
     review: list[NeedsReview] = []
     for finding in findings:
@@ -1351,8 +1389,8 @@ def _split_build_output_evidence(
         if _THREAT_CLASS_BY_ID.get(finding.id, ThreatClass.CAPABILITY) == ThreatClass.CAPABILITY:
             kept.append(finding)
             continue
-        prod = [e for e in finding.evidence if not is_build_output_path(e.file)]
-        built = [e for e in finding.evidence if is_build_output_path(e.file)]
+        prod = [e for e in finding.evidence if not built_output(e)]
+        built = [e for e in finding.evidence if built_output(e)]
         if prod:
             kept.append(_finding_with_evidence(finding, prod))
         if built:

@@ -76,6 +76,14 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-MCP-STATIC-AUTH-EXEC": ("AST01",),
     "ST-CLIPPER": ("AST01",),
     "ST-SHELL-EVASION": ("AST01",),
+    # Post-exploitation tactics: access, persistence, masquerading and beacons are what a
+    # malicious component does once it runs.
+    "ST-POSTEX-REMOTE-ACCESS": ("AST01",),
+    "ST-POSTEX-PERSIST": ("AST01",),
+    "ST-POSTEX-MASQUERADE": ("AST01",),
+    "ST-POSTEX-BEACON": ("AST01",),
+    "ST-POSTEX-EVASION": ("AST01",),
+    "ST-POSTEX-CHAIN": ("AST01",),
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.
     "ST-INSTALL-DROPPER": ("AST02",),
     "ST-INSTALL-NPM": ("AST02",),

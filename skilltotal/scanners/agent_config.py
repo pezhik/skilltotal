@@ -52,6 +52,8 @@ from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
+    TACTIC_COMMAND_AND_CONTROL,
+    TACTIC_PERSISTENCE,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -598,6 +600,7 @@ class AgentConfigScanner(Scanner):
             ),
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            tactic=TACTIC_PERSISTENCE,
         ),
         RuleSpec(
             id=R_CLI_BYPASS,
@@ -640,6 +643,7 @@ class AgentConfigScanner(Scanner):
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             code_context="comments",
+            tactic=TACTIC_COMMAND_AND_CONTROL,
         ),
         RuleSpec(
             id=R_GITCONFIG_REMOTE,
@@ -705,6 +709,7 @@ class AgentConfigScanner(Scanner):
             capability=Capability.FILESYSTEM_WRITE,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             code_context="comments",
+            tactic=TACTIC_PERSISTENCE,
         ),
         RuleSpec(
             id=R_GIT_PERSIST,
@@ -723,6 +728,7 @@ class AgentConfigScanner(Scanner):
             capability=Capability.SHELL_EXECUTION,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
             code_context="comments",
+            tactic=TACTIC_PERSISTENCE,
         ),
         RuleSpec(
             id=R_SKILL_EXEC,

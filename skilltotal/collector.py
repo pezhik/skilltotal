@@ -1726,8 +1726,17 @@ def detect_component(root: Path, source: str, default_name: str | None = None) -
     elif any(is_regular_file(root / f) for f in ("pom.xml", "build.gradle", "build.gradle.kts")):
         ctype = "java_project"
 
+    # A VS Code extension: a package.json that declares `engines.vscode`, at the root (a source
+    # checkout or an unpacked extension folder) or in `extension/` of an unpacked .vsix. Checked
+    # first, because the engine treats it as a shipped artifact whatever else it carries.
+    extension = vscode_extension_package(root)
+    if extension is not None:
+        ctype = "vscode_extension"
+        meta = _read_package_json(extension / "package.json")
+        name = meta.get("name") or name
+        version = meta.get("version") or version
     # MCP / AI-component overrides take precedence when their artifacts are present.
-    if _has_mcp_manifest(root):
+    elif _has_mcp_manifest(root):
         ctype = "mcp_server"
     elif ctype == "directory" and _has_skill_manifest(root):
         ctype = "agent_skill"  # an Anthropic-style Agent Skill (SKILL.md + bundled scripts)
@@ -1739,6 +1748,40 @@ def detect_component(root: Path, source: str, default_name: str | None = None) -
     return Component(
         name=neutralize_hidden(name), type=ctype, source=source, version=neutralize_hidden(version)
     )
+
+
+# What an unpacked .vsix holds next to its `extension/` folder (the OPC package metadata).
+_VSIX_METADATA = frozenset({"extension.vsixmanifest", "[content_types].xml"})
+
+
+def vscode_extension_package(root: Path) -> Path | None:
+    """The folder holding a VS Code extension's ``package.json`` in ``root``, or None.
+
+    A ``package.json`` whose ``engines`` names ``vscode`` marks an extension. In a .vsix it sits
+    in ``extension/``, beside ``extension.vsixmanifest``: that folder counts when ``root`` has no
+    ``package.json`` of its own and holds nothing but the folder and the package metadata.
+    """
+    if is_regular_file(root / "package.json"):
+        return root if _declares_vscode_engine(root / "package.json") else None
+    inner = root / "extension"
+    if not is_regular_file(inner / "package.json") or inner.is_symlink():
+        return None
+    try:
+        names = {p.name.casefold() for p in root.iterdir()}
+    except OSError:
+        return None
+    if "extension.vsixmanifest" not in names and not names <= {"extension"} | _VSIX_METADATA:
+        return None
+    return inner if _declares_vscode_engine(inner / "package.json") else None
+
+
+def _declares_vscode_engine(path: Path) -> bool:
+    try:
+        data = bounded_json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return False
+    engines = data.get("engines") if isinstance(data, dict) else None
+    return isinstance(engines, dict) and isinstance(engines.get("vscode"), str)
 
 
 def _read_package_json(path: Path) -> dict[str, str]:

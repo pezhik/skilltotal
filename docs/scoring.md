@@ -105,16 +105,36 @@ launch of some other program.
 
 ## Other synthesized combinations
 
-`ST-COMBO-EXFIL` is one of four findings the engine synthesizes from combinations of base findings,
-in the order `combinations.py` declares. Each carries the merged evidence of what it combines and
-is a scored `risky_construct`:
+`ST-COMBO-EXFIL` is one of five findings the engine synthesizes from combinations of base findings,
+in the order `combinations.py` declares. Each carries the merged evidence of what it combines. The
+first four are scored `risky_construct`s; `ST-POSTEX-CHAIN` is a `malicious_indicator`:
 
 | Rule | Severity | Fires when |
 |------|----------|------------|
 | `ST-COMBO-EXFIL` | critical | credential access + network egress (above) |
 | `ST-FLOW-TRIFECTA` | high | a real `ST-PROMPT-INJECTION` + filesystem read + network egress (the "lethal trifecta"); not added when `ST-COMBO-EXFIL` already fired |
 | `ST-INSTALL-DROPPER` | high | an install/build hook + a decode-and-execute payload or credential access |
-| `ST-CONVERGENCE` | high | two or more distinct malicious-indicator findings in one component |
+| `ST-POSTEX-CHAIN` | critical | steps of two or more post-exploitation tactics, one of them remote access or command and control (below) |
+| `ST-CONVERGENCE` | high | two or more distinct malicious-indicator findings in one component (`ST-POSTEX-CHAIN` is not counted again) |
+
+### Post-exploitation tactics
+
+Rules can declare the tactic their finding is a step of (`RuleSpec.tactic`):
+
+| Tactic | Rules |
+|--------|-------|
+| remote access | `ST-POSTEX-REMOTE-ACCESS` (reverse tunnel to the local SSH/RDP/VNC port, a literal key written into `authorized_keys`, reverse shells, tunnel clients started with an embedded credential, remote login or remote desktop switched on, a new local or admin account) |
+| persistence | `ST-POSTEX-PERSIST` (LaunchAgents/Daemons, cron `@reboot` or a piped crontab, enabled systemd units, startup/logon scheduled tasks, Run keys, the Startup folder, shell-profile appends), `ST-AGENT-CONFIG-PERSIST`, `ST-AGENT-AUTORUN-REMOTE`, `ST-GIT-HOOK-PERSIST`, `ST-PTH-EXEC`, `ST-PTH-IMPORT-EXEC`, `ST-STARTUP-HOOK-EXEC` |
+| defense evasion | `ST-POSTEX-EVASION` (antivirus exclusions, Gatekeeper or quarantine stripping, host-key checks off with a null known-hosts file, cleared history or logs), `ST-SHELL-EVASION`, `ST-POSTEX-MASQUERADE` |
+| command and control | `ST-POSTEX-BEACON` (secret env-var names or a public-IP lookup next to host facts and a network call, or host facts sent to a raw-IP URL), `ST-AGENT-CLI-RELAY` |
+
+Each signal alone is a `risky_construct`, because each has an honest use (a provisioning script
+plants a key, a daemon installs a LaunchAgent, a dotfiles installer appends to `.zshrc`), except
+`ST-POSTEX-MASQUERADE`: an autostart entry the code names after the OS vendor (`com.apple.*`,
+`MicrosoftEdgeUpdate...`) is a `malicious_indicator` on its own. `ST-POSTEX-CHAIN` counts tactics over
+the findings that survive the demotion layers (documentation, tests, examples, comments never count)
+and requires a way in or a call home: persistence plus evasion alone is what an honest installer
+that registers a logon task and bypasses the PowerShell execution policy does.
 
 ## Taint: untrusted input → dangerous sink (Python)
 

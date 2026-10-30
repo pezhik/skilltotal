@@ -119,6 +119,21 @@
   "ST-SHELL-PY"
  ],
  "negative/AST01/password-archive/test-fixture-extract": [],
+ "negative/AST01/post-exploitation/cli-own-launchagent": [
+  "ST-POSTEX-PERSIST",
+  "ST-SHELL-PY"
+ ],
+ "negative/AST01/post-exploitation/dev-tunnel-helper": [
+  "ST-SHELL-NODE"
+ ],
+ "negative/AST01/post-exploitation/devcontainer-sshd-feature": [
+  "ST-POSTEX-PERSIST"
+ ],
+ "negative/AST01/post-exploitation/dotfiles-installer": [
+  "ST-POSTEX-PERSIST"
+ ],
+ "negative/AST01/post-exploitation/readme-shows-commands": [],
+ "negative/AST01/post-exploitation/security-tool-signatures": [],
  "negative/AST01/powershell-download-exec/local-iex-and-plain-fetch": [],
  "negative/AST01/preview-pane-oversized-html-file-url-csp-bypass/web-api-and-file-link": [],
  "negative/AST01/prompt-split-exfil/dashboard-sync": [],
@@ -322,6 +337,7 @@
   "ST-FS-NODE-READ",
   "ST-FS-NODE-WRITE",
   "ST-NET-NODE",
+  "ST-POSTEX-PERSIST",
   "ST-SENS-PATH",
   "ST-SHELL-NODE"
  ],
@@ -543,6 +559,68 @@
  ],
  "positive/AST01/password-archive/skill-download-protected-zip": [
   "ST-ARCHIVE-PASSWORD-EXTRACT"
+ ],
+ "positive/AST01/post-exploitation/node-code-tunnel-zshrc": [
+  "ST-FS-NODE-WRITE",
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-PERSIST",
+  "ST-POSTEX-REMOTE-ACCESS",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST01/post-exploitation/npm-postinstall-reboot-revshell": [
+  "ST-INSTALL-NPM",
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-PERSIST",
+  "ST-POSTEX-REMOTE-ACCESS"
+ ],
+ "positive/AST01/post-exploitation/python-cloudflared-runkey": [
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-PERSIST",
+  "ST-POSTEX-REMOTE-ACCESS",
+  "ST-SHELL-PY"
+ ],
+ "positive/AST01/post-exploitation/python-ssh-backdoor": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-PY-WRITE",
+  "ST-NET-PY",
+  "ST-POSTEX-BEACON",
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-REMOTE-ACCESS",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH-PY",
+  "ST-SHELL-PY"
+ ],
+ "positive/AST01/post-exploitation/shell-ssh-backdoor": [
+  "ST-INSTALL-NPM",
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-EVASION",
+  "ST-POSTEX-MASQUERADE",
+  "ST-POSTEX-PERSIST",
+  "ST-POSTEX-REMOTE-ACCESS"
+ ],
+ "positive/AST01/post-exploitation/vscode-ps-defender-exclusion-task": [
+  "ST-POSTEX-EVASION",
+  "ST-POSTEX-MASQUERADE",
+  "ST-POSTEX-PERSIST",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST01/post-exploitation/vscode-ssh-backdoor-folder": [
+  "ST-FS-NODE-WRITE",
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-PERSIST",
+  "ST-POSTEX-REMOTE-ACCESS",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST01/post-exploitation/vscode-ssh-backdoor-vsix": [
+  "ST-FS-NODE-WRITE",
+  "ST-NET-NODE",
+  "ST-POSTEX-BEACON",
+  "ST-POSTEX-CHAIN",
+  "ST-POSTEX-EVASION",
+  "ST-POSTEX-MASQUERADE",
+  "ST-POSTEX-PERSIST",
+  "ST-POSTEX-REMOTE-ACCESS",
+  "ST-SHELL-NODE"
  ],
  "positive/AST01/powershell-download-exec/iex-pipe": [
   "ST-PS-DOWNLOAD-EXEC"

@@ -22,6 +22,7 @@ from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severi
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
     MAX_EVIDENCE_SCANNED,
+    TACTIC_PERSISTENCE,
     RuleSpec,
     Scanner,
     ScanResult,
@@ -529,6 +530,7 @@ class PythonAstScanner(Scanner):
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             suffixes=(*PY_SUFFIXES, ".pth"),
             # AST-only: the .pth import line and the module-level spawn are matched structurally.
+            tactic=TACTIC_PERSISTENCE,
         ),
         RuleSpec(
             id=R_TAINT_EXEC,

@@ -406,6 +406,15 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     "ST-FLOW-TRIFECTA": (_T.INSTRUCTION_EXFIL_FLOW,),
     "ST-CONVERGENCE": (_T.MALWARE_CONVERGENCE,),
     "ST-INSTALL-DROPPER": (_T.SUPPLY_CHAIN_PROVENANCE, _T.EXECUTION_AUTHORITY),
+    # Post-exploitation tactics. A way in for someone else is an inbound surface the component
+    # opens; a beacon is egress; persistence and a vendor-named entry run code again later.
+    "ST-POSTEX-REMOTE-ACCESS": (_T.NETWORK_EXPOSURE, _T.EXECUTION_AUTHORITY),
+    "ST-POSTEX-PERSIST": (_T.EXECUTION_AUTHORITY,),
+    "ST-POSTEX-MASQUERADE": (_T.EXECUTION_AUTHORITY, _T.METADATA_INTEGRITY),
+    "ST-POSTEX-BEACON": (_T.NETWORK_EGRESS,),
+    "ST-POSTEX-EVASION": (_T.EXECUTION_AUTHORITY,),
+    # Steps of several tactics converge, like independent malicious indicators do.
+    "ST-POSTEX-CHAIN": (_T.MALWARE_CONVERGENCE, _T.EXECUTION_AUTHORITY),
 }
 
 

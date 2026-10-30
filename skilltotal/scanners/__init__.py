@@ -29,6 +29,7 @@ from skilltotal.scanners.npm_supply import NpmSupplyScanner
 from skilltotal.scanners.oauth_auth import OAuthAuthScanner
 from skilltotal.scanners.oauth_discovery import OAuthDiscoveryInjectionScanner
 from skilltotal.scanners.obfuscation import ObfuscationScanner
+from skilltotal.scanners.postex import PostExploitationScanner
 from skilltotal.scanners.prompt_surface import PromptSurfaceScanner
 from skilltotal.scanners.pth_exec import PthExecScanner
 from skilltotal.scanners.python_ast import PythonAstScanner
@@ -49,6 +50,7 @@ SCANNERS: list[Scanner] = [
     ShellExecScanner(),
     ShellScriptScanner(),
     ShellEvasionScanner(),
+    PostExploitationScanner(),
     FilesystemScanner(),
     SensitivePathScanner(),
     NetworkScanner(),

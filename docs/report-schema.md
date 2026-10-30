@@ -65,7 +65,7 @@ radius of a compromise, not only whether a secret exists.
 | Field | Type | Notes |
 |-------|------|-------|
 | `name` | string | From `package.json`/`pyproject` or directory name |
-| `type` | string | `npm_package`, `python_package`, `mcp_server`, `agent_skill` (a folder with a `SKILL.md`), `ai_component` (a folder with an `AGENTS.md` or `CLAUDE.md`), `go_project`, `java_project`, `directory` (a local folder or clone with none of these), or `project` (an archive or single file with none of these). Treat an unknown value as `directory`: new types can be added |
+| `type` | string | `npm_package`, `python_package`, `vscode_extension` (a `package.json` declaring `engines.vscode`, at the root or in the `extension/` folder of an unpacked `.vsix`), `mcp_server`, `agent_skill` (a folder with a `SKILL.md`), `ai_component` (a folder with an `AGENTS.md` or `CLAUDE.md`), `go_project`, `java_project`, `directory` (a local folder or clone with none of these), or `project` (an archive or single file with none of these). Treat an unknown value as `directory`: new types can be added |
 | `source` | string | Resolved local path or the original URL |
 | `version` | string | From manifest if available, else `""` |
 | `download_url` | string \| null | The distribution artifact fetched for an npm/PyPI source; `null` for git and local sources (added in 1.2) |

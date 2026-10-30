@@ -27,6 +27,8 @@ from skilltotal.models import (
     Severity,
     ThreatClass,
 )
+from skilltotal.scanners import all_rules
+from skilltotal.scanners.base import TACTIC_COMMAND_AND_CONTROL, TACTIC_REMOTE_ACCESS, TACTICS
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
 
 SCORE_CAP = 100
@@ -48,6 +50,11 @@ COMBO_FINDING_ID = "ST-COMBO-EXFIL"
 TRIFECTA_FINDING_ID = "ST-FLOW-TRIFECTA"
 CONVERGENCE_FINDING_ID = "ST-CONVERGENCE"
 INSTALL_DROPPER_FINDING_ID = "ST-INSTALL-DROPPER"
+POSTEX_CHAIN_FINDING_ID = "ST-POSTEX-CHAIN"
+# Rule id -> the post-exploitation tactic it is a step of, declared on each RuleSpec.
+_TACTIC_BY_ID = {r.id: r.tactic for r in all_rules() if r.tactic}
+# A chain needs a way in or a call home; persistence and evasion only support one.
+_POSTEX_ENTRY_TACTICS = frozenset({TACTIC_REMOTE_ACCESS, TACTIC_COMMAND_AND_CONTROL})
 _INSTALL_HOOK_IDS = frozenset(
     {
         "ST-INSTALL-NPM", "ST-INSTALL-NPM-PREPARE", "ST-INSTALL-PY", "ST-INSTALL-GYP",
@@ -669,6 +676,52 @@ def install_dropper_finding(findings: list[Finding]) -> Finding | None:
     )
 
 
+def postex_chain_finding(findings: list[Finding]) -> Finding | None:
+    """Synthesize a post-exploitation chain: steps of two or more tactics in one component.
+
+    Each tactic signal (``RuleSpec.tactic``) on its own has an honest use: a provisioning script
+    plants a key, a daemon installs a LaunchAgent, a deploy script turns host-key checks off. A
+    component that does steps of two different tactics, one of them a way in (remote access) or a
+    call home (command and control), has the shape of an intrusion that keeps itself running:
+    a reverse tunnel plus a LaunchAgent, a reverse shell in a cron @reboot line, a tunnel client
+    with a hardcoded token plus a Run key. Persistence plus defense evasion alone is left out: an
+    installer that registers a logon task and runs PowerShell with the execution policy bypassed
+    has both, and neither lets anyone in.
+
+    Runs after the demotion layers, so documentation, tests, examples and comments never count.
+    Evidence is one line per tactic.
+    """
+    by_tactic: dict[str, list[Finding]] = {}
+    for f in findings:
+        tactic = _TACTIC_BY_ID.get(f.id)
+        if tactic is not None and f.evidence:
+            by_tactic.setdefault(tactic, []).append(f)
+    if len(by_tactic) < 2 or not by_tactic.keys() & _POSTEX_ENTRY_TACTICS:
+        return None
+    tactics = [t for t in TACTICS if t in by_tactic]
+    evidence = _dedupe([by_tactic[t][0].evidence[0] for t in tactics])
+    named = ", ".join(t.replace("_", " ") for t in tactics)
+    return Finding(
+        id=POSTEX_CHAIN_FINDING_ID,
+        severity=Severity.CRITICAL,
+        category="post_exploitation",
+        title="Steps of an intrusion chain in one component",
+        description=(
+            f"The component's code performs steps of {len(tactics)} post-exploitation tactics "
+            f"({named}): a way in or a call home, together with a step that keeps it running or "
+            "hides it. Each step has an honest use on its own; together they are how an intruder "
+            "keeps access to a machine."
+        ),
+        evidence=evidence,
+        recommendation=(
+            "Treat the component as malicious: do not install it. On a machine that ran it, "
+            "remove what each step added (keys, accounts, tunnels, autostart entries) and rotate "
+            "the credentials the machine held."
+        ),
+        threat_class=ThreatClass.MALICIOUS_INDICATOR,
+    )
+
+
 def convergence_finding(findings: list[Finding]) -> Finding | None:
     """Synthesize an elevation finding when multiple distinct malicious indicators co-occur.
 
@@ -679,7 +732,13 @@ def convergence_finding(findings: list[Finding]) -> Finding | None:
 
     Must run after ``_assign_threat_classes`` so each finding's ``threat_class`` is final.
     """
-    malicious = [f for f in findings if f.threat_class is ThreatClass.MALICIOUS_INDICATOR]
+    # ST-POSTEX-CHAIN is itself a convergence (of tactics), so it is not counted again here: the
+    # chain plus one indicator it was built from must not raise a second elevation. Indicators
+    # outside the chain still converge with each other as before.
+    malicious = [
+        f for f in findings
+        if f.threat_class is ThreatClass.MALICIOUS_INDICATOR and f.id != POSTEX_CHAIN_FINDING_ID
+    ]
     distinct_ids = {f.id for f in malicious}
     if len(distinct_ids) < 2:
         return None

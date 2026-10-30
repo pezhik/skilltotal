@@ -69,7 +69,8 @@ Everything under `skilltotal/` is a pure library — no `print`, no `sys.exit` �
 6. **Score** (`scoring.py`): sum of severity weights of risk-bearing findings (malicious +
    risky_construct; capability findings score 0), cap 100, and at least 50 when any malicious
    indicator is present → risk level. Synthesized findings for combinations of base findings
-   (`ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, `ST-INSTALL-DROPPER`, `ST-CONVERGENCE`) are added in the
+   (`ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, `ST-INSTALL-DROPPER`, `ST-POSTEX-CHAIN`,
+   `ST-CONVERGENCE`) are added in the
    order and phase that `combinations.py` declares; their detection logic lives in `scoring.py`.
    Embedded secrets are `exposure` findings: reported, never scored. See [scoring.md](scoring.md).
 7. **Report** (`report.py` / `sarif.py`): render `Report` as human text, JSON, or SARIF.

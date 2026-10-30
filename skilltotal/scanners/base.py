@@ -75,6 +75,18 @@ def concat_folded_spans(
                 yield f, start, end
 
 
+# Post-exploitation tactics (MITRE ATT&CK names in short form). A rule declares at most one; the
+# ST-POSTEX-CHAIN combination fires when the findings cover at least two, one of them a way in
+# (remote access) or a call home (command and control).
+TACTIC_REMOTE_ACCESS = "remote_access"
+TACTIC_PERSISTENCE = "persistence"
+TACTIC_DEFENSE_EVASION = "defense_evasion"
+TACTIC_COMMAND_AND_CONTROL = "command_and_control"
+TACTICS: tuple[str, ...] = (
+    TACTIC_REMOTE_ACCESS, TACTIC_PERSISTENCE, TACTIC_DEFENSE_EVASION, TACTIC_COMMAND_AND_CONTROL,
+)
+
+
 @dataclass(frozen=True)
 class RuleSpec:
     """Metadata + (optional) detection pattern for a single rule."""
@@ -109,6 +121,10 @@ class RuleSpec:
     #                            definition ``Description: "ignore previous instructions"``) is data
     #                            describing an attack, not a live directive.
     code_context: str = "any"
+    # The post-exploitation tactic a rule's finding is a step of (one of ``TACTICS``), or None.
+    # The ST-POSTEX-CHAIN combination counts distinct tactics among the findings that survive
+    # demotion, so a new rule joins the chain by declaring its tactic here. Not serialized.
+    tactic: str | None = None
 
     def to_dict(self) -> dict[str, str]:
         return {

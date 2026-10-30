@@ -16,11 +16,13 @@ from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
+    TACTIC_DEFENSE_EVASION,
     RuleSpec,
     Scanner,
     ScanResult,
     _finding_from_rule,
     alternation,
+    findings_from_rules,
 )
 
 # Where these idioms appear: shell, PowerShell, batch, and source that shells out.
@@ -237,6 +239,61 @@ _RULE = RuleSpec(
         r"(?:downloadstring|invoke-webrequest|\biwr\b|net\.webclient)",
         flags=re.IGNORECASE,
     ),
+    tactic=TACTIC_DEFENSE_EVASION,
+)
+
+
+# Turning off a security control of the machine. These are a step further than the idioms above,
+# which hide how a command runs: each of these switches a protection off (antivirus scanning of a
+# folder, Gatekeeper, the quarantine flag on a file, SSH host-key checking with nowhere to record
+# the key) or wipes the record of what ran (shell history, event logs). A separate rule from
+# ST-SHELL-EVASION so it can carry its own, lower, severity: an installer strips the quarantine
+# flag from the binary it downloaded, a deploy script turns host-key checks off. On its own it is a
+# risky construct; next to a way in or a call home it is a step of ST-POSTEX-CHAIN.
+R_POSTEX_EVASION = "ST-POSTEX-EVASION"
+_TAMPER_RULE = RuleSpec(
+    id=R_POSTEX_EVASION,
+    category="defense_evasion",
+    severity=Severity.MEDIUM,
+    title="Code turns off a security control or wipes its traces",
+    description=(
+        "A command switches a protection of the machine off or erases a record of activity: an "
+        "antivirus exclusion or disabled real-time scanning (Add-MpPreference / Set-MpPreference), "
+        "Gatekeeper disabled (spctl) or the quarantine attribute removed from a file (xattr), SSH "
+        "host-key checking turned off with the known-hosts file sent to the null device, or shell "
+        "history and event logs cleared. Each leaves the machine less able to notice what runs "
+        "next."
+    ),
+    recommendation=(
+        "Confirm why the component changes the machine's security settings. A package should not "
+        "need to exclude itself from antivirus scanning, disable Gatekeeper or clear logs."
+    ),
+    capability=None,
+    threat_class=ThreatClass.RISKY_CONSTRUCT,
+    suffixes=_EVASION_SUFFIXES,
+    # Like ST-SHELL-EVASION: a .py string holding the command is a pattern list as often as a
+    # command, and a comment documents it.
+    code_context="strings_and_comments",
+    tactic=TACTIC_DEFENSE_EVASION,
+    # Every alternative starts at a literal word and its gaps are bounded and lazy.
+    pattern=alternation(
+        r"\bAdd-MpPreference\b[^\n]{0,200}?-Exclusion(?:Path|Process|Extension|IpAddress)\b",
+        r"\bSet-MpPreference\b[^\n]{0,200}?-Disable(?:RealtimeMonitoring|BehaviorMonitoring"
+        r"|IOAVProtection|ScriptScanning|IntrusionPreventionSystem)\b",
+        r"\bspctl\b[\"'\s,]{1,6}--(?:master|global)-disable\b",
+        r"\bxattr\b[\"'\s,]{1,6}-[a-z]*d[a-z]*[\"'\s,]{1,6}com\.apple\.quarantine\b",
+        r"\bStrictHostKeyChecking[\s=:\"',]{1,4}no\b[^\n]{0,300}?"
+        r"\bUserKnownHostsFile[\s=:\"',]{1,4}(?:/dev/null|NUL)\b",
+        r"\bUserKnownHostsFile[\s=:\"',]{1,4}(?:/dev/null|NUL)\b[^\n]{0,300}?"
+        r"\bStrictHostKeyChecking[\s=:\"',]{1,4}no\b",
+        r"\bhistory\s+-c\b",
+        r"\bunset\s+HISTFILE\b",
+        r"\bHISTFILE=/dev/null\b",
+        r"\bwevtutil(?:\.exe)?[\"'\s,]{1,6}cl\b",
+        r"\bClear-EventLog\b",
+        r"\brm\b[^\n]{0,40}?\.(?:bash|zsh)_history\b",
+        flags=re.IGNORECASE,
+    ),
 )
 
 
@@ -305,7 +362,7 @@ def _download_assigned(text: str) -> set[str]:
 
 class ShellEvasionScanner(Scanner):
     name = "shell_evasion"
-    rules = [_RULE, _PS_RULE]
+    rules = [_RULE, _PS_RULE, _TAMPER_RULE]
 
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
@@ -346,6 +403,7 @@ class ShellEvasionScanner(Scanner):
                     break
         if ps_evidence:
             findings.append(_finding_from_rule(_PS_RULE, ps_evidence))
+        findings.extend(findings_from_rules(index, [_TAMPER_RULE]))
 
         needs_review = []
         if encoded_scripts:

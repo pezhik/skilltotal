@@ -1026,6 +1026,25 @@ def _prints(prefix: str) -> bool:
     """
     cut = max(prefix.rfind(";"), prefix.rfind("&"), prefix.rfind("|"))
     return bool(_PRINT_COMMAND.search(prefix, max(cut, 0)))
+
+
+# The output of `echo` reaches a person unless the same command sends it on: `echo "…" | crontab -`
+# installs it, `echo "…" >> ~/.bashrc` writes it. A redirect to stderr (`>&2`, `2>`) still shows
+# it. Only the text up to the next `;` or `&` belongs to the command.
+_SENT_ON = re.compile(r"[^;&]*?(?:\|(?!\|)|(?<![0-9&>])>{1,2}(?!&))")
+_REDIRECT = re.compile(r"(?<![0-9&>])>{1,2}(?!&)")
+
+
+def _output_sent_on(rest: str) -> bool:
+    """True if the text after an output command's argument pipes or redirects its output."""
+    return bool(_SENT_ON.match(_QUOTED_ARG.sub(" ", rest)))
+
+
+def _redirect_target(prefix: str) -> bool:
+    """True if a redirect stands between the output command and the argument: the argument is
+    the file the output goes to (`echo "…" >> "$HOME/.bashrc"`), not text that is printed."""
+    cut = max(prefix.rfind(";"), prefix.rfind("&"), prefix.rfind("|"))
+    return bool(_REDIRECT.search(prefix, max(cut, 0)))
 _QUOTED_ARG = re.compile(r"""(["'`])(?:\\.|(?!\1)[^\\])*\1""")
 # A shell variable assigned a quoted value on its own line: `name="…"`, `export name='…'`,
 # `local name="…"`. The value ends at the next same quote (an escaped quote is rare in a hint, and
@@ -1537,6 +1556,10 @@ def neutralize_hidden(text: str) -> str:
 
 # Files larger than this are not loaded as text (still recorded in stats).
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
+# A VS Code extension runs one bundled entry point, routinely larger than MAX_FILE_BYTES (3-4 MB
+# for `extension.js`), so the engine reads its entry points up to this size (``keep_max_bytes``).
+# Scanning a minified bundle costs roughly 20 s of CPU per MB.
+MAX_ENTRY_POINT_BYTES = 8 * 1024 * 1024  # 8 MiB
 
 # Compiled code a scanner of source cannot read. Shipped without the source beside it, it is a
 # place a payload can hide in plain sight (a .pyc dropped next to the SKILL.md), so the engine
@@ -1981,7 +2004,10 @@ class IndexedFile:
         if k not in printed:
             line = self._line_text(line_no)
             prefix = _QUOTED_ARG.sub(" ", line[: starts[k] - 1])
-            printed[k] = _prints(prefix)
+            printed[k] = (
+                _prints(prefix) and not _redirect_target(prefix)
+                and not _output_sent_on(line[ends[k] + 1 :])
+            )
         return printed[k]
 
     def in_shell_assigned_hint(self, offset: int) -> bool:
@@ -2294,12 +2320,14 @@ class FileIndex:
         skip_build_output: bool = True,
         always_index: Iterable[str] = (),
         keep_minified: Iterable[str] = (),
+        keep_max_bytes: int = MAX_FILE_BYTES,
     ) -> FileIndex:
         """Walk ``root`` once and load its text files.
 
         ``always_index`` names files (relative POSIX paths) indexed even when minified: the
         scripts a package runs at install time are the attack surface itself, whatever their
-        shape, so they are never set aside as a bundle.
+        shape, so they are never set aside as a bundle. ``keep_minified`` files are read up to
+        ``keep_max_bytes`` instead of ``MAX_FILE_BYTES``.
         """
         root = Path(root).resolve()
         files: list[IndexedFile] = []
@@ -2333,7 +2361,10 @@ class FileIndex:
             except OSError:
                 unreadable.append(path.relative_to(root).as_posix())
                 continue
-            if size > MAX_FILE_BYTES:
+            limit = MAX_FILE_BYTES
+            if size > limit and path.relative_to(root).as_posix() in keep:
+                limit = max(limit, keep_max_bytes)
+            if size > limit:
                 stats["skipped_large"] += 1
                 if cls._large_text(path):
                     large.append(path.relative_to(root).as_posix())

@@ -16,7 +16,7 @@ any of these tokens.
 from __future__ import annotations
 
 from skilltotal.models import Capability, Severity, ThreatClass
-from skilltotal.scanners.base import PatternScanner, RuleSpec, alternation
+from skilltotal.scanners.base import TACTIC_PERSISTENCE, PatternScanner, RuleSpec, alternation
 
 R_PTH_EXEC = "ST-PTH-EXEC"
 R_STARTUP_HOOK = "ST-STARTUP-HOOK-EXEC"
@@ -90,6 +90,7 @@ class PthExecScanner(PatternScanner):
                 r"\burllib\.request\b",
                 r"\brequests\.",
             ),
+            tactic=TACTIC_PERSISTENCE,
         ),
         RuleSpec(
             id=R_STARTUP_HOOK,
@@ -115,5 +116,6 @@ class PthExecScanner(PatternScanner):
             # A payload token in a comment is description, not behavior; demote it.
             code_context="comments",
             pattern=_STARTUP_PAYLOAD,
+            tactic=TACTIC_PERSISTENCE,
         ),
     ]

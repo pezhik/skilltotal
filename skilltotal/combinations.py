@@ -2,8 +2,9 @@
 
 The most dangerous shapes in an AI component are rarely a single finding; they emerge when
 independent behaviors co-occur (read a secret AND reach the network; an install hook AND a
-decode-exec payload). SkillTotal synthesizes those as dedicated risky-construct findings
-(``ST-COMBO-EXFIL`` / ``ST-FLOW-TRIFECTA`` / ``ST-INSTALL-DROPPER`` / ``ST-CONVERGENCE``).
+decode-exec payload). SkillTotal synthesizes those as dedicated findings
+(``ST-COMBO-EXFIL`` / ``ST-FLOW-TRIFECTA`` / ``ST-INSTALL-DROPPER`` / ``ST-CONVERGENCE`` are risky
+constructs; ``ST-POSTEX-CHAIN`` is a malicious indicator).
 
 This module is the single, ordered source of truth for *which* combinations exist and *when*
 each is evaluated — the orchestration the engine used to hardcode as four sequential calls.
@@ -38,10 +39,12 @@ from skilltotal.scoring import (
     COMBO_FINDING_ID,
     CONVERGENCE_FINDING_ID,
     INSTALL_DROPPER_FINDING_ID,
+    POSTEX_CHAIN_FINDING_ID,
     TRIFECTA_FINDING_ID,
     convergence_finding,
     exfiltration_finding,
     install_dropper_finding,
+    postex_chain_finding,
     trifecta_finding,
 )
 
@@ -88,6 +91,10 @@ def _dropper(findings, capabilities, component, fired, index):
     return install_dropper_finding(findings)
 
 
+def _postex_chain(findings, capabilities, component, fired, index):
+    return postex_chain_finding(findings)
+
+
 def _convergence(findings, capabilities, component, fired, index):
     return convergence_finding(findings)
 
@@ -113,6 +120,14 @@ COMBINATIONS: tuple[Combination, ...] = (
         technique="Install-time dropper (lifecycle hook + decode-exec/credential payload)",
         phase=Phase.PRE_CLASSIFICATION,
         synth=_dropper,
+    ),
+    # Counts tactics (RuleSpec.tactic) over the base findings, so it needs no threat classes; it
+    # is a malicious indicator, and ST-CONVERGENCE (POST) leaves it out of its own count.
+    Combination(
+        id=POSTEX_CHAIN_FINDING_ID,
+        technique="Post-exploitation chain (remote access or C2 + persistence/evasion)",
+        phase=Phase.PRE_CLASSIFICATION,
+        synth=_postex_chain,
     ),
     Combination(
         id=CONVERGENCE_FINDING_ID,

@@ -15,6 +15,7 @@ from skilltotal.scoring import (
     COMBO_FINDING_ID,
     CONVERGENCE_FINDING_ID,
     INSTALL_DROPPER_FINDING_ID,
+    POSTEX_CHAIN_FINDING_ID,
     TRIFECTA_FINDING_ID,
 )
 from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID
@@ -119,6 +120,25 @@ _INSTALL_DROPPER_RULE = RuleSpec(
 )
 
 
+# Post-exploitation chain, synthesized in scoring from RuleSpec.tactic. Unlike the combinations
+# above it is a MALICIOUS_INDICATOR; threat_class must match the finding.
+_POSTEX_CHAIN_RULE = RuleSpec(
+    id=POSTEX_CHAIN_FINDING_ID,
+    category="post_exploitation",
+    severity=Severity.CRITICAL,
+    title="Steps of an intrusion chain in one component",
+    description=(
+        "Raised when a component's code performs steps of two or more post-exploitation tactics "
+        "(remote access, persistence, defense evasion, command and control), one of them remote "
+        "access or command and control."
+    ),
+    recommendation="Treat the component as malicious; undo what each step added on machines "
+                   "that ran it.",
+    capability=None,
+    threat_class=ThreatClass.MALICIOUS_INDICATOR,
+)
+
+
 def get_rules() -> list[RuleSpec]:
     """All rules, sorted by id, including the synthesized combination + skill-mismatch rules."""
     rules = list(all_rules()) + [
@@ -128,6 +148,7 @@ def get_rules() -> list[RuleSpec]:
         _TRIFECTA_RULE,
         _CONVERGENCE_RULE,
         _INSTALL_DROPPER_RULE,
+        _POSTEX_CHAIN_RULE,
     ]
     return sorted(rules, key=lambda r: r.id)
 
