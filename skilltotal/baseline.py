@@ -41,15 +41,22 @@ def finding_fingerprints(finding: Finding) -> list[str]:
 
 
 def apply_suppressions(
-    findings: list[Finding], suppressed: set[str]
+    findings: list[Finding], suppressed: set[str], matched: dict[str, str] | None = None
 ) -> tuple[list[Finding], int]:
-    """Drop suppressed evidence (and emptied findings). Returns (kept, suppressed_count)."""
+    """Drop suppressed evidence (and emptied findings). Returns (kept, suppressed_count).
+    ``matched``, if given, receives the fingerprint -> rule id of every occurrence dropped."""
     if not suppressed:
         return findings, 0
     kept: list[Finding] = []
     removed = 0
     for finding in findings:
-        remaining = [e for e in finding.evidence if fingerprint(finding.id, e) not in suppressed]
+        remaining = []
+        for e in finding.evidence:
+            fp = fingerprint(finding.id, e)
+            if fp not in suppressed:
+                remaining.append(e)
+            elif matched is not None:
+                matched[fp] = finding.id
         removed += len(finding.evidence) - len(remaining)
         if remaining:
             kept.append(

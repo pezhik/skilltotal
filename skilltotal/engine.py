@@ -89,6 +89,7 @@ def analyze(
     exclude: Iterable[str] | None = None,
     inline_ignores: bool = False,
     progress: Callable[[str], None] | None = None,
+    suppressed_out: dict[str, str] | None = None,
 ) -> Report:
     """Resolve ``source`` (path or URL), analyze it, and return a Report."""
     with collect(source) as ctx:
@@ -100,6 +101,7 @@ def analyze(
             exclude=exclude,
             inline_ignores=inline_ignores,
             progress=progress,
+            suppressed_out=suppressed_out,
         )
         if ctx.note:
             report.needs_review.append(
@@ -127,10 +129,12 @@ def analyze_directory(
     exclude: Iterable[str] | None = None,
     inline_ignores: bool = False,
     progress: Callable[[str], None] | None = None,
+    suppressed_out: dict[str, str] | None = None,
 ) -> Report:
     """Analyze an already-local component directory. Pure: no stdout, no exit.
 
-    ``suppress`` is an optional set of baseline fingerprints to drop before scoring.
+    ``suppress`` is an optional set of baseline fingerprints to drop before scoring;
+    ``suppressed_out``, if given, receives the fingerprint -> rule id of each one it dropped.
     ``ignore_rules`` drops whole rule ids; ``exclude`` is a list of path globs to skip.
     ``inline_ignores`` honors ``skilltotal:ignore`` markers in the scanned files. Only the owner of
     the code may turn it on (``scan`` of a local checkout, as in CI): in a package someone else
@@ -241,7 +245,7 @@ def analyze_directory(
         regex_only.update(result.regex_only_files)
 
     before = {f.id: len(f.evidence) for f in findings}
-    findings, suppressed_count = apply_suppressions(findings, suppress or set())
+    findings, suppressed_count = apply_suppressions(findings, suppress or set(), suppressed_out)
     # Reported apart from the inline markers' share, so the report can say what the baseline hid.
     baseline_count = suppressed_count if suppress else None
     # A baseline that accepts a malicious indicator turns the verdict it should stop into "low":
@@ -340,14 +344,26 @@ def analyze_directory(
     # Agent Skill: declared allowed-tools vs. what the bundled code actually does (deterministic
     # undeclared-capability check). Synthesized here, after capabilities.
     mismatch = skill_capability_mismatch(component, index, capabilities)
-    if mismatch is not None:
-        findings.append(mismatch)
 
     # Supply chain: npm/PyPI package name one or two edits from a popular package (typosquatting).
     # Synthesized here off component identity; deterministic, evidence-anchored to the manifest.
     typosquat = package_name_typosquatting(component, index)
-    if typosquat is not None:
-        findings.append(typosquat)
+
+    # These two are not derived from other findings, so the suppression above never reached them:
+    # a baseline or accept file that lists their fingerprints is honored here. Combinations stay
+    # derived: they vanish when their inputs are suppressed, never by their own fingerprints.
+    synthesized_own = [f for f in (mismatch, typosquat) if f is not None]
+    if suppress and synthesized_own:
+        before_own = {f.id: len(f.evidence) for f in synthesized_own}
+        synthesized_own, own_count = apply_suppressions(synthesized_own, suppress, suppressed_out)
+        suppressed_count += own_count
+        baseline_count = (baseline_count or 0) + own_count
+        after_own = {f.id: len(f.evidence) for f in synthesized_own}
+        baseline_malicious = sorted(set(baseline_malicious) | {
+            rule_id for rule_id, count in before_own.items()
+            if after_own.get(rule_id, 0) < count
+            and _THREAT_CLASS_BY_ID.get(rule_id) is ThreatClass.MALICIOUS_INDICATOR})
+    findings.extend(synthesized_own)
 
     if ignore_set:
         # Drop again after synthesis so ignored synthesized ids (e.g. ST-COMBO-EXFIL) are honored.

@@ -122,13 +122,17 @@ skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4 --fail-on-new high --fail-
 # Pre-install guard: allow/block decision (exit 2 on block) you can chain before installing
 skilltotal guard npm:some-mcp-server && claude mcp add some-mcp-server -- npx some-mcp-server
 skilltotal guard npm:x --block-on malicious   # block only on malicious indicators
-skilltotal guard --installed                  # check the MCP servers, plugins and skills your agents use
+skilltotal guard --installed                  # check the MCP servers, plugins, skills and editor extensions
 skilltotal guard --installed --allow-unchecked  # exit 0 even if some could not be checked
+skilltotal guard --installed --state ~/.skilltotal-state.json  # also catch risk gained in an update
+skilltotal guard --installed --write-accept accept.json  # draft entries for what blocks (exits 0)
+skilltotal guard --installed --accept accept.json  # accept reviewed false positives
 
-# Inventory: list the MCP servers, plugins and skills your agents are configured with, and scan them
+# Inventory: list the MCP servers, plugins, skills and editor extensions installed, and scan them
 skilltotal inventory
 skilltotal inventory --json
 skilltotal inventory --no-scan          # list only, do not scan
+skilltotal inventory --no-extensions    # leave out editor extensions (their scan takes minutes)
 skilltotal inventory --project .        # also include this project's agent configs
 skilltotal inventory --sbom             # AI-BOM: CycloneDX 1.6 JSON of your agent stack,
                                         # scan verdicts attached as component properties
@@ -182,7 +186,13 @@ Claude Code plugins you installed, an organization's Claude Code `managed-mcp.js
 Claude Desktop, Cursor (`~/.cursor/mcp.json`), Windsurf, VS Code
 (the user `mcp.json` and `settings.json` `mcp.servers`) and Gemini CLI configs, and the skills in
 `~/.claude/skills`. With `--project DIR` they also read that project's `.mcp.json`,
-`.cursor/mcp.json`, `.vscode/mcp.json` and `.claude/skills`. Claude Code's `~/.claude/settings.json`
+`.cursor/mcp.json`, `.vscode/mcp.json` and `.claude/skills`. They also list the editor extensions
+installed in `~/.vscode/extensions` (or the folder `VSCODE_EXTENSIONS` names),
+`~/.vscode-insiders/extensions`, `~/.cursor/extensions`, `~/.windsurf/extensions`,
+`~/.vscode-oss/extensions` (VSCodium) and the remote-server folders `~/.vscode-server/extensions`,
+`~/.vscodium-server/extensions` and `~/.cursor-server/extensions`: one entry per extension folder
+with a `package.json`, named `publisher.name@version`, leaving out the folders the editor marked
+for deletion in `.obsolete`. Claude Code's `~/.claude/settings.json`
 is not read: it holds permissions and hooks, not server definitions. Each server's launch command
 is read by the same parser as the plugin hook, which derives the `npm:`, `pypi:`, git or local
 source to scan. A launcher that pipes a download into a shell is marked risky, a remote (URL)
@@ -190,6 +200,135 @@ server cannot be scanned, and an inline secret in a config entry (an `env` value
 `Authorization` header, a key in a URL) is reported redacted. `guard --installed` exits 2 when a
 component blocks, else 1 when any component could not be checked (a scan error, a remote or
 unsupported server, a risky launcher) or none was found; `--allow-unchecked` turns that 1 into 0.
+
+An editor extension blocks only on malicious indicators unless you pass `--block-on`: large,
+legitimate extensions that bundle a language server or a debugger score high on the risky
+constructs in their bundled code, so the default `high` would block widely used extensions on
+every machine that has them. The typosquatting check does not apply to them: an editor installs an
+extension by its marketplace id, not by the name in its `package.json`.
+
+### Accepting a reviewed false positive
+
+`scan` accepts findings through a baseline; `guard` (both forms) and `inventory` take an **accept
+file** instead, `--accept FILE`. Each entry accepts the findings it lists for one component at one
+exact version:
+
+```json
+{
+  "format": "skilltotal-accept",
+  "version": 1,
+  "accepted": [
+    {
+      "component": "VS Code|editor_extension|acme.quillwidget",
+      "version": "1.4.2",
+      "findings": ["3f9c2a7e1b6d4c08"],
+      "rules": ["ST-OBF-DECODE-EXEC"],
+      "reason": "Decodes a bundled test fixture; reviewed in SEC-123, nothing runs it",
+      "accepted_by": "security team",
+      "expires": "2027-03-31"
+    }
+  ]
+}
+```
+
+- `component` is `host|kind|name` for an installed component (the host, kind and name the
+  inventory prints, without an extension's `@version`), and for `guard <source>` the source:
+  `npm:<name>` or `pypi:<name>` without its version, anything else as written.
+- `version` is the exact version scanned (`""` for a component that has none, such as a skill
+  folder). An update is judged afresh, so a trojanized update of an accepted extension still blocks.
+- `findings` are the fingerprints of the accepted evidence (the baseline's: rule id, file and
+  snippet). A new finding in the same version is judged as usual. `rules` is for the reader only.
+- `reason` is required; `accepted_by` and `expires` (valid through that day) are optional.
+
+Accepted evidence is removed before scoring, so the score, verdict and decision are those of the
+rest. Nothing disappears silently: `guard --installed` marks the component `[ACCEPTED]` and prints
+the rules, count and reason, `guard <source>` adds an `Accepted  :` line, the JSON gets an
+`accepted` object (`rules`, `count`, `reason`, `expires`, `accepted_by`) and the AI-BOM a
+`skilltotal:accepted` property. Every run warns on stderr when an accepted finding is a malicious
+indicator, names expired entries (which no longer apply), and lists stale entries (no component
+matched at that version). A file that is not valid (not JSON, wrong `format` or `version`, an
+unknown key, an empty `reason`, a malformed fingerprint or date) is an error, exit 1, and nothing
+is scanned.
+
+To write the entries, run `--write-accept FILE`: it adds one entry for each component the run
+blocks (`guard`) or flags as high risk, malicious or blocked (`inventory`), with the fingerprints
+of its risk findings and an empty `reason`, and exits 0. The file is refused until a reviewer
+fills in every reason. It adds to an existing accept file and never overwrites any other file.
+An accepted finding is not drift, and `--state` still records it, so the state file is the same
+as without `--accept`.
+
+A combination finding (`ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, `ST-INSTALL-DROPPER`,
+`ST-CONVERGENCE`) follows its inputs: it disappears when they are accepted and keeps firing while
+they are present, even if its own fingerprints are listed. A finding capped out of the report can
+appear once the shown ones are accepted; accept it the same way. A block that is not a finding (an
+install script that could not be read) cannot be accepted.
+
+### Catching a malicious editor extension update
+
+An editor extension updates itself from its marketplace, so no install command runs that the
+Claude Code hook could check. A scheduled `guard --installed` run catches a bad update the next
+time it runs. With `--state FILE`, each run records every component's version and the
+fingerprints of its risk findings (the same fingerprints as a baseline; capabilities are not
+recorded), and compares them with the last run. A component whose version changed and that gained
+risk findings it did not have before is reported as **drift**, with the new rule ids (text, JSON
+`drift` and the AI-BOM's `skilltotal:drift` property). The guard blocks drift that adds a malicious
+indicator or a high or critical risky construct. The first run only records. The state file holds
+component names, versions and fingerprint hashes, nothing from the scanned files. A file that is
+not a state file is an error and is left as it is.
+
+Scanning extensions takes time: on one developer machine, the 9 installed extensions took about
+15 minutes, most of it one language extension's 7,500 type-stub files. Run it daily, not on every login;
+`--no-extensions` leaves them out.
+
+For one machine, run it once a day and keep the state file:
+
+```bash
+# Linux and macOS (crontab -e). cron has a short PATH: use the full path `which skilltotal` prints.
+0 9 * * * /usr/local/bin/skilltotal guard --installed --state "$HOME/.skilltotal-state.json" >> "$HOME/skilltotal-guard.log" 2>&1
+```
+
+```powershell
+# Windows Task Scheduler
+schtasks /Create /SC DAILY /ST 09:00 /TN "SkillTotal guard" /TR "cmd /c skilltotal guard --installed --state %USERPROFILE%\skilltotal-state.json >> %USERPROFILE%\skilltotal-guard.log 2>&1"
+```
+
+On macOS, launchd works as well: save a LaunchAgent at
+`~/Library/LaunchAgents/ai.skilltotal.guard.plist` and load it with
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.skilltotal.guard.plist`.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>ai.skilltotal.guard</string>
+  <key>ProgramArguments</key><array>
+    <string>/bin/sh</string><string>-c</string>
+    <string>/usr/local/bin/skilltotal guard --installed --state "$HOME/.skilltotal-state.json" >> "$HOME/skilltotal-guard.log" 2>&amp;1</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>9</integer></dict>
+</dict></plist>
+```
+
+The log ends with a `BLOCK:`, `UNCHECKED:` or `ALLOW:` line; exit code 2 means a component
+blocked.
+
+For a company, run `skilltotal guard --installed --json --state FILE` from your fleet or MDM tool
+on each machine, **as the signed-in user**: the command reads that user's home folder, so a job
+running as root or SYSTEM sees root's or SYSTEM's extensions, not the user's. Keep one state file
+per user on the machine. Treat a non-zero exit as an alert (2: a component blocked; 1: something
+could not be checked, or the state file could not be used) and send the JSON to your SIEM: one
+object per component with `host`, `name`, `kind`, `decision`, `reasons` and, after an update that
+added risk, `drift`.
+
+When a component blocks on a false positive, accept it rather than turn the job off. Keep one
+accept file for the team in a git repository: on a machine that shows the block, run the job's
+command with `--write-accept accept.json`, open a pull request with the new entries, and have a
+reviewer fill in each `reason` (and an `expires` date) before it merges; the file is refused while
+any reason is empty. Ship the reviewed file with the job, the way you ship its command, and add
+`--accept /path/to/accept.json`, for example
+`skilltotal guard --installed --json --state FILE --accept /opt/skilltotal/accept.json`. Each run
+then names every accepted malicious indicator, expired entry and stale entry on stderr, so the
+log shows what the file still covers.
 
 **Provenance** (`--provenance`, opt-in) adds registry-metadata signals for `npm:` /
 `pypi:` sources: *recently published*, *deprecated / yanked*, *no recent releases*, *no
@@ -201,8 +340,8 @@ scan stays component-only.
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success: no gate tripped. Also after `--write-baseline` has written its file (no gate is applied) |
-| 1 | Usage, config or collection error (for example an unknown or abbreviated flag, an invalid `.skilltotal.toml` or an unknown rule id in it, a missing path, an `--output` folder that does not exist, a failed clone, a source over a size limit). `guard --installed` also exits 1 when a component could not be checked or none was found, unless `--allow-unchecked` is given |
+| 0 | Success: no gate tripped. Also after `--write-baseline` or `--write-accept` has written its file (no gate is applied) |
+| 1 | Usage, config or collection error (for example an unknown or abbreviated flag, an invalid `.skilltotal.toml` or an unknown rule id in it, an invalid `--accept` file, a missing path, an `--output` folder that does not exist, a failed clone, a source over a size limit). `guard --installed` also exits 1 when a component could not be checked or none was found, unless `--allow-unchecked` is given |
 | 2 | A configured gate tripped (`--fail-on`/`--fail-on-high` severity, `--fail-on-score`, `--fail-on-unanalyzed`, a `block` policy or `diff --fail-on-new`/`--fail-on-unanalyzed`), or `guard` blocked a component |
 
 When a gate trips, stderr gets one `gate:` line per gate, naming the gate, the finding that

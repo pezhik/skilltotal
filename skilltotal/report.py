@@ -289,7 +289,8 @@ def _diff_side(side: dict) -> str:
     )
 
 
-def render_guard_json(source: str, report: dict, decision: GuardDecision) -> str:
+def render_guard_json(source: str, report: dict, decision: GuardDecision,
+                      accepted: dict | None = None) -> str:
     return json.dumps(
         {
             "source": source,
@@ -298,13 +299,23 @@ def render_guard_json(source: str, report: dict, decision: GuardDecision) -> str
             "risk_level": report.get("risk_level", ""),
             "verdict": report.get("verdict", {}),
             "capabilities": sorted(report.get("capabilities", {})),
+            **({"accepted": accepted} if accepted else {}),
         },
         indent=2,
         ensure_ascii=False,
     )
 
 
-def render_guard_text(source: str, report: dict, decision: GuardDecision) -> str:
+def accepted_text(accepted: dict) -> str:
+    """What an accept file took out of one component (``Applied.to_dict()``) as a sentence."""
+    until = f" until {accepted['expires']}" if accepted.get("expires") else ""
+    by = f" by {accepted['accepted_by']}" if accepted.get("accepted_by") else ""
+    return (f"ACCEPTED{by}{until}: {', '.join(str(r) for r in accepted.get('rules') or [])} "
+            f"({accepted.get('count', 0)} occurrence(s)): {accepted.get('reason', '')}")
+
+
+def render_guard_text(source: str, report: dict, decision: GuardDecision,
+                      accepted: dict | None = None) -> str:
     # The name, version and type come from the package's own manifest: a newline in one would
     # print a line of its choosing ("Decision  : ALLOW") above the real decision. Every field is
     # kept on its own line; only the decision line says ALLOW or BLOCK.
@@ -326,6 +337,8 @@ def render_guard_text(source: str, report: dict, decision: GuardDecision) -> str
     caps = sorted(report.get("capabilities", {}))
     if caps:
         lines.append(f"Capabilities: {', '.join(one_line(str(cap)) for cap in caps)}")
+    if accepted:
+        lines.append(f"Accepted  : {one_line(accepted_text(accepted))}")
     lines.append("")
     lines.append(f"Decision  : {'ALLOW' if decision.allow else 'BLOCK'}")
     for reason in decision.reasons:
@@ -340,10 +353,17 @@ def render_inventory_json(items: list[dict]) -> str:
     return json.dumps(items, indent=2, ensure_ascii=False)
 
 
+def drift_text(drift: dict) -> str:
+    """One inventory item's drift (``Drift.to_dict()``) as a sentence."""
+    return (f"drift: updated from {drift.get('from')} to {drift.get('to')} and gained risk "
+            f"findings: {', '.join(str(r) for r in drift.get('rules') or [])}")
+
+
 def render_inventory_text(items: list[dict]) -> str:
     """Render the installed-component inventory as an aligned table."""
     if not items:
-        return "No installed AI components (MCP servers or skills) found.\n"
+        return ("No installed AI components (MCP servers, plugins, skills or editor extensions) "
+                "found.\n")
     rows = []
     for it in items:
         verdict = it.get("verdict") or ("-" if it.get("scannable") else (
@@ -365,18 +385,23 @@ def render_inventory_text(items: list[dict]) -> str:
     # Whatever `guard --installed` blocks needs attention here too: a typosquatted name blocks the
     # guard with a low score, and the two commands must not disagree about one component.
     flagged = [it for it in items if it.get("verdict") in ("malicious", "critical", "high")
-               or it.get("risky") or it.get("guard") == "block"]
+               or it.get("risky") or it.get("guard") == "block" or it.get("drift")]
     if flagged:
         lines.append("")
         lines.append(f"{len(flagged)} component(s) need attention (high risk, malicious, blocked "
-                     f"by `skilltotal guard`, or a launch command that runs a downloaded script).")
+                     f"by `skilltotal guard`, risk gained in an update, or a launch command that "
+                     f"runs a downloaded script).")
     for it in items:
         name = one_line(str(it["name"]))
         if it.get("risky") and it.get("note"):
             lines.append(f"  {name}: {one_line(str(it['note']))}")
+        if it.get("drift") and not it["drift"].get("blocks"):  # a blocking one is a guard reason
+            lines.append(f"  {name}: {one_line(drift_text(it['drift']))}")
         if it.get("guard") == "block":
             lines.extend(f"  {name}: {one_line(str(reason))}"
                          for reason in it.get("guard_reasons") or [])
+        if it.get("accepted"):
+            lines.append(f"  {name}: {one_line(accepted_text(it['accepted']))}")
         lines.extend(f"  {name}: inline secret in its config: {one_line(str(secret))}"
                      for secret in it.get("secrets") or [])
     return _terminal_safe("\n".join(lines) + "\n")

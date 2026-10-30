@@ -21,6 +21,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from skilltotal.drift import Drift
+from skilltotal.inventory import EDITOR_EXTENSION
 from skilltotal.models import NOTHING_READ, UNANALYZED_INSTALL_SCRIPT
 from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID
 
@@ -38,6 +40,12 @@ _BLOCKED_BANDS: dict[str, tuple[str, ...]] = {
 
 BLOCK_LEVELS = tuple(_BLOCKED_BANDS)
 DEFAULT_BLOCK_LEVEL = "high"
+# Editor extensions are large, long-lived programs: measured on 2026-10-30, widely used language
+# and debugger extensions score high (deserialization and command-construction risky
+# constructs in their bundled Python code), so `high` blocked legitimate extensions on any Python
+# developer's machine. They block on malicious indicators, and on an update that added risk
+# (drift), unless --block-on is given.
+EDITOR_EXTENSION_BLOCK_LEVEL = "malicious"
 
 
 @dataclass
@@ -56,8 +64,10 @@ class GuardDecision:
         }
 
 
-def evaluate(report: dict[str, Any], block_on: str = DEFAULT_BLOCK_LEVEL) -> GuardDecision:
-    """Decide allow/block for a serialized report (``Report.to_dict()`` shape)."""
+def evaluate(report: dict[str, Any], block_on: str = DEFAULT_BLOCK_LEVEL, *,
+             check_name: bool = True) -> GuardDecision:
+    """Decide allow/block for a serialized report (``Report.to_dict()`` shape). ``check_name``
+    False skips the typosquatting check, for a component not installed by its package name."""
     if block_on not in _BLOCKED_BANDS:
         raise ValueError(f"unknown block level: {block_on!r}")
     reasons: list[str] = []
@@ -90,11 +100,31 @@ def evaluate(report: dict[str, Any], block_on: str = DEFAULT_BLOCK_LEVEL) -> Gua
 
     # A name a letter or two from a popular package: the hook asks about it, and only the person
     # can say which name was meant. Its score says nothing; an impostor often copies the code.
-    if looks_typosquatted(report):
+    if check_name and looks_typosquatted(report):
         reasons.append("its name is a letter or two away from a popular package (possible "
                        "typosquatting): check it is the package you meant")
 
     return GuardDecision(allow=not reasons, block_on=block_on, reasons=reasons)
+
+
+def evaluate_installed(report: dict[str, Any], kind: str, block_on: str | None = None,
+                       drift: Drift | None = None) -> GuardDecision:
+    """The decision for one installed component, as ``inventory`` and ``guard --installed`` make
+    it. An editor extension blocks at EDITOR_EXTENSION_BLOCK_LEVEL unless ``block_on`` is given,
+    and never on its package name: an editor installs it by its marketplace id
+    (``publisher.name``), so the npm-style name in its package.json is not what anyone typed. An
+    update that added a malicious indicator or a high/critical risky construct (``drift``) blocks
+    whatever the level."""
+    if kind == EDITOR_EXTENSION:
+        decision = evaluate(report, block_on or EDITOR_EXTENSION_BLOCK_LEVEL, check_name=False)
+    else:
+        decision = evaluate(report, block_on or DEFAULT_BLOCK_LEVEL)
+    if drift is not None and drift.blocking:
+        decision.reasons.append(
+            f"updated from {drift.old_version} to {drift.new_version} and gained risk findings "
+            f"it did not have before: {', '.join(drift.rule_ids)}")
+        decision.allow = False
+    return decision
 
 
 def _first_malicious(report: dict[str, Any]) -> str:

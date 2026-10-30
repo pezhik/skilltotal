@@ -25,7 +25,9 @@ Commands:
     skilltotal guard --installed [--project DIR] [--block-on ...] [--json]
         pre-install allow/block decision (exit 2 on block): malicious indicators always
         block; scored risk at/above the block level blocks; capabilities alone never do.
-    skilltotal inventory [--json] [--no-scan] [--project DIR]
+        --accept FILE accepts reviewed false positives (one component at one exact version);
+        --write-accept FILE drafts entries for what blocks, each reason left to fill in.
+    skilltotal inventory [--json] [--no-scan] [--project DIR] [--accept FILE]
         discover AI components installed on this machine (agent configs / MCP servers), then scan.
     skilltotal rules list [--json]
     skilltotal mcp
@@ -50,6 +52,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import json
 import os
 import re
@@ -60,12 +63,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from skilltotal import RULESET_VERSION, __version__, parallel
-from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate
+from skilltotal.guard import BLOCK_LEVELS, DEFAULT_BLOCK_LEVEL, evaluate, evaluate_installed
 
 # The engine, the collector and the scanners are imported inside the commands that use them:
 # the Claude Code hook starts this CLI before every install-like Bash command the agent runs, and
 # loading the whole engine for a command that turns out to install nothing costs most of a second.
 if TYPE_CHECKING:
+    from skilltotal.accept import AcceptList, Applied
     from skilltotal.config import Config
     from skilltotal.hook_scan import Marker, Pending, ScanContinues
 
@@ -308,13 +312,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--block-on",
         metavar="LEVEL",
         choices=list(BLOCK_LEVELS),
-        default=DEFAULT_BLOCK_LEVEL,
+        default=None,
         help=(
             "What blocks (exit 2): 'malicious' = only malicious indicators; "
             "'high' (default) = also risk level high/critical; 'medium' = also medium. "
-            "Capabilities alone never block."
+            "Capabilities alone never block. With --installed, editor extensions default to "
+            "'malicious'."
         ),
     )
+    _installed_arguments(guard, "With --installed: ")
+    _accept_arguments(guard, "blocks")
     guard.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
 
     inv = sub.add_parser(
@@ -336,6 +343,8 @@ def build_parser() -> argparse.ArgumentParser:
     inv.add_argument(
         "--project", metavar="DIR", help="Also look for project-local agent configs in DIR."
     )
+    _installed_arguments(inv, "")
+    _accept_arguments(inv, "flags (high risk, malicious, or blocked by the guard)")
 
     rules = sub.add_parser("rules", help="Inspect the detection rules.")
     rules_sub = rules.add_subparsers(dest="rules_command", required=True)
@@ -371,6 +380,40 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _installed_arguments(sub: argparse.ArgumentParser, prefix: str) -> None:
+    """The options `inventory` and `guard --installed` share."""
+    sub.add_argument(
+        "--no-extensions",
+        action="store_true",
+        help=prefix + "Leave out editor extensions (VS Code, Cursor, Windsurf, VSCodium); "
+        "scanning them can take minutes.",
+    )
+    sub.add_argument(
+        "--state",
+        metavar="FILE",
+        help=prefix + "Keep each component's version and risk-finding fingerprints in FILE and "
+        "report a component that gained risk findings when its version changed (drift). "
+        "The first run only records.",
+    )
+
+
+def _accept_arguments(sub: argparse.ArgumentParser, flagged: str) -> None:
+    """--accept and --write-accept, which `guard` and `inventory` share."""
+    sub.add_argument(
+        "--accept",
+        metavar="FILE",
+        help="Accept the reviewed false positives FILE lists: each entry names a component, its "
+        "exact version and the fingerprints of the findings accepted, with a reason. Any other "
+        "version or finding is judged as usual.",
+    )
+    sub.add_argument(
+        "--write-accept",
+        metavar="FILE",
+        help=f"Add an entry to FILE for each component this run {flagged}, with an empty "
+        "reason to fill in (FILE is refused until every reason is), and exit 0.",
+    )
 
 
 def _config_arguments(sub: argparse.ArgumentParser) -> None:
@@ -1053,17 +1096,34 @@ def _cmd_guard(args: argparse.Namespace) -> int:
         return EXIT_ERROR
     if args.installed:
         return _guard_installed(args)
+    if args.state or args.no_extensions:
+        print("error: --state and --no-extensions go with --installed", file=sys.stderr)
+        return EXIT_ERROR
+    acc = _open_accept(args)
+    if acc is None:
+        return EXIT_ERROR
 
+    from skilltotal.accept import source_key
+
+    key = source_key(args.source)
     try:
-        report = analyze(args.source).to_dict()
+        report, version, accepted = _scan_accepting(analyze, args.source, acc.entries, key)
     except CollectionError as exc:
         print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
-    decision = evaluate(report, args.block_on)
+    decision = evaluate(report, args.block_on or DEFAULT_BLOCK_LEVEL)
+    shown = accepted.to_dict() if accepted else None
     if args.json:
-        print(render_guard_json(args.source, report, decision))
+        print(render_guard_json(args.source, report, decision, shown))
     else:
-        print(render_guard_text(args.source, report, decision))
+        print(render_guard_text(args.source, report, decision, shown))
+    _warn_accepted(acc, key if not version else f"{key}@{version}", accepted)
+    if acc.entries is not None:
+        _warn_stale(acc, acc.entries.stale(key))
+    if args.write_accept:
+        drafts = [] if decision.allow else _drafts(key, version, report)
+        return EXIT_OK if _write_accept(acc, drafts, [] if decision.allow or drafts
+                                        else [args.source]) else EXIT_ERROR
     return EXIT_OK if decision.allow else EXIT_FAIL_ON_HIGH
 
 
@@ -1072,14 +1132,29 @@ def _guard_installed(args: argparse.Namespace) -> int:
     be checked or none was found (unless --allow-unchecked), else 0. What was not checked is never
     reported as passed: a sweep where every scan failed used to say "ALLOW"."""
     from skilltotal import engine
+    from skilltotal.drift import component_key
     from skilltotal.inventory import discover
-    from skilltotal.report import _terminal_safe, one_line, render_inventory_json
+    from skilltotal.report import (
+        _terminal_safe,
+        accepted_text,
+        drift_text,
+        one_line,
+        render_inventory_json,
+    )
 
     if _project_missing(args.project):
         return EXIT_ERROR
-    components = discover(project=Path(args.project).expanduser() if args.project else None)
+    state = _open_state(args.state) if args.state else {}
+    if state is None:
+        return EXIT_ERROR
+    acc = _open_accept(args)
+    if acc is None:
+        return EXIT_ERROR
+    components = _discovered(discover, args)
     items: list[dict] = []
     blocked: list[str] = []
+    drafts: list[dict] = []
+    nothing_to_accept: list[str] = []
     for c in components:
         item: dict = {"host": c.host, "name": c.name, "kind": c.kind, "source": c.source}
         if c.secrets:
@@ -1094,20 +1169,33 @@ def _guard_installed(args: argparse.Namespace) -> int:
             item["note"] = c.note
             items.append(item)
             continue
+        key = component_key(c.host, c.kind, c.name, c.version)
         try:
-            report = engine.analyze(c.source).to_dict()
+            report, version, accepted = _scan_accepting(engine.analyze, c.source, acc.entries,
+                                                        key, c.version)
         except Exception as exc:  # noqa: BLE001 - one bad item must not abort the sweep
             item["decision"] = "error"
             item["note"] = str(exc)
             items.append(item)
             continue
-        decision = evaluate(report, args.block_on)
+        drift = _track_drift(state, c, report, item, accepted) if args.state else None
+        decision = evaluate_installed(report, c.kind, args.block_on, drift)
         item["decision"] = "allow" if decision.allow else "block"
         item["risk_level"] = report.get("risk_level", "")
         item["reasons"] = decision.reasons
+        if accepted:
+            item["accepted"] = accepted.to_dict()
+            _warn_accepted(acc, c.name, accepted)
         if not decision.allow:
             blocked.append(c.name)
+            found = _drafts(key, version, report)
+            drafts.extend(found)
+            if not found:
+                nothing_to_accept.append(c.name)
         items.append(item)
+    saved = _save_state(args.state, state) if args.state else True
+    if acc.entries is not None:
+        _warn_stale(acc, acc.entries.stale())
 
     unchecked = {kind: sum(it["decision"] == kind for it in items)
                  for kind in ("error", "not scanned", "remote", "risky")}
@@ -1117,8 +1205,8 @@ def _guard_installed(args: argparse.Namespace) -> int:
     else:
         lines: list[str] = []
         for it in items:
-            marker = {"allow": "ok", "block": "BLOCK", "risky": "RISKY"}.get(
-                it["decision"], it["decision"])
+            marker = {"allow": "ACCEPTED" if it.get("accepted") else "ok", "block": "BLOCK",
+                      "risky": "RISKY"}.get(it["decision"], it["decision"])
             risk = f"  risk={it['risk_level']}" if it.get("risk_level") else ""
             # Names and notes come from config files anyone can write (a repository's
             # `.mcp.json`): one_line keeps a newline or a bidi control in one from forging an
@@ -1126,6 +1214,10 @@ def _guard_installed(args: argparse.Namespace) -> int:
             lines.append(f"[{marker}] {one_line(str(it['name']))} ({one_line(str(it['host']))}, "
                          f"{one_line(str(it['kind']))}){risk}")
             lines.extend(f"      - {one_line(str(reason))}" for reason in it.get("reasons", []))
+            if it.get("accepted"):
+                lines.append(f"      - {one_line(accepted_text(it['accepted']))}")
+            if it.get("drift") and not it["drift"]["blocks"]:
+                lines.append(f"      - {one_line(drift_text(it['drift']))}")
             if it.get("note") and (it["decision"] in unchecked
                                    or it["decision"] == "this scanner"):
                 lines.append(f"      - {one_line(str(it['note']))}")
@@ -1152,27 +1244,45 @@ def _guard_installed(args: argparse.Namespace) -> int:
             lines.append(lead + not_checked)
         else:
             lines.append(f"ALLOW: all {len(items)} component(s) passed the guard.")
+        accepted_count = sum(1 for it in items if it.get("accepted"))
+        if accepted_count:
+            lines.append(f"{accepted_count} component(s) with findings the accept file accepts.")
         # Names come from config files anyone can write (a repository's `.mcp.json`): their
         # escape sequences must not reach the terminal, as in every other text report.
         print(_terminal_safe("\n".join(lines)))
+    if args.write_accept:
+        return EXIT_OK if _write_accept(acc, drafts, nothing_to_accept) and saved else EXIT_ERROR
     if blocked:
         return EXIT_FAIL_ON_HIGH
     if (missing or not items) and not args.allow_unchecked:
         return EXIT_ERROR  # could not check: never a silent pass
-    return EXIT_OK
+    return EXIT_OK if saved else EXIT_ERROR
 
 
 def _cmd_inventory(args: argparse.Namespace) -> int:
     from skilltotal.collector import CollectionError
+    from skilltotal.drift import component_key
     from skilltotal.engine import analyze
     from skilltotal.inventory import discover
     from skilltotal.report import render_inventory_json, render_inventory_text
 
     if _project_missing(args.project):
         return EXIT_ERROR
-    components = discover(project=Path(args.project).expanduser() if args.project else None)
+    if (args.state or args.accept or args.write_accept) and args.no_scan:
+        print("error: --state, --accept and --write-accept need a scan; drop --no-scan",
+              file=sys.stderr)
+        return EXIT_ERROR
+    state = _open_state(args.state) if args.state else {}
+    if state is None:
+        return EXIT_ERROR
+    acc = _open_accept(args)
+    if acc is None:
+        return EXIT_ERROR
+    components = _discovered(discover, args)
 
     items: list[dict] = []
+    drafts: list[dict] = []
+    nothing_to_accept: list[str] = []
     for c in components:
         item = {
             "host": c.host, "name": c.name, "kind": c.kind,
@@ -1180,24 +1290,41 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
             "config": c.config, "risky": c.risky, "secrets": c.secrets,
             "remote": c.remote, "this_tool": c.this_tool,
         }
+        if c.version:
+            item["version"] = c.version
         if c.scannable and not args.no_scan and c.source is not None:
+            key = component_key(c.host, c.kind, c.name, c.version)
             try:
-                report = analyze(c.source)
-                item["verdict"] = report.verdict.get("level")
-                item["risk_level"] = report.risk_level.value
-                item["risk_score"] = report.risk_score
-                item["has_malicious_indicators"] = report.verdict.get("has_malicious_indicators")
+                report, version, accepted = _scan_accepting(analyze, c.source, acc.entries, key,
+                                                            c.version)
+                verdict = report.get("verdict") or {}
+                item["verdict"] = verdict.get("level")
+                item["risk_level"] = report.get("risk_level")
+                item["risk_score"] = report.get("risk_score")
+                item["has_malicious_indicators"] = verdict.get("has_malicious_indicators")
                 # What `guard --installed` would decide, at its default level: a component it
                 # blocks (a typosquatted name, an unread install script) needs attention here
                 # too, whatever its score says.
-                decision = evaluate(report.to_dict())
+                drift = _track_drift(state, c, report, item, accepted) if args.state else None
+                decision = evaluate_installed(report, c.kind, drift=drift)
                 item["guard"] = "allow" if decision.allow else "block"
                 item["guard_reasons"] = decision.reasons
+                if accepted:
+                    item["accepted"] = accepted.to_dict()
+                    _warn_accepted(acc, c.name, accepted)
+                if not decision.allow or item["verdict"] in ("malicious", "critical", "high"):
+                    found = _drafts(key, version, report)
+                    drafts.extend(found)
+                    if not found:
+                        nothing_to_accept.append(c.name)
             except CollectionError as exc:
                 item["error"] = str(exc)
             except Exception as exc:  # noqa: BLE001 - one bad item must not abort the sweep
                 item["error"] = f"scan failed: {exc}"
         items.append(item)
+    saved = _save_state(args.state, state) if args.state else True
+    if acc.entries is not None:
+        _warn_stale(acc, acc.entries.stale())
 
     if args.sbom:
         from skilltotal.sbom import build_aibom
@@ -1207,7 +1334,223 @@ def _cmd_inventory(args: argparse.Namespace) -> int:
         print(render_inventory_json(items))
     else:
         print(render_inventory_text(items))
-    return EXIT_OK
+    if args.write_accept and not _write_accept(acc, drafts, nothing_to_accept):
+        return EXIT_ERROR
+    return EXIT_OK if saved else EXIT_ERROR
+
+
+def _discovered(discover, args: argparse.Namespace) -> list:
+    """What `inventory` and `guard --installed` check: everything discovered, less the editor
+    extensions with --no-extensions."""
+    from skilltotal.inventory import EDITOR_EXTENSION
+
+    components = discover(project=Path(args.project).expanduser() if args.project else None)
+    if args.no_extensions:
+        components = [c for c in components if c.kind != EDITOR_EXTENSION]
+    return components
+
+
+def _open_state(path: str) -> dict | None:
+    """The components a --state file records ({} before its first run), or None after saying
+    why it cannot be used. A file that is not a state file is never overwritten."""
+    from skilltotal.drift import StateError, load_state
+
+    problem = _output_problem(path)
+    target = Path(path).expanduser()
+    if not problem and target.exists() and (not target.is_file() or _is_link(target) or (
+            os.name == "nt" and _WINDOWS_DEVICE.match(target.name))):
+        problem = "not a regular file"
+    if not problem and target.exists():
+        try:
+            return load_state(target.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, StateError) as exc:
+            problem = str(exc)
+    if problem:
+        print(f"error: cannot use the state file {_one_line(path)}: {_one_line(problem)}",
+              file=sys.stderr)
+        return None
+    return {}
+
+
+def _save_state(path: str, state: dict) -> bool:
+    from skilltotal.drift import dump_state
+
+    try:
+        _write_file(str(Path(path).expanduser()), dump_state(state))
+    except OSError as exc:
+        print(f"error: cannot write the state file {_one_line(path)}: {exc.strerror or exc}",
+              file=sys.stderr)
+        return False
+    return True
+
+
+def _track_drift(state: dict, component, report: dict, item: dict, accepted=None):
+    """Compare a scanned component with its entry in ``state``, record it there, and put any
+    drift on its output ``item``. What the accept file accepted (``accepted``) is not drift, and
+    it is recorded all the same, so the state is the one a run without the file would keep."""
+    from skilltotal.drift import component_key, component_version, detect, record
+
+    key = component_key(component.host, component.kind, component.name, component.version)
+    version = component_version(report, component.version)
+    drift = detect(state.get(key), report, version)
+    state[key] = record(report, version)
+    if accepted is not None:
+        state[key]["risk"] = sorted(set(state[key]["risk"]) | accepted.risk_fingerprints)
+    if drift is not None:
+        item["drift"] = drift.to_dict()
+    return drift
+
+
+class _Accept(NamedTuple):
+    """An --accept file's entries (None without one), the --write-accept file's current text
+    (None when there is none yet) and the paths, for messages."""
+
+    entries: AcceptList | None
+    path: str
+    write_path: str
+    write_text: str | None
+
+
+def _open_accept(args: argparse.Namespace) -> _Accept | None:
+    """The --accept and --write-accept files, checked before any scan; None after saying why
+    one cannot be used. An invalid accept file fails closed, and a file that is not an accept
+    file is never overwritten."""
+    from datetime import date
+
+    from skilltotal.accept import AcceptError, AcceptList, dump_with, load_accept
+
+    entries = None
+    if args.accept:
+        target = Path(args.accept).expanduser()
+        problem = ""
+        if not target.exists():
+            problem = "no such file"
+        elif not target.is_file() or (os.name == "nt" and _WINDOWS_DEVICE.match(target.name)):
+            problem = "not a regular file"
+        else:
+            try:
+                entries = AcceptList(load_accept(target.read_text(encoding="utf-8")),
+                                     date.today())
+            except (OSError, UnicodeDecodeError, AcceptError) as exc:
+                problem = str(exc)
+        if problem or entries is None:
+            print(f"error: cannot use the accept file {_one_line(args.accept)}: "
+                  f"{_one_line(problem)}", file=sys.stderr)
+            return None
+        if entries.expired:
+            print(f"warning: accept file {_one_line(args.accept)}: expired entr(ies) no longer "
+                  "apply: " + ", ".join(f"{_one_line(e.label())} (expired {e.expires})"
+                                        for e in entries.expired), file=sys.stderr)
+    write_text = None
+    if args.write_accept:
+        target = Path(args.write_accept).expanduser()
+        problem = _output_problem(args.write_accept)
+        if not problem and target.exists():
+            if not target.is_file() or _is_link(target) or (
+                    os.name == "nt" and _WINDOWS_DEVICE.match(target.name)):
+                problem = "not a regular file"
+            else:
+                try:
+                    write_text = target.read_text(encoding="utf-8")
+                    dump_with(write_text, [])  # raises unless it is an accept file
+                except (OSError, UnicodeDecodeError, AcceptError) as exc:
+                    problem = f"{exc}; it is not overwritten"
+        if problem:
+            print(f"error: cannot write the accept file {_one_line(args.write_accept)}: "
+                  f"{_one_line(problem)}", file=sys.stderr)
+            return None
+    return _Accept(entries, args.accept or "", args.write_accept or "", write_text)
+
+
+@functools.lru_cache(maxsize=1)
+def _threat_classes() -> dict[str, str]:
+    from skilltotal.rules import get_rules
+
+    return {r.id: r.threat_class.value for r in get_rules()}
+
+
+def _scan_accepting(analyze, source: str, accept: AcceptList | None, key: str,
+                    known_version: str = "") -> tuple[dict, str, Applied | None]:
+    """Scan ``source`` (``analyze`` is the engine's) and return the report, the version scanned
+    and what the accept file took out of it: the evidence its entries for ``key`` accept at that
+    exact version is removed before scoring, so the verdict and the guard see the rest.
+
+    An editor extension's version is read from its manifest before the scan (``known_version``);
+    a package a launcher runs at its latest version, or a ``guard <source>``, shows its version
+    only in the scan. Then the entries for every version of the component are tried at once, and
+    the component is scanned a second time, with its own version's entries alone, only when an
+    entry for another version took something out: one scan unless it was updated."""
+    from skilltotal.accept import applied
+    from skilltotal.drift import component_version
+
+    def scan(fingerprints: set[str], hits: dict[str, str]) -> dict:
+        if not fingerprints:
+            return analyze(source).to_dict()
+        return analyze(source, suppress=fingerprints, suppressed_out=hits).to_dict()
+
+    if accept is None:
+        report = analyze(source).to_dict()
+        return report, component_version(report, known_version), None
+    hits: dict[str, str] = {}
+    report = scan(accept.candidates(key, known_version or None), hits)
+    version = component_version(report, known_version)
+    entries = accept.matching(key, version)
+    own = set().union(*(e.findings for e in entries))
+    if not hits.keys() <= own:
+        hits = {}
+        report = scan(own, hits)
+    return report, version, applied(entries, hits, _threat_classes())
+
+
+def _warn_accepted(acc: _Accept, name: str, accepted: Applied | None) -> None:
+    """A malicious indicator the accept file hides is named on stderr on every run, so a log or a
+    SIEM shows that the guard passed a component with one."""
+    if accepted is not None and accepted.malicious:
+        print(f"warning: accept file {_one_line(acc.path)} hides malicious indicator(s) "
+              f"{', '.join(accepted.malicious)} in {_one_line(name)} (reason: "
+              f"{_one_line(accepted.reason)}); the verdict and the guard do not see them",
+              file=sys.stderr)
+
+
+def _warn_stale(acc: _Accept, stale: list) -> None:
+    if stale:
+        print(f"warning: accept file {_one_line(acc.path)}: {len(stale)} entr(ies) match no "
+              f"component scanned at their version (stale): "
+              f"{', '.join(_one_line(e.label()) for e in stale)}", file=sys.stderr)
+
+
+def _drafts(key: str, version: str, report: dict) -> list[dict]:
+    """The --write-accept entry for a component this run flagged: its risk findings, or none
+    when what flags it is not a finding (an install script that could not be read)."""
+    from skilltotal.accept import draft_entry, risk_findings
+
+    fingerprints, rules = risk_findings(report)
+    return [draft_entry(key, version, fingerprints, rules)] if fingerprints else []
+
+
+def _write_accept(acc: _Accept, drafts: list[dict], nothing_to_accept: list[str]) -> bool:
+    """Add ``drafts`` to the --write-accept file and say what is left to do."""
+    from skilltotal.accept import dump_with
+
+    path = acc.write_path
+    if nothing_to_accept:
+        print(f"note: nothing to accept for {', '.join(_one_line(n) for n in nothing_to_accept)}:"
+              " what flags it is not a finding (an install script or a component that could not "
+              "be read)", file=sys.stderr)
+    text, added = dump_with(acc.write_text, drafts)
+    if not added:
+        print(f"Nothing new to accept; {_one_line(path)} was not changed.", file=sys.stderr)
+        return True
+    try:
+        _write_file(str(Path(path).expanduser()), text)
+    except OSError as exc:
+        print(f"error: cannot write the accept file {_one_line(path)}: {exc.strerror or exc}",
+              file=sys.stderr)
+        return False
+    print(f"{added} entr(ies) added to {_one_line(path)}, each with an empty \"reason\". The "
+          "file is refused until a reviewer writes in every entry why its findings are safe.",
+          file=sys.stderr)
+    return True
 
 
 def _cmd_mcp() -> int:

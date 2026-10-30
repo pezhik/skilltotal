@@ -1,7 +1,7 @@
 """AI-BOM export: the installed-component inventory as a CycloneDX 1.6 document.
 
 An SBOM answers "what is deployed?" for classic software; this is the same answer for an
-agent stack — every MCP server and skill the machine's agent hosts reference, with
+agent stack — every MCP server, plugin, skill and editor extension found on the machine, with
 SkillTotal's scan verdict attached as component properties. The output is standard
 CycloneDX JSON, so it feeds any SBOM tooling (dependency-track, compliance pipelines)
 without a custom format.
@@ -29,6 +29,8 @@ _PROPERTY_KEYS = (
     ("verdict", "skilltotal:verdict"),
     ("has_malicious_indicators", "skilltotal:has_malicious_indicators"),
     ("error", "skilltotal:scan_error"),
+    ("drift", "skilltotal:drift"),
+    ("accepted", "skilltotal:accepted"),
 )
 
 
@@ -62,6 +64,8 @@ def _component(item: dict[str, Any]) -> dict[str, Any]:
         version = purl.rsplit("@", 1)[1] if "@" in purl.split("/", 1)[1] else None
         if version:
             component["version"] = version
+    if "version" not in component and item.get("version"):
+        component["version"] = str(item["version"])  # an editor extension's manifest version
     properties = []
     for key, prop_name in _PROPERTY_KEYS:
         value = item.get(key)
@@ -69,6 +73,14 @@ def _component(item: dict[str, Any]) -> dict[str, Any]:
             continue
         if isinstance(value, bool):
             value = "true" if value else "false"
+        elif key == "drift" and isinstance(value, dict):
+            value = (f"{value.get('from')} -> {value.get('to')}: "
+                     f"{', '.join(str(r) for r in value.get('rules') or [])}")
+        elif key == "accepted" and isinstance(value, dict):
+            # Findings an accept file took out before scoring: the verdict above is without them.
+            until = f" until {value['expires']}" if value.get("expires") else ""
+            value = (f"{', '.join(str(r) for r in value.get('rules') or [])} "
+                     f"({value.get('count', 0)}){until}: {value.get('reason', '')}")
         properties.append({"name": prop_name, "value": str(value)})
     if properties:
         component["properties"] = properties

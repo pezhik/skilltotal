@@ -35,6 +35,11 @@ An applied config is always named: on a `Config    :` line in the text report, a
 `config applied: ...` line on stderr with `--json` or `--sarif`, and in the report's
 `metadata.config_applied`. A `baseline` set in the config is named there too.
 
+A baseline fingerprint also suppresses a finding synthesized from the component's name or declared
+tools (`ST-TYPOSQUAT`, `ST-SKILL-CAP-MISMATCH`). A combination finding (`ST-COMBO-EXFIL`,
+`ST-FLOW-TRIFECTA`, `ST-INSTALL-DROPPER`, `ST-CONVERGENCE`) is not suppressed by its own
+fingerprints: it disappears when the findings it combines are suppressed.
+
 > **Protect the config in CI.** The GitHub Action and the pre-commit hook run from the root of the
 > repository they scan, so that repository's own `.skilltotal.toml` is applied, and a pull request
 > can change it: lower `fail_on`, `ignore` a rule, point `baseline` at a file that suppresses

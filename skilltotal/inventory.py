@@ -1,8 +1,9 @@
 """Discover AI agent components already installed on this machine.
 
 Reads the configuration files of common agent hosts (Claude Desktop, Claude Code with its plugins
-and an organization's managed-mcp.json, Cursor, Windsurf, VS Code, Gemini CLI) and the local
-skills directories, enumerates the MCP servers, plugins and skills they reference, and derives a
+and an organization's managed-mcp.json, Cursor, Windsurf, VS Code, Gemini CLI), the local
+skills directories and the editors' extension folders, enumerates the MCP servers, plugins,
+skills and editor extensions they hold, and derives a
 *scannable source* (an ``npm:`` / ``pypi:`` spec, a git URL or a local path) for each, which the
 CLI then runs through the normal engine. This is pure discovery: it only reads config files,
 never launches anything.
@@ -40,7 +41,7 @@ _SKIP_ARG_TOKENS = {"-y", "--yes", "-q", "run", "tool", "exec", "--", "-m", "x",
 class DiscoveredComponent:
     host: str          # which agent app declared it (e.g. "Claude Desktop")
     name: str          # server/skill/plugin name as configured
-    kind: str          # "mcp_server" | "skill" | "plugin"
+    kind: str          # "mcp_server" | "skill" | "plugin" | "editor_extension"
     source: str | None  # scannable source (npm:/pypi:/git URL/local path) or None
     scannable: bool
     note: str = ""     # why not scannable, or extra context
@@ -50,6 +51,7 @@ class DiscoveredComponent:
     secrets: list[str] = field(default_factory=list)
     remote: bool = False  # served from a URL: no code on this machine to scan
     this_tool: bool = False  # SkillTotal's own MCP server (`skilltotal mcp`)
+    version: str = ""  # an editor extension's manifest version (for the AI-BOM)
 
 
 # The notes for a remote server and for SkillTotal's own MCP server (see DiscoveredComponent).
@@ -496,6 +498,98 @@ def _plugins(claude_dir: Path) -> list[DiscoveredComponent]:
     return found
 
 
+# --- Editor extensions ---------------------------------------------------------------------------
+
+# Where VS Code and the editors built on it keep installed extensions. VS Code's
+# environmentService.extensionsPath (checked in the 1.141 build) uses `--extensions-dir` if given,
+# else the VSCODE_EXTENSIONS environment variable, else `$VSCODE_PORTABLE/extensions`, else
+# `~/<dataFolderName>/extensions`, where dataFolderName comes from the editor's product.json:
+# `.vscode` (VS Code 1.141), `.vscode-insiders`, `.vscode-oss` (VSCodium, the Code - OSS default),
+# `.cursor` and `.windsurf`. A remote server keeps them under its serverDataFolderName
+# (`.vscode-server` in VS Code 1.141, `.vscodium-server` in VSCodium's prepare_vscode.sh,
+# `.cursor-server`). `--extensions-dir` lives only on an editor's command line and a portable
+# install's folder only in its own process, so neither can be seen from here.
+_EDITOR_EXTENSION_DIRS = (
+    ("VS Code", ".vscode"),
+    ("VS Code Insiders", ".vscode-insiders"),
+    ("Cursor", ".cursor"),
+    ("Windsurf", ".windsurf"),
+    ("VSCodium", ".vscode-oss"),
+    ("VS Code Server", ".vscode-server"),
+    ("VSCodium Server", ".vscodium-server"),
+    ("Cursor Server", ".cursor-server"),
+)
+EDITOR_EXTENSION = "editor_extension"
+
+
+def _editor_extension_dirs(home: Path, env: Mapping[str, str]) -> list[tuple[str, Path]]:
+    dirs = [(host, home / folder / "extensions") for host, folder in _EDITOR_EXTENSION_DIRS]
+    if env.get("VSCODE_EXTENSIONS"):
+        dirs.insert(0, ("VS Code (VSCODE_EXTENSIONS)", Path(env["VSCODE_EXTENSIONS"])))
+    return dirs
+
+
+def _obsolete(folder: Path) -> set[str]:
+    """Extension folders the editor uninstalled or replaced and deletes on its next start: the keys
+    of ``.obsolete`` (``{"publisher.name-1.2.3": true}``). The editor no longer loads them."""
+    data = _load(folder / ".obsolete")
+    return {str(key).lower() for key in data} if isinstance(data, dict) else set()
+
+
+def _extension_name(manifest: Path, fallback: str) -> tuple[str, str]:
+    """(``publisher.name@version``, version) from an extension's package.json; the folder name
+    when the manifest has no name. The manifest is the extension author's to write, so hidden and
+    bidi characters are shown as ``<U+XXXX>``."""
+    from skilltotal.file_index import neutralize_hidden
+
+    data = _load(manifest)
+
+    def text(key: str) -> str:
+        value = data.get(key) if isinstance(data, dict) else None
+        return value.strip() if isinstance(value, str) else ""
+
+    publisher, name, version = text("publisher"), text("name"), text("version")
+    shown = f"{publisher}.{name}" if publisher and name else name or fallback
+    if version:
+        shown += f"@{version}"
+    return neutralize_hidden(shown), neutralize_hidden(version)
+
+
+def _editor_extensions(host: str, folder: Path) -> list[DiscoveredComponent]:
+    """One entry per installed extension folder: a folder with a package.json of its own that is
+    not pending deletion. ``extensions.json``, ``.obsolete`` and other files are not extensions."""
+    from skilltotal.file_index import is_regular_file, neutralize_hidden
+
+    obsolete = _obsolete(folder)
+    try:
+        children = sorted(folder.iterdir())
+    except OSError:
+        return []
+    found: list[DiscoveredComponent] = []
+    for child in children:
+        # The editor skips dot folders (its own temporary ones) and what .obsolete names.
+        if child.name.startswith(".") or child.name.lower() in obsolete or not child.is_dir():
+            continue
+        if _links_out_of(child, folder):
+            # A link to a folder elsewhere would have the inventory read that folder, as with a
+            # project's skills (security review, 2026-10-15). Listed, not scanned.
+            found.append(DiscoveredComponent(
+                host=host, name=neutralize_hidden(child.name), kind=EDITOR_EXTENSION, source=None,
+                scannable=False, config=str(folder),
+                note="links to a folder outside the extensions folder; not scanned",
+            ))
+            continue
+        manifest = child / "package.json"
+        if not is_regular_file(manifest):
+            continue  # the editor loads no extension without a manifest
+        name, version = _extension_name(manifest, neutralize_hidden(child.name))
+        found.append(DiscoveredComponent(
+            host=host, name=name, kind=EDITOR_EXTENSION, source=str(child), scannable=True,
+            config=str(folder), version=version,
+        ))
+    return found
+
+
 def discover(
     home: Path | None = None,
     project: Path | None = None,
@@ -503,13 +597,14 @@ def discover(
     environ: Mapping[str, str] | None = None,
     managed_configs: list[Path] | None = None,
 ) -> list[DiscoveredComponent]:
-    """Find installed MCP servers, plugins and skills. Parameters override defaults for testing.
+    """Find installed MCP servers, plugins, skills and editor extensions. Parameters override
+    defaults for testing.
 
-    ``environ`` supplies APPDATA and CLAUDE_CONFIG_DIR. It defaults to the process environment
-    only when ``home`` is not given either: a home passed in (a test's fake one) means every
-    location comes from it, never from the machine running the code. For the same reason the
-    system-wide ``managed-mcp.json`` paths are read only when ``home`` is not given;
-    ``managed_configs`` names them explicitly.
+    ``environ`` supplies APPDATA, CLAUDE_CONFIG_DIR and VSCODE_EXTENSIONS. It defaults to the
+    process environment only when ``home`` is not given either: a home passed in (a test's fake
+    one) means every location comes from it, never from the machine running the code. For the
+    same reason the system-wide ``managed-mcp.json`` paths are read only when ``home`` is not
+    given; ``managed_configs`` names them explicitly.
     """
     env: Mapping[str, str] = environ if environ is not None else (
         os.environ if home is None else {})
@@ -555,4 +650,17 @@ def discover(
                         source=str(child), scannable=True, config=str(sdir),
                     )
                 )
+
+    # Editor extensions update themselves from a marketplace without any install command a hook
+    # could see, so a scheduled inventory is where a trojanized update shows up.
+    seen_ext: set[Path] = set()
+    for host, folder in _editor_extension_dirs(home, env):
+        try:
+            key = folder.resolve()
+        except OSError:
+            continue
+        if key in seen_ext or not folder.is_dir():
+            continue
+        seen_ext.add(key)
+        found.extend(_editor_extensions(host, folder))
     return found
