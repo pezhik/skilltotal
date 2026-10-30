@@ -46,6 +46,17 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **E-mail/SMTP credential exfiltration** (read secret → e-mail it out) | `ST-COMBO-EXFIL` via smtplib/nodemailer egress | `py-email-stealer` |
 | **Mail backdoor** (hardcoded BCC/CC copies outgoing mail) | `ST-EMAIL-BCC-EXFIL` | — |
 | **CI-token exfiltration from a composite action** (a `run:` step sends `GITHUB_TOKEN` / a `${{ secrets.* }}` to a non-GitHub host) | `ST-ACTION-SECRET-EXFIL` (malicious) | — |
+| **Trojanized editor extension / SSH backdoor** (a loader in an extension's bundle or a package's install script opens a reverse tunnel to the local SSH port, plants a key, adds an autostart entry) | `ST-POSTEX-CHAIN` (malicious), `ST-POSTEX-REMOTE-ACCESS`, `ST-POSTEX-PERSIST`; `ST-POSTEX-MASQUERADE` (malicious) when the autostart entry is named after the OS vendor | `vscode-ssh-backdoor-vsix`, `vscode-ssh-backdoor-folder`, `shell-ssh-backdoor`, `python-ssh-backdoor` |
+| **Reverse shell at install or reboot** (`bash -i >& /dev/tcp/...`, `nc -e`, a socket duplicated onto stdin/stdout, a cron `@reboot` line) | `ST-POSTEX-REMOTE-ACCESS`, `ST-POSTEX-PERSIST` → `ST-POSTEX-CHAIN` | `npm-postinstall-reboot-revshell` |
+| **Tunnel client with an embedded credential** (`cloudflared --token`, `ngrok authtoken`, `code tunnel`) plus a Run key or shell-profile entry | `ST-POSTEX-REMOTE-ACCESS`, `ST-POSTEX-PERSIST` → `ST-POSTEX-CHAIN` | `python-cloudflared-runkey`, `node-code-tunnel-zshrc` |
+| **Security controls switched off** (antivirus exclusions, Gatekeeper or quarantine stripped, history and logs cleared) | `ST-POSTEX-EVASION`, `ST-SHELL-EVASION`; `ST-POSTEX-MASQUERADE` (malicious) for a task named after the OS vendor | `vscode-ps-defender-exclusion-task` |
+| **Host beacon** (host name, user name, secret env-var names or the public IP sent to a server) | `ST-POSTEX-BEACON` | `python-ssh-backdoor`, `vscode-ssh-backdoor-vsix` |
+
+The post-exploitation samples live in `tests/eval_corpus/positive/AST01/post-exploitation/`, with
+honest look-alikes (a CLI that installs its own LaunchAgent, a dotfiles installer, a devcontainer
+feature that enables sshd, a security tool's signature list) under `negative/` that must stay
+below a malicious verdict. How tactics combine into `ST-POSTEX-CHAIN` is in
+[scoring.md](scoring.md#post-exploitation-tactics).
 
 Only `malicious_indicator` rules drive the "malicious" verdict; `risky_construct` rules raise
 risk; `exposure` rules (`ST-SECRET-EMBEDDED`, `ST-ENV-SHIPPED`) report a credential the component

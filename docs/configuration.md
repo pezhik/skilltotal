@@ -1,7 +1,8 @@
 # Configuration
 
-How to configure a scan: the project config file, inline suppression, environment variables and
-scanning through a registry mirror. The [README](../README.md) has the short version.
+How to configure SkillTotal: the project config file, environment variables and scanning through
+a registry mirror. The ways to accept a reviewed finding are in
+[Accepting findings](accepting-findings.md). The [README](../README.md) has the short version.
 
 ## Project config
 
@@ -33,12 +34,18 @@ does not exist yet. A relative `baseline` path is resolved against the config fi
 
 An applied config is always named: on a `Config    :` line in the text report, as a
 `config applied: ...` line on stderr with `--json` or `--sarif`, and in the report's
-`metadata.config_applied`. A `baseline` set in the config is named there too.
+`metadata.config_applied`. A `baseline` set in the config is named there too. How a baseline,
+`ignore` and `[policy]` accept findings is in [Accepting findings](accepting-findings.md).
 
-A baseline fingerprint also suppresses a finding synthesized from the component's name or declared
-tools (`ST-TYPOSQUAT`, `ST-SKILL-CAP-MISMATCH`). A combination finding (`ST-COMBO-EXFIL`,
-`ST-FLOW-TRIFECTA`, `ST-INSTALL-DROPPER`, `ST-CONVERGENCE`) is not suppressed by its own
-fingerprints: it disappears when the findings it combines are suppressed.
+Which commands read it:
+
+| Command | Reads |
+|---|---|
+| `scan` | Every key |
+| `diff` | `exclude`, `ignore` and `[policy]` `ignore` entries. Not the gates (`fail_on`, `fail_on_score`, `fail_on_unanalyzed`, `block`), `warn` or `baseline`: `diff` gates with `--fail-on-new` |
+| `guard`, `inventory`, `mcp`, `hook` | Nothing. They judge a component as it is published, and the plugin and the MCP server run outside any one project |
+
+The GitHub Action and the pre-commit hook run `scan`, so they read every key.
 
 > **Protect the config in CI.** The GitHub Action and the pre-commit hook run from the root of the
 > repository they scan, so that repository's own `.skilltotal.toml` is applied, and a pull request
@@ -50,21 +57,16 @@ fingerprints: it disappears when the findings it combines are suppressed.
 
 ## Inline suppression
 
-To accept a single finding, add a `skilltotal:ignore[ST-ID]` comment (any comment syntax: `#`,
-`//`, `<!-- -->`) on the finding's line or on the line just above it. Several ids are separated by
-commas; a bare `skilltotal:ignore` accepts every rule on that line. Inline markers count only when
-you scan a local directory (your own code, as in CI). In a package, repository, archive or file
-that SkillTotal fetches or unpacks they are ignored, so a component cannot silence its own
-findings. Suppressed occurrences are counted in the report (`metadata.suppressed_count`).
-
-A marker never hides a malicious indicator, in any source. The finding stays, and a
-`needs_review` note says so. To accept one after review, record it in a baseline or set its rule
-to `warn` under `[policy]`. A marker that names a rule id no rule has suppresses nothing and gets
-a `needs_review` note suggesting the closest id.
+A `skilltotal:ignore[ST-ID]` comment on a finding's line, or on the line above it, accepts that
+occurrence when you scan a local folder. It never hides a malicious indicator. The rules are in
+[Accepting findings](accepting-findings.md#inline-marker).
 
 ## Environment variables
 
-**Settings** (environment variables, for the CLI, the plugin and the action):
+Every variable is read from the environment of the process that runs SkillTotal, never from the
+scanned component.
+
+**Settings** (limits for the CLI, the plugin, the MCP server and the action):
 
 | Variable | Default | What it sets |
 |---|---|---|
@@ -77,14 +79,24 @@ a `needs_review` note suggesting the closest id.
 | `SKILLTOTAL_WORKERS` | up to 4 | Processes a large scan uses (1 for one) |
 
 A source over a limit is refused with its size and the variable to raise. A value that is not a
-positive whole number is an error. The registry mirror settings are described below.
+positive whole number is an error.
 
-`SKILLTOTAL_GITHUB_TOKEN` (unset by default): before cloning a GitHub repository, SkillTotal asks
-the GitHub API how large the checkout will be. Without a token GitHub allows 60 such requests an
-hour per address. Past that, the size check is skipped and only the size limit applied during
-the clone itself is left, so an oversized repository is downloaded before it is refused. With a
-token the limit is 5000 requests an hour. A fine-grained token with no permissions is enough.
-SkillTotal sends it only to `api.github.com` and never along a redirect.
+**Other variables:**
+
+| Variable | Default | What it sets |
+|---|---|---|
+| `SKILLTOTAL_GITHUB_TOKEN` | unset | A GitHub token for the size check before a clone (below) |
+| `SKILLTOTAL_NPM_REGISTRY`, `SKILLTOTAL_PYPI_INDEX`, `SKILLTOTAL_REGISTRY_TOKEN` | unset | A registry mirror to fetch `npm:` and `pypi:` sources from ([below](#scanning-through-a-registry-mirror)) |
+| `VSCODE_EXTENSIONS` | unset | VS Code's own setting for its extensions folder; `inventory` and `guard --installed` read that folder too |
+| `CLAUDE_CONFIG_DIR` | `~/.claude` | Where `inventory` and `guard --installed` look for Claude Code's config, plugins and skills, as Claude Code does |
+| `SKILLTOTAL_STRICT`, `SKILLTOTAL_ALLOW_UNCHECKED`, `SKILLTOTAL_STRICT_PARTIAL`, `SKILLTOTAL_HOOK_BUDGET`, `SKILLTOTAL_CACHE_DIR` | | The Claude Code plugin's hook: CI strict mode, what it lets through, its time budget and its cache ([plugin settings](plugin.md#settings)) |
+
+`SKILLTOTAL_GITHUB_TOKEN`: before cloning a GitHub repository, SkillTotal asks the GitHub API how
+large the checkout will be. Without a token GitHub allows 60 such requests an hour per address.
+Past that, the size check is skipped and only the size limit applied during the clone itself is
+left, so an oversized repository is downloaded before it is refused. With a token the limit is
+5000 requests an hour. A fine-grained token with no permissions is enough. SkillTotal sends it
+only to `api.github.com` and never along a redirect.
 
 ## Scanning through a registry mirror
 

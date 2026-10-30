@@ -44,7 +44,13 @@ The action runs the engine that ships with the tag you pin, so nothing is downlo
 the tag pins the scanner too. Pin it to a released tag (see
 [Releases](https://github.com/pezhik/skilltotal/releases)), or to that release's commit SHA
 (`pezhik/skilltotal@<commit> # vX.Y.Z`), which, unlike a tag, cannot be moved. Without the action,
-the same scan is `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-high`.
+the same scan is `skilltotal scan . --sarif --output skilltotal.sarif --fail-on-default high`:
+`--fail-on-default` applies `high` only when the repository's `.skilltotal.toml` sets no gate of
+its own, as the action does with `fail-on` empty (`--fail-on-high` would override the config).
+
+The action sets up Python 3.12 with `actions/setup-python`, so later steps of the same job find
+that Python first on `PATH`. It runs `skilltotal scan`; for `diff`, `guard`, `--staged` or
+`--provenance`, install the CLI and run it in a step of its own ([below](#other-ci-systems)).
 
 | Input | Default | What it does |
 |---|---|---|
@@ -120,6 +126,52 @@ jobs:
           config: none         # this repository's .skilltotal.toml is not about that package
 ```
 
+## Reviewing a dependency upgrade
+
+When a pull request (yours, Dependabot's or Renovate's) moves an MCP server or another agent
+component to a new version, `skilltotal diff` reports what the new version adds, and
+`--fail-on-new high` fails the job only on risk that version introduces. Findings the old version
+already had, which you accepted when you adopted it, do not trip it. This workflow checks the npm
+packages you list whenever `package.json` changes:
+
+```yaml
+# .github/workflows/skilltotal-upgrades.yml
+name: SkillTotal upgrade review
+on:
+  pull_request:
+    paths: [package.json]
+permissions:
+  contents: read
+jobs:
+  diff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { fetch-depth: 0 }
+      - name: Diff each upgraded package
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          WATCH: some-mcp-server another-mcp-server   # the packages to review
+        run: |
+          python3 -m venv "$HOME/.skilltotal-venv"
+          "$HOME/.skilltotal-venv/bin/pip" install skilltotal==0.87.0
+          status=0
+          for name in $WATCH; do
+            old=$(git show "$BASE:package.json" | jq -r --arg n "$name" '.dependencies[$n] // empty')
+            new=$(jq -r --arg n "$name" '.dependencies[$n] // empty' package.json)
+            [ -n "$old" ] && [ -n "$new" ] && [ "$old" != "$new" ] || continue
+            "$HOME/.skilltotal-venv/bin/skilltotal" diff "npm:$name@${old#[~^]}" "npm:$name@${new#[~^]}" \
+              --fail-on-new high --fail-on-unanalyzed || status=$?
+          done
+          exit $status
+```
+
+Exit code 2 means the new version added a high or critical risk finding, a malicious indicator, or
+a part the scan could not read; 1 means a side could not be fetched. The log lists the new findings
+with file and line, and `--json` gives them as [diff JSON](report-schema.md#diff-json). Pin exact
+versions in `package.json` (`1.4.2`, not a range) so the diff compares what is installed. For a
+PyPI package, use `pypi:name==old` and `pypi:name==new` the same way.
+
 ## Use as a pre-commit hook
 
 Run SkillTotal on every commit via [pre-commit](https://pre-commit.com):
@@ -135,7 +187,10 @@ repos:
 ```
 
 Then `pre-commit install`. The hook installs the CLI in its own environment and scans the repo
-on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`). It scans
+on commit; tune the scan with the same flags as the CLI (e.g. `--exclude`, `--fail-on`). Without
+`args`, or without a gate flag in them, the hook only reports and never blocks a commit, unless
+the repository's `.skilltotal.toml` sets a gate. When you set `args`, keep `.` as the first one:
+it is the folder to scan. It scans
 what the commit will contain (`skilltotal scan --staged`): every file in git's index across the
 whole repository, not only the changed files, so the verdict matches what CI sees. Untracked
 and ignored files are left out. The repository's `.skilltotal.toml` applies here too.
@@ -209,13 +264,11 @@ twice: once with `--fail-on none` for the report, once with the gate.
 4. **Accept a false positive.** For one occurrence, prefer an inline
    `# skilltotal:ignore[ST-ID]` on its line or the line above: it sits next to the code and is
    reviewed with it. A malicious indicator needs the baseline or a `[policy]` `warn` instead.
-   Re-writing the baseline accepts every current finding at once, which is convenient after a
-   review but easy to misuse. A `[policy]` `warn` or `ignore` applies to a rule
-   everywhere. [Report false positives](https://github.com/pezhik/skilltotal/issues) too: they are
-   fixed in the open.
+   [Accepting findings](accepting-findings.md) compares every way to do it.
 5. **Decide on `--fail-on-unanalyzed`.** It is off by default, so the gate passes code the scan
-   could not read: files over 2 MiB, minified bundles, code in languages whose behavior is not
-   analyzed, and compiled code shipped without its source. The log still reports that code on every
+   could not read: files over 2 MiB, minified bundles that are not an entry point or an install
+   script, code in languages whose behavior is not analyzed, and compiled code shipped without its
+   source. The log still reports that code on every
    run (`Not everything was analyzed: ...`; the action adds a warning annotation). Turned on, the flag
    fails closed on that code, which also fails a repository that commits bundles or Go code, so
    turn it on for the third-party components you scan rather than for your own repository. Do not

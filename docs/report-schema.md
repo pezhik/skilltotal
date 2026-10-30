@@ -1,4 +1,22 @@
-# SkillTotal Report Schema
+# Output formats
+
+What each command prints with `--json` (and `--sarif`, `--sbom`), field by field:
+
+| Output | Command |
+|---|---|
+| [Scan report (JSON)](#scan-report-json) | `scan --json`, `scan --output FILE`, the MCP server's `scan_component` with `detail: "full"` |
+| [SARIF](#sarif) | `scan --sarif` |
+| [Diff (JSON)](#diff-json) | `diff --json`, `diff --output FILE` |
+| [Guard (JSON)](#guard-json) | `guard <source> --json` |
+| [Installed components (JSON)](#inventory-and-guard---installed-json) | `inventory --json`, `guard --installed --json` |
+| [AI-BOM](#ai-bom-properties) | `inventory --sbom` |
+| [Rules (JSON)](#rules-json) | `rules list --json` |
+
+Only the scan report has a formal schema and a version of its own. The other outputs are built
+from it and change with the engine version: a field may be added in a minor release, and none is
+removed or renamed without a note in the [changelog](../CHANGELOG.md).
+
+## Scan report (JSON)
 
 The JSON report (`--json` / `--output`) is the serialization of the core `Report` model.
 It is the stable, machine-readable contract for any consumer: CI scripts, dashboards, or a service
@@ -10,7 +28,7 @@ that imports the engine and returns `Report.to_dict()`.
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
 
-## What a report contains
+### What a report contains
 
 A normalized report containing the component identity, a **risk score (0–100)** and
 **risk level** (low / medium / high / critical), a plain-language **verdict**, detected
@@ -34,7 +52,7 @@ Three of the traits record how the component authenticates its tool calls (an em
 credential, delegated OAuth/OIDC or a least-privilege scoped identity), which shows the blast
 radius of a compromise, not only whether a secret exists.
 
-## Top-level shape
+### Top-level shape
 
 ```json
 {
@@ -58,8 +76,6 @@ radius of a compromise, not only whether a secret exists.
   "metadata": { /* see below */ }
 }
 ```
-
-## Fields
 
 ### `component`
 | Field | Type | Notes |
@@ -120,7 +136,7 @@ mapping rationale: [`trait-crosswalk.md`](trait-crosswalk.md).
 | `category` | string | e.g. `shell_execution`, `mcp`, `exfiltration_path` |
 | `title` | string | Short human title |
 | `description` | string | What was detected (interprets evidence only) |
-| `evidence` | array | **Non-empty** list of evidence objects (invariant) |
+| `evidence` | array | **Non-empty** list of evidence objects (invariant), at most 25 per finding |
 | `recommendation` | string | Actionable guidance |
 | `threat_class` | string | `malicious_indicator` (drives the malicious verdict), `risky_construct` (scored), `exposure` (a shipped credential: reported, not scored; added in 1.6), `capability` (informational) |
 | `owasp` | array | OWASP Agentic Skills Top 10 ids (`AST01`–`AST10`) for the rule; empty when there is no honest static fit; never scored (added in 1.4) |
@@ -161,7 +177,17 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `baseline_suppressed_malicious` | array of string | Optional; present only when the baseline removed evidence of a malicious-indicator rule: those rule ids, sorted. The verdict and the gates no longer see them; the text report names them on its `Baseline` line and the CLI warns on stderr (added in 1.10) |
 | `config_applied` | object | Optional; present only when `scan` applied a `.skilltotal.toml`: `path`, and the number of `exclude` globs, `ignore` rule ids and `policy` entries it set, plus `fail_on` / `fail_on_score` when it sets them (added in 1.8), and `baseline`, the path as the config writes it (added in 1.9) |
 
-## Alternative format: SARIF
+### Invariants (guaranteed by the engine)
+
+1. Every object in `findings[]` has a non-empty `evidence[]`.
+2. Every evidence object has all four fields with valid line numbers.
+3. Items that cannot be evidenced appear only in `needs_review[]`.
+4. `risk_score` is the capped sum of the severity weights of `malicious_indicator` and
+   `risky_construct` findings, and at least 50 when any `malicious_indicator` is present;
+   `risk_level` is derived from it. `exposure` and `capability`
+   findings never change it.
+
+## SARIF
 
 `--sarif` emits a SARIF 2.1.0 document instead of the native JSON (for GitHub Code Scanning
 / IDEs). The driver lists every rule. Each evidence occurrence of a finding becomes one SARIF
@@ -182,12 +208,131 @@ reference. `--sarif-uri-prefix PATH` puts the scanned folder in front of it (pat
 the repository root, for Code Scanning), and `--sarif-category NAME` sets
 `runs[0].automationDetails.id` to `NAME/`.
 
-## Invariants (guaranteed by the engine)
+## Diff (JSON)
 
-1. Every object in `findings[]` has a non-empty `evidence[]`.
-2. Every evidence object has all four fields with valid line numbers.
-3. Items that cannot be evidenced appear only in `needs_review[]`.
-4. `risk_score` is the capped sum of the severity weights of `malicious_indicator` and
-   `risky_construct` findings, and at least 50 when any `malicious_indicator` is present;
-   `risk_level` is derived from it. `exposure` and `capability`
-   findings never change it.
+`diff --json` prints one object:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `old`, `new` | object | Each side: `component` (`name`, `version`, `type`, `source`), `risk_score`, `risk_level`, `verdict_level`, `engine_version`, `ruleset_version` |
+| `risk_score_delta` | integer | New score minus old score |
+| `verdict_changed` | boolean | `true` when the verdict level differs |
+| `new_findings` | array | Findings whose rule fires only in the new version, as full finding objects, most severe first |
+| `resolved_findings` | array | Findings whose rule fires only in the old version |
+| `changed_findings` | array | Rules in both whose evidence changed: `id`, `severity`, `title`, `threat_class`, `added_evidence`, `removed_evidence` (evidence objects matched by the baseline fingerprint, so moved lines are not changes) |
+| `capabilities_added`, `capabilities_removed` | array of string | Capability names |
+| `ruleset_mismatch` | boolean | `true` when the two sides were scanned with different rulesets, so some changes may come from the rules rather than the component |
+| `coverage_gaps_added` | array | `needs_review` notes that say part of the new version was not analyzed, which the old version did not have. A finding that disappeared with such a part may only be out of view |
+| `summary` | string | One line for a person |
+
+`--fail-on-new` counts `new_findings` and the entries of `changed_findings` that have
+`added_evidence`, skipping capabilities.
+
+## Guard (JSON)
+
+`guard <source> --json` prints one object:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `source` | string | The source as given |
+| `decision` | string | `allow` or `block` (exit code 0 or 2) |
+| `block_on` | string | The block level applied: `malicious`, `high` or `medium` |
+| `reasons` | array of string | Why it blocks, one sentence each; empty when allowed |
+| `risk_score`, `risk_level` | integer, string | As in the scan report |
+| `verdict` | object | The scan report's [`verdict`](#verdict) |
+| `capabilities` | array of string | Capability names |
+| `accepted` | object | Present only when an accept file removed findings ([below](#accepted)) |
+
+## `inventory` and `guard --installed` JSON
+
+Both print an array with one object per installed component. Every object has:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `host` | string | Where it was found, such as `Claude Code`, `Claude Desktop`, `Cursor`, `VS Code`, `Claude Code plugins`, `Claude skills` or `Cursor Server` |
+| `name` | string | The configured name; for an editor extension `publisher.name@version` |
+| `kind` | string | `mcp_server`, `plugin`, `skill` or `editor_extension` |
+| `source` | string \| null | What was scanned: an `npm:` or `pypi:` spec, a git URL or a local path; `null` when nothing could be derived |
+
+`guard --installed` adds:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `decision` | string | `allow`, `block`, or why it was not checked: `remote`, `risky`, `not scanned`, `error`, `this scanner` (SkillTotal's own MCP server) |
+| `risk_level` | string | For a scanned component |
+| `reasons` | array of string | For a scanned component: why it blocks; empty when allowed |
+| `note` | string | For a component that was not checked: why |
+| `secrets` | array of string | Present when its config entry holds inline secrets, redacted |
+| `drift`, `accepted` | object | Present when they apply ([below](#drift)) |
+
+`inventory` adds:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `scannable` | boolean | Whether a source could be derived |
+| `note` | string | Why it is not scannable, or extra context |
+| `config` | string | The config file or folder it came from |
+| `risky`, `remote`, `this_tool` | boolean | Its launcher runs a downloaded script; it is reached at a URL; it is SkillTotal's own MCP server |
+| `secrets` | array of string | Inline secrets in its config entry, redacted |
+| `version` | string | Present when discovery read a version from the component's manifest (editor extensions) |
+| `verdict`, `risk_level`, `risk_score`, `has_malicious_indicators` | | From the scan, when it ran |
+| `guard`, `guard_reasons` | string, array | What `guard --installed` would decide at its default level, and why |
+| `error` | string | Present when the scan failed |
+| `drift`, `accepted` | object | Present when they apply |
+
+### `drift`
+
+Present with `--state` when the component's version changed and it gained risk findings
+([drift](installed-components.md#catching-a-malicious-update)):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `from`, `to` | string | The previous and the current version |
+| `rules` | array of string | Rule ids with risk findings the previous version did not have |
+| `blocks` | boolean | `true` when one of them is a malicious indicator or a high or critical risky construct; the component then blocks, with the reason in `reasons` (`guard_reasons` in `inventory`) |
+
+### `accepted`
+
+Present when an accept file removed findings from the component's scan
+([accept file](accepting-findings.md#accept-file)):
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `rules` | array of string | Rule ids of the removed findings |
+| `count` | integer | Evidence occurrences removed |
+| `reason` | string | The entry's reason (the reasons of several entries are joined with `; `) |
+| `expires` | string | Optional; the earliest `expires` date of the entries used |
+| `accepted_by` | string | Optional |
+
+## AI-BOM properties
+
+`inventory --sbom` prints a CycloneDX 1.6 JSON document. `metadata.tools` names SkillTotal and its
+version. Each installed component is an `application` component with its `name`, a `purl`
+(`pkg:npm/...`, `pkg:pypi/...`) for `npm:` and `pypi:` sources, a `version` when the source pins
+one or the extension's manifest names one, and these properties when they have a value:
+
+| Property | Value |
+|---|---|
+| `skilltotal:host` | As `host` above |
+| `skilltotal:kind` | As `kind` above |
+| `skilltotal:source` | What was scanned |
+| `skilltotal:config` | The config file or folder it came from |
+| `skilltotal:verdict` | `malicious`, `critical`, `high`, `medium` or `low` |
+| `skilltotal:risk_level`, `skilltotal:risk_score` | From the scan |
+| `skilltotal:has_malicious_indicators` | `true` or `false` |
+| `skilltotal:scan_error` | Why the scan failed |
+| `skilltotal:drift` | `<from> -> <to>: <rule ids>` |
+| `skilltotal:accepted` | `<rule ids> (<count>) until <date>: <reason>` (without `until` when no entry expires) |
+
+## Rules (JSON)
+
+`rules list --json` prints an array with one object per rule: `id`, `category`, `severity`,
+`title`, `description`, `recommendation`, `capability` (empty for a rule that implies none) and
+`threat_class`.
+
+## Files SkillTotal keeps
+
+The baseline, the accept file and the `--state` file are JSON files SkillTotal reads and writes.
+The accept file is meant to be reviewed and edited; its format is in
+[Accepting findings](accepting-findings.md#accept-file). Write the baseline with
+`--write-baseline` and the state file with `--state`, and treat both as opaque.

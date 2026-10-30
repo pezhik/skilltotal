@@ -314,8 +314,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=list(BLOCK_LEVELS),
         default=None,
         help=(
-            "What blocks (exit 2): 'malicious' = only malicious indicators; "
+            "What blocks (exit 2): 'malicious' = malicious indicators; "
             "'high' (default) = also risk level high/critical; 'medium' = also medium. "
+            "At every level an install script that could not be read, a component with nothing "
+            "readable and a name a letter or two from a popular package also block. "
             "Capabilities alone never block. With --installed, editor extensions default to "
             "'malicious'."
         ),

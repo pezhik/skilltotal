@@ -40,7 +40,9 @@ alone does not count).
 ## What happens to the install
 
 - **Malicious indicators:** the command is denied, and the agent is told the finding and its
-  file:line.
+  file:line. The hook has no accept file and reads no baseline, `.skilltotal.toml` or inline
+  marker, so there is no override: after you have reviewed the package, run the install yourself
+  outside the agent ([Accepting findings](accepting-findings.md#the-claude-code-plugin)).
 - **High or critical risk:** Claude Code asks you to approve the install and shows the top
   finding.
 - **Anything SkillTotal could not check:** Claude Code asks you. This covers:
@@ -296,9 +298,15 @@ CI.
   program running as you can write. An entry without the engine and ruleset version that produced
   it is ignored, but a program that can write that file can also replace the CLI itself: the hook
   does not defend against code already running on your account.
-- **Minified bundles.** They are listed in the report but not analyzed, and a low verdict then
-  reads "Partially analyzed". The scripts npm runs at install are the exception: they are analyzed
-  even when minified.
+- **Minified bundles and files over 2 MiB.** They are listed in the report but not analyzed, and a
+  low verdict then reads "Partially analyzed". The scripts npm runs at install and the entry points
+  a `package.json` names (`main`, `bin`, `exports`, ...) are the exception: they are analyzed even
+  when minified. A VS Code extension's entry points are read up to 8 MiB.
+- **Editor extension updates, and servers that update themselves.** An editor extension updates
+  from its marketplace, and an MCP server started with `npx -y some-server` runs the latest
+  release each time. No install command runs, so the hook sees nothing. Schedule
+  `skilltotal guard --installed --state FILE` to catch a bad update the day after it lands
+  ([Installed components](installed-components.md#catching-a-malicious-update)).
 - **SkillTotal's own reports.** A SARIF report, JSON report or baseline that SkillTotal wrote into
   the scanned folder is recognised by its content (pure JSON of exactly that shape), listed in the
   report and not scanned: its rule descriptions quote detection patterns.

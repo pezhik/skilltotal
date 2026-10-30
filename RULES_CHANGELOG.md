@@ -4,6 +4,77 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 86 (engine 0.87.0)
+
+Detection-efficacy corpus: 158 positive / 120 negative samples, 158/158 flagged, 0 false
+positives. The 8 new positives and 6 new negatives are post-exploitation samples (TEST-NET hosts,
+`.invalid` domains, placeholder keys and tokens).
+
+Six rules for what code does once it runs on a machine: open a way in, start again after a reboot,
+hide what it left behind, and report the host. A signal is a literal anchor plus what must stand
+next to it (a write next to a LaunchAgents path, `/create` and `/sc onlogon` next to `schtasks`),
+so a path or a command name that is only mentioned does not fire. The rules read
+JavaScript/TypeScript, Python, shell (also shebang files without a suffix), PowerShell and batch
+files. Anchors in comments and docstrings, printed commands, documentation, tests and examples do
+not count, and a string-literal list of three or more whole command lines is read as a signature
+list, not behavior. A new `RuleSpec.tactic` field names the tactic each rule is a step of.
+
+- **`ST-POSTEX-REMOTE-ACCESS`** (new, high, risky construct; remote access): a reverse tunnel to
+  the local SSH, RDP or VNC port (`-R`, `RemoteForward`, also in argv arrays); `authorized_keys`
+  written next to a literal public key; reverse shells (`/dev/tcp/... 0>&1`, `nc -e`, `socat
+  exec:`, a socket duplicated onto stdin/stdout, a spawned shell piped to a socket, a PowerShell
+  `TCPClient` stream fed to `iex`); tunnel clients started with an embedded credential or onto
+  port 22 (`ngrok`, `cloudflared --token`, `tailscale up --authkey`, `chisel ... R:`, `frpc -c`,
+  `code tunnel`, `devtunnel host`); remote login or remote desktop switched on; a local or admin
+  account created under a literal name. A tunnel to a web port (`-R 80:localhost:3000`,
+  `ngrok http 3000`), a key read from an environment variable, a `/dev/tcp` port probe, enabling
+  sshd on Linux, `useradd`, a `NOPASSWD` sudoers line and accounts named by a parameter do not
+  fire.
+- **`ST-POSTEX-PERSIST`** (new, medium, risky construct; persistence): a LaunchAgent or
+  LaunchDaemon written or loaded; a cron `@reboot` line, `| crontab -` or a file written to
+  `/etc/cron.d/`; a systemd unit written and enabled; a scheduled task created to run at start-up
+  or logon; a `Run`/`RunOnce` registry value written; a file written to the Startup folder; an
+  append to a shell profile (`.bashrc`, `.zshrc`, `.profile`, `$PROFILE`, `config.fish`). Reading
+  or listing those places (`crontab -l`, `reg query`) does not fire.
+- **`ST-POSTEX-MASQUERADE`** (new, high, malicious indicator; defense evasion): an autostart entry
+  the code writes or loads under a name that copies the operating system vendor's own naming (a
+  LaunchAgent label, a scheduled task, a Run value or a Startup file named like a system
+  component). The component's own reverse-DNS label, and the operating system's own agents in
+  their system folder, do not fire.
+- **`ST-POSTEX-BEACON`** (new, medium, risky construct; command and control): two host facts
+  (host name, user name, the names of secret-looking environment variables, a public-IP lookup)
+  within a short span, one of them the variable names or the public IP, next to a network call;
+  or host facts sent to a URL with a raw public IPv4 address and a port. A crash reporter that
+  sends the host name and user name to a domain, and private or loopback addresses, do not fire.
+- **`ST-POSTEX-EVASION`** (new, medium, risky construct; defense evasion): antivirus exclusions or
+  real-time protection switched off, the macOS app-verification check disabled or a download's
+  quarantine attribute removed, host-key checking off together with a null known-hosts file on
+  one line, shell history or event logs cleared. Host-key checking off alone and listing extended
+  attributes do not fire. Matches in Python strings and in comments are demoted, as for
+  `ST-SHELL-EVASION`.
+- **`ST-POSTEX-CHAIN`** (new, synthesized, critical, malicious indicator): findings of two or more
+  tactics in one component, one of them remote access or command and control. The evidence has one
+  line per tactic. Persistence plus evasion alone does not fire: an honest installer can register a
+  logon task and bypass the PowerShell execution policy. Only findings that survive the demotion
+  layers count.
+- Tactic members (unchanged findings, now counted by `ST-POSTEX-CHAIN`): persistence:
+  `ST-AGENT-CONFIG-PERSIST`, `ST-AGENT-AUTORUN-REMOTE`, `ST-GIT-HOOK-PERSIST`, `ST-PTH-EXEC`,
+  `ST-PTH-IMPORT-EXEC`, `ST-STARTUP-HOOK-EXEC`; defense evasion: `ST-SHELL-EVASION`; command and
+  control: `ST-AGENT-CLI-RELAY`.
+- **`ST-CONVERGENCE`** (narrowed): `ST-POSTEX-CHAIN` is not counted as a second malicious
+  indicator, so a chain plus a masquerading entry alone does not converge. A chain plus an
+  unrelated malicious indicator still does.
+- **VS Code extensions** (component type `vscode_extension`): the entry points the extension's own
+  `package.json` names are read up to 8 MiB, even when minified. A minified entry point is judged
+  like build output: capabilities count, other risk findings go to `needs_review`, and the five
+  post-exploitation rules stay scored in build output of every published type. A local or git VS
+  Code extension is no longer name-checked for typosquatting against npm.
+- **Printed commands** (all rules that set them aside): an `echo` whose output is piped or
+  redirected (`echo "..." | crontab -`, `echo "..." >> ~/.bashrc`), or whose quoted text is the
+  redirect target, is no longer read as a command printed for a person.
+- **Suppression:** a baseline or accept-file fingerprint now also removes `ST-TYPOSQUAT` and
+  `ST-SKILL-CAP-MISMATCH`. Combination findings still follow their inputs.
+
 ## ruleset 85 (engine 0.86.0)
 
 Two new malicious-indicator rules, each with an honest look-alike in the eval corpus that stays clean.

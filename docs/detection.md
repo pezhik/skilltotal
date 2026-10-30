@@ -1,7 +1,7 @@
 # What SkillTotal detects
 
 SkillTotal performs **static** security analysis of AI components: MCP servers, agent
-skills/plugins, npm and PyPI packages, and AI-generated projects/repositories. The engine
+skills/plugins, npm and PyPI packages, VS Code extensions, and AI-generated projects/repositories. The engine
 combines capability analysis, dangerous-pattern detection, privilege analysis, supply-chain
 (install-time) analysis, prompt-surface analysis, and data-flow correlation (e.g. secret
 access combined with network egress). Findings are mapped to risk categories and contribute to
@@ -19,6 +19,7 @@ Nothing is executed and no LLM is called, so results are deterministic and repro
 | Obfuscation | decode-and-execute chains, base64 blobs, hex escaping, minification |
 | MCP risks | manifests, dangerous tools (shell/fs/network/credential), server commands |
 | Prompt surface | "ignore previous instructions", "reveal system prompt", exfiltration phrasing |
+| Post-exploitation | reverse tunnels and shells, a key written into `authorized_keys`, autostart entries (LaunchAgents, cron `@reboot`, Run keys, logon tasks), entries named after the OS vendor, antivirus or Gatekeeper switched off, host details sent home |
 
 `skilltotal rules list` prints every rule. Which rules catch which malware archetype is in
 [docs/detection-coverage.md](https://github.com/pezhik/skilltotal/blob/main/docs/detection-coverage.md).
@@ -29,30 +30,38 @@ Legend: **✅** analyzed by default for this component type · **⚠️** the en
 that surface is uncommon for this type, so it is flagged only when the component actually contains
 it (e.g. prompt-injection text inside an npm/PyPI package) · **❌** not applicable to this type.
 
-Columns are the component types SkillTotal scans. **AI project** = a scanned repository or folder
-(an agent skill/plugin, an AI-generated codebase, or a set of prompts/configs) that is not a
-published npm/PyPI package.
+Columns are the component types SkillTotal scans. **VS Code** = a VS Code extension (a `.vsix`
+or an unpacked extension folder, including installed Cursor, Windsurf and VSCodium extensions).
+**AI project** = a scanned repository or folder (an agent skill/plugin, an AI-generated codebase,
+or a set of prompts/configs) that is not a published package.
 
-| Category | MCP | npm | PyPI | AI project |
-|---|---|---|---|---|
-| Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ✅ |
-| Tool poisoning (MCP tool and schema text, prompts, resources, server instructions) | ✅ | ❌ | ❌ | ⚠️ |
-| Dangerous capabilities (shell / fs / network) | ✅ | ✅ | ✅ | ⚠️ |
-| Data exfiltration (secret access + egress) | ✅ | ✅ | ✅ | ⚠️ |
-| Secret theft / sensitive-path access | ✅ | ✅ | ✅ | ⚠️ |
-| Dynamic code execution | ✅ | ✅ | ✅ | ⚠️ |
-| Obfuscation (decode-and-execute) | ✅ | ✅ | ✅ | ✅ |
-| Hidden text (tag characters, variation selectors, invisible operators, zero-width characters inside words, ANSI escapes in agent-facing text) | ✅ | ✅ | ✅ | ✅ |
-| Embedded secrets (hardcoded keys/tokens) | ✅ | ✅ | ✅ | ✅ |
-| Install-time / supply-chain hooks | ⚠️ | ✅ | ✅ | ❌ |
-| Overprivileged tools, auto-approve in MCP server entries and agent settings | ✅ | ❌ | ❌ | ⚠️ |
+| Category | MCP | npm | PyPI | VS Code | AI project |
+|---|---|---|---|---|---|
+| Prompt injection / instruction override | ✅ | ⚠️ | ⚠️ | ⚠️ | ✅ |
+| Tool poisoning (MCP tool and schema text, prompts, resources, server instructions) | ✅ | ❌ | ❌ | ❌ | ⚠️ |
+| Dangerous capabilities (shell / fs / network) | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Data exfiltration (secret access + egress) | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Secret theft / sensitive-path access | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Dynamic code execution | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Obfuscation (decode-and-execute) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Post-exploitation (remote access, persistence, masquerading, beacons, defense evasion) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Hidden text (tag characters, variation selectors, invisible operators, zero-width characters inside words, ANSI escapes in agent-facing text) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Embedded secrets (hardcoded keys/tokens) | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Install-time / supply-chain hooks | ⚠️ | ✅ | ✅ | ⚠️ | ❌ |
+| Overprivileged tools, auto-approve in MCP server entries and agent settings | ✅ | ❌ | ❌ | ❌ | ⚠️ |
 
 Each row names what the engine checks today. The code-behavior rows (dangerous capabilities, data
 exfiltration, dynamic code execution, decode-and-execute) cover Python and JavaScript/TypeScript;
-shell, PowerShell and batch scripts are checked for download-and-run, decode-and-run and evasion
-idioms. Code in other languages gets only the secret, sensitive-path and hidden-text checks (see
-[Limitations](#limitations)). Bidi controls and lone zero-width characters are listed for
-review and left out of the score, because locale and CJK files use them legitimately.
+shell, PowerShell and batch scripts are checked for download-and-run, decode-and-run, evasion and
+post-exploitation idioms. Code in other languages gets only the secret, sensitive-path and
+hidden-text checks (see [Limitations](#limitations)). Bidi controls and lone zero-width
+characters are listed for review and left out of the score, because locale and CJK files use them
+legitimately.
+
+A VS Code extension usually ships one minified bundle as its entry point. SkillTotal reads it (up
+to 8 MiB) and judges it like build output: capabilities and the post-exploitation rules count,
+while other risk findings in the bundle go to `needs_review`, because a bundle carries the code of
+every dependency.
 
 ## Typical findings
 
@@ -66,6 +75,9 @@ review and left out of the score, because locale and CJK files use them legitima
 - An MCP server with auto-approved or overprivileged tools
 - Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
   shell: a traced path, not just a dangerous API in isolation
+- Code that opens a way into the machine (a reverse tunnel to the local SSH port, a key written
+  into `authorized_keys`) and makes itself start again after a reboot: two post-exploitation
+  steps in one component combine into `ST-POSTEX-CHAIN`
 - An **agent skill** whose bundled code does more than its declared `allowed-tools` cover. The
   field pre-approves tools and does not limit the skill's code, so a narrow list can make a skill
   look safer than it is.
@@ -86,9 +98,11 @@ component could be read` when nothing could be read. That wording does not chang
 ## Limitations
 
 - **Files over 2 MiB are not read**, and minified JavaScript/TypeScript bundles are listed but not
-  analyzed. The scripts npm runs at install are the exception: they are read even when minified
-  or filed in a skipped folder. A low verdict then reads "Partially analyzed", and the report
-  counts them in `verdict.unanalyzed_files`.
+  analyzed. Two kinds of file are read even when minified: the scripts npm runs at install (also
+  when filed in a skipped folder) and the entry points a `package.json` names (`main`, `module`,
+  `browser`, `bin`, `exports`). A VS Code extension's entry points are read up to 8 MiB. A low
+  verdict over unread code reads "Partially analyzed", and the report counts the files in
+  `verdict.unanalyzed_files`.
 - **Dependency and environment folders are skipped:** `node_modules/`, `vendor/` (and
   `vendored-*`), Python virtual environments and installed `site-packages`, and in a repository
   (not a published package) the build output in `dist/` and `build/`. Code the component loads
@@ -102,7 +116,7 @@ component could be read` when nothing could be read. That wording does not chang
   binaries or compiled artifacts (counted in `metadata.files_skipped_binary`).
 - **Languages.** Shell execution, network access, file access and dynamic code are analyzed in
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
-  download-and-run, decode-and-run and evasion idioms. Go, Rust, Java, Ruby, PHP, C/C++, C#, Swift,
+  download-and-run, decode-and-run, evasion and post-exploitation idioms. Go, Rust, Java, Ruby, PHP, C/C++, C#, Swift,
   Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy, Haskell, Clojure, Erlang, R and Zig files get only
   the secret, sensitive-path and hidden-Unicode checks; the report adds a `needs_review` note, and
   a low verdict reads "Partially analyzed". See

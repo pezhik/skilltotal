@@ -35,7 +35,8 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
   or `pypi:` source is fetched over HTTPS from the npm registry or PyPI. `--provenance` fetches
   registry metadata. `inventory`, `guard --installed` and the Claude Code plugin fetch the packages
   they check from the same places. There is no telemetry.
-- **Limits.** Each file over 2 MiB is not read (the verdict says "Partially analyzed"). Archives,
+- **Limits.** Each file over 2 MiB is not read (the verdict says "Partially analyzed"), except a
+  VS Code extension's entry points, which are read up to 8 MiB. Archives,
   clones and the total text read are capped by environment variables, and a source over a limit
   is refused with the variable to raise: `SKILLTOTAL_MAX_ARCHIVE_MB` (150), `SKILLTOTAL_MAX_EXTRACT_MB`
   (400), `SKILLTOTAL_MAX_ARCHIVE_MEMBERS` (30000), `SKILLTOTAL_MAX_CLONE_MB` (200),
@@ -48,9 +49,10 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
   stops the scan, password-protected archives are refused, and stored permissions are not applied.
   In a scanned folder, symbolic links and junctions are not followed. Temporary clones and
   extractions are removed when the scan ends, also on Ctrl-C or SIGTERM.
-- **Output.** `--output` and `--write-baseline` refuse to write when the target, or any folder
-  between the working directory and it, is a symbolic link or junction, and replace the file
-  atomically; the GitHub Action refuses a `sarif-file` under such a folder of the workspace before
+- **Output.** `--output`, `--write-baseline`, `--write-accept` and the `--state` file refuse to
+  write when the target, or any folder between the working directory and it, is a symbolic link
+  or junction, and replace the file atomically. A `--state` or `--write-accept` file that holds
+  anything other than SkillTotal's own format is left as it is; the GitHub Action refuses a `sarif-file` under such a folder of the workspace before
   it creates or removes anything there. The text report prints control characters from the
   scanned files as escapes (`\x1b`; in file names, `<U+XXXX>`, which also covers newlines), so
   they cannot drive your terminal or forge report lines, and the GitHub Action stops workflow

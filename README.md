@@ -67,10 +67,26 @@ skilltotal scan npm:express     # or pypi:name, a git URL, a folder, an archive
 
 To try it without installing anything, [www.skilltotal.ai](https://www.skilltotal.ai) runs the same engine.
 
+## Choose your path
+
+| You want to | Start here |
+|---|---|
+| Check packages before Claude Code installs them | [Claude Code plugin](https://github.com/pezhik/skilltotal#claude-code-plugin) |
+| Check packages before another agent (Cursor, Windsurf, Gemini CLI, Codex) installs them | [MCP server and `guard`](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md#checking-installs-in-agents-other-than-claude-code) |
+| Scan a package, repository, folder, archive, `.vsix`, `.mcpb` or wheel yourself | [`skilltotal scan`](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md#scan) |
+| Gate pull requests in CI | [GitHub Action and other CI](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md) |
+| Adopt it on a repository that already has findings | [Rolling out with a baseline](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md#rolling-out-on-an-existing-repository) |
+| Review a dependency upgrade before you merge it | [`diff --fail-on-new`](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md#reviewing-a-dependency-upgrade) |
+| Check the MCP servers, plugins, skills and editor extensions installed on your machine every day | [Installed components](https://github.com/pezhik/skilltotal/blob/main/docs/installed-components.md) |
+| Run that check on a company fleet, feed a SIEM, export an AI-BOM | [Running it on a fleet](https://github.com/pezhik/skilltotal/blob/main/docs/installed-components.md#running-it-on-a-fleet) |
+| Accept a false positive | [Accepting findings](https://github.com/pezhik/skilltotal/blob/main/docs/accepting-findings.md) |
+| Scan through a company registry mirror | [Registry mirrors](https://github.com/pezhik/skilltotal/blob/main/docs/configuration.md#scanning-through-a-registry-mirror) |
+
 ## What it catches
 
-It scans npm and PyPI packages, MCP servers, agent skills and plugins, git repositories (or one
-folder of them), local folders, archives and single files, and looks for:
+It scans npm and PyPI packages, MCP servers, agent skills and plugins, VS Code extensions, git
+repositories (or one folder of them), local folders, archives (including `.mcpb`, `.vsix` and
+wheels) and single files, and looks for:
 
 | Category | Examples |
 |----------|----------|
@@ -83,6 +99,7 @@ folder of them), local folders, archives and single files, and looks for:
 | Obfuscation | decode-and-execute chains, base64 blobs, hex escaping, minification |
 | MCP risks | manifests, dangerous tools (shell/fs/network/credential), server commands |
 | Prompt surface | "ignore previous instructions", "reveal system prompt", exfiltration phrasing |
+| Post-exploitation | reverse tunnels and shells, planted SSH keys, autostart persistence, antivirus or Gatekeeper evasion, host beacons |
 
 It also flags hidden Unicode in agent-facing text, embedded secrets, auto-approved MCP tools and
 data flows such as a credential read followed by network egress. `skilltotal rules list` prints
@@ -178,33 +195,19 @@ It does not check the dependencies of the named package, installs that name no p
 `pip install -r`, `uv sync`; the console says so), scripts on disk, shell-profile aliases or
 functions, downloaded scripts (`curl ... | bash`, reported as not checked), repositories fetched
 with `git clone`, or code already running on your account (it can rewrite the verdict cache or the
-CLI). The plugin is a static check, not a sandbox: run the agent in a container for code you don't
-trust. It also adds a `/skilltotal:scan <target>` command and registers the SkillTotal MCP server.
+CLI). Updates that install themselves, such as an editor extension or an `npx -y` server that runs
+its latest release, run no install command; schedule
+[`guard --installed --state`](https://github.com/pezhik/skilltotal/blob/main/docs/installed-components.md#catching-a-malicious-update)
+for them. The plugin has no override for a denied install, and it is a static check, not a
+sandbox: run the agent in a container for code you don't trust. It also adds a `/skilltotal:scan <target>` command and registers the SkillTotal MCP server.
 Recognized commands, settings, cache, timing, [team rollout](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#rolling-out-to-a-team)
 and [troubleshooting](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#troubleshooting) are in [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md).
 
 ## CI / GitHub Action
 
-Run SkillTotal in CI and see the findings in your repository's **Security → Code scanning** tab.
-
-```yaml
-# .github/workflows/skilltotal.yml
-name: SkillTotal
-on: [push, pull_request]
-permissions:
-  contents: read
-  security-events: write   # required to upload SARIF to Code Scanning
-  actions: read            # required for the SARIF upload in a private repository
-jobs:
-  scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pezhik/skilltotal@v0.87.0
-        with:
-          source: .             # a path, a git URL, or an npm:/pypi:<name> spec
-          fail-on: high         # fail on a high/critical risk finding (or 'none')
-```
+Run SkillTotal in CI and see the findings in your repository's **Security → Code scanning** tab:
+add the step from [Quick start](https://github.com/pezhik/skilltotal#quick-start) to a workflow
+with `security-events: write` ([full workflow](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md)).
 
 A malicious indicator fails the job at any severity; a capability on its own, such as a shell call
 or network access, never does. The log names the gate that tripped and the finding behind it.
@@ -213,8 +216,8 @@ Security; without it, set `upload-sarif: 'false'`. `comment-on-pr: 'true'` (with
 `pull-requests: write`) keeps one summary comment up to date. The repository's `.skilltotal.toml`
 is applied, so put it under CODEOWNERS ([Configuration](https://github.com/pezhik/skilltotal#configuration)).
 [docs/ci.md](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md) covers every input and
-output, scheduled re-checks of a third-party package, pre-commit, GitLab CI, Jenkins and rolling
-out on an existing repository. Anywhere else Python 3.10+ runs, install a pinned release and gate
+output, scheduled re-checks of a third-party package, upgrade reviews, pre-commit, GitLab CI,
+Jenkins and rolling out on an existing repository. Anywhere else Python 3.10+ runs, install a pinned release and gate
 on the exit code (0 passed, 2 a gate tripped, 1 the scan could not run):
 
 ```bash
@@ -226,6 +229,7 @@ skilltotal scan . --fail-on high
 
 ```bash
 skilltotal scan ./path/to/component           # a folder, archive, file, git URL, npm:name or pypi:name
+skilltotal scan ./downloads/some-extension.vsix   # also .mcpb, .dxt and .whl files
 skilltotal scan ./component --json            # JSON to stdout
 skilltotal scan ./component --sarif --output report.sarif
 skilltotal scan ./component --fail-on high    # exit 2 on a high/critical risk finding
@@ -233,14 +237,18 @@ skilltotal scan ./component --write-baseline .skilltotal-baseline.json
 skilltotal scan ./component --baseline .skilltotal-baseline.json --fail-on-high
 skilltotal diff npm:some-lib@1.2.3 npm:some-lib@1.2.4 --fail-on-new high
 skilltotal guard npm:some-mcp-server          # exit 2 if it should not be installed
-skilltotal guard --installed                  # check the MCP servers, plugins and skills your agents use
+skilltotal guard --installed                  # the MCP servers, plugins, skills and editor extensions installed here
+skilltotal guard --installed --state ~/.skilltotal-state.json   # also catch risk gained in an update
 skilltotal inventory --sbom                   # AI-BOM: CycloneDX 1.6 JSON of your agent stack
 skilltotal rules list
 ```
 
-`scan` on its own exits 0 whatever it finds, even for a malicious verdict. In a script, use
-`skilltotal guard` or a gate (`--fail-on`) and check the exit code. Every flag, exit code and gate
-is described in the [CLI reference](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md).
+With no gate flag and no gate in a `.skilltotal.toml`, `scan` exits 0 whatever it finds, even for
+a malicious verdict. In a script, use `skilltotal guard` or a gate (`--fail-on`) and check the
+exit code. Every command, flag, exit code and gate is in the
+[CLI reference](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md); a daily check of what
+is installed, with cron, launchd or Task Scheduler, is in
+[Installed components](https://github.com/pezhik/skilltotal/blob/main/docs/installed-components.md#running-it-every-day).
 
 ## MCP server
 
@@ -264,8 +272,8 @@ forms and the path rules are in [docs/mcp-server.md](https://github.com/pezhik/s
 ## Install
 
 Requires **Python 3.10+**, with zero runtime dependencies. `git` is needed only for scanning
-remote URLs and for `scan --staged`. Scanning inside a directory you don't trust and other install
-details are in [docs/cli.md](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md#install).
+remote URLs and for `scan --staged`. Scanning inside a directory you don't trust, installing on
+an offline machine and other install details are in [docs/cli.md](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md#install).
 
 ```bash
 pipx install skilltotal      # recommended for the CLI; then `pipx ensurepath` if it is not found
@@ -299,16 +307,18 @@ npx -y --package=skilltotal@0.87.0 -- skilltotal scan https://github.com/owner/r
 ## Limitations
 
 - **Files over 2 MiB are not read.** Minified JavaScript/TypeScript bundles are listed but not
-  analyzed, except the scripts npm runs at install. A low verdict then reads "Partially analyzed".
+  analyzed, except the scripts npm runs at install and the entry points a `package.json` names.
+  A VS Code extension's entry points are read up to 8 MiB. A low verdict over unread code reads
+  "Partially analyzed".
 - **Dependencies are not scanned.** `node_modules/`, `vendor/` and virtual environments are skipped.
 - **Code fetched or generated at run time is not analyzed**, nor are binaries and compiled artifacts.
 - **Languages.** Shell execution, network access, file access and dynamic code are analyzed in
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
-  download-and-run, decode-and-run and evasion idioms. Other languages get only the secret,
-  sensitive-path and hidden-Unicode checks.
+  download-and-run, decode-and-run, evasion and post-exploitation idioms. Other languages get
+  only the secret, sensitive-path and hidden-Unicode checks.
 - **The default gate does not count unread code**, and unread code never passes in silence: the
   log names it (`Not everything was analyzed: ...`), the verdict reads "Partially analyzed", and
-  `--fail-on-unanalyzed` fails on it. That covers files over 2 MiB, minified bundles, code in
+  `--fail-on-unanalyzed` fails on it. That covers files too large to read, minified bundles, code in
   languages not analyzed for behavior, and compiled code shipped without its source (a `.pyc`,
   `.pyo` or `.class` with no `.py` or `.java` of the same name beside it).
 - **Detection is at the call/import level.** A capability shows the code is there, not that it is
@@ -320,10 +330,17 @@ The full list is in [docs/detection.md](https://github.com/pezhik/skilltotal/blo
 ## Configuration
 
 Commit a `.skilltotal.toml` instead of repeating flags: gate levels, excludes, ignored rules, a
-baseline file and per-rule `block` / `warn` / `ignore` policy. To accept a single finding, add an
-inline `skilltotal:ignore[ST-ID]` comment. Limits and registry mirrors are set with `SKILLTOTAL_*`
-environment variables. In CI the scanned repository's own config and markers apply, so put
-`.skilltotal.toml` and the baseline under CODEOWNERS with branch protection ([docs/configuration.md](https://github.com/pezhik/skilltotal/blob/main/docs/configuration.md)).
+baseline file and per-rule `block` / `warn` / `ignore` policy. `scan` reads all of it and `diff`
+reads the excludes and ignored rules; `guard` and `inventory` read none
+([docs/configuration.md](https://github.com/pezhik/skilltotal/blob/main/docs/configuration.md)).
+Limits and registry mirrors are set with `SKILLTOTAL_*` environment variables.
+
+To accept a reviewed finding, add an inline `skilltotal:ignore[ST-ID]` comment (local folders
+only, never for a malicious indicator), record it in a baseline, or, for `guard` and scheduled
+sweeps of installed components, list it in an accept file (`--accept FILE`: one component at one
+exact version, with a reason). [Accepting findings](https://github.com/pezhik/skilltotal/blob/main/docs/accepting-findings.md)
+compares them. In CI the scanned repository's own config and markers apply, so put
+`.skilltotal.toml` and the baseline under CODEOWNERS with branch protection.
 
 ## Network access
 
@@ -348,13 +365,15 @@ services on top of it; their code is not part of this repository ([docs/open-cor
 
 | Section | Now in |
 |---|---|
-| <a id="usage"></a>Usage, <a id="exit-codes"></a>exit codes, <a id="status-badge"></a>status badge | [docs/cli.md](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md) |
-| <a id="project-config"></a>Project config, <a id="inline-suppression"></a>inline suppression, <a id="environment-variables"></a>environment variables, <a id="scanning-through-a-registry-mirror"></a>registry mirrors | [docs/configuration.md](https://github.com/pezhik/skilltotal/blob/main/docs/configuration.md) |
-| Action inputs and outputs, <a id="use-as-a-pre-commit-hook"></a>pre-commit, <a id="other-ci-systems"></a>other CI systems, <a id="rolling-out-on-an-existing-repository"></a>rolling out | [docs/ci.md](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md) |
-| MCP server clients and path rules | [docs/mcp-server.md](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md) |
+| <a id="usage"></a>Every command and flag, sources and archive types, <a id="exit-codes"></a>exit codes, gates, <a id="status-badge"></a>status badge | [docs/cli.md](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md) |
+| Installed components: discovery, editor extensions, update drift (`--state`), daily and fleet checks, AI-BOM | [docs/installed-components.md](https://github.com/pezhik/skilltotal/blob/main/docs/installed-components.md) |
+| <a id="inline-suppression"></a>Accepting findings: inline markers, baselines, `ignore` and `[policy]`, accept files | [docs/accepting-findings.md](https://github.com/pezhik/skilltotal/blob/main/docs/accepting-findings.md) |
+| <a id="project-config"></a>Project config and which commands read it, <a id="environment-variables"></a>environment variables, <a id="scanning-through-a-registry-mirror"></a>registry mirrors | [docs/configuration.md](https://github.com/pezhik/skilltotal/blob/main/docs/configuration.md) |
+| Action inputs and outputs, <a id="use-as-a-pre-commit-hook"></a>pre-commit, upgrade reviews, <a id="other-ci-systems"></a>other CI systems, <a id="rolling-out-on-an-existing-repository"></a>rolling out | [docs/ci.md](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md) |
+| MCP server clients, path rules, checking installs in other agents | [docs/mcp-server.md](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md) |
 | <a id="what-it-detects"></a>What it detects, <a id="coverage-by-component-type"></a>coverage by component type, <a id="typical-findings"></a>typical findings, <a id="verdict"></a>verdict, <a id="out-of-scope"></a>out of scope, <a id="accuracy-notes"></a>accuracy notes | [docs/detection.md](https://github.com/pezhik/skilltotal/blob/main/docs/detection.md) |
 | Malware archetypes and the rules that catch them | [docs/detection-coverage.md](https://github.com/pezhik/skilltotal/blob/main/docs/detection-coverage.md) |
-| <a id="output"></a>Report output, traits, OWASP mapping | [docs/report-schema.md](https://github.com/pezhik/skilltotal/blob/main/docs/report-schema.md) |
+| <a id="output"></a>Output formats: scan report (traits, OWASP mapping), SARIF, diff, guard and inventory JSON, AI-BOM properties | [docs/report-schema.md](https://github.com/pezhik/skilltotal/blob/main/docs/report-schema.md) |
 | Claude Code plugin reference | [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md) |
 | <a id="architecture"></a>Architecture | [docs/architecture.md](https://github.com/pezhik/skilltotal/blob/main/docs/architecture.md) |
 

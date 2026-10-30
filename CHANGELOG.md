@@ -4,6 +4,85 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.87.0]
+
+`inventory` and `guard --installed` now check installed editor extensions, report risk that an
+update added (`--state`), and accept reviewed false positives from a file (`--accept`). A VS Code
+extension is scanned as a component type of its own. Ruleset 86 adds six post-exploitation rules.
+Report schema 1.10 is unchanged. `RULES_CHANGELOG.md` (ruleset 86) has the detection details.
+
+### Added
+- Editor extensions in `inventory` and `guard --installed`: the extension folders of VS Code, VS
+  Code Insiders, Cursor, Windsurf and VSCodium, their remote-server folders (`~/.vscode-server`,
+  `~/.vscodium-server`, `~/.cursor-server`) and the folder `VSCODE_EXTENSIONS` names. Each folder
+  with its own `package.json` is one component, named `publisher.name@version`; folders the editor
+  marked for deletion in `.obsolete` are left out. An editor extension blocks on malicious
+  indicators and on the reasons that always block (an unread install script, nothing readable),
+  not on its risk level, unless `--block-on` is given. It is never checked for typosquatting,
+  because an editor installs it by its `publisher.name` id, not by the name in its `package.json`.
+- `--no-extensions` on `inventory` and `guard --installed` leaves editor extensions out.
+- `--state FILE` on `inventory` and `guard --installed`: each run records every component's
+  version and the fingerprints of its risk findings, and reports drift, a component whose version
+  changed and that gained risk findings. Drift that adds a malicious indicator or a high or
+  critical risky construct blocks at any `--block-on` level. It shows as a `drift:` line, a `drift`
+  object in the JSON and a `skilltotal:drift` property in the AI-BOM. The first run only records.
+  A file that is not a state file, or a state file that cannot be written, exits 1.
+- `--accept FILE` on `guard <source>`, `guard --installed` and `inventory`: each entry accepts the
+  listed finding fingerprints for one component at one exact version and needs a reason; `expires`
+  and `accepted_by` are optional. Accepted evidence is removed before scoring and stays visible
+  (`[ACCEPTED]` and an `Accepted  :` line in the text, `accepted` in the JSON, `skilltotal:accepted`
+  in the AI-BOM). Every run warns on stderr about an accepted malicious indicator, an expired entry
+  and a stale entry. An invalid file (an unknown key, an empty reason, a malformed fingerprint or
+  date) exits 1 before anything is scanned.
+- `--write-accept FILE` drafts accept entries for what the run blocks (`guard`) or flags
+  (`inventory`), each with an empty reason a reviewer must fill in, and exits 0. It adds to an
+  existing accept file and never overwrites another file.
+- Component type `vscode_extension`: a `package.json` that declares `engines.vscode`, at the root
+  or in the `extension/` folder of an unpacked `.vsix`. Its build output is read, and the entry
+  points its own `package.json` names are read up to 8 MiB (2 MiB for other files) even when
+  minified. A minified entry point is judged like build output: capabilities and the
+  post-exploitation rules count, and other risk findings in it go to `needs_review`.
+- Post-exploitation rules `ST-POSTEX-REMOTE-ACCESS`, `ST-POSTEX-PERSIST`, `ST-POSTEX-MASQUERADE`,
+  `ST-POSTEX-BEACON` and `ST-POSTEX-EVASION`, and the synthesized `ST-POSTEX-CHAIN` (two tactics
+  in one component, one of them remote access or command and control). New scanner `postex`.
+- `RuleSpec.tactic` names the post-exploitation tactic a rule's finding is a step of. Existing
+  persistence, evasion and relay rules declare theirs. It is not part of the report.
+- Engine API: `analyze()` and `analyze_directory()` take an optional `suppressed_out` dict, which
+  receives the fingerprint and rule id of each finding the `suppress` set removed. The default
+  behavior is unchanged.
+
+### Changed
+- A baseline or accept-file fingerprint now also suppresses `ST-TYPOSQUAT` and
+  `ST-SKILL-CAP-MISMATCH`, the findings synthesized from a component's name and declared tools. A
+  combination finding still follows its inputs: it disappears when they are suppressed.
+- `ST-CONVERGENCE` no longer counts `ST-POSTEX-CHAIN` as a second malicious indicator.
+- An `echo` whose output is piped or redirected (`echo "..." | crontab -`, `echo "..." >> ~/.bashrc`)
+  is no longer read as a command printed for a person. This applies to every rule that sets
+  printed commands aside.
+- A local or git VS Code extension is no longer checked for typosquatting against npm names. An
+  `npm:` source still is.
+- `guard --block-on` defaults per component kind with `--installed` (`high`, and `malicious` for
+  editor extensions); `guard <source>` still defaults to `high`. Its help text names the reasons
+  that block at every level.
+- `inventory` with nothing installed says "No installed AI components (MCP servers, plugins,
+  skills or editor extensions) found."
+- The detection-efficacy corpus has 158 malicious and 120 benign samples (8 and 6 added for
+  post-exploitation), all flagged and none a false positive.
+- Docs: the README has a "Choose your path" table; `docs/cli.md` has a section and a flag table
+  per command and lists every archive type (`.mcpb`, `.dxt`, `.whl`, `.vsix`, `.tar.bz2`,
+  `.tar.xz`); new `docs/installed-components.md` (discovery, editor extensions, drift, daily and
+  fleet checks, AI-BOM) and `docs/accepting-findings.md` (every way to accept a finding, compared);
+  `docs/report-schema.md` documents the diff, guard and inventory JSON and the AI-BOM properties;
+  `docs/configuration.md` says which commands read `.skilltotal.toml` and lists every environment
+  variable; `docs/ci.md` has a workflow for reviewing dependency upgrades with `diff`.
+
+### Fixed
+- Docs: `scan` exits 0 without a gate flag only when `.skilltotal.toml` sets no gate either.
+  `guard --block-on malicious` also blocks on an unread install script, a component with nothing
+  readable and a look-alike name. The pre-commit hook without `args` only reports. The CLI form of
+  the action's default gate is `--fail-on-default high`, not `--fail-on-high`, which overrides the
+  config.
+
 ## [0.86.0]
 
 Ruleset 85 adds `ST-SKILL-ENCRYPTED-INSTRUCTIONS` and `ST-HTML-FILE-URL-EXFIL`. Report schema 1.10 is unchanged.
