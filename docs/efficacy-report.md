@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.86.0 · ruleset 85 · Python 3.11 · offline corpus.
+Engine 0.87.0 · ruleset 86 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (150/150 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/114 benign samples wrongly flagged)
+- **recall: 100.0%** (158/158 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/120 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -58,6 +58,7 @@ Engine 0.86.0 · ruleset 85 · Python 3.11 · offline corpus.
 | password-archive | 100% |
 | pickle-reduce-gadget | 100% |
 | plugin-hook-trojan | 100% |
+| post-exploitation | 100% |
 | powershell-download-exec | 100% |
 | preview-pane-oversized-html-file-url-csp-bypass | 100% |
 | prompt-injection | 100% |
@@ -78,7 +79,7 @@ Engine 0.86.0 · ruleset 85 · Python 3.11 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 26 | 28 | 20 | 2 |
+| AST01 | 26 | 31 | 23 | 4 |
 | AST02 | 20 | 13 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
 | AST04 | 20 | 3 | 8 | 0 |
@@ -95,7 +96,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 3 | 0 | - | - |
-| `ST-COMBO-EXFIL` | AST01 | 26 | 0 | 1/1 | 1/1 |
+| `ST-COMBO-EXFIL` | AST01 | 27 | 0 | 1/1 | 1/1 |
 | `ST-CONVERGENCE` | AST01 | 4 | 0 | - | - |
 | `ST-EMAIL-BCC-EXFIL` | AST01 | 1 | 0 | 1/1 | 1/1 |
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
@@ -108,11 +109,17 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-OBF-DECODE-EXEC-SH` | AST01 | 8 | 0 | - | - |
 | `ST-OBF-DECRYPT-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-OBF-DYNAMIC-DECODE-EXEC` | AST01 | 1 | 0 | - | - |
+| `ST-POSTEX-BEACON` | AST01 | 2 | 0 | - | - |
+| `ST-POSTEX-CHAIN` | AST01 | 7 | 0 | - | - |
+| `ST-POSTEX-EVASION` | AST01 | 3 | 0 | - | - |
+| `ST-POSTEX-MASQUERADE` | AST01 | 3 | 0 | - | - |
+| `ST-POSTEX-PERSIST` | AST01 | 8 | 3 | - | - |
+| `ST-POSTEX-REMOTE-ACCESS` | AST01 | 7 | 0 | - | - |
 | `ST-PS-DOWNLOAD-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-IMPORT-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
-| `ST-SECRET-EXFIL` | AST01 | 9 | 0 | - | - |
+| `ST-SECRET-EXFIL` | AST01 | 10 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |
@@ -135,7 +142,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-GIT-HOOK-PERSIST` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-DROPPER` | AST02 | 10 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 18 | 5 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 20 | 5 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-PREPARE` | AST02 | 0 | 3 | 1/1 | 1/1 |
 | `ST-INSTALL-PY` | AST02 | 3 | 0 | 1/1 | 1/1 |
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | - | - |
@@ -170,6 +177,6 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-DESERIALIZE-PY` | AST05 | 0 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-67 of 77 rules fire on at least one sample.
+73 of 83 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-NPM-GIT-DEP`, `ST-NPM-URL-DEP`, `ST-SHELL-PIPE-EXEC-PY`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

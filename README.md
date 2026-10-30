@@ -61,7 +61,7 @@ skilltotal scan npm:express     # or pypi:name, a git URL, a folder, an archive
 ([full example with permissions](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md)):
 
 ```yaml
-      - uses: pezhik/skilltotal@v0.86.0
+      - uses: pezhik/skilltotal@v0.87.0
         with: { source: ., fail-on: high }
 ```
 
@@ -200,7 +200,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pezhik/skilltotal@v0.86.0
+      - uses: pezhik/skilltotal@v0.87.0
         with:
           source: .             # a path, a git URL, or an npm:/pypi:<name> spec
           fail-on: high         # fail on a high/critical risk finding (or 'none')
@@ -218,7 +218,7 @@ out on an existing repository. Anywhere else Python 3.10+ runs, install a pinned
 on the exit code (0 passed, 2 a gate tripped, 1 the scan could not run):
 
 ```bash
-pip install skilltotal==0.86.0      # in a virtual environment outside the checkout
+pip install skilltotal==0.87.0      # in a virtual environment outside the checkout
 skilltotal scan . --fail-on high
 ```
 
@@ -276,14 +276,14 @@ With npx (it needs uv, pipx, or Python 3.11+ with `skilltotal` installed), name 
 `--package` so npx does not run a `skilltotal` from the scanned repository's `node_modules/.bin`:
 
 ```bash
-npx -y --package=skilltotal@0.86.0 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.87.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 ## Measured, not asserted
 
 - **[Detection efficacy](https://github.com/pezhik/skilltotal/blob/main/docs/efficacy-report.md)**:
-  recall and precision on a labeled corpus we built and publish (150 malicious and
-  114 benign samples), regenerated every release and enforced by CI as a floor. A perfect score on
+  recall and precision on a labeled corpus we built and publish (158 malicious and
+  120 benign samples), regenerated every release and enforced by CI as a floor. A perfect score on
   our own corpus guards against regressions; it is not a claim about every attack in the wild.
   Each rule behind the survey's OWASP class counts also has labeled samples of its own, listed in
   the report's rule coverage table.

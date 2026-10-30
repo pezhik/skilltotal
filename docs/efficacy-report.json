@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.86.0",
-  "ruleset_version": 85,
-  "python_version": "3.11",
-  "positives": 150,
-  "negatives": 114,
+  "engine_version": "0.87.0",
+  "ruleset_version": 86,
+  "python_version": "3.14",
+  "positives": 158,
+  "negatives": 120,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -54,6 +54,7 @@
     "password-archive": 1.0,
     "pickle-reduce-gadget": 1.0,
     "plugin-hook-trojan": 1.0,
+    "post-exploitation": 1.0,
     "powershell-download-exec": 1.0,
     "preview-pane-oversized-html-file-url-csp-bypass": 1.0,
     "prompt-injection": 1.0,
@@ -72,10 +73,10 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 28,
+      "node": 31,
       "manifest/text": 26,
-      "python": 20,
-      "shell": 2
+      "python": 23,
+      "shell": 4
     },
     "AST02": {
       "manifest/text": 20,
@@ -257,7 +258,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 26,
+      "malicious_samples": 27,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -400,7 +401,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 18,
+      "malicious_samples": 20,
       "benign_samples": 5,
       "should_fire": 1,
       "fired": 1,
@@ -687,6 +688,72 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-POSTEX-BEACON": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-POSTEX-CHAIN": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 7,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-POSTEX-EVASION": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 3,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-POSTEX-MASQUERADE": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 3,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-POSTEX-PERSIST": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 8,
+      "benign_samples": 3,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-POSTEX-REMOTE-ACCESS": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 7,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-PROMPT-INJECTION": {
       "owasp": [
         "AST04"
@@ -769,7 +836,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 9,
+      "malicious_samples": 10,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
