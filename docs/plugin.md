@@ -324,7 +324,7 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
 ## Rolling out to a team
 
 1. **Install the CLI at a pinned version** on each machine, for example
-   `pipx install skilltotal==0.87.0`, with the same version as the plugin.
+   `pipx install skilltotal==0.88.0`, with the same version as the plugin.
 2. **Enable the plugin for everyone** with Claude Code's managed settings file,
    `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
    `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
@@ -360,7 +360,7 @@ It is a static guardrail, not a sandbox. For code you don't trust, run the agent
            "source": "git-subdir",
            "url": "https://github.com/pezhik/skilltotal.git",
            "path": "plugin",
-           "ref": "v0.87.0"
+           "ref": "v0.88.0"
          }
        }
      ]

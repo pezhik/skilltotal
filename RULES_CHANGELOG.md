@@ -4,31 +4,41 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
-## ruleset 87 (unreleased)
+## ruleset 87 (engine 0.88.0)
 
-- **`ST-MCP-ANNOTATION-MISMATCH`** (new, medium, risky construct): an MCP tool whose annotations
-  its own handler contradicts. `readOnlyHint: true` over a handler that writes or deletes a file
-  (also `fs.promises.*`, names imported from `fs/promises`, and the module bound to a name such
-  as `import * as fsp from "fs/promises"` or `{ promises as fsp }` from `fs`), sends a PUT,
-  PATCH or DELETE request, or runs a process that is either handed its command (a command line with a computed
-  part, a computed program, subcommand or `sh -c` script) or runs a written-out command from a
-  short mutating list (`rm`, `mv`, `cp`, `dd`, `chmod`, `chown`, `tee`, `truncate`, a `>`
-  redirect into a file, `git push/commit/reset/checkout/clean/rm`, `kubectl
-  apply/delete/patch/create/scale`, `docker rm/rmi/run`, `npm install/i/ci/add/uninstall`,
-  `yarn add/remove`, `pnpm add/remove/install`, `pip install/uninstall` and `python -m pip`; a
-  Python module-level name assigned once in the file to strings reads as written out); an
-  explicit `destructiveHint: false` over a handler that deletes a file or directory or sends a
-  DELETE request. A POST does not fire (GraphQL and search APIs read through POST), nor does a
-  written-out `git log`, `kubectl get` or `ls`, with or without a computed path argument.
-  Clients use these hints to decide which calls run without asking. Read in TypeScript
-  and JavaScript (`server.registerTool(name, { annotations }, handler)`, `server.tool(name, ...,
-  annotations, handler)`) and Python (`@mcp.tool(annotations=...)` with a dict or
-  `ToolAnnotations(...)`, `mcp.add_tool(fn, annotations=...)`); annotations may be a constant of
-  the same file, and a handler may be passed by name. Only the handler's own body is read, with
-  the call signatures of `ST-FS-*-WRITE`, `ST-SHELL-*` and `ST-NET-*`; a helper function it calls
-  is not followed. A missing `destructiveHint`, `readOnlyHint: false`, `destructiveHint: true`,
-  and calls in comments or strings do not fire. Two evidence lines per tool: the hint and the
-  first contradicting call. Not a malicious indicator and not counted by `ST-CONVERGENCE`.
+One new rule checks an MCP tool's annotations against the tool's own handler. Clients use these
+hints to decide which calls run without asking.
+
+- **`ST-MCP-ANNOTATION-MISMATCH`** (new, medium, risky construct): a tool whose handler
+  contradicts its annotations. It is not a malicious indicator, and `ST-CONVERGENCE` does not
+  count it. It fires in two cases:
+  - `readOnlyHint: true` over a handler that writes or deletes a file, sends a PUT, PATCH or
+    DELETE request, or starts a process. File calls include `fs.promises.*`, names imported from
+    `fs/promises`, and a module bound to a name, such as `import * as fsp from "fs/promises"` or
+    `{ promises as fsp }` from `fs`. A process counts when it is handed its command (a command
+    line with a computed part, a computed program, subcommand or `sh -c` script) or when it runs
+    a written-out command from a short mutating list: `rm`, `mv`, `cp`, `dd`, `chmod`, `chown`,
+    `tee`, `truncate`, a `>` redirect into a file, `git push/commit/reset/checkout/clean/rm`,
+    `kubectl apply/delete/patch/create/scale`, `docker rm/rmi/run`,
+    `npm install/i/ci/add/uninstall`, `yarn add/remove`, `pnpm add/remove/install`,
+    `pip install/uninstall` and `python -m pip`. A Python module-level name assigned once in the
+    file to strings reads as written out.
+  - An explicit `destructiveHint: false` over a handler that deletes a file or directory or sends
+    a DELETE request.
+
+  A POST does not fire, because GraphQL and search APIs read through POST. Nor do a written-out
+  `git log`, `kubectl get` or `ls` (with or without a computed path argument), a missing
+  `destructiveHint`, `readOnlyHint: false`, `destructiveHint: true`, or calls in comments or
+  strings.
+
+  Tools are read in TypeScript and JavaScript
+  (`server.registerTool(name, { annotations }, handler)`,
+  `server.tool(name, ..., annotations, handler)`) and in Python (`@mcp.tool(annotations=...)` with
+  a dict or `ToolAnnotations(...)`, `mcp.add_tool(fn, annotations=...)`). The annotations may be a
+  constant of the same file, and the handler may be passed by name. Only the handler's own body is
+  read, with the call signatures of `ST-FS-*-WRITE`, `ST-SHELL-*` and `ST-NET-*`; a helper
+  function it calls is not followed. Each tool gets two evidence lines: the hint and the first
+  contradicting call.
 - `ST-FS-NODE-WRITE` also matches `fs.rmdir` / `fs.rmdirSync`.
 
 ## ruleset 86 (engine 0.87.0)

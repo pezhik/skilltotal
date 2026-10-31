@@ -61,7 +61,7 @@ skilltotal scan npm:express     # or pypi:name, a git URL, a folder, an archive
 ([full example with permissions](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md)):
 
 ```yaml
-      - uses: pezhik/skilltotal@v0.87.0
+      - uses: pezhik/skilltotal@v0.88.0
         with: { source: ., fail-on: high }
 ```
 
@@ -221,7 +221,7 @@ Jenkins and rolling out on an existing repository. Anywhere else Python 3.10+ ru
 on the exit code (0 passed, 2 a gate tripped, 1 the scan could not run):
 
 ```bash
-pip install skilltotal==0.87.0      # in a virtual environment outside the checkout
+pip install skilltotal==0.88.0      # in a virtual environment outside the checkout
 skilltotal scan . --fail-on high
 ```
 
@@ -284,7 +284,7 @@ With npx (it needs uv, pipx, or Python 3.11+ with `skilltotal` installed), name 
 `--package` so npx does not run a `skilltotal` from the scanned repository's `node_modules/.bin`:
 
 ```bash
-npx -y --package=skilltotal@0.87.0 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.88.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 ## Measured, not asserted

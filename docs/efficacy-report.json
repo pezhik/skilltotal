@@ -1,6 +1,6 @@
 {
-  "engine_version": "0.87.0",
-  "ruleset_version": 86,
+  "engine_version": "0.88.0",
+  "ruleset_version": 87,
   "python_version": "3.14",
   "positives": 158,
   "negatives": 120,
@@ -439,6 +439,18 @@
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
+    },
+    "ST-MCP-ANNOTATION-MISMATCH": {
+      "owasp": [
+        "AST03",
+        "AST04"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 2,
+      "fired": 2,
       "should_stay_silent": 1,
       "stayed_silent": 1
     },

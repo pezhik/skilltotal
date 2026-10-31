@@ -3,8 +3,8 @@
 Run the SkillTotal scanner with npx. It checks MCP servers, agent skills and npm/PyPI packages for tool poisoning, malicious install scripts, credential exfiltration and hidden Unicode. Every finding cites the file and line it came from. The analysis is static: the scanner never runs the code it reads and never calls an LLM.
 
 ```bash
-npx -y --package=skilltotal@0.87.0 -- skilltotal scan https://github.com/owner/repo
-npx -y --package=skilltotal@0.87.0 -- skilltotal scan npm:some-package --fail-on-high
+npx -y --package=skilltotal@0.88.0 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.88.0 -- skilltotal scan npm:some-package --fail-on-high
 ```
 
 Name the release with `--package`: a plain `npx skilltotal` run inside a repository first runs any `skilltotal` program in that repository's `node_modules/.bin`, and a repository you are about to scan can ship one.
@@ -12,7 +12,7 @@ Name the release with `--package`: a plain `npx skilltotal` run inside a reposit
 To use it as a local MCP server in Claude Code, Claude Desktop, Cursor or any other MCP client:
 
 ```json
-{ "mcpServers": { "skilltotal": { "command": "npx", "args": ["-y", "--package=skilltotal@0.87.0", "--", "skilltotal", "mcp"] } } }
+{ "mcpServers": { "skilltotal": { "command": "npx", "args": ["-y", "--package=skilltotal@0.88.0", "--", "skilltotal", "mcp"] } } }
 ```
 
 ## How it runs

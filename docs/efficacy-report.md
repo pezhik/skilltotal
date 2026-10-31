@@ -1,6 +1,6 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.87.0 · ruleset 86 · Python 3.14 · offline corpus.
+Engine 0.88.0 · ruleset 87 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (158/158 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/120 benign samples wrongly flagged)
@@ -161,6 +161,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-DANGEROUS-TOOL` | AST03 | 0 | 0 | 3/3 | 2/2 |
 | `ST-MCP-OVERBROAD-SCOPE` | AST03 | 0 | 0 | 1/1 | 1/1 |
 | `ST-MCP-SERVER-EXEC` | AST03 | 5 | 3 | 3/3 | 2/2 |
+| `ST-MCP-ANNOTATION-MISMATCH` | AST03, AST04 | 0 | 0 | 2/2 | 1/1 |
 | `ST-SKILL-CAP-MISMATCH` | AST03, AST04 | 1 | 2 | - | - |
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
 | `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 1 | - | - |
@@ -177,6 +178,6 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-DESERIALIZE-PY` | AST05 | 0 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-73 of 83 rules fire on at least one sample.
+74 of 84 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-NPM-GIT-DEP`, `ST-NPM-URL-DEP`, `ST-SHELL-PIPE-EXEC-PY`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

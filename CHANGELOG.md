@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.88.0]
+
+Ruleset 87 checks MCP tool annotations against the code that implements the tool. Report schema
+1.10 is unchanged. `RULES_CHANGELOG.md` (ruleset 87) has the detection details.
+
+### Added
+- `ST-MCP-ANNOTATION-MISMATCH` (medium, risky construct): an MCP tool declares `readOnlyHint: true`
+  while its handler writes or deletes files, sends a PUT, PATCH or DELETE request, or runs a
+  command it is handed or a written-out command from a mutating list (`rm`, `git push`,
+  `npm install` and others). It also fires when a tool declares `destructiveHint: false` while its
+  handler deletes files or sends a DELETE request. Clients use these hints to decide which calls
+  run without asking. The rule reads TypeScript, JavaScript and Python servers. Only the handler's
+  own body is read, so a helper function it calls is not followed.
+
+### Changed
+- `ST-FS-NODE-WRITE` also matches `fs.rmdir` and `fs.rmdirSync`.
+
 ## [0.87.0]
 
 `inventory` and `guard --installed` now check installed editor extensions, report risk that an

@@ -48,7 +48,7 @@ repository you are about to scan can ship one (with `--package`, npx runs only t
 `uvx` does not look in the folder at all).
 
 ```bash
-npx -y --package=skilltotal@0.87.0 -- skilltotal scan https://github.com/owner/repo
+npx -y --package=skilltotal@0.88.0 -- skilltotal scan https://github.com/owner/repo
 ```
 
 From source (development):
@@ -64,7 +64,7 @@ would run instead of the standard library or the engine.
 
 **Offline.** A local folder, archive or file is scanned without any network request, so the CLI
 works air-gapped: download a pinned wheel on a connected machine
-(`pip download skilltotal==0.87.0 --no-deps`), copy it over and `pip install` the file. `npm:`,
+(`pip download skilltotal==0.88.0 --no-deps`), copy it over and `pip install` the file. `npm:`,
 `pypi:` and git sources need the network, or a [registry mirror](configuration.md#scanning-through-a-registry-mirror).
 
 ## Sources
