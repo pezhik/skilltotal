@@ -176,10 +176,11 @@ mirror package is cached separately from the public one, for an hour.
 
 For an install that names no package, the hook reads the lockfile and sends the names and exact
 versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google).
-Nothing else is sent. To turn it off, set `SKILLTOTAL_OSV=0`. An entry goes out only when the
-lockfile itself proves it resolved from the public registry: scoped, mirrored, git, file and link
-entries are never sent, nor is any entry of a lockfile that records no registry (pnpm, yarn berry,
-a requirements file).
+Nothing else is sent. To turn it off, set `SKILLTOTAL_OSV=0`. A package goes out only when the
+install itself would fetch it from the public registry: its lockfile records a public URL, or, for
+a lockfile that records none (pnpm, yarn berry, pinned requirements, poetry), no custom registry is
+configured anywhere the installer reads. A scope that an `.npmrc` maps elsewhere or holds a token
+for is never sent, nor is a git, file or link dependency or an entry from another host.
 
 A version listed as `MAL-...` is denied. A clean result reads "No known-malicious version in OSV",
 which says what OSV knows: it lists known malware only, a brand-new package is not on it, and a
@@ -320,7 +321,8 @@ CI.
 - **Dependencies.** It scans the package a command names, not the packages it pulls in.
 - **Installs that name no package.** `npm install`, `npm ci`, `pip install -r requirements.txt` and
   `uv sync` install from a lockfile or a requirements file. Their code is not scanned: the lockfile
-  is only [looked up in OSV](#the-lockfile-lookup), where it proves its entries public. The hook
+  is only [looked up in OSV](#the-lockfile-lookup), for the entries that come from the public
+  registry. The hook
   says so in the console. In CI it denies them unless `SKILLTOTAL_ALLOW_UNCHECKED` includes
   `lockfile`.
 - **Scripts and shell-profile definitions.** The hook reads only the command line. It does not

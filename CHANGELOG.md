@@ -28,9 +28,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - Lockfile installs (`npm ci`, `npm install`, `pip install -r`, `uv sync`, `poetry install`) are
   looked up in OSV: the hook sends the names and exact versions of public-registry packages to
   `api.osv.dev`, operated by Google, and denies a version listed as `MAL-...`, in and out of CI. On
-  by default; `SKILLTOTAL_OSV=0` turns it off. Only an entry the lockfile proves public is sent:
-  scoped, mirrored, git, file and link entries never are, nor is any entry of a lockfile that
-  records no registry. A clean result reads "No known-malicious version in OSV". An unreachable OSV
+  by default; `SKILLTOTAL_OSV=0` turns it off. A package is sent only when the install would fetch
+  it from the public registry: its lockfile records a public URL, or the lockfile records none and
+  no custom registry is configured. A scope an `.npmrc` maps elsewhere or holds a token for, a git,
+  file or link dependency and an entry from another host are never sent. A clean result reads "No known-malicious version in OSV". An unreachable OSV
   reads "not checked" with the number, and in CI is denied unless the new `osv` kind is allowed in
   `SKILLTOTAL_ALLOW_UNCHECKED`. One batch per command, 5 seconds at most, no retry, an hour's cache.
   It lives in the hook only: `engine.analyze`, `scan`, `guard` and `watch` make no such request.

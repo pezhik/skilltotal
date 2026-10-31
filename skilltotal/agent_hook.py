@@ -4583,7 +4583,7 @@ def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
     strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
     deny_partial: bool = False, environ: Mapping[str, str] | None = None,
-    home: Path | None = None, osv: Callable[[list[str], str | None], Any] | None = None,
+    home: Path | None = None, osv: Callable[[list[str], str | None, str], Any] | None = None,
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -4611,8 +4611,9 @@ def hook_response(
     names, the package is checked there instead (``scan(..., mirror=True)``). Without
     ``environ`` nothing outside the command line is read.
 
-    ``osv(files, cwd)`` looks up the exact versions the lockfiles of a command name on OSV's list
-    of known malicious packages (``skilltotal.osv_lookup``), for an install that names none. A
+    ``osv(files, cwd, command)`` looks up the exact versions the lockfiles of a command name on
+    OSV's list of known malicious packages (``skilltotal.osv_lookup``), for an install that names
+    none. A
     listed version is denied, in and out of CI. A lookup that covered less than it should have is
     said, and in strict mode denied unless ``osv`` is an allowed kind. Without it nothing is
     looked up.
@@ -4725,7 +4726,7 @@ def hook_response(
     osv_line = ""
     lockfiles = [i.lockfile for i in unchecked if i.unchecked == LOCKFILE and i.lockfile]
     if osv is not None and lockfiles:
-        found = osv(lockfiles, cwd)
+        found = osv(lockfiles, cwd, command)
         osv_listed = found.hit_lines()
         osv_line = found.line()
         if strict and found.incomplete:

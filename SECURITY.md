@@ -37,7 +37,9 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
   packages they check from the same places. For an install that names no package (`npm ci`,
   `uv sync`), the agent hook also sends the names and exact versions of public-registry packages
   to OSV (`api.osv.dev`, operated by Google) to look up known malicious releases, and nothing else:
-  an entry the lockfile does not prove public is never sent. `SKILLTOTAL_OSV=0` turns it off.
+  a package is sent only when the install would fetch it from the public registry, so with a custom
+  registry configured, an entry with no public URL in the lockfile is not sent.
+  `SKILLTOTAL_OSV=0` turns it off.
   Scanning sends none of your code anywhere. There is no telemetry.
 - **Limits.** Each file over 2 MiB is not read (the verdict says "Partially analyzed"), except a
   VS Code extension's entry points, which are read up to 8 MiB. Archives,

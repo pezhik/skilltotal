@@ -364,7 +364,7 @@ A scan of a local folder, archive or file makes no network request. SkillTotal g
   `marketplace.visualstudio.com` or `open-vsx.org`, and their download hosts
 - **`--provenance`:** the package's registry metadata
 - **`inventory`, `guard --installed`, `watch`, the agent hooks and the MCP server:** the same registries and git hosts, for the packages they check
-- **The agent hook's lockfile lookup:** for an install that names no package (`npm ci`, `uv sync`), the hook sends the names and exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google) and nothing else. A scoped or private entry, or one the lockfile does not prove public, is never sent. Set `SKILLTOTAL_OSV=0` to turn it off. [What is sent, and its limits](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#what-goes-over-the-network)
+- **The agent hook's lockfile lookup:** for an install that names no package (`npm ci`, `uv sync`), the hook sends the names and exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google) and nothing else. A package is sent only when the install would fetch it from the public registry: with a custom registry configured, an entry with no public URL in the lockfile is not sent. Set `SKILLTOTAL_OSV=0` to turn it off. [What is sent, and its limits](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#what-goes-over-the-network)
 
 Only the agent hook does that lookup: scanning sends nothing about your code anywhere. It sends no telemetry, needs no account and makes no LLM call.
 

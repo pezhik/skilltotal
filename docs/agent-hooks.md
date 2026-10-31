@@ -197,21 +197,37 @@ hook asks about them in one batch.
 | OSV is unreachable or times out | The console says they were not checked, with the number. Outside CI the install goes on. In CI it is denied unless `SKILLTOTAL_ALLOW_UNCHECKED` includes `osv` |
 | An entry could not be parsed, or a batch was cut short | Counted as not checked, with the number, and treated as above |
 
-**What is sent.** An entry is sent only when the lockfile itself records that it resolved from the
-public registry, and its name and version are taken from that record:
+**What is sent.** A package is sent only when the install itself would fetch it from the public
+registry:
 
-| Lockfile | Sent | Never sent |
-|---|---|---|
-| `package-lock.json`, `npm-shrinkwrap.json` | Entries resolved from `registry.npmjs.org` | Scoped packages (`@scope/x`), other hosts, git, file and link dependencies, entries with no `resolved` URL |
-| `yarn.lock` (v1) | Entries resolved from `registry.npmjs.org` or `registry.yarnpkg.com` | The same |
-| `yarn.lock` (berry), `pnpm-lock.yaml` | Nothing: they do not record a registry | Everything |
-| `uv.lock` | Entries whose `source` is `pypi.org/simple` | Other indexes, git and path dependencies |
-| `poetry.lock` | Entries whose `[package.source]` names `pypi.org/simple` | All others. Poetry records no source for its default index, so most entries are not sent |
-| Requirements files | Nothing: they do not record an index | Everything |
+1. **The lockfile records a public URL** (`registry.npmjs.org` or `registry.yarnpkg.com` for npm,
+   `pypi.org` or `files.pythonhosted.org` for Python). The entry is sent, whatever else is
+   configured. A scoped name (`@scope/x`) is sent too, unless an `.npmrc` maps that scope to another
+   registry or holds a token for it. A token for `registry.npmjs.org` itself can reach any private
+   scope there, so with one present no scoped name is sent.
+2. **The lockfile records no URL.** The entry is sent only when no custom registry is configured
+   anywhere the installer reads. The same scope check applies.
+3. **Anything else is never sent:** another host, and git, file, link and path dependencies.
 
-A custom registry configured in `.npmrc`, `pip.conf` or the environment changes nothing here, because
-an entry is sent only on the lockfile's own proof. The console says how many entries were not sent.
-`bun.lock`, `Pipfile.lock` and other formats are not read, and the console says so.
+| Lockfile | Records a URL? |
+|---|---|
+| `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock` (v1) | Yes, `resolved`. An entry without one is not sent |
+| `uv.lock` | Yes, its `source` |
+| `poetry.lock` | Only for an entry with a `[package.source]` |
+| `pnpm-lock.yaml`, `yarn.lock` (berry) | No, except a `tarball` |
+| Requirements files | No. A `==` pin is treated as an entry with no URL. An unpinned line cannot be looked up, and is counted as not checked |
+
+For rule 2, these count as a custom registry when they name anything but the public registry:
+
+| Ecosystem | Where |
+|---|---|
+| npm, pnpm, yarn, bun | The project's and your `.npmrc` (a default or a scoped registry), `NPM_CONFIG_REGISTRY` and every `npm_config_*registry`, `YARN_REGISTRY`, `YARN_NPM_REGISTRY_SERVER`, `BUN_CONFIG_REGISTRY`, `.yarnrc`, `.yarnrc.yml` (`npmRegistryServer`, `npmScopes`), `pnpm-workspace.yaml`, `bunfig.toml` |
+| Python | `pip.conf` or `pip.ini`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, `UV_INDEX_URL`, `UV_DEFAULT_INDEX`, `UV_EXTRA_INDEX_URL`, `UV_INDEX`, `UV_FIND_LINKS`, `uv.toml`, `[tool.uv]`, `[[tool.poetry.source]]` and `[[tool.pdm.source]]` in `pyproject.toml`, and `--index-url`, `--extra-index-url` and `--find-links` in the requirements file |
+| Both | `--index-url`, `--extra-index-url`, `--find-links` or `--registry` on the command |
+
+A config file too large to read, or a home folder that cannot be found, counts as configured. The
+console says how many entries were not sent. `bun.lock`, `Pipfile.lock` and other formats are not
+read, and the console says so.
 
 **Limits.**
 

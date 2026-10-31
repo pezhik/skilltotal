@@ -56,7 +56,10 @@ def project(tmp_path: Path, name: str, text: str) -> Path:
 
 
 def run(tmp_path, file="package-lock.json", transport=None, **options):
-    return lookup([file], str(tmp_path), transport or Osv(), tmp_path / "cache.json", **options)
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    settings = {"environ": {}, "home": home, **options}
+    return lookup([file], str(tmp_path), transport or Osv(), tmp_path / "cache.json", **settings)
 
 
 # --- 2. What may leave the machine ---------------------------------------------------------------
@@ -94,12 +97,75 @@ def test_an_entry_the_lockfile_does_not_prove_public_is_never_sent(tmp_path, ent
     assert result.withheld == 1
 
 
-def test_a_scoped_entry_is_never_sent_even_from_the_public_registry(tmp_path):
-    scoped = npm_entry("@acme/internal", "1.0.0")
-    project(tmp_path, "package-lock.json", package_lock({"node_modules/@acme/internal": scoped}))
+def scoped_lock(tmp_path):
+    entry = {"version": "1.0.0",
+             "resolved": f"{NPMJS}/@acme/tool/-/tool-1.0.0.tgz"}
+    project(tmp_path, "package-lock.json", package_lock({"node_modules/@acme/tool": entry}))
+
+
+def test_a_scoped_entry_from_the_public_registry_is_public(tmp_path):
+    scoped_lock(tmp_path)
+    osv = Osv()
+    result = run(tmp_path, transport=osv)
+    assert osv.names() == ["@acme/tool"] and result.withheld == 0
+
+
+def test_a_scoped_url_may_spell_its_slash(tmp_path):
+    entry = {"version": "1.0.0", "resolved": f"{NPMJS}/@acme%2ftool/-/tool-1.0.0.tgz"}
+    project(tmp_path, "package-lock.json", package_lock({"node_modules/@acme/tool": entry}))
+    osv = Osv()
+    run(tmp_path, transport=osv)
+    assert osv.names() == ["@acme/tool"]
+
+
+@pytest.mark.parametrize("where", ["project", "user"])
+@pytest.mark.parametrize("line", [
+    "@acme:registry=https://npm.corp.example/",
+    "@acme:_authToken=synthetic",
+    "//registry.npmjs.org/:_authToken=synthetic",
+])
+def test_a_scope_mapped_elsewhere_or_holding_a_token_is_not_sent(tmp_path, where, line):
+    scoped_lock(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    (tmp_path if where == "project" else home).joinpath(".npmrc").write_text(
+        line + "\n", encoding="utf-8")
     osv = Osv()
     result = run(tmp_path, transport=osv)
     assert osv.bodies == [] and result.withheld == 1
+
+
+def test_another_scopes_mapping_leaves_this_scope_public(tmp_path):
+    scoped_lock(tmp_path)
+    project(tmp_path, ".npmrc", "@other:registry=https://npm.corp.example/\n")
+    osv = Osv()
+    run(tmp_path, transport=osv)
+    assert osv.names() == ["@acme/tool"]
+
+
+def test_a_scope_mapped_in_the_environment_is_not_sent(tmp_path):
+    scoped_lock(tmp_path)
+    osv = Osv()
+    environ = {"npm_config_@acme:registry": "https://npm.corp.example/"}
+    assert run(tmp_path, transport=osv, environ=environ).withheld == 1
+    assert osv.bodies == []
+
+
+def test_a_scope_mapped_to_the_public_registry_is_public(tmp_path):
+    scoped_lock(tmp_path)
+    project(tmp_path, ".npmrc", "@acme:registry=https://registry.npmjs.org/\n")
+    osv = Osv()
+    run(tmp_path, transport=osv)
+    assert osv.names() == ["@acme/tool"]
+
+
+def test_with_no_home_nothing_scoped_or_unproven_is_sent(tmp_path):
+    scoped_lock(tmp_path)
+    project(tmp_path, "requirements.txt", "requests==2.32.0\n")
+    osv = Osv()
+    assert run(tmp_path, transport=osv, home=None).withheld == 1
+    assert run(tmp_path, "requirements.txt", osv, home=None).withheld == 1
+    assert osv.bodies == []
 
 
 def test_a_workspace_link_and_the_project_itself_are_not_sent(tmp_path):
@@ -173,41 +239,136 @@ def test_yarn_v1_sends_only_what_its_url_proves(tmp_path):
     project(tmp_path, "yarn.lock", YARN_V1)
     osv = Osv()
     result = run(tmp_path, "yarn.lock", osv)
-    assert osv.names() == ["left-pad"]
-    assert result.withheld == 3
+    assert sorted(osv.names()) == ["@acme/internal", "left-pad"]
+    assert result.withheld == 2
 
 
-def test_yarn_berry_records_no_registry_so_nothing_is_sent(tmp_path):
-    project(tmp_path, "yarn.lock", """__metadata:
+BERRY = """__metadata:
   version: 8
 
 "left-pad@npm:^1.3.0":
   version: 1.3.0
   resolution: "left-pad@npm:1.3.0"
-""")
-    osv = Osv()
-    result = run(tmp_path, "yarn.lock", osv)
-    assert osv.bodies == [] and result.withheld == 1
 
+"@acme/tool@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "@acme/tool@npm:1.0.0"
 
-def test_pnpm_records_no_registry_so_nothing_is_sent(tmp_path):
-    project(tmp_path, "pnpm-lock.yaml", """lockfileVersion: '9.0'
+"my-project@workspace:.":
+  version: 0.0.0-use.local
+  resolution: "my-project@workspace:."
+
+"gitdep@https://github.com/acme/gitdep.git":
+  version: 1.0.0
+  resolution: "gitdep@https://github.com/acme/gitdep.git#commit=abc"
+"""
+
+PNPM = """lockfileVersion: '9.0'
 
 packages:
 
   left-pad@1.3.0:
     resolution: {integrity: sha512-x}
 
-  '@acme/internal@1.0.0':
+  '@acme/tool@1.0.0':
     resolution: {integrity: sha512-y}
+
+  with-peer@2.0.0(react@18.0.0):
+    resolution: {integrity: sha512-z}
+
+  corp@1.0.0:
+    resolution: {integrity: sha512-z, tarball: https://npm.corp.example/corp/-/corp-1.0.0.tgz}
+
+  gitdep@https://codeload.github.com/acme/gitdep/tar.gz/abc:
+    resolution: {tarball: https://codeload.github.com/acme/gitdep/tar.gz/abc}
+
+  localdep@file:../local:
+    resolution: {directory: ../local, type: directory}
 
 snapshots:
 
   left-pad@1.3.0: {}
-""")
+"""
+
+
+def test_yarn_berry_records_no_url_so_it_is_sent_with_no_custom_registry(tmp_path):
+    project(tmp_path, "yarn.lock", BERRY)
+    osv = Osv()
+    result = run(tmp_path, "yarn.lock", osv)
+    assert sorted(osv.names()) == ["@acme/tool", "left-pad"]
+    assert result.withheld == 1  # the git dependency; the project itself is not counted
+
+
+def test_pnpm_records_no_url_so_it_is_sent_with_no_custom_registry(tmp_path):
+    project(tmp_path, "pnpm-lock.yaml", PNPM)
     osv = Osv()
     result = run(tmp_path, "pnpm-lock.yaml", osv)
-    assert osv.bodies == [] and result.withheld == 2
+    assert sorted(osv.names()) == ["@acme/tool", "left-pad", "with-peer"]
+    assert result.withheld == 3  # a private tarball, a git source, a folder
+
+
+NPM_CONFIGS = [
+    (".npmrc", "registry=https://npm.corp.example/\n", {}),
+    (".npmrc", "@acme:registry=https://npm.corp.example/\n", {}),
+    (".yarnrc.yml", 'npmRegistryServer: "https://npm.corp.example"\n', {}),
+    (".yarnrc.yml", "npmScopes:\n  acme:\n    npmRegistryServer: https://npm.corp.example\n", {}),
+    (".yarnrc", 'registry "https://npm.corp.example/"\n', {}),
+    ("pnpm-workspace.yaml", "registry: https://npm.corp.example/\n", {}),
+    ("bunfig.toml", '[install]\nregistry = "https://npm.corp.example/"\n', {}),
+    (None, None, {"NPM_CONFIG_REGISTRY": "https://npm.corp.example/"}),
+    (None, None, {"npm_config_registry": "https://npm.corp.example/"}),
+    (None, None, {"YARN_NPM_REGISTRY_SERVER": "https://npm.corp.example/"}),
+]
+
+
+@pytest.mark.parametrize("file, text, environ", NPM_CONFIGS)
+@pytest.mark.parametrize("lockfile, body, entries", [("pnpm-lock.yaml", PNPM, 6),
+                                                     ("yarn.lock", BERRY, 3)])
+def test_any_custom_npm_registry_holds_every_entry_with_no_url(tmp_path, file, text, environ,
+                                                               lockfile, body, entries):
+    project(tmp_path, lockfile, body)
+    if file:
+        project(tmp_path, file, text)
+    osv = Osv()
+    result = run(tmp_path, lockfile, osv, environ=environ)
+    assert osv.bodies == []
+    assert result.withheld == entries
+    assert f"{entries} lockfile entries were not sent to OSV" in result.line()
+
+
+def test_a_custom_registry_in_the_users_npmrc_counts_too(tmp_path):
+    project(tmp_path, "pnpm-lock.yaml", PNPM)
+    (tmp_path / "home").mkdir()
+    (tmp_path / "home" / ".npmrc").write_text("registry=https://npm.corp.example/\n",
+                                              encoding="utf-8")
+    osv = Osv()
+    run(tmp_path, "pnpm-lock.yaml", osv)
+    assert osv.bodies == []
+
+
+def test_a_public_registry_named_in_npmrc_is_no_custom_registry(tmp_path):
+    project(tmp_path, "pnpm-lock.yaml", PNPM)
+    project(tmp_path, ".npmrc", "registry=https://registry.npmjs.org/\n")
+    osv = Osv()
+    run(tmp_path, "pnpm-lock.yaml", osv)
+    assert "left-pad" in osv.names()
+
+
+def test_a_custom_npm_registry_does_not_hold_python_entries(tmp_path):
+    project(tmp_path, "requirements.txt", "requests==2.32.0\n")
+    project(tmp_path, ".npmrc", "registry=https://npm.corp.example/\n")
+    osv = Osv()
+    run(tmp_path, "requirements.txt", osv)
+    assert osv.names() == ["requests"]
+
+
+def test_a_url_still_proves_an_entry_under_a_custom_registry(tmp_path):
+    project(tmp_path, ".npmrc", "registry=https://npm.corp.example/\n")
+    project(tmp_path, "package-lock.json", package_lock({
+        "node_modules/pub": npm_entry("pub", "1.0.0")}))
+    osv = Osv()
+    run(tmp_path, transport=osv)
+    assert osv.names() == ["pub"]
 
 
 UV_LOCK = """version = 1
@@ -277,21 +438,83 @@ reference = "pypi"
 """
 
 
-def test_poetry_sends_only_what_names_pypi_itself(tmp_path):
+def test_poetry_sends_what_has_no_source_and_what_names_pypi(tmp_path):
     project(tmp_path, "poetry.lock", POETRY_LOCK)
+    osv = Osv()
+    result = run(tmp_path, "poetry.lock", osv)
+    assert sorted(osv.names()) == ["explicit", "requests"]
+    assert result.withheld == 1
+
+
+def test_poetry_sources_in_pyproject_hold_entries_with_no_source(tmp_path):
+    project(tmp_path, "poetry.lock", POETRY_LOCK)
+    project(tmp_path, "pyproject.toml",
+            '[[tool.poetry.source]]\nname = "corp"\nurl = "https://pypi.corp.example/simple"\n')
     osv = Osv()
     result = run(tmp_path, "poetry.lock", osv)
     assert osv.names() == ["explicit"]
     assert result.withheld == 2
 
 
-def test_a_requirements_file_records_no_registry_so_nothing_is_sent(tmp_path):
+def test_a_requirements_pin_is_sent_and_an_unpinned_line_is_counted(tmp_path):
     project(tmp_path, "requirements.txt",
-            "--index-url https://pypi.corp.example/simple\nrequests==2.32.0\nflask>=2\n# note\n")
+            "requests==2.32.0\nflask[async]==3.0.0 ; python_version > '3.9'\nnumpy>=2\n"
+            "tool==1.*\n# note\n\n")
     osv = Osv()
     result = run(tmp_path, "requirements.txt", osv)
+    assert sorted(osv.names()) == ["flask", "requests"]
+    assert result.not_checked == 2
+    assert "2 lockfile entries were not checked" in result.line()
+
+
+@pytest.mark.parametrize("line", [
+    "--index-url https://pypi.corp.example/simple", "--index-url=https://pypi.corp.example/simple",
+    "-i https://pypi.corp.example/simple", "--extra-index-url https://pypi.corp.example/simple",
+    "--find-links https://pypi.corp.example/links",
+])
+def test_an_index_in_the_requirements_file_holds_its_pins(tmp_path, line):
+    project(tmp_path, "requirements.txt", f"{line}\nrequests==2.32.0\n")
+    osv = Osv()
+    assert run(tmp_path, "requirements.txt", osv).withheld == 1
     assert osv.bodies == []
-    assert (result.withheld, result.not_checked) == (1, 1)
+
+
+@pytest.mark.parametrize("command", [
+    "pip install -r requirements.txt --index-url https://pypi.corp.example/simple",
+    "pip install -i https://pypi.corp.example/simple -r requirements.txt",
+    "pip install -r requirements.txt --extra-index-url https://pypi.corp.example/simple",
+])
+def test_an_index_on_the_command_holds_the_pins(tmp_path, command):
+    project(tmp_path, "requirements.txt", "requests==2.32.0\n")
+    osv = Osv()
+    assert run(tmp_path, "requirements.txt", osv, command=command).withheld == 1
+    assert osv.bodies == []
+
+
+@pytest.mark.parametrize("environ", [{"PIP_INDEX_URL": "https://pypi.corp.example/simple"},
+                                     {"PIP_EXTRA_INDEX_URL": "https://pypi.corp.example/simple"},
+                                     {"UV_INDEX_URL": "https://pypi.corp.example/simple"}])
+def test_an_index_in_the_environment_holds_the_pins(tmp_path, environ):
+    project(tmp_path, "requirements.txt", "requests==2.32.0\n")
+    osv = Osv()
+    assert run(tmp_path, "requirements.txt", osv, environ=environ).withheld == 1
+    assert osv.bodies == []
+
+
+def test_an_index_in_pip_conf_holds_the_pins(tmp_path):
+    project(tmp_path, "requirements.txt", "requests==2.32.0\n")
+    conf = tmp_path / "pip.ini"
+    conf.write_text("[global]\nindex-url = https://pypi.corp.example/simple\n", encoding="utf-8")
+    osv = Osv()
+    result = run(tmp_path, "requirements.txt", osv, environ={"PIP_CONFIG_FILE": str(conf)})
+    assert (result.withheld, osv.bodies) == (1, [])
+
+
+def test_the_public_index_named_is_no_custom_index(tmp_path):
+    project(tmp_path, "requirements.txt", "requests==2.32.0\n")
+    osv = Osv()
+    run(tmp_path, "requirements.txt", osv, environ={"PIP_INDEX_URL": "https://pypi.org/simple"})
+    assert osv.names() == ["requests"]
 
 
 @pytest.mark.parametrize("name, version", [("a b", "1.0.0"), ("a", "1 0"), ("a", "1;rm"),
@@ -529,7 +752,7 @@ def test_the_cli_passes_no_lookup_when_turned_off(monkeypatch):
 
 
 def stand_in(hits=(), *, failed=False, not_checked=0, no_lockfile=False, asked=1):
-    def check(files, cwd):
+    def check(files, cwd, command):
         found = osv_lookup.Lookup(asked=asked, failed=failed, not_checked=not_checked,
                                   no_lockfile=no_lockfile)
         found.known = [(Package("npm", name, version), [mal]) for name, version, mal in hits]
@@ -597,9 +820,9 @@ def test_without_a_lookup_a_lockfile_install_is_as_before():
 def test_a_command_with_no_lockfile_asks_osv_nothing():
     calls: list = []
 
-    def check(files, cwd):
+    def check(files, cwd, command):
         calls.append(files)
-        return stand_in()(files, cwd)
+        return stand_in()(files, cwd, command)
 
     hook_response(event("ls"), no_scan, osv=check)
     assert calls == []
@@ -608,9 +831,9 @@ def test_a_command_with_no_lockfile_asks_osv_nothing():
 def test_the_lookup_gets_the_lockfile_the_command_reads():
     calls: list = []
 
-    def check(files, cwd):
+    def check(files, cwd, command):
         calls.append((files, cwd))
-        return stand_in()(files, cwd)
+        return stand_in()(files, cwd, command)
 
     hook_response(event("pip install -r requirements.txt"), no_scan, osv=check)
     hook_response(event("npm install"), no_scan, osv=check)

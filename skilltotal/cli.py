@@ -2137,7 +2137,8 @@ def _hook_osv():
     if not osv_lookup.enabled(os.environ):
         return None
     cache = _hook_cache_path().parent / "osv-cache.json"
-    return lambda files, cwd: osv_lookup.lookup(files, cwd, osv_lookup.post, cache)
+    return lambda files, cwd, command: osv_lookup.lookup(
+        files, cwd, osv_lookup.post, cache, environ=os.environ, home=_home(), command=command)
 
 
 def _home() -> Path | None:

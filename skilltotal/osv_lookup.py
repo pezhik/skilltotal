@@ -5,16 +5,17 @@ down to the transitive ones, at an exact version. OSV (api.osv.dev, operated by 
 known malicious releases under ``MAL-`` ids, so the hook can ask in one batch. This is a lookup of a
 public list, not a scan of the code: it knows nothing about a package nobody has reported.
 
-It is the only part of SkillTotal that sends anything about a project to a third party, so what it
-may send is decided here, by proof and not by inference:
+It is the only part of SkillTotal that sends anything about a project to a third party. A package
+is sent only when the install itself would fetch it from the public registry:
 
-* an entry goes out only when the lockfile itself records that it resolved from the public
-  registry (``registry.npmjs.org`` or ``registry.yarnpkg.com`` for npm, ``pypi.org`` for Python).
-  The name and version are read from that same record;
-* a scoped npm entry, a git, file, link or path dependency, an entry from any other host and an
-  entry that records no registry (pnpm, yarn berry, a requirements file, poetry's default source)
-  are never sent, whatever the machine's configuration says. They are counted, and the line says
-  how many;
+* an entry whose lockfile records a public URL (``registry.npmjs.org`` or ``registry.yarnpkg.com``
+  for npm, ``pypi.org`` or ``files.pythonhosted.org`` for Python) is sent, scoped names included,
+  unless an ``.npmrc`` maps that scope elsewhere or holds a token that could reach a private scope;
+* an entry that records no URL (pnpm, yarn berry, a pinned requirements line, poetry's default
+  source) is sent only when no custom registry is configured anywhere the installer would read
+  (:func:`_settings`). With one present it may be private, so it is not sent;
+* a git, file, link or path dependency and an entry from any other host are never sent. What is
+  not sent is counted, and the line says how many;
 * what goes out is ``{"package": {"name", "ecosystem"}, "version"}`` per entry and nothing else: no
   path, project name, identifier or hash, and a fixed ``User-Agent`` with no version.
 
@@ -40,7 +41,17 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from skilltotal import bounded_json
-from skilltotal.agent_hook import _read_config
+from skilltotal.agent_hook import (
+    _env_get,
+    _npm_configured,
+    _npm_prefixes,
+    _npm_stacks,
+    _public,
+    _py_configured,
+    _read_config,
+    _tool_config_files,
+    _tool_configured,
+)
 from skilltotal.hook_scan import file_lock, write_atomic
 
 OSV_ENV = "SKILLTOTAL_OSV"
@@ -53,7 +64,9 @@ _MAX_LOCKFILE = 32 * 1024 * 1024
 _MAX_ANSWER = 16 * 1024 * 1024
 _OFF = frozenset({"0", "false", "no", "off"})
 _NPM_HOSTS = frozenset({"registry.npmjs.org", "registry.yarnpkg.com"})
-_PLAIN_NPM = re.compile(r"[a-z0-9][a-z0-9._-]{0,213}", re.IGNORECASE)
+_PYPI_HOSTS = frozenset({"pypi.org", "files.pythonhosted.org"})
+_PLAIN_NPM = re.compile(r"(?:@[a-z0-9][a-z0-9._-]{0,100}/)?[a-z0-9][a-z0-9._-]{0,213}",
+                        re.IGNORECASE)
 _PLAIN_PYPI = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 _PLAIN_VERSION = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+!_-]{0,63}")
 _MAL_ID = re.compile(r"MAL-[0-9A-Za-z-]{1,40}")
@@ -84,21 +97,34 @@ class Package:
 
 @dataclass
 class Entries:
-    """A lockfile, sorted by what may leave the machine."""
+    """A lockfile, sorted by what proves where each entry comes from."""
 
-    public: set[Package] = field(default_factory=set)
-    withheld: int = 0    # its registry is not proven public: never sent
+    public: set[Package] = field(default_factory=set)    # the lockfile records a public URL
+    unproven: set[Package] = field(default_factory=set)  # it records no URL at all
+    withheld: int = 0    # it records something else: a private host, git, a path. Never sent
     unparsed: int = 0    # read as an entry, but no name and version came of it
+    indexes: bool = False  # the file itself names an index (a requirements file's --index-url)
 
     def add(self, other: Entries) -> None:
         self.public |= other.public
+        self.unproven |= other.unproven
         self.withheld += other.withheld
         self.unparsed += other.unparsed
+        self.indexes = self.indexes or other.indexes
+
+
+def _no_url(found: Entries, ecosystem: str, name: str, version: str) -> None:
+    """An entry whose lockfile records no registry."""
+    plain = _PLAIN_NPM if ecosystem == NPM else _PLAIN_PYPI
+    if not plain.fullmatch(name) or not _PLAIN_VERSION.fullmatch(version):
+        found.unparsed += 1
+    elif not (ecosystem == NPM and version == _NPM_HELD):
+        found.unproven.add(Package(ecosystem, name, version))
 
 
 def _npm_entry(found: Entries, name: object, version: object, resolved: object) -> None:
     """One npm entry. The public registry's URL proves it, and also names it:
-    ``https://registry.npmjs.org/<name>/-/<name>-<version>.tgz``. An alias, or a name that does not
+    ``https://registry.npmjs.org/<name>/-/<base>-<version>.tgz``. An alias, or a name that does not
     match its URL, is not what it says it is."""
     if not isinstance(resolved, str) or not resolved:
         found.withheld += 1
@@ -115,10 +141,7 @@ def _npm_entry(found: Entries, name: object, version: object, resolved: object) 
     if not isinstance(name, str) or not isinstance(version, str) or not name or not version:
         found.unparsed += 1
         return
-    if name.startswith("@") or "/" in name or "%2f" in resolved.lower():
-        found.withheld += 1
-        return
-    if unquote(url.path) != f"/{name}/-/{name}-{version}.tgz":
+    if unquote(url.path) != f"/{name}/-/{name.rsplit('/', 1)[-1]}-{version}.tgz":
         found.withheld += 1
         return
     if not _PLAIN_NPM.fullmatch(name) or not _PLAIN_VERSION.fullmatch(version):
@@ -165,13 +188,21 @@ def _npm_lock(text: str) -> Entries | None:
 
 _YARN_BLOCK = re.compile(r'^("?)(.+?)\1(?:, .*)?:\r?$')
 _YARN_FIELD = re.compile(r'^  (version|resolved) "([^"]*)"')
+_BERRY_RESOLUTION = re.compile(r'^\s+resolution: "([^"\n]*)"', re.MULTILINE)
+_BERRY_NPM = re.compile(r"(@?[^@]+)@npm:([^:@]+)")
 
 
 def _yarn_lock(text: str) -> Entries | None:
     found = Entries()
     if re.search(r"^__metadata:", text, re.MULTILINE):
-        # Yarn berry records `resolution: "x@npm:1.2.3"`, with no URL: the registry is not proven.
-        found.withheld = len(re.findall(r"^\s+resolution: ", text, re.MULTILINE))
+        # Yarn berry records `resolution: "x@npm:1.2.3"`, with no URL. Anything else there is a
+        # workspace, a patch, a git or file source; `::` marks an archive URL of its own.
+        for resolution in _BERRY_RESOLUTION.finditer(text):
+            parts = _BERRY_NPM.fullmatch(resolution.group(1))
+            if parts:
+                _no_url(found, NPM, parts.group(1), parts.group(2))
+            elif "@workspace:" not in resolution.group(1):
+                found.withheld += 1
         return found
     name: str | None = None
     fields: dict[str, str] = {}
@@ -195,13 +226,34 @@ def _yarn_lock(text: str) -> Entries | None:
     return found
 
 
+# Any key of the section, whatever its version holds: a key this misses would hand its body to the
+# entry before it. A version that is a URL or a path fails the plain test further on.
+_PNPM_KEY = re.compile(r"""^  ['"]?/?(@?[^@\s'"(/]+(?:/[^@\s'"(/]+)?)[@/]([^\s'"(]+)[^\s'"]*['"]?:"""
+                       r"""\s*(?:\{.*\})?\s*$""")
+_PNPM_TARBALL = re.compile(r"tarball:\s*([^\s,}]+)")
+
+
 def _pnpm_lock(text: str) -> Entries | None:
-    """pnpm records an integrity hash and no registry, so nothing here is proven public."""
+    """pnpm records an integrity hash and no URL for a package from the default registry, and a
+    ``tarball`` or a ``type`` (git, directory) in its ``resolution`` for anything else."""
     section = re.search(r"^packages:[ \t]*\r?\n(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    found = Entries()
     if section is None:
-        return Entries()
-    return Entries(withheld=len(re.findall(r"^  \S.*:\s*(?:\{.*\})?\s*$", section.group(1),
-                                           re.MULTILINE)))
+        return found
+    lines = section.group(1).splitlines()
+    keys = [(i, match) for i, line in enumerate(lines) if (match := _PNPM_KEY.match(line))]
+    for position, (i, match) in enumerate(keys):
+        end = keys[position + 1][0] if position + 1 < len(keys) else len(lines)
+        body = "\n".join(lines[i + 1:end])
+        name, version = match.group(1), match.group(2)
+        tarball = _PNPM_TARBALL.search(body)
+        if tarball:
+            _npm_entry(found, name, version, tarball.group(1))
+        elif "type:" in body:
+            found.withheld += 1
+        else:
+            _no_url(found, NPM, name, version)
+    return found
 
 
 _TOML_NAME = re.compile(r'^name = "([^"\n]*)"', re.MULTILINE)
@@ -213,8 +265,9 @@ _POETRY_SOURCE_URL = re.compile(r'^\[package\.source\]\s(?:.*\n)*?url = "([^"\n]
 def _pypi_index(url: str) -> bool:
     try:
         parts = urlsplit(url)
-        return (parts.scheme == "https" and parts.hostname == "pypi.org" and not parts.username
-                and not parts.port and parts.path.rstrip("/") == "/simple")
+        return (parts.scheme == "https" and parts.hostname in _PYPI_HOSTS and not parts.username
+                and not parts.port and (parts.hostname != "pypi.org"
+                                        or parts.path.rstrip("/") == "/simple"))
     except ValueError:
         return False
 
@@ -230,6 +283,14 @@ def _pypi_entry(found: Entries, block: str, proven: bool) -> None:
         found.public.add(Package(PYPI, name.group(1), version.group(1)))
 
 
+def _pypi_no_url(found: Entries, block: str) -> None:
+    name, version = _TOML_NAME.search(block), _TOML_VERSION.search(block)
+    if name is None or version is None:
+        found.unparsed += 1
+    else:
+        _no_url(found, PYPI, name.group(1), version.group(1))
+
+
 def _uv_lock(text: str) -> Entries | None:
     found = Entries()
     for block in text.split("[[package]]")[1:]:
@@ -242,32 +303,41 @@ def _uv_lock(text: str) -> Entries | None:
 
 
 def _poetry_lock(text: str) -> Entries | None:
-    """Poetry writes ``[package.source]`` only for a source other than its default, so most entries
-    record no registry, and a default index can be replaced in configuration: not proven."""
+    """Poetry writes ``[package.source]`` only for a source other than its default, so an entry
+    without one records no URL."""
     found = Entries()
     for block in text.split("[[package]]")[1:]:
+        if "[package.source]" not in block:
+            _pypi_no_url(found, block)
+            continue
         url = _POETRY_SOURCE_URL.search(block)
         _pypi_entry(found, block, url is not None and _pypi_index(url.group(1)))
     return found
 
 
-_REQUIREMENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^\]]*\])?\s*==\s*[^\s;#\\]+")
+_REQUIREMENT = re.compile(r"([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?\s*==\s*([^\s;#\\,]+)\s*"
+                          r"(?:[;#\\].*)?$")
+_INDEX_LINE = re.compile(r"(?:--index-url|--extra-index-url|--find-links|-i|-f)(?:[\s=]|$)")
 
 
 def _requirements(text: str) -> Entries | None:
-    """A requirements file records no registry, so a pin here is not proven public. A line that
-    pins nothing is resolved by pip when it runs: nothing could be looked up."""
+    """A requirements file records no URL for a pin. A line that pins nothing is resolved by pip
+    when it runs, so it cannot be looked up. An index it names counts as configured."""
     found = Entries()
     for raw in text.splitlines():
         line = raw.strip()
-        if line.startswith(("-r", "--requirement", "-c", "--constraint")):
+        if _INDEX_LINE.match(line):
+            found.indexes = True
+        elif line.startswith(("-r", "--requirement", "-c", "--constraint")):
             found.unparsed += 1  # another file, which is not followed
         elif not line or line.startswith(("#", "-")):
             continue
-        elif _REQUIREMENT.match(line):
-            found.withheld += 1
         else:
-            found.unparsed += 1
+            pin = _REQUIREMENT.match(line)
+            if pin:
+                _no_url(found, PYPI, pin.group(1), pin.group(2))
+            else:
+                found.unparsed += 1
     return found
 
 
@@ -281,6 +351,98 @@ def _reader(name: str) -> Callable[[str], Entries | None] | None:
     if name in _READERS:
         return _READERS[name]
     return _requirements if name.lower().endswith((".txt", ".in")) else None
+
+
+# --- What the machine says about registries -------------------------------------------------------
+
+_NPMRC_SCOPE = re.compile(r"^\s*(@[^:=\s]+):registry\s*=\s*(\S*)", re.MULTILINE)
+_NPMRC_TOKEN = re.compile(
+    r"^\s*(?://registry\.npmjs\.org/:)?(?:_authToken|_auth|_password)\s*=", re.MULTILINE)
+_NPMRC_SCOPED_TOKEN = re.compile(r"^\s*(@[^:=\s]+):_auth(?:Token)?\s*=", re.MULTILINE)
+_ENV_SCOPE = re.compile(r"npm_config_(@[^:]+):registry", re.IGNORECASE)
+_PYPROJECT_SOURCE = re.compile(r"^\s*\[\[tool\.(?:poetry|pdm)\.source\]\]", re.MULTILINE)
+_COMMAND_INDEX = re.compile(r"(?:^|\s)(?:--ind|--ext|--fin|--reg|-i(?=\s)|-f(?=\s))")
+
+
+@dataclass
+class Registries:
+    """What installers on this machine are configured to read, for what a lockfile cannot prove."""
+
+    npm: bool = False    # a custom registry for npm, pnpm, yarn or bun is configured somewhere
+    pypi: bool = False   # a custom index is
+    scopes: set[str] = field(default_factory=set)  # npm scopes mapped or holding a token
+    all_scopes: bool = False  # a token for the public registry can reach any private scope
+
+    def scoped_private(self, package: Package) -> bool:
+        if package.ecosystem != NPM or not package.name.startswith("@"):
+            return False
+        return self.all_scopes or package.name.split("/", 1)[0].lower() in self.scopes
+
+
+def _npmrc_texts(folder: Path, environ: Mapping[str, str], home: Path | None) -> list[str | None]:
+    """The project's and the person's ``.npmrc``, as text; None for one too large to read."""
+    paths = [prefix / ".npmrc" for prefix in _npm_prefixes(folder)]
+    moved = _env_get(environ, "NPM_CONFIG_USERCONFIG")
+    if moved:
+        paths.append(Path(moved))
+    elif home is not None:
+        paths.append(home / ".npmrc")
+    return [_read_config(path) for path in paths]
+
+
+def _npm_settings(found: Registries, folder: Path, environ: Mapping[str, str],
+                  home: Path | None, tools: list[Path]) -> None:
+    if _npm_configured("", _npm_stacks(folder, environ, home), environ) is not None:
+        found.npm = True
+    if any(_tool_configured(tool, tools, environ) for tool in ("yarn", "bun", "pnpm")):
+        found.npm = True
+    for name in environ:
+        scope = _ENV_SCOPE.fullmatch(name)
+        if scope:
+            found.npm = True
+            found.scopes.add(scope.group(1).lower())
+    for text in _npmrc_texts(folder, environ, home):
+        if text is None:
+            found.npm = found.all_scopes = True
+            continue
+        for scope, value in _NPMRC_SCOPE.findall(text):
+            if not _public(value):
+                found.npm = True
+                found.scopes.add(scope.lower())
+        found.scopes.update(scope.lower() for scope in _NPMRC_SCOPED_TOKEN.findall(text))
+        found.all_scopes = found.all_scopes or bool(_NPMRC_TOKEN.search(text))
+    for base in tools:
+        text = _read_config(base / ".yarnrc.yml")
+        if text is None or (text and re.search(r"^npmScopes:", text, re.MULTILINE)):
+            found.npm = found.all_scopes = True
+
+
+def _pypi_settings(found: Registries, environ: Mapping[str, str], home: Path | None,
+                   tools: list[Path]) -> None:
+    if _py_configured(environ, home, "", tools) is not None or _tool_configured(
+            "uv", tools, environ) is not None:
+        found.pypi = True
+    for base in tools:
+        text = _read_config(base / "pyproject.toml", 256 * 1024)
+        if text is None or (text and _PYPROJECT_SOURCE.search(text)):
+            found.pypi = True
+
+
+def _settings(folder: Path, environ: Mapping[str, str], home: Path | None,
+              command: str) -> Registries:
+    """Every place an installer on this machine may be told to read something other than the
+    public registry: project and user ``.npmrc``, yarn, pnpm and bun configuration, ``pip.conf``,
+    the environment, uv's and poetry's sources in ``pyproject.toml``, and the command itself. A
+    home folder that cannot be found, or a file too large to read, counts as configured."""
+    found = Registries()
+    if home is None:
+        return Registries(npm=True, pypi=True, all_scopes=True)
+    tools = _tool_config_files(folder, environ, home)
+    _npm_settings(found, folder, environ, home, tools)
+    _pypi_settings(found, environ, home, tools)
+    if _COMMAND_INDEX.search(command):
+        found.npm = found.pypi = True
+    return found
 
 
 def read_lockfile(path: Path) -> Entries | None:
@@ -301,7 +463,7 @@ class Lookup:
 
     known: list[tuple[Package, list[str]]] = field(default_factory=list)  # malicious, with ids
     asked: int = 0            # packages OSV answered for (this run or within the cache's life)
-    withheld: int = 0         # never sent: the lockfile does not prove them public
+    withheld: int = 0         # not sent: they may come from somewhere private
     not_checked: int = 0      # could not be parsed, or the batch failed or was too long
     failed: bool = False      # OSV did not answer
     no_lockfile: bool = False # `npm install` with nothing to read
@@ -331,8 +493,8 @@ class Lookup:
         if self.not_checked and not self.failed:
             parts.append(f"{self.not_checked} lockfile entries were not checked in OSV.")
         if self.withheld:
-            parts.append(f"{self.withheld} lockfile entries were not sent to OSV: the lockfile "
-                         f"does not prove they come from the public registry.")
+            parts.append(f"{self.withheld} lockfile entries were not sent to OSV: they may come "
+                         f"from a private registry.")
         if self.unread:
             parts.append(f"Not checked in OSV: {', '.join(self.unread)} could not be read.")
         return " ".join(parts)
@@ -397,9 +559,29 @@ def _ask(packages: list[Package], transport: Transport) -> list[object] | None:
     return results if isinstance(results, list) and len(results) == len(packages) else None
 
 
+def _sendable(entries: Entries, settings: Registries) -> tuple[set[Package], int]:
+    """What may leave the machine, and how many entries may not, by the rule at the top."""
+    send: set[Package] = set()
+    held = 0
+    for package in entries.public:
+        if settings.scoped_private(package):
+            held += 1
+        else:
+            send.add(package)
+    for package in entries.unproven - entries.public:
+        custom = settings.npm if package.ecosystem == NPM else (settings.pypi or entries.indexes)
+        if custom or settings.scoped_private(package):
+            held += 1
+        else:
+            send.add(package)
+    return send, held
+
+
 def lookup(files: list[str], cwd: str | None, transport: Transport, cache: Path,
-           now: float | None = None) -> Lookup:
-    """Look up what the lockfiles ``files`` name (as the command names them, under ``cwd``)."""
+           now: float | None = None, *, environ: Mapping[str, str] | None = None,
+           home: Path | None = None, command: str = "") -> Lookup:
+    """Look up what the lockfiles ``files`` name (as the command names them, under ``cwd``).
+    ``environ``, ``home`` and ``command`` say what the machine is configured to read."""
     now = time.time() if now is None else now
     result = Lookup()
     entries = Entries()
@@ -423,12 +605,13 @@ def lookup(files: list[str], cwd: str | None, transport: Transport, cache: Path,
                 result.unread.append(path.name)
             else:
                 entries.add(read)
-    result.withheld = entries.withheld
+    send, held = _sendable(entries, _settings(folder, environ or {}, home, command))
+    result.withheld = entries.withheld + held
     result.not_checked = entries.unparsed
     known: dict[Package, list[str]] = {}
     fresh = _read_cache(cache)
     unseen: list[Package] = []
-    for package in sorted(entries.public):
+    for package in sorted(send):
         hit = fresh.get(package.key())
         if _fresh(hit, now):
             known[package] = [i for i in hit["ids"] if isinstance(i, str) and _MAL_ID.fullmatch(i)]
