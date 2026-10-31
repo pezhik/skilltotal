@@ -109,9 +109,10 @@ is scanned as its `universal` build when it has one, else its `linux-x64` build;
 the builds that were not read.
 
 Only the parts of the `.vsix` the scanner reads are downloaded, by HTTP range requests, from
-`marketplace.visualstudio.com`, `open-vsx.org` and their download hosts. A native executable stays
-on the server, and `needs_review` gives the number and total size of the binary files that were
-not read: the scan says nothing about what they do. If a server does not serve ranges, or the
+`marketplace.visualstudio.com`, `open-vsx.org` and their download hosts. Of a native executable,
+only the first bytes are fetched, to tell it from text. `needs_review` gives the number and total
+size of the binary files that were not read: the scan says nothing about what they do. For
+`anthropic.claude-code` that means about 4 MB of a 157 MB package. If a server does not serve ranges, or the
 package looks wrong in any way, the whole file is streamed to disk instead, up to
 `SKILLTOTAL_MAX_EXTENSION_MB` (400 MB by default). The same limit bounds what the range requests
 fetch, and `SKILLTOTAL_MAX_EXTRACT_MB` bounds what is unpacked.

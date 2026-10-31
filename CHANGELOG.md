@@ -18,8 +18,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
   `collector.resolve_release` names the version such a source resolves to from marketplace
   metadata alone, without downloading the extension.
 - A `vscode:` or `openvsx:` extension is fetched by HTTP range requests: the central directory,
-  then only the files the scanner reads. Native binaries stay on the server, and `needs_review`
-  gives their number and total size ("Binary files not read"). If ranges do not work or the
+  then only the files the scanner reads. Of a native binary only the first bytes are fetched, to
+  tell it from text, and `needs_review` gives the number and total size of those files ("Binary
+  files not read"). If ranges do not work or the
   package looks wrong, the whole file is streamed to disk. `SKILLTOTAL_MAX_EXTENSION_MB` (400 by
   default) bounds both, and `SKILLTOTAL_MAX_EXTRACT_MB` still bounds what is unpacked, without
   counting binaries.
