@@ -4,7 +4,7 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.89.0]
 
 ### Added
 - Hooks for other agents: `skilltotal hook <agent>` reads an agent's hook event and answers in its
