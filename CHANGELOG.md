@@ -10,10 +10,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - Hooks for other agents: `skilltotal hook <agent>` reads an agent's hook event and answers in its
   format, with the same parser, verdicts and CI strict mode as Claude Code. Each has a tier, shown
   by `hook status` and `hook install`: the Gemini CLI hook is tested in 0.45.2 with a stand-in
-  model and not yet run with a live model; Cursor, Windsurf, Devin, Codex and VS Code Copilot are preview,
-  built to the agent's documented hook format and not yet run in the agent. A hook never approves:
-  it answers in the form each agent documents as no decision. An agent with no way to ask gets a
-  denial that says how to go ahead. A command that cannot install anything is answered without
+  model and not yet run with a live model; Cursor, Windsurf, Devin, Codex and VS Code Copilot are
+  preview, built to the agent's documented hook format and not yet run in the agent. A hook never
+  approves: it answers in the form each agent documents as no decision. An agent with no way to
+  ask gets a denial that says how to go ahead. A command that cannot install anything is answered without
   loading the CLI. Cursor and Windsurf also check an MCP server on its first call, by the command
   that starts it. `skilltotal hook install` merges the hook into each agent's config
   (`--agent`, `--scope`, `--dry-run`) and keeps a backup, `hook uninstall` takes it out, and
@@ -35,10 +35,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
   by default; `SKILLTOTAL_OSV=0` turns it off. A package is sent only when the install would fetch
   it from the public registry: its lockfile records a public URL, or the lockfile records none and
   no custom registry is configured. A scope an `.npmrc` maps elsewhere or holds a token for, a git,
-  file or link dependency and an entry from another host are never sent. A clean result reads "No known-malicious version in OSV". An unreachable OSV
-  reads "not checked" with the number, and the install goes on, in CI too unless
-  `SKILLTOTAL_STRICT_OSV=1` denies it. One batch per command, 5 seconds at most, no retry, an hour's cache.
-  It lives in the hook only: `engine.analyze`, `scan`, `guard` and `watch` make no such request.
+  file or link dependency and an entry from another host are never sent. A clean result reads "No
+  known-malicious version in OSV". An unreachable OSV reads "not checked" with the number, and the
+  install goes on, in CI too unless `SKILLTOTAL_STRICT_OSV=1` denies it. One batch per command, 5
+  seconds at most, no retry, an hour's cache. It lives in the hook only: `engine.analyze`, `scan`, `guard` and `watch` make no such request.
 - Editor extensions can be scanned by marketplace id or link before they are installed:
   `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`
   link for the Visual Studio Marketplace, and `openvsx:<namespace>.<name>[@<version>]` or an
@@ -52,10 +52,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - A `vscode:` or `openvsx:` extension is fetched by HTTP range requests: the central directory,
   then only the files the scanner reads. Of a native binary only the first bytes are fetched, to
   tell it from text, and `needs_review` gives the number and total size of those files ("Binary
-  files not read"). If ranges do not work or the
-  package looks wrong, the whole file is streamed to disk. `SKILLTOTAL_MAX_EXTENSION_MB` (400 by
-  default) bounds both, and `SKILLTOTAL_MAX_EXTRACT_MB` still bounds what is unpacked, without
-  counting binaries.
+  files not read"). If ranges do not work or the package looks wrong, the whole file is streamed
+  to disk. `SKILLTOTAL_MAX_EXTENSION_MB` (400 by default) bounds both, and
+  `SKILLTOTAL_MAX_EXTRACT_MB` still bounds what is unpacked, without counting binaries.
 - `guard vscode:...` and `guard openvsx:...` use the policy of `guard --installed` for editor
   extensions: malicious indicators and the reasons that always block, no typosquat check, unless
   `--block-on` is given.

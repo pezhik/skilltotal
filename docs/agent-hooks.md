@@ -13,9 +13,9 @@ agents. Not all of them have been proven in the agent itself, so each carries a 
 | Codex | preview: built to the agent's documented hook format, not yet run in the agent |
 | VS Code Copilot | preview: built to the agent's documented hook format, not yet run in the agent |
 
-Gemini CLI's run used a local stand-in for the model, since no account was signed in: the CLI, its
-tool scheduler and its hook runner were real, and so were the deny, the denial of a question and the
-install that went through. `hook status` and `hook install` show the same tier.
+Gemini CLI's run used a local stand-in for the model, since no account was signed in. The CLI, its
+tool scheduler and its hook runner were real, and so were the denied command, the denied question
+and the install that went through. `hook status` and `hook install` show the same tier.
 
 This page says what each hook can and cannot see, how to install it, and how to roll it out to a
 team. For what the check decides, its settings, its cache and CI strict mode, see
@@ -186,10 +186,10 @@ is your call. The settings file is backed up first, and one that is not plain JS
 background, with one worker process, so the session does not wait. What the sweep finds reaches the
 agent at the next session start, not in the running one. In CI no sweep starts.
 
-**What the agent is told.** A flagged component is the last place to take words from, so the agent
-gets our fixed sentences and the component's kind and name, and a name that holds anything but
-plain characters is withheld. It never gets a finding, a reason or a description. The findings are
-in `skilltotal watch`.
+**What the agent is told.** A flagged component's own text could steer the agent, so the agent gets
+only fixed sentences and the component's kind and name, and a name that holds anything but plain
+characters is withheld. It never gets a finding, a reason or a description. To read the findings,
+run `skilltotal watch`.
 
 **What it does not see.**
 
@@ -218,8 +218,9 @@ do:
    marketplace, to scan them on your machine. Those hosts see an ordinary download.
 2. **For an install that names no package, it looks the lockfile up in OSV.** It sends the names and
    exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by
-   Google), and nothing else: no path, project name, file content, hash, account or identifier. To
-   turn it off, set `SKILLTOTAL_OSV=0`.
+   Google), and nothing else: no path, project name, file content, hash, account or identifier. OSV
+   sees the address the request comes from, as any web server does. To turn it off, set
+   `SKILLTOTAL_OSV=0`.
 
 ### The lockfile lookup
 

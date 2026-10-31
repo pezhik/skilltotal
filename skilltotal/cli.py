@@ -374,12 +374,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _installed_arguments(watch, "")
     watch.add_argument("--accept", metavar="FILE",
-                       help="Accepted findings (one component at one exact version).")
+                       help="Accept the reviewed findings FILE lists, each for one component "
+                            "at one exact version.")
     watch.add_argument("--block-on", choices=BLOCK_LEVELS, default=None,
                        help="What flags a component, as in `guard`.")
     watch.add_argument(
         "--disable", action="store_true",
-        help="Turn a Claude Code plugin with malicious indicators off in enabledPlugins. "
+        help="Turn off a Claude Code plugin with malicious indicators (in enabledPlugins). "
              "Nothing else is ever changed.",
     )
     watch.add_argument("--quiet", action="store_true", help="Print only what is flagged.")
@@ -401,7 +402,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     hook = sub.add_parser(
         "hook",
-        help="Agent hook entry points (used by the SkillTotal Claude Code plugin).",
+        help="The install check for coding agents, and install, uninstall and status.",
     )
     agents = hook.add_subparsers(dest="agent", required=True, metavar="agent")
     claude_code = agents.add_parser(
@@ -437,7 +438,7 @@ def build_parser() -> argparse.ArgumentParser:
                            choices=("all", *HOOK_INSTALLABLE),
                            help="One agent, or every agent found on this machine (default).")
         setup.add_argument("--scope", default="user", choices=("user", "project"),
-                           help="The person's config, or the current project's.")
+                           help="Your own config, or the current project's.")
         setup.add_argument("--dry-run", action="store_true",
                            help="Show the change as a diff and write nothing.")
     status = agents.add_parser(
@@ -1682,7 +1683,7 @@ command). Reads one hook event (JSON) on stdin, finds the packages the command w
 checks each one, and prints Claude Code's hook answer (JSON) on stdout, or nothing for a command
 that installs nothing:
 
-  deny     a package with malicious indicators
+  deny     a package with malicious indicators, or a lockfile version OSV lists as malicious
   ask      high or critical risk, or anything SkillTotal could not check (a custom registry or
            index, a name the shell fills in, a check that failed or ran out of time)
   no decision, with a console line

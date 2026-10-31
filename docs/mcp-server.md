@@ -54,9 +54,9 @@ entry in the client's config.
 
 ## Checking installs in agents other than Claude Code
 
-The Claude Code plugin checks installs before they run. In Cursor, Windsurf, Gemini CLI, Codex or
-any other agent, register this server and tell the agent to use it, for example in the project's
-`AGENTS.md` or rules file:
+The Claude Code plugin checks installs before they run. Other agents have [hooks](agent-hooks.md),
+each with a tier that says how far it has been tested. In any agent you can also register this
+server and tell the agent to use it, for example in the project's `AGENTS.md` or rules file:
 
 ```text
 Before you install a package or add an MCP server, call the skilltotal scan_component tool on it

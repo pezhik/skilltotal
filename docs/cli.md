@@ -114,8 +114,8 @@ Only the parts of the `.vsix` the scanner reads are downloaded, by HTTP range re
 `marketplace.visualstudio.com`, `open-vsx.org` and their download hosts. Of a native executable,
 only the first bytes are fetched, to tell it from text. `needs_review` gives the number and total
 size of the binary files that were not read: the scan says nothing about what they do. For
-`anthropic.claude-code` that means about 4 MB of a 157 MB package. If a server does not serve ranges, or the
-package looks wrong in any way, the whole file is streamed to disk instead, up to
+`anthropic.claude-code` that means about 4 MB of a 157 MB package. If a server does not serve
+ranges, or the package looks wrong in any way, the whole file is streamed to disk instead, up to
 `SKILLTOTAL_MAX_EXTENSION_MB` (400 MB by default). The same limit bounds what the range requests
 fetch, and `SKILLTOTAL_MAX_EXTRACT_MB` bounds what is unpacked.
 
@@ -345,10 +345,9 @@ skilltotal hook status --json
 `--agent` names (`all`, `claude-code`, `cursor`, `windsurf`, `devin`, `codex`, `gemini`, `copilot`),
 in your own config or, with `--scope project`, the project's, and leaves every other entry alone.
 It prints each agent's [tier](agent-hooks.md) first: how far the hook has been tested in that agent,
-or "preview". It is safe to run twice, and it keeps a backup
-beside the file. `--dry-run` shows the change as a diff and writes nothing. `uninstall` removes
-only that entry. `status` lists which agents are protected, a plugin and CLI whose versions differ,
-and a hook whose CLI is gone. For Claude Code, `install` says how to get the plugin and writes
+or "preview". It is safe to run twice, and it keeps a backup beside the file. `--dry-run` shows the
+change as a diff and writes nothing. `uninstall` removes only that entry. `status` lists which
+agents are protected, a plugin and CLI whose versions differ, and a hook whose CLI is gone. For Claude Code, `install` says how to get the plugin and writes
 nothing. It exits 1 when a config could not be changed.
 
 The hooks themselves are `skilltotal hook cursor`, `windsurf`, `devin`, `codex`, `gemini` and

@@ -72,7 +72,7 @@ To try it without installing anything, [www.skilltotal.ai](https://www.skilltota
 | You want to | Start here |
 |---|---|
 | Check packages before Claude Code installs them | [Claude Code plugin](https://github.com/pezhik/skilltotal#claude-code-plugin) |
-| Check packages before another agent (Cursor, Windsurf, Gemini CLI, Codex) installs them | [MCP server and `guard`](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md#checking-installs-in-agents-other-than-claude-code) |
+| Check packages before another agent installs them | [Agent hooks](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md), each with a support tier, or the [MCP server and `guard`](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md#checking-installs-in-agents-other-than-claude-code) |
 | Scan a package, repository, folder, archive, `.vsix`, `.mcpb` or wheel yourself | [`skilltotal scan`](https://github.com/pezhik/skilltotal/blob/main/docs/cli.md#scan) |
 | Gate pull requests in CI | [GitHub Action and other CI](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md) |
 | Adopt it on a repository that already has findings | [Rolling out with a baseline](https://github.com/pezhik/skilltotal/blob/main/docs/ci.md#rolling-out-on-an-existing-repository) |
@@ -143,9 +143,9 @@ Shortened. The full report also prints descriptions, recommendations, capabiliti
 
 - The [Claude Code plugin](https://github.com/pezhik/skilltotal#claude-code-plugin) checks each `npx`,
   `npm install`, `pip install` or `claude mcp add` command before the agent runs it.
-- Scans run on your machine without an account, API token, upload or telemetry, and it never runs
-  the code it reads. The agent hooks also look lockfiles up in OSV, which sends public package names
-  and versions, and which `SKILLTOTAL_OSV=0` turns off ([Network access](https://github.com/pezhik/skilltotal#network-access)).
+- Scans run on your machine with no account, API token, upload or telemetry, and SkillTotal never
+  runs the code it reads. The exception is the agent hooks' lockfile lookup: public package names
+  and versions go to OSV, and `SKILLTOTAL_OSV=0` turns that off ([Network access](https://github.com/pezhik/skilltotal#network-access)).
 - Detection is regex and AST matching with no LLM, so the same input on the same Python version
   gives the same findings and score. Every finding cites a file and line, and recall and precision
   are [published](https://github.com/pezhik/skilltotal#measured-not-asserted).
@@ -175,8 +175,8 @@ or network access is reported but scores zero. Details in [docs/architecture.md]
 
 Before an install command runs, the plugin scans each package it names, locally and with the same
 engine as the CLI. It reads npm, pnpm, yarn, bun, npx, pip, uv, uvx, pipx, poetry and similar
-installs, `claude mcp add` (and the Codex and Gemini equivalents) and `npx skills add`, including
-when they are wrapped in `sudo`, `bash -c`, `$(...)` or PowerShell. Install the CLI first
+installs, `claude mcp add` (and the Codex and Gemini equivalents), `claude plugin install`,
+`code --install-extension` and `npx skills add`, including when they are wrapped in `sudo`, `bash -c`, `$(...)` or PowerShell. Install the CLI first
 (`skilltotal --version` must work where you start Claude Code), then run the three commands from
 [Quick start](https://github.com/pezhik/skilltotal#quick-start).
 
@@ -199,8 +199,9 @@ scripts (`curl ... | bash`, reported as not checked), repositories fetched with 
 already running on your account (it can rewrite the verdict cache or the CLI). Updates that install
 themselves, such as an editor extension or an `npx -y` server that runs its latest release, run no
 install command. The plugin's [sentinel](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#the-sentinel)
-scans what changed at session start, and tells the agent at the next one. The plugin has no override for a denied install, and it is a static check, not a
-sandbox: run the agent in a container for code you don't trust. It also adds a `/skilltotal:scan <target>` command and registers the SkillTotal MCP server.
+scans what changed at session start and tells the agent at the next one. The plugin has no
+override for a denied install, and it is a static check, not a sandbox: run the agent in a
+container for code you don't trust. It also adds a `/skilltotal:scan <target>` command and registers the SkillTotal MCP server.
 Recognized commands, settings, cache, timing, [team rollout](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#rolling-out-to-a-team)
 and [troubleshooting](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#troubleshooting) are in [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md).
 
@@ -282,8 +283,7 @@ For Claude Desktop, Cursor, Windsurf or any client that reads `mcpServers`:
 ```
 
 It has three read-only tools: `scan_component` (a local path, git URL, `npm:`, `pypi:`, `vscode:`
-or `openvsx:` source),
-`diff_components` (what changed between two versions) and `list_rules`. VS Code, the `uvx`/`npx`
+or `openvsx:` source), `diff_components` (what changed between two versions) and `list_rules`. VS Code, the `uvx`/`npx`
 forms and the path rules are in [docs/mcp-server.md](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md).
 
 ## Install
@@ -371,9 +371,9 @@ A scan of a local folder, archive or file makes no network request. SkillTotal g
   `marketplace.visualstudio.com` or `open-vsx.org`, and their download hosts
 - **`--provenance`:** the package's registry metadata
 - **`inventory`, `guard --installed`, `watch`, the agent hooks and the MCP server:** the same registries and git hosts, for the packages they check
-- **The agent hook's lockfile lookup:** for an install that names no package (`npm ci`, `uv sync`), the hook sends the names and exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google) and nothing else. A package is sent only when the install would fetch it from the public registry: with a custom registry configured, an entry with no public URL in the lockfile is not sent. Set `SKILLTOTAL_OSV=0` to turn it off. [What is sent, and its limits](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#what-goes-over-the-network)
+- **The agent hook's lockfile lookup:** for an install that names no package (`npm ci`, `uv sync`), the hook sends the names and exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google) and nothing else. A package is sent only when the install would fetch it from the public registry: with a custom registry configured, an entry with no public URL in the lockfile is not sent. A clean result means OSV lists no known-malicious version, not that the package is safe. Set `SKILLTOTAL_OSV=0` to turn it off. [What is sent, and its limits](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#what-goes-over-the-network)
 
-Only the agent hook does that lookup: scanning sends nothing about your code anywhere. It sends no telemetry, needs no account and makes no LLM call.
+Only the agent hook does that lookup. Scanning sends nothing about your code anywhere. SkillTotal sends no telemetry, needs no account and makes no LLM call.
 
 ## Open source vs SkillTotal Cloud
 

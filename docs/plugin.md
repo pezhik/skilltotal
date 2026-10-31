@@ -7,9 +7,8 @@ it out to a team, and what to do when it does not work.
 
 Coding agents install packages in the middle of a task, and the permission prompt, if there is
 one, shows only the command. The plugin checks each package on your machine, with the same engine
-as the CLI, before the install command runs. Hooks for
-[other agents](agent-hooks.md) use the same check, each with a tier that says how far it has been
-proven.
+as the CLI, before the install command runs. Hooks for [other agents](agent-hooks.md) use the same
+check, each with a tier that says how far it has been tested.
 
 ## Commands the hook recognizes
 
@@ -323,10 +322,9 @@ CI.
 - **Installs that name no package.** `npm install`, `npm ci`, `pip install -r requirements.txt` and
   `uv sync` install from a lockfile or a requirements file. Their code is not scanned: the lockfile
   is only [looked up in OSV](#the-lockfile-lookup), for the entries that come from the public
-  registry. The hook
-  says so in the console. In CI it denies them unless `SKILLTOTAL_ALLOW_UNCHECKED` includes
-  `lockfile`.
-- **Scripts and shell-profile definitions.** The hook reads only the command line. It does not
+  registry. The hook says so in the console. In CI it denies them unless
+  `SKILLTOTAL_ALLOW_UNCHECKED` includes `lockfile`.
+- **Scripts and shell-profile definitions.** The hook works from the command line. It does not
   read a script on disk (`bash install.sh`, `cat install.sh | bash`) or the aliases, functions and
   variables your shell profile defines, and such a command is not treated as an install: it runs
   without a console line, in CI too. Shell setup lines such as `eval "$(pyenv init -)"` or

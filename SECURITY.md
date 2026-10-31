@@ -32,15 +32,15 @@ SkillTotal is built to be pointed at code you do not trust. What it does and doe
 - **What it contacts, and when.** A local folder, archive or file is scanned without any network
   request. A git URL is cloned with `git clone --depth 1` (terminal prompts off, Git LFS downloads
   skipped), after GitHub REST API calls that check the size of a github.com repository. An `npm:`
-  or `pypi:` source is fetched over HTTPS from the npm registry or PyPI. `--provenance` fetches
-  registry metadata. `inventory`, `guard --installed`, `watch` and the agent hooks fetch the
+  or `pypi:` source is fetched over HTTPS from the npm registry or PyPI, and a `vscode:` or
+  `openvsx:` source from the Visual Studio Marketplace or Open VSX. `--provenance` fetches registry
+  metadata. `inventory`, `guard --installed`, `watch` and the agent hooks fetch the
   packages they check from the same places. For an install that names no package (`npm ci`,
   `uv sync`), the agent hook also sends the names and exact versions of public-registry packages
-  to OSV (`api.osv.dev`, operated by Google) to look up known malicious releases, and nothing else:
-  a package is sent only when the install would fetch it from the public registry, so with a custom
-  registry configured, an entry with no public URL in the lockfile is not sent.
-  `SKILLTOTAL_OSV=0` turns it off.
-  Scanning sends none of your code anywhere. There is no telemetry.
+  to OSV (`api.osv.dev`, operated by Google) to look up known malicious releases, and nothing else.
+  A package is sent only when the install would fetch it from the public registry, so with a custom
+  registry configured, an entry with no public URL in the lockfile is not sent. `SKILLTOTAL_OSV=0`
+  turns it off. Scanning sends none of your code anywhere. There is no telemetry.
 - **Limits.** Each file over 2 MiB is not read (the verdict says "Partially analyzed"), except a
   VS Code extension's entry points, which are read up to 8 MiB. Archives,
   clones and the total text read are capped by environment variables, and a source over a limit
