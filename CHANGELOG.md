@@ -15,7 +15,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
   the newest stable release is scanned. An extension published as one build per platform is
   scanned as its `universal` build, else its `linux-x64` build, and the report lists the builds
   that were not read. Downloads come only from the two marketplaces and their download hosts,
-  within the archive size limit.
+  within the archive size limit. `collector.resolve_release` names the version such a source
+  resolves to from marketplace metadata alone, without downloading the extension.
 
 ## [0.88.0]
 

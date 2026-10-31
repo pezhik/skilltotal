@@ -436,6 +436,24 @@ def test_network_failures_keep_the_fetch_categories(transport):
     assert collector.failure_category(exc.value) == "offline"
 
 
+def test_resolve_release_names_the_version_a_scan_would_read(transport):
+    t = transport({
+        ("POST", _VSM_QUERY): _Resp(_gallery(("2.1.0", None, True), ("2.0.0", "linux-x64", False))),
+        ("GET", _OVSX_API): _Resp(_ovsx_doc("3.0.0")),
+    })
+    assert collector.resolve_release("vscode:acme.tiny") == collector.Release(
+        "vscode:acme.tiny@2.0.0")
+    assert collector.resolve_release(
+        "https://open-vsx.org/extension/acme/tiny").source == "openvsx:acme.tiny@3.0.0"
+    count = len(t.requests)
+    # A pin needs no request; an invalid id or an unknown extension resolves to nothing.
+    assert collector.resolve_release("openvsx:acme.tiny@1.0.0").source == "openvsx:acme.tiny@1.0.0"
+    assert len(t.requests) == count
+    assert collector.resolve_release("vscode:../evil") is None
+    transport({})
+    assert collector.resolve_release("openvsx:acme.tiny") is None
+
+
 # ------------------------------------------------------------------ end to end
 
 

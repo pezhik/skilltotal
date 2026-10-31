@@ -1436,9 +1436,10 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT,
     """The exact artifact a registry source names right now.
 
     ``npm:x`` / ``npm:x@latest`` -> ``npm:x@1.2.3``; ``pypi:x`` -> ``pypi:x==1.2.3`` plus the file
-    pip would install. An exact npm pin comes back without a request. Anything that is not an npm
-    or PyPI package (a git URL, a local path) returns None, as does a registry that does not
-    answer: the caller then knows only the name, not what it would get.
+    pip would install; ``vscode:p.x`` / ``openvsx:p.x`` -> the same source ``@<version>`` that a
+    scan would read (the newest stable release). An exact npm pin and an extension pin come back
+    without a request. Anything else (a git URL, a local path) returns None, as does a registry
+    that does not answer: the caller then knows only the name, not what it would get.
 
     One small request (npm's per-tag manifest, PyPI's release JSON), so a caller that keeps a
     verdict per package can tell a new release from the one it checked. It goes to the configured
@@ -1478,6 +1479,14 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT,
             names = sorted(str(u.get("filename") or "") for u in urls)
             files = hashlib.sha256("\n".join(names).encode("utf-8")).hexdigest()[:16]
             return Release(f"pypi:{name}=={version}", artifact, files)
+        if kind in ("vscode", "openvsx"):
+            ext_id, pin = extension_spec(source)
+            if not ext_id:
+                return None
+            if pin:
+                return Release(f"{kind}:{ext_id}@{pin}")
+            resolve = _vscode_release if kind == "vscode" else _openvsx_release
+            return Release(f"{kind}:{ext_id}@{resolve(ext_id, None, timeout)[0]}")
     except (OSError, ValueError, CollectionError):
         return None
     return None
@@ -1836,11 +1845,11 @@ def _shown_host(url: str) -> str:
 
 
 def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = None,
-                       archive: bool = False) -> bytes:
+                       archive: bool = False, timeout: float = _HTTP_TIMEOUT) -> bytes:
     """GET ``url`` (or POST ``body`` as JSON) on ``market``'s hosts and return the body, decoded
     when it is served gzip-encoded. Redirects are followed only to the same hosts; the body may be
-    at most the archive limit (``archive``) or _MAX_GALLERY_JSON_BYTES, and the whole fetch must
-    finish within _DOWNLOAD_DEADLINE."""
+    at most the archive limit (``archive``) or _MAX_GALLERY_JSON_BYTES; each network step waits at
+    most ``timeout`` seconds, and the whole fetch must finish within _DOWNLOAD_DEADLINE."""
     deadline = time.monotonic() + _DOWNLOAD_DEADLINE
     for _ in range(_MAX_REDIRECTS + 1):
         if not _on_marketplace(url, market):
@@ -1853,7 +1862,7 @@ def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = N
         request = urllib.request.Request(url, data=body, headers=headers,
                                          method="GET" if body is None else "POST")
         try:
-            resp = _marketplace_send(request, min(_HTTP_TIMEOUT, _DOWNLOAD_DEADLINE))
+            resp = _marketplace_send(request, min(timeout, _DOWNLOAD_DEADLINE))
         except (OSError, ValueError) as exc:  # URLError/HTTPError are OSError subclasses
             raise CollectionError(f"failed to fetch {url}: {exc}") from exc
         with resp:
@@ -1899,10 +1908,10 @@ def _read_bounded(resp, url: str, *, archive: bool, deadline: float) -> bytes:
 
 
 def _marketplace_json(url: str, market: _Marketplace, *, body: bytes | None = None,
-                      not_found: str = "") -> dict:
+                      not_found: str = "", timeout: float = _HTTP_TIMEOUT) -> dict:
     """A marketplace answer as a JSON object; a 404 is reported as ``not_found`` when given."""
     try:
-        data = _marketplace_fetch(url, market, body=body)
+        data = _marketplace_fetch(url, market, body=body, timeout=timeout)
     except CollectionError as exc:
         cause = exc.__cause__
         if not_found and isinstance(cause, urllib.error.HTTPError) and cause.code == 404:
@@ -1918,7 +1927,7 @@ def _marketplace_json(url: str, market: _Marketplace, *, body: bytes | None = No
 
 
 def _gallery_builds(market: _Marketplace, gallery: str, ext_id: str, *,
-                    latest_only: bool) -> list[_Build]:
+                    latest_only: bool, timeout: float = _HTTP_TIMEOUT) -> list[_Build]:
     """Every published build of ``ext_id`` the gallery query lists (or, ``latest_only``, the
     latest stable and pre-release one per platform). Entries that do not read as a version and a
     platform are left out."""
@@ -1926,7 +1935,7 @@ def _gallery_builds(market: _Marketplace, gallery: str, ext_id: str, *,
                           "pageNumber": 1, "pageSize": 1}],
              "flags": _GALLERY_FLAGS | (_GALLERY_LATEST_ONLY if latest_only else 0)}
     doc = _marketplace_json(f"{gallery}/extensionquery", market,
-                            body=json.dumps(query).encode("utf-8"))
+                            body=json.dumps(query).encode("utf-8"), timeout=timeout)
     results = doc.get("results")
     first = results[0] if isinstance(results, list) and results else None
     extensions = first.get("extensions") if isinstance(first, dict) else None
@@ -2009,14 +2018,12 @@ def _vsix_context(source: str, ext_id: str, version: str, url: str, data: bytes,
     return ctx
 
 
-def _collect_vscode(source: str) -> SourceContext:
-    """An extension from the Visual Studio Marketplace: the gallery query names the version and
-    its platform builds, and the public ``vspackage`` endpoint serves the .vsix (gzip-encoded)."""
-    ext_id, pin = extension_spec(source)
-    if not ext_id:
-        raise _invalid_extension("vscode", _VS_MARKETPLACE,
-                                 "marketplace.visualstudio.com/items?itemName=")
-    builds = _gallery_builds(_VS_MARKETPLACE, _VSM_GALLERY, ext_id, latest_only=pin is None)
+def _vscode_release(ext_id: str, pin: str | None,
+                    timeout: float = _HTTP_TIMEOUT) -> tuple[str, list[str], bool]:
+    """``(version, its platform builds, whether only pre-releases exist)`` on the Visual Studio
+    Marketplace, from the gallery query alone."""
+    builds = _gallery_builds(_VS_MARKETPLACE, _VSM_GALLERY, ext_id, latest_only=pin is None,
+                             timeout=timeout)
     prerelease_only = False
     if pin:
         chosen = [b for b in builds if b.version == pin]
@@ -2028,8 +2035,17 @@ def _collect_vscode(source: str) -> SourceContext:
         if not chosen:
             raise CollectionError(
                 f"extension '{ext_id}' has no resolvable release on {_VS_MARKETPLACE.label}")
-    version = chosen[0].version
-    platforms = [b.platform for b in chosen]
+    return chosen[0].version, [b.platform for b in chosen], prerelease_only
+
+
+def _collect_vscode(source: str) -> SourceContext:
+    """An extension from the Visual Studio Marketplace: the gallery query names the version and
+    its platform builds, and the public ``vspackage`` endpoint serves the .vsix (gzip-encoded)."""
+    ext_id, pin = extension_spec(source)
+    if not ext_id:
+        raise _invalid_extension("vscode", _VS_MARKETPLACE,
+                                 "marketplace.visualstudio.com/items?itemName=")
+    version, platforms, prerelease_only = _vscode_release(ext_id, pin)
     platform = _pick_platform(platforms)
     publisher, name = ext_id.split(".", 1)
     url = (f"{_VSM_GALLERY}/publishers/{quote(publisher)}/vsextensions/{quote(name)}/"
@@ -2041,28 +2057,36 @@ def _collect_vscode(source: str) -> SourceContext:
     return _vsix_context(source, ext_id, version, url, data, _VS_MARKETPLACE, note)
 
 
+def _openvsx_release(ext_id: str, pin: str | None,
+                     timeout: float = _HTTP_TIMEOUT) -> tuple[str, dict, bool]:
+    """``(version, its Open VSX document, whether only pre-releases exist)``, metadata only."""
+    namespace, name = ext_id.split(".", 1)
+    base = f"{_OPENVSX_API}/{quote(namespace)}/{quote(name)}"
+    wanted = f"extension '{ext_id}'" + (f" {pin}" if pin else "")
+    doc = _marketplace_json(f"{base}/{quote(pin, safe='')}" if pin else base, _OPEN_VSX,
+                            not_found=f"{wanted} was not found on Open VSX", timeout=timeout)
+    prerelease_only = False
+    if not pin and doc.get("preRelease") is True:
+        # Open VSX's latest may be a pre-release; an editor installs the newest stable one.
+        latest, prerelease_only = _latest_builds(_gallery_builds(
+            _OPEN_VSX, _OPENVSX_GALLERY, ext_id, latest_only=True, timeout=timeout))
+        if latest and not prerelease_only and latest[0].version != doc.get("version"):
+            doc = _marketplace_json(f"{base}/{quote(latest[0].version, safe='')}", _OPEN_VSX,
+                                    not_found=f"{wanted} was not found on Open VSX",
+                                    timeout=timeout)
+    version = doc.get("version")
+    if not (isinstance(version, str) and _EXTENSION_VERSION_RE.fullmatch(version)):
+        raise CollectionError(f"{wanted} has no resolvable release on Open VSX")
+    return version, doc, prerelease_only
+
+
 def _collect_openvsx(source: str) -> SourceContext:
     """An extension from Open VSX (what Cursor, VSCodium and Windsurf install from): its API names
     the version, a download URL per platform build and each build's size."""
     ext_id, pin = extension_spec(source)
     if not ext_id:
         raise _invalid_extension("openvsx", _OPEN_VSX, "open-vsx.org/extension/<namespace>/<name>")
-    namespace, name = ext_id.split(".", 1)
-    base = f"{_OPENVSX_API}/{quote(namespace)}/{quote(name)}"
-    wanted = f"extension '{ext_id}'" + (f" {pin}" if pin else "")
-    doc = _marketplace_json(f"{base}/{quote(pin, safe='')}" if pin else base, _OPEN_VSX,
-                            not_found=f"{wanted} was not found on Open VSX")
-    prerelease_only = False
-    if not pin and doc.get("preRelease") is True:
-        # Open VSX's latest may be a pre-release; an editor installs the newest stable one.
-        latest, prerelease_only = _latest_builds(
-            _gallery_builds(_OPEN_VSX, _OPENVSX_GALLERY, ext_id, latest_only=True))
-        if latest and not prerelease_only and latest[0].version != doc.get("version"):
-            doc = _marketplace_json(f"{base}/{quote(latest[0].version, safe='')}", _OPEN_VSX,
-                                    not_found=f"{wanted} was not found on Open VSX")
-    version = doc.get("version")
-    if not (isinstance(version, str) and _EXTENSION_VERSION_RE.fullmatch(version)):
-        raise CollectionError(f"{wanted} has no resolvable release on Open VSX")
+    version, doc, prerelease_only = _openvsx_release(ext_id, pin)
     downloads = doc.get("downloads")
     if not isinstance(downloads, dict) or not downloads:
         files = doc.get("files")
