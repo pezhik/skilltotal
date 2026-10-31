@@ -70,7 +70,7 @@ STRICT_MAX_BUDGET_S = 840.0
 # The size settings a check may name when it stops at a limit (collector.LIMIT_VARIABLES).
 LIMIT_SETTINGS = frozenset({
     "SKILLTOTAL_MAX_ARCHIVE_MB", "SKILLTOTAL_MAX_EXTRACT_MB", "SKILLTOTAL_MAX_ARCHIVE_MEMBERS",
-    "SKILLTOTAL_MAX_CLONE_MB", "SKILLTOTAL_MAX_READABLE_MB",
+    "SKILLTOTAL_MAX_CLONE_MB", "SKILLTOTAL_MAX_READABLE_MB", "SKILLTOTAL_MAX_EXTENSION_MB",
 })
 _MAX_DEPTH = 4  # nested `bash -c "$(...)"`; deeper than this is not an honest install command
 # Quotes and substitutions nested deeper than this inside one command line are not read.

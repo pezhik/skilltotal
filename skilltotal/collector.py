@@ -38,7 +38,14 @@ try:  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     tomllib = None  # type: ignore[assignment]
 
-from skilltotal.file_index import is_regular_file, neutralize_hidden, walk_files
+from skilltotal.file_index import (
+    BINARY_SNIFF_BYTES,
+    BYTECODE_SUFFIXES,
+    is_binary_content,
+    is_regular_file,
+    neutralize_hidden,
+    walk_files,
+)
 from skilltotal.models import Component
 
 _GIT_URL_RE = re.compile(r"^(?:https?://|git@|ssh://|git://).+", re.IGNORECASE)
@@ -72,6 +79,7 @@ INT_SETTINGS = {
     "SKILLTOTAL_MAX_ARCHIVE_MB": 150, "SKILLTOTAL_MAX_EXTRACT_MB": 400,
     "SKILLTOTAL_MAX_ARCHIVE_MEMBERS": 30000, "SKILLTOTAL_CLONE_TIMEOUT": 300,
     "SKILLTOTAL_MAX_CLONE_MB": 200, "SKILLTOTAL_MAX_READABLE_MB": None,
+    "SKILLTOTAL_MAX_EXTENSION_MB": 400,
 }
 
 
@@ -83,6 +91,10 @@ def _env_int(name: str, default: int) -> int:
 _MAX_ARCHIVE_BYTES = _env_int("SKILLTOTAL_MAX_ARCHIVE_MB", 150) * 1024 * 1024
 _MAX_EXTRACT_BYTES = _env_int("SKILLTOTAL_MAX_EXTRACT_MB", 400) * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = _env_int("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", 30000)
+# A .vsix downloaded from a marketplace (`vscode:` / `openvsx:`) has a limit of its own. Most of a
+# large extension is native binaries (a 313 MB `claude` executable in a 150 MB package), which are
+# streamed to disk and never unpacked or read; the extract limit still bounds what is unpacked.
+_MAX_EXTENSION_BYTES = _env_int("SKILLTOTAL_MAX_EXTENSION_MB", 400) * 1024 * 1024
 # Local archive sources accepted by `scan <path>` (besides a directory and a single file). Zip is
 # also the container of formats that carry their own extension: Claude Desktop extensions (.mcpb,
 # formerly .dxt), Python wheels and VS Code extensions. Any other local file that starts with the
@@ -140,7 +152,7 @@ class CollectionError(Exception):
 # wrote, and takes only one of these.
 LIMIT_VARIABLES = frozenset({
     "SKILLTOTAL_MAX_ARCHIVE_MB", "SKILLTOTAL_MAX_EXTRACT_MB", "SKILLTOTAL_MAX_ARCHIVE_MEMBERS",
-    "SKILLTOTAL_MAX_CLONE_MB", "SKILLTOTAL_MAX_READABLE_MB",
+    "SKILLTOTAL_MAX_CLONE_MB", "SKILLTOTAL_MAX_READABLE_MB", "SKILLTOTAL_MAX_EXTENSION_MB",
 })
 
 
@@ -200,6 +212,8 @@ class SourceContext:
     distribution_note: str | None = None
     # Set when a registry package was fetched through a configured mirror, not the public registry.
     mirror_note: str | None = None
+    # Set when binary files of a downloaded package were left packed (see _safe_extract_zip).
+    unpacked_note: str | None = None
 
     def __enter__(self) -> SourceContext:
         return self
@@ -1328,16 +1342,23 @@ def _safe_extract_tar(data: bytes, dest: Path) -> int:
     return skipped
 
 
-def _safe_extract_zip(data: bytes, dest: Path) -> int:
-    """Extract a zip archive into ``dest``; return how many entries were left out (symlinks).
+def _safe_extract_zip(data: bytes | Path, dest: Path, *,
+                      binaries: list[tuple[str, int]] | None = None) -> int:
+    """Extract a zip archive (its bytes, or a file) into ``dest``; return how many entries were
+    left out (symlinks).
 
     Every check runs on the central directory before anything is written. Declared sizes bound
     the work, since an entry never inflates past its declared size. A damaged, truncated,
     password-protected or unsupported archive is a CollectionError.
+
+    With ``binaries``, an entry whose content the index would skip as binary is not extracted and
+    does not count toward the extract limit; its name and size are appended there. Only the start
+    of the entry is inflated to tell. Bytecode and archives stay: the engine lists the one and
+    opens the other.
     """
     dest_resolved = dest.resolve()
     try:
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        with zipfile.ZipFile(data if isinstance(data, Path) else io.BytesIO(data)) as zf:
             infos = zf.infolist()
             if len(infos) > _MAX_ARCHIVE_MEMBERS:
                 raise SizeLimitError(
@@ -1356,6 +1377,9 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
                         "archive is password-protected, so its contents cannot be read")
                 if not _within(dest_resolved, info.filename, dest):
                     raise CollectionError("archive contains an unsafe path")
+                if binaries is not None and _binary_entry(zf, info):
+                    binaries.append((info.filename, info.file_size))
+                    continue
                 # The name as stored: on Windows zipfile has already turned `\` into `/`.
                 names.add(info.orig_filename, info.is_dir())
                 total += info.file_size
@@ -1372,16 +1396,40 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
     return skipped
 
 
+# Binary files the engine still looks at: bytecode is reported as not analyzed, and a zip is
+# opened by the encrypted-archive check.
+_KEPT_BINARY_SUFFIXES = (*BYTECODE_SUFFIXES, *_ZIP_SUFFIXES, *_TAR_SUFFIXES)
+
+
+def _binary_entry(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
+    """Whether a zip entry is a file the index would skip as binary, from its first bytes."""
+    if info.is_dir() or info.filename.lower().endswith(_KEPT_BINARY_SUFFIXES):
+        return False
+    with zf.open(info) as entry:
+        return is_binary_content(info.filename, entry.read(BINARY_SNIFF_BYTES))
+
+
+def _binaries_note(binaries: list[tuple[str, int]]) -> str | None:
+    """What the report says about the binary files of a package that were left packed."""
+    if not binaries:
+        return None
+    largest = sorted(binaries, key=lambda b: -b[1])[:3]
+    named = ", ".join(neutralize_hidden(name) for name, _ in largest)
+    total = sum(size for _, size in binaries)
+    files = "binary file was" if len(binaries) == 1 else "binary files were"
+    return (f"{len(binaries)} {files} not unpacked ({_mb(total)} MB, largest: {named}). The "
+            "scanner does not read binary content, so native executables and other binaries in "
+            "the package were not analyzed.")
+
+
 def _collect_archive(
     source: str, ctype: str, version: str, archive_url: str, filename: str,
-    *, name: str | None = None, data: bytes | None = None,
+    *, name: str | None = None,
 ) -> SourceContext:
     """Download and extract a registry artifact. ``name`` is the registry's own name for the
     project, when the artifact may not carry a manifest that says it (a wheel has none at its
-    root, and an sdist folder is named ``project-1.2.3``). ``data`` is the artifact when the
-    caller has already downloaded it."""
-    if data is None:
-        data = _http_get(archive_url)
+    root, and an sdist folder is named ``project-1.2.3``)."""
+    data = _http_get(archive_url)
     tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
     try:
         extract_dir = Path(tmp.name) / "x"
@@ -1845,11 +1893,12 @@ def _shown_host(url: str) -> str:
 
 
 def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = None,
-                       archive: bool = False, timeout: float = _HTTP_TIMEOUT) -> bytes:
-    """GET ``url`` (or POST ``body`` as JSON) on ``market``'s hosts and return the body, decoded
-    when it is served gzip-encoded. Redirects are followed only to the same hosts; the body may be
-    at most the archive limit (``archive``) or _MAX_GALLERY_JSON_BYTES; each network step waits at
-    most ``timeout`` seconds, and the whole fetch must finish within _DOWNLOAD_DEADLINE."""
+                       sink: BinaryIO | None = None, timeout: float = _HTTP_TIMEOUT) -> bytes:
+    """GET ``url`` (or POST ``body`` as JSON) on ``market``'s hosts, decoded when it is served
+    gzip-encoded: returned (at most _MAX_GALLERY_JSON_BYTES), or, with ``sink``, written there as
+    it arrives (at most _MAX_EXTENSION_BYTES; b"" is returned). Redirects are followed only to the
+    same hosts; each network step waits at most ``timeout`` seconds, and the whole fetch must
+    finish within _DOWNLOAD_DEADLINE."""
     deadline = time.monotonic() + _DOWNLOAD_DEADLINE
     for _ in range(_MAX_REDIRECTS + 1):
         if not _on_marketplace(url, market):
@@ -1867,44 +1916,62 @@ def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = N
             raise CollectionError(f"failed to fetch {url}: {exc}") from exc
         with resp:
             if resp.status not in _REDIRECT_CODES:
-                return _read_bounded(resp, url, archive=archive, deadline=deadline)
+                if sink is not None:
+                    _read_bounded(resp, url, sink, archive=True, deadline=deadline)
+                    return b""
+                buffer = io.BytesIO()
+                _read_bounded(resp, url, buffer, archive=False, deadline=deadline)
+                return buffer.getvalue()
             if body is not None:
                 raise CollectionError(f"failed to fetch {url}: the query was redirected")
             url = urljoin(url, resp.headers.get("Location") or "")
     raise CollectionError(f"failed to fetch {url}: too many redirects")
 
 
-def _read_bounded(resp, url: str, *, archive: bool, deadline: float) -> bytes:
-    """The response body, gunzipped when its Content-Encoding says gzip, refused once either the
-    bytes received or the bytes decoded pass the limit (a small gzip body can inflate a lot)."""
-    limit = _MAX_ARCHIVE_BYTES if archive else _MAX_GALLERY_JSON_BYTES
+def _read_bounded(resp, url: str, sink: BinaryIO, *, archive: bool, deadline: float) -> None:
+    """Copy the response body to ``sink`` a chunk at a time, gunzipped when its Content-Encoding
+    says gzip (inflated a chunk at a time too, so a gzip bomb never sits in memory), refused once
+    either the bytes received or the bytes decoded pass the limit."""
+    limit = _MAX_EXTENSION_BYTES if archive else _MAX_GALLERY_JSON_BYTES
     gzipped = "gzip" in (resp.headers.get("Content-Encoding") or "").lower()
     inflate = zlib.decompressobj(16 + zlib.MAX_WBITS) if gzipped else None
-    out = bytearray()
+    written = 0
+
+    def too_large() -> CollectionError:
+        if archive:
+            return SizeLimitError(
+                f"response from {url} exceeds the size limit of {_mb(limit)} MB.",
+                variable="SKILLTOTAL_MAX_EXTENSION_MB")
+        return CollectionError(f"unexpected response from {url}: over {_mb(limit)} MB")
+
+    def write(piece: bytes) -> None:
+        nonlocal written
+        written += len(piece)
+        if written > limit:
+            raise too_large()
+        sink.write(piece)
+
     received = 0
     try:
         while chunk := resp.read(_READ_CHUNK):
             received += len(chunk)
+            if received > limit:
+                raise too_large()
             if inflate is None:
-                out += chunk
-            while inflate is not None and chunk and len(out) <= limit:
-                out += inflate.decompress(chunk, limit + 1 - len(out))
+                write(chunk)
+            while inflate is not None and chunk:
+                write(inflate.decompress(chunk, _READ_CHUNK))
                 chunk = inflate.unconsumed_tail
-            if received > limit or len(out) > limit:
-                if archive:
-                    raise SizeLimitError(
-                        f"response from {url} exceeds the size limit of {_mb(limit)} MB.",
-                        variable="SKILLTOTAL_MAX_ARCHIVE_MB")
-                raise CollectionError(f"unexpected response from {url}: over {_mb(limit)} MB")
             if time.monotonic() > deadline:
                 raise CollectionError(f"failed to fetch {url}: timed out")
+        if inflate is not None:
+            write(inflate.flush())
     except OSError as exc:
         raise CollectionError(f"failed to fetch {url}: {exc}") from exc
     except zlib.error as exc:
         raise CollectionError(f"failed to fetch {url}: the gzip encoding is damaged") from exc
     if inflate is not None and not inflate.eof:
         raise CollectionError(f"failed to fetch {url}: the response ended early")
-    return bytes(out)
 
 
 def _marketplace_json(url: str, market: _Marketplace, *, body: bytes | None = None,

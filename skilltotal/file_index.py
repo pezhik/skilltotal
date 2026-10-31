@@ -1588,6 +1588,16 @@ _WIDE_BOMS = (
 )
 
 
+BINARY_SNIFF_BYTES = _BINARY_SNIFF_BYTES
+
+
+def is_binary_content(name: str, head: bytes) -> bool:
+    """Whether the index skips a file named ``name`` as binary, from its first
+    BINARY_SNIFF_BYTES bytes (or all of it, if shorter): the sniff reads no further, so the start
+    decides for the whole file. Nothing reads such a file's content."""
+    return _sniffed_text(name, head[:_BINARY_SNIFF_BYTES]) is None
+
+
 def _sniffed_text(name: str, raw: bytes) -> str | None:
     """The file's text, or None when the sniff says it is binary."""
     for bom, encoding in _WIDE_BOMS:
