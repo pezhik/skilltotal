@@ -212,7 +212,7 @@ runs:
         PREFIX=""
         shopt -s nocasematch
         case "$INPUT_SOURCE" in
-          npm:*|pypi:*|http://*|https://*|git@*|ssh://*|git://*|git+*) SARIF_UPLOAD=false ;;
+          npm:*|pypi:*|vscode:*|openvsx:*|http://*|https://*|git@*|ssh://*|git://*|git+*) SARIF_UPLOAD=false ;;
           *) SARIF_UPLOAD=true ;;
         esac
         shopt -u nocasematch

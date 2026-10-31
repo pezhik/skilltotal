@@ -58,9 +58,11 @@ def test_the_pull_request_comment_puts_malicious_indicators_first():
 
 
 def test_sarif_from_a_source_outside_the_repository_is_not_uploaded():
-    # Alerts for an npm:/pypi: package or a git URL would point at files the repository lacks.
+    # Alerts for a registry package, a marketplace extension or a git URL would point at files
+    # the repository lacks.
     text = ACTION.read_text(encoding="utf-8")
-    assert "npm:*|pypi:*|http://*|https://*|git@*|ssh://*|git://*|git+*) SARIF_UPLOAD=false" in text
+    assert ("npm:*|pypi:*|vscode:*|openvsx:*|http://*|https://*|git@*|ssh://*|git://*|git+*) "
+            "SARIF_UPLOAD=false") in text
     upload = text.split("- name: Upload SARIF to Code Scanning", 1)[1].split("- name:", 1)[0]
     assert "steps.scan.outputs.sarif-upload == 'true'" in upload
 
