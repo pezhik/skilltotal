@@ -34,7 +34,7 @@ TRIGGERS="np bun yarn pip =uv =uvx poetry pdm pipenv corepack conda mamba rye pi
 deno hatch tox nox python =py =py2 =py3 node perl ruby php osascript
 =sh bash zsh dash ksh fish pwsh powershell cmd =exec eval iex invoke source trap alias
 curl wget =irm =iwr download webclient http base xxd openssl printf decode atob uudecode
-clone claude codex gemini skill smithery mcp"
+clone claude codex gemini skill smithery mcp extension"
 
 # CI strict mode, read the way the CLI reads it: SKILLTOTAL_STRICT=0/false/no/off turns it off and
 # any other non-empty value on (1/true/yes/on, or a typo: a typo must not loosen a gate); otherwise

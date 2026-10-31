@@ -18,6 +18,21 @@ as the CLI, before the install command runs.
   `easy_install`
 - MCP servers: `claude mcp add`, `claude mcp add-json`, `codex mcp add` and `gemini mcp add`
 - Skills and extensions from GitHub: `npx skills add owner/repo` and `gemini extensions install`
+- Claude Code plugins: `claude plugin install name@marketplace` is looked up in the marketplace
+  Claude Code has on disk (`plugins/known_marketplaces.json` and its `marketplace.json`), and what
+  the entry fetches is scanned: a GitHub repository, a folder of one, an npm package or a folder of
+  the marketplace. An entry SkillTotal cannot resolve is asked about, by name, and so is a git
+  repository on another host, a zip archive, a `command` source, an entry that adds hooks or MCP
+  servers of its own, and an entry with dependencies.
+- Marketplaces: `claude plugin marketplace add owner/repo` scans the repository. A link to a bare
+  `marketplace.json` or a repository on another host is asked about.
+- Editor extensions: `code --install-extension publisher.name[@version]` is checked on the Visual
+  Studio Marketplace, and the same command of `cursor`, `windsurf` and `codium` on Open VSX. They
+  block as in `guard`: on malicious indicators, not on high risk alone. A `.vsix` on disk is your
+  own file, and `--pre-release` is asked about, since a scan reads the stable release.
+
+Typing `/plugin install` yourself, the Extensions panel and automatic updates run no command, so no
+hook sees them. The [sentinel](agent-hooks.md#the-sentinel) does.
 
 The hook reads a command the way the shell would, so it finds installs behind `sudo`, `env`,
 `timeout`, `nohup`, `bash -c '...'`, `eval '...'`, `cmd /c`, `xargs` and `find -exec`. It also

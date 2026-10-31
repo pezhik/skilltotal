@@ -51,7 +51,12 @@ from pathlib import Path
 from typing import Any
 
 from skilltotal import bounded_json
-from skilltotal.guard import PLAIN_PATH, evaluate, unanalyzed_install_scripts
+from skilltotal.guard import (
+    EDITOR_EXTENSION_BLOCK_LEVEL,
+    PLAIN_PATH,
+    evaluate,
+    unanalyzed_install_scripts,
+)
 from skilltotal.models import UNANALYZED_TITLES
 
 # How many packages one command gets checked; the person is asked about the rest.
@@ -97,6 +102,9 @@ class Install:
     # Comes from the registry mirror the scan itself is set to read (SKILLTOTAL_NPM_REGISTRY,
     # SKILLTOTAL_PYPI_INDEX): checked there instead of on the public registry.
     mirror: bool = False
+    # `name@marketplace`: a Claude Code plugin, until its marketplace says where it comes from.
+    plugin: str | None = None
+    lockfile: str | None = None  # the file an unchecked lockfile install reads
 
 
 # Text the hook could not take apart as commands, when it names an installer.
@@ -2743,6 +2751,10 @@ def _installs_in(tokens: list[str], shell: str, depth: int, level: _Level,
         return _add_json(rest[2:], shell, depth, level)
     if head == "claude" and rest[:1] == ["plugin"] and rest[1:2] in (["install"], ["i"]):
         return _plugin_install(rest[2:])
+    if head == "claude" and rest[:3] == ["plugin", "marketplace", "add"]:
+        return _marketplace_add(rest[3:])
+    if head in _EDITOR_MARKETS and any(a.split("=", 1)[0] == _INSTALL_EXTENSION for a in rest):
+        return _extension_install(head, rest)
     if head == "gemini" and rest[:1] in (["extensions"], ["extension"]) \
             and rest[1:2] == ["install"]:
         return _gemini_extension(rest[2:])
@@ -4180,18 +4192,75 @@ def _deno_spec(spec: str, bare_is_jsr: bool) -> list[Install]:
 
 
 def _plugin_install(args: list[str]) -> list[Install]:
-    """``claude plugin install name@marketplace``: a plugin the hook has no source for."""
+    """``claude plugin install name@marketplace``: its marketplace says where the plugin comes
+    from, which only the agent's files on disk can tell (see ``plugin_sources``)."""
     found: list[Install] = []
     for name in _positionals(args, {"-s", "--scope"}):
         if _COMPUTED.search(name):
             found.extend(_computed(name))
             continue
-        shown = name if _PLAIN_PLUGIN.fullmatch(name) else "a plugin"
-        found.append(Install(None, f"{shown} (a Claude Code plugin from a marketplace)"))
+        plain = bool(_PLAIN_PLUGIN.fullmatch(name))
+        shown = name if plain else "a plugin"
+        found.append(Install(None, f"{shown} (a Claude Code plugin from a marketplace)",
+                             plugin=name if plain else None))
     return found
 
 
 _PLAIN_PLUGIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}(?:@[A-Za-z0-9][A-Za-z0-9._-]{0,99})?")
+# `owner/repo@ref`, as `claude plugin marketplace add` takes it.
+_MARKET_REPO_REF = re.compile(r"([A-Za-z0-9][\w.-]*/[A-Za-z0-9][\w.-]*)@(.+)")
+
+
+def _marketplace_add(args: list[str]) -> list[Install]:
+    """``claude plugin marketplace add <repository, URL or path>``: the repository is scanned.
+    A link to a bare marketplace.json has no code to read: asked about."""
+    specs = _positionals(args, {"-s", "--scope"})
+    if not specs:
+        return []
+    spec = specs[0]
+    if "--sparse" in args and args.index("--sparse") < args.index(spec):
+        return [_NOT_READ]  # its value list runs on: which word is the source is not known here
+    if _COMPUTED.search(spec):
+        return _computed(spec)
+    pinned = _MARKET_REPO_REF.fullmatch(spec)
+    if pinned:
+        spec = f"{pinned.group(1)}#{pinned.group(2)}"
+    if spec.lower().endswith(".json") and "://" in spec:
+        return [Install(None, "a marketplace.json at a URL (its plugins are fetched later)")]
+    return _repository_source(spec)
+
+
+# Editors' command lines, and the marketplace each installs from. Cursor, Windsurf and VSCodium
+# use Open VSX.
+_EDITOR_MARKETS = {"code": "vscode", "code-insiders": "vscode", "cursor": "openvsx",
+                   "codium": "openvsx", "vscodium": "openvsx", "windsurf": "openvsx"}
+_INSTALL_EXTENSION = "--install-extension"
+_EXTENSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,99}\.[A-Za-z0-9][A-Za-z0-9-]{0,99}"
+                           r"(?:@[0-9][0-9A-Za-z.+-]{0,40})?")
+
+
+def _extension_install(head: str, args: list[str]) -> list[Install]:
+    """``code --install-extension publisher.name[@version]`` (repeatable). A .vsix file on disk is
+    the person's own; an extension with ``--pre-release`` is not the stable release a scan reads."""
+    specs: list[str] = []
+    for i, arg in enumerate(args):
+        if arg == _INSTALL_EXTENSION and i + 1 < len(args):
+            specs.append(args[i + 1])
+        elif arg.startswith(_INSTALL_EXTENSION + "="):
+            specs.append(arg.split("=", 1)[1])
+    found: list[Install] = []
+    for spec in specs:
+        if _COMPUTED.search(spec):
+            found.extend(_computed(spec))
+        elif spec.lower().endswith(".vsix"):
+            found.extend(_local(spec))
+        elif not _EXTENSION_ID.fullmatch(spec):
+            found.append(Install(None, "an editor extension SkillTotal could not read"))
+        elif "--pre-release" in args:
+            found.append(Install(None, f"{spec} (a pre-release of an editor extension)"))
+        else:
+            found.append(Install(f"{_EDITOR_MARKETS[head]}:{spec}"))
+    return found or [_NOT_READ]
 
 
 def _gemini_extension(args: list[str]) -> list[Install]:
@@ -4487,6 +4556,26 @@ class BackgroundFull(TimeoutError):
         self.running = running
 
 
+_MARKET_SOURCES = ("vscode:", "openvsx:")
+
+
+def _resolve_plugins(found: list[Install], environ: Mapping[str, str],
+                     home: Path | None) -> list[Install]:
+    """Claude Code plugins replaced by what their marketplaces say they are."""
+    if not any(item.plugin for item in found):
+        return found
+    from skilltotal.inventory import _claude_dir
+    from skilltotal.plugin_sources import resolve
+
+    out: dict[Install, None] = {}
+    for item in found:
+        if item.plugin and home is not None:
+            out.update(dict.fromkeys(resolve(item.plugin, _claude_dir(home, environ))))
+        else:
+            out[item] = None
+    return list(out)
+
+
 def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
     strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
@@ -4529,6 +4618,7 @@ def hook_response(
     if not installs:
         return None
     if environ is not None:
+        installs = _resolve_plugins(installs, environ, home)
         installs = _registry_from_config(installs, cwd, environ, home, command)
 
     denied: list[str] = []
@@ -4599,7 +4689,9 @@ def hook_response(
             else:
                 failed.append(source)
             continue
-        decision = evaluate(report)
+        # An editor extension blocks as it does in `guard` (see EDITOR_EXTENSION_BLOCK_LEVEL).
+        decision = (evaluate(report, EDITOR_EXTENSION_BLOCK_LEVEL, check_name=False)
+                    if source.startswith(_MARKET_SOURCES) else evaluate(report))
         verdict = report.get("verdict") or {}
         label = _clip(_checked_label(source, report))
         shown = f"{label} (from the registry mirror)" if item.mirror else label
@@ -4607,7 +4699,8 @@ def hook_response(
         if verdict.get("has_malicious_indicators"):
             denied.append(_sentence(f"{shown}: {_malicious_detail(report)}"))
             scanned.append(label)
-        elif not decision.allow or _looks_typosquatted(report):
+        elif not decision.allow or (_looks_typosquatted(report)
+                                    and not source.startswith(_MARKET_SOURCES)):
             asked.append(_sentence(f"{shown}: {_ask_detail(report)}"))
             scanned.append(label)
         else:

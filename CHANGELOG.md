@@ -14,6 +14,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
   by the command that starts it. `skilltotal hook install` merges the hook into each agent's config
   (`--agent`, `--scope`, `--dry-run`) and keeps a backup, `hook uninstall` takes it out, and
   `hook status` lists what is protected. See `docs/agent-hooks.md`.
+- `claude plugin install name@marketplace` is now checked: the hook finds the plugin in the
+  marketplace on disk and scans what its entry fetches. What it cannot resolve is asked about by
+  name, as is an entry that adds hooks or MCP servers of its own. `claude plugin marketplace add`
+  and `code|cursor|codium|windsurf --install-extension` are checked too.
 - Editor extensions can be scanned by marketplace id or link before they are installed:
   `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`
   link for the Visual Studio Marketplace, and `openvsx:<namespace>.<name>[@<version>]` or an
