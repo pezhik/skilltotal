@@ -43,6 +43,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Defense-evasion idioms** (PS bypass/-enc, codesign, run-from-temp) | `ST-SHELL-EVASION` | — |
 | **Install-time dropper** (lifecycle hook + decode-exec / credential payload) | `ST-INSTALL-DROPPER` | `npm-postinstall-exfil` |
 | **Over-broad MCP scope** (wildcard / full-access permission) | `ST-MCP-OVERBROAD-SCOPE` | — |
+| **MCP tool that misstates its annotations** (`readOnlyHint: true` over a handler that writes, deletes, runs a process or sends a mutating request; `destructiveHint: false` over one that deletes) | `ST-MCP-ANNOTATION-MISMATCH` (risky) | `tests/eval_corpus/rules/ST-MCP-ANNOTATION-MISMATCH/` |
 | **E-mail/SMTP credential exfiltration** (read secret → e-mail it out) | `ST-COMBO-EXFIL` via smtplib/nodemailer egress | `py-email-stealer` |
 | **Mail backdoor** (hardcoded BCC/CC copies outgoing mail) | `ST-EMAIL-BCC-EXFIL` | — |
 | **CI-token exfiltration from a composite action** (a `run:` step sends `GITHUB_TOKEN` / a `${{ secrets.* }}` to a non-GitHub host) | `ST-ACTION-SECRET-EXFIL` (malicious) | — |

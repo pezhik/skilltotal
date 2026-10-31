@@ -136,6 +136,9 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-PROMPT-WEAK": ("AST04",),
     # Spans both: code does more than the skill declares (falsified declaration + over-privilege).
     "ST-SKILL-CAP-MISMATCH": ("AST03", "AST04"),
+    # The same for an MCP tool: a read-only or non-destructive hint its handler's code
+    # contradicts (a falsified declaration that clients use to skip the approval prompt).
+    "ST-MCP-ANNOTATION-MISMATCH": ("AST03", "AST04"),
     # AST05 Unsafe Deserialization.
     "ST-DESERIALIZE-PY": ("AST05",),
     "ST-TAINT-DESERIAL-PY": ("AST05",),

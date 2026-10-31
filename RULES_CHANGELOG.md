@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 87 (unreleased)
+
+- **`ST-MCP-ANNOTATION-MISMATCH`** (new, medium, risky construct): an MCP tool whose annotations
+  its own handler contradicts. `readOnlyHint: true` over a handler that writes or deletes a file,
+  runs a process, or sends a POST, PUT, PATCH or DELETE request; an explicit
+  `destructiveHint: false` over a handler that deletes a file or directory or sends a DELETE
+  request. Clients use these hints to decide which calls run without asking. Read in TypeScript
+  and JavaScript (`server.registerTool(name, { annotations }, handler)`, `server.tool(name, ...,
+  annotations, handler)`) and Python (`@mcp.tool(annotations=...)` with a dict or
+  `ToolAnnotations(...)`, `mcp.add_tool(fn, annotations=...)`); annotations may be a constant of
+  the same file, and a handler may be passed by name. Only the handler's own body is read, with
+  the call signatures of `ST-FS-*-WRITE`, `ST-SHELL-*` and `ST-NET-*`; a helper function it calls
+  is not followed. A missing `destructiveHint`, `readOnlyHint: false`, `destructiveHint: true`,
+  and calls in comments or strings do not fire. Two evidence lines per tool: the hint and the
+  first contradicting call. Not a malicious indicator and not counted by `ST-CONVERGENCE`.
+- `ST-FS-NODE-WRITE` also matches `fs.rmdir` / `fs.rmdirSync`.
+
 ## ruleset 86 (engine 0.87.0)
 
 Detection-efficacy corpus: 158 positive / 120 negative samples, 158/158 flagged, 0 false

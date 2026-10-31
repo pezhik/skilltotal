@@ -22,6 +22,7 @@ from skilltotal.scanners.html_file_exfil import HtmlFileExfilScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
 from skilltotal.scanners.mcp import McpScanner
+from skilltotal.scanners.mcp_annotations import McpAnnotationScanner
 from skilltotal.scanners.mcp_elicitation import McpElicitationScanner
 from skilltotal.scanners.mcp_pinning import McpPinningScanner
 from skilltotal.scanners.network import NetworkScanner
@@ -79,6 +80,7 @@ SCANNERS: list[Scanner] = [
     SkillDirectivesScanner(),
     McpPinningScanner(),
     McpElicitationScanner(),
+    McpAnnotationScanner(),
     DependencyRedirectScanner(),
     WorkflowExfilScanner(),
     HtmlFileExfilScanner(),

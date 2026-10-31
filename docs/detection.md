@@ -17,7 +17,7 @@ Nothing is executed and no LLM is called, so results are deterministic and repro
 | Install-time execution | npm `preinstall`/`postinstall`/`prepare`, `setup.py` hooks, a lifecycle script that downloads or decodes code and runs it |
 | Dynamic code execution | `eval`, `exec`, `compile`, `new Function`, `vm.runInNewContext` |
 | Obfuscation | decode-and-execute chains, base64 blobs, hex escaping, minification |
-| MCP risks | manifests, dangerous tools (shell/fs/network/credential), server commands |
+| MCP risks | manifests, dangerous tools (shell/fs/network/credential), server commands, tool annotations the handler's code contradicts |
 | Prompt surface | "ignore previous instructions", "reveal system prompt", exfiltration phrasing |
 | Post-exploitation | reverse tunnels and shells, a key written into `authorized_keys`, autostart entries (LaunchAgents, cron `@reboot`, Run keys, logon tasks), entries named after the OS vendor, antivirus or Gatekeeper switched off, host details sent home |
 
@@ -73,6 +73,10 @@ every dependency.
 - Sensitive-data access combined with outbound network egress
 - Hardcoded API keys or tokens
 - An MCP server with auto-approved or overprivileged tools
+- An MCP tool annotated `readOnlyHint: true` whose handler writes or deletes files, runs a
+  process or sends a POST/PUT/PATCH/DELETE request, or annotated `destructiveHint: false` whose
+  handler deletes files or sends a DELETE request (`ST-MCP-ANNOTATION-MISMATCH`). Clients read
+  these hints to decide which calls run without asking.
 - Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
   shell: a traced path, not just a dangerous API in isolation
 - Code that opens a way into the machine (a reverse tunnel to the local SSH port, a key written
@@ -170,6 +174,17 @@ a substitute for:
   `invoke`/`fabric`; Node `zx`/`execa`/`cross-spawn`/`shelljs`/`tinyexec`/`node-pty`).
 - MCP dangerous tools are classified by name/description both in JSON manifests **and when
   defined in code** (`server.tool("run_command", …)`, `@mcp.tool` over `def read_file`).
+- **MCP tool annotations** are checked against the tool's handler: TypeScript/JavaScript
+  `server.registerTool(name, { annotations }, handler)` and `server.tool(name, …, annotations,
+  handler)`, Python `@mcp.tool(annotations=…)` (a dict or `ToolAnnotations(…)`) and
+  `mcp.add_tool(fn, annotations=…)`. The annotations can be inline or a constant of the same file;
+  the handler can be inline, the decorated function, or a function of the same file passed by
+  name. Only the handler's own body is read. A call it makes to a helper function is not followed,
+  in the same file or another, so a write done in a helper is not reported against the
+  annotation (the write itself is still reported as a filesystem write). A missing
+  `destructiveHint` is never reported: the MCP specification defaults it to true. Annotations a
+  server builds at run time (a helper that returns them, a low-level `tools/list` handler) are not
+  read.
 - SARIF, JSON and baseline files that SkillTotal wrote into the scanned folder are recognised by
   their content, listed in `needs_review` and not scanned (their rule descriptions quote detection
   patterns).

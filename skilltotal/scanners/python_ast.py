@@ -2010,6 +2010,73 @@ class _WriteVisitor(_CallVisitor):
         return None
 
 
+# --- what each call does (read by the MCP tool-annotation check) ------------------------------
+EFFECT_WRITE = "write"
+EFFECT_DELETE = "delete"
+EFFECT_EXEC = "exec"
+EFFECT_NETWORK = "network"
+_RULE_EFFECTS = {R_FS_WRITE: EFFECT_WRITE, R_SHELL: EFFECT_EXEC, R_NET: EFFECT_NETWORK}
+_DELETE_CALLS = frozenset({"os.remove", "os.unlink", "os.rmdir", "os.removedirs", "shutil.rmtree"})
+# pathlib's Path.unlink() / Path.rmdir(), on whatever receiver holds the path.
+_DELETE_METHODS = frozenset({"unlink", "rmdir"})
+
+
+@dataclass(frozen=True)
+class CallEffect:
+    """A call that writes or deletes a file, runs a process or reaches the network, as the rules
+    above classify it, with its target resolved through the module's imports."""
+
+    call: ast.Call
+    name: str
+    effects: frozenset[str]
+
+
+def python_call_effects(f: IndexedFile, tree: ast.Module) -> list[CallEffect]:
+    """Every call in ``tree`` that ST-FS-PY-WRITE, ST-SHELL-PY or ST-NET-PY counts, plus file
+    deletes (``os.remove``, ``shutil.rmtree``, ``Path.unlink``), in visiting order. The same
+    classification as the rules, so a caller scoping it to one function sees what they see."""
+
+    def walk() -> list[CallEffect]:
+        visitor = _EffectVisitor(f)
+        visitor.visit(tree)
+        return [
+            CallEffect(call, visitor.names[key], frozenset(kinds))
+            for key, (call, kinds) in visitor.effects.items()
+        ]
+
+    try:
+        return walk_deep(walk)
+    except RecursionError:
+        return []
+
+
+class _EffectVisitor(_CallVisitor):
+    """_CallVisitor, noting which calls its rule hits land on."""
+
+    def __init__(self, file: IndexedFile):
+        super().__init__(file)
+        self.effects: dict[int, tuple[ast.Call, set[str]]] = {}
+        self.names: dict[int, str] = {}
+
+    def _classify_call(self, name: str, node: ast.Call) -> None:
+        self.names[id(node)] = name
+        super()._classify_call(name, node)
+        if name in _DELETE_CALLS or (
+            isinstance(node.func, ast.Attribute) and node.func.attr in _DELETE_METHODS
+        ):
+            self._note(node, EFFECT_DELETE)
+
+    def _add(self, rule_id: str, node: ast.AST) -> None:
+        super()._add(rule_id, node)
+        effect = _RULE_EFFECTS.get(rule_id)
+        if effect is not None and isinstance(node, ast.Call):
+            self._note(node, effect)
+
+    def _note(self, node: ast.Call, effect: str) -> None:
+        self.names.setdefault(id(node), self._dotted(node.func) or "")
+        self.effects.setdefault(id(node), (node, set()))[1].add(effect)
+
+
 def _open_is_write(node: ast.Call) -> bool:
     mode: ast.expr | None = None
     if len(node.args) >= 2:

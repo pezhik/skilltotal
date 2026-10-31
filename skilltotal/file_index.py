@@ -1971,6 +1971,28 @@ class IndexedFile:
         self._ensure_c_code_spans()
         return self._c_string_spans_cache or []
 
+    def c_code_view(self) -> str:
+        """The C-family source with comments, regex literals and the contents of string literals
+        blanked to spaces (quotes and newlines kept, so every offset and line number is the
+        original's). A pattern matched in it is code: a call named in a comment, a string or a
+        regex does not match, and brackets can be paired without minding quotes. Not cached."""
+        self._ensure_c_code_spans()
+        chars = list(self.text)
+
+        def blank(start: int, end: int) -> None:
+            for i in range(start, min(end, len(chars))):
+                if chars[i] != "\n":
+                    chars[i] = " "
+
+        for start, end in self._c_comment_spans_cache or ():
+            blank(start, end)
+        for start, end in self._c_regex_spans_cache or ():
+            blank(start, end)
+        for start, end in self._c_string_spans_cache or ():
+            # Keep the quotes; a ''' / """ triple-quoted literal keeps its first and last quote.
+            blank(start + 1, end - 1)
+        return "".join(chars)
+
     def string_span_at(self, offset: int) -> tuple[int, int] | None:
         """The char-span of the Python or C-family string literal holding ``offset``, if any."""
         if self.suffix in (".py", ".pyw"):

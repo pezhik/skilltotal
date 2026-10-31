@@ -44,14 +44,19 @@ _IDENT = r"[A-Za-z_$][\w$]*"
 _BARE = r"(?<![\w$.])"
 _CALLS = r"(?:exec|execSync|spawn|spawnSync)"
 
+# Call sites that run a process in any file, whatever it imports.
+_ANYWHERE_CALLS = (
+    r"child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)\s*\(",
+    r"\bBun\.spawn(?:Sync)?\s*\(",
+)
 # Evidence that holds in any file, whatever it imports.
 _ANYWHERE = alternation(
-    r"child_process\.(?:exec|execSync|spawn|spawnSync|execFile|execFileSync)\s*\(",
+    _ANYWHERE_CALLS[0],
     rf"require\(\s*{_CP}\s*\)",
     rf"from\s+{_CP}",
     rf"require\(\s*{_SPAWN_LIBS}\s*\)",
     rf"from\s+{_SPAWN_LIBS}",
-    r"\bBun\.spawn(?:Sync)?\s*\(",
+    _ANYWHERE_CALLS[1],
     flags=re.MULTILINE,
 )
 _IMPORTS_CP = re.compile(rf"require\(\s*{_CP}\s*\)|from\s+{_CP}")
@@ -84,6 +89,12 @@ def _call_prefixes(f: IndexedFile) -> list[str]:
         if aliases:
             prefixes.append(_BARE + "(?:" + "|".join(re.escape(a) for a in aliases) + r")\.")
     return prefixes
+
+
+def exec_call_pattern(f: IndexedFile) -> re.Pattern[str]:
+    """The process-running call sites ST-SHELL-NODE counts in this file (imports left out)."""
+    prefixes = "|".join(f"(?:{p})" for p in _call_prefixes(f))
+    return alternation(rf"(?:{prefixes}){_CALLS}\s*\(", *_ANYWHERE_CALLS, flags=re.MULTILINE)
 
 
 SHELL_RULE = RuleSpec(

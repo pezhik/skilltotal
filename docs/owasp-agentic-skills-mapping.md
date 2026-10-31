@@ -18,13 +18,16 @@ AST category are left **unmapped** (empty `owasp`) rather than forced into a lab
 |---|---|---|
 | **AST01 Malicious Skills** | `ST-OBF-DECODE-EXEC(-PY/-SH)`, `ST-PTH-EXEC`, `ST-ENCRYPTED-ARCHIVE`, `ST-SHELL-EVASION`, `ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, `ST-EMAIL-BCC-EXFIL`, `ST-CONVERGENCE` | deliberate harm: decode-and-execute, persistence, exfiltration, evasion, multi-indicator convergence |
 | **AST02 Supply Chain Compromise** | `ST-INSTALL-NPM(-PREPARE)`, `ST-INSTALL-NPM-REMOTE-EXEC`, `ST-INSTALL-PY`, `ST-INSTALL-DROPPER`, `ST-SHELL-PIPE-EXEC(-PY/-NODE)` | install-time hooks and remote-fetch-and-run (`curl \| sh`) |
-| **AST03 Over-Privileged Skills** | `ST-MCP-OVERBROAD-SCOPE`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-SKILL-CAP-MISMATCH` | excessive scope/autonomy/dangerous host powers; undeclared capabilities |
-| **AST04 Insecure Metadata** | `ST-MCP-TOOL-POISONING`, `ST-MCP-SAMPLING-INJECTION`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-INJECTION`, `ST-PROMPT-WEAK`, `ST-HIDDEN-UNICODE(-AMBIG)`, `ST-SKILL-CAP-MISMATCH` | misleading/falsified descriptions, hidden/smuggled instructions, falsified capability declarations |
+| **AST03 Over-Privileged Skills** | `ST-MCP-OVERBROAD-SCOPE`, `ST-MCP-AUTO-APPROVE`, `ST-MCP-DANGEROUS-TOOL`, `ST-MCP-SERVER-EXEC`, `ST-SKILL-CAP-MISMATCH`, `ST-MCP-ANNOTATION-MISMATCH` | excessive scope/autonomy/dangerous host powers; undeclared capabilities |
+| **AST04 Insecure Metadata** | `ST-MCP-TOOL-POISONING`, `ST-MCP-SAMPLING-INJECTION`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-INJECTION`, `ST-PROMPT-WEAK`, `ST-HIDDEN-UNICODE(-AMBIG)`, `ST-SKILL-CAP-MISMATCH`, `ST-MCP-ANNOTATION-MISMATCH` | misleading/falsified descriptions, hidden/smuggled instructions, falsified capability declarations |
 | **AST05 Unsafe Deserialization** | `ST-DESERIALIZE-PY`, `ST-TAINT-DESERIAL-PY` | unsafe `pickle`/`yaml`/`marshal` loads, incl. taint into a deserialize sink |
 
 `ST-SKILL-CAP-MISMATCH` spans **AST03 + AST04** (the bundled code does more than the skill's
 `allowed-tools` list covers: over-privilege, and metadata that understates what the skill does).
 `allowed-tools` pre-approves tools for the agent; it does not limit what the skill's code can do.
+`ST-MCP-ANNOTATION-MISMATCH` spans the same two for an MCP tool: a `readOnlyHint` or
+`destructiveHint` that the tool's handler contradicts, which a client may use to run the tool
+without asking.
 
 ## Honest gaps (intentionally unmapped)
 

@@ -13,6 +13,20 @@ NODE_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 
 CATEGORY = "filesystem"
 
+# The Node.js calls that delete, and all that write or delete. ST-FS-NODE-WRITE matches these, and
+# ST-MCP-ANNOTATION-MISMATCH reads the same set inside a tool handler.
+NODE_FS_DELETE_CALLS = (
+    r"\bfs\.unlink(?:Sync)?\s*\(",
+    r"\bfs\.rm(?:Sync)?\s*\(",
+    r"\bfs\.rmdir(?:Sync)?\s*\(",
+)
+NODE_FS_WRITE_CALLS = (
+    r"\bfs\.writeFile(?:Sync)?\s*\(",
+    r"\bfs\.appendFile(?:Sync)?\s*\(",
+    *NODE_FS_DELETE_CALLS,
+    r"\bfs\.createWriteStream\s*\(",
+)
+
 _READ_RECO = (
     "Confirm which files are read and that paths cannot be influenced by untrusted "
     "input to reach sensitive locations."
@@ -56,12 +70,6 @@ class FilesystemScanner(PatternScanner):
             capability=Capability.FILESYSTEM_WRITE,
             code_context="comments",
             suffixes=NODE_SUFFIXES,
-            pattern=alternation(
-                r"\bfs\.writeFile(?:Sync)?\s*\(",
-                r"\bfs\.appendFile(?:Sync)?\s*\(",
-                r"\bfs\.unlink(?:Sync)?\s*\(",
-                r"\bfs\.rm(?:Sync)?\s*\(",
-                r"\bfs\.createWriteStream\s*\(",
-            ),
+            pattern=alternation(*NODE_FS_WRITE_CALLS),
         ),
     ]
