@@ -319,8 +319,10 @@ CI.
   when minified. A VS Code extension's entry points are read up to 8 MiB.
 - **Editor extension updates, and servers that update themselves.** An editor extension updates
   from its marketplace, and an MCP server started with `npx -y some-server` runs the latest
-  release each time. No install command runs, so the hook sees nothing. Schedule
-  `skilltotal guard --installed --state FILE` to catch a bad update the day after it lands
+  release each time. No install command runs, so the hook sees nothing. The plugin's
+  [sentinel](agent-hooks.md#the-sentinel) runs `skilltotal watch` at session start and tells the
+  agent what is flagged at the next one. Between sessions, schedule `skilltotal watch`, or
+  `skilltotal guard --installed --state FILE` to read every file
   ([Installed components](installed-components.md#catching-a-malicious-update)).
 - **SkillTotal's own reports.** A SARIF report, JSON report or baseline that SkillTotal wrote into
   the scanned folder is recognised by its content (pure JSON of exactly that shape), listed in the

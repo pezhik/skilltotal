@@ -67,6 +67,7 @@ def test_the_marketplace_serves_only_the_plugin_folder():
         ".claude-plugin/icon.png",
         "hooks/hooks.json",
         "hooks/pretooluse.sh",
+        "hooks/sessionstart.sh",
         "commands/scan.md",
     }
 

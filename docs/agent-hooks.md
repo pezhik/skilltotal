@@ -85,3 +85,86 @@ It holds hashes and times.
 
 Claude Code's plugin does not hook MCP calls: it would start the hook on every tool call. Servers
 are checked when `claude mcp add` runs.
+
+## The sentinel
+
+No agent has a hook for a plugin install. A person typing `/plugin install`, the Extensions panel
+and automatic updates run no command, so no hook is asked. A bad update arrives that way.
+`skilltotal watch` looks at what is on disk instead:
+
+```bash
+skilltotal watch                 # scan what is new or changed since the last run
+skilltotal watch --disable       # also turn off a Claude Code plugin with malicious indicators
+```
+
+It lists every installed plugin, skill, MCP server and editor extension, compares a fingerprint of
+each with its state file, and scans only what is new or changed. A new ruleset counts as a change.
+When nothing changed it reads a few sizes and times and exits.
+
+| Exit code | Meaning |
+|---|---|
+| 0 | Nothing is flagged |
+| 1 | A scan failed; that component is tried again next run |
+| 2 | A component is flagged. It stays flagged on every run until it is removed, updated or accepted |
+
+`--accept FILE`, `--block-on`, `--state FILE`, `--no-extensions`, `--project DIR` and `--json` work
+as in [`guard --installed`](cli.md#guard), and an update that gains risk is reported as
+[drift](installed-components.md#catching-a-malicious-update). The state is kept in
+`watch-state.json` in the [cache folder](plugin.md#git-sources-the-verdict-cache-and-timing).
+
+It edits nothing unless you pass `--disable`, which sets `enabledPlugins` to `false` in Claude
+Code's user settings for a plugin with malicious indicators, and for nothing else. High risk alone
+is your call. The settings file is backed up first, and one that is not plain JSON is left alone.
+
+**Where it runs.**
+
+- Claude Code: the plugin runs it at session start and when skills or user settings change.
+- Cursor: `hook install` adds it to `sessionStart`.
+- Anywhere else, or as well, schedule it:
+
+  ```bash
+  # cron (Linux): every hour
+  0 * * * * skilltotal watch --quiet
+  ```
+
+  ```xml
+  <!-- launchd (macOS): ~/Library/LaunchAgents/skilltotal.watch.plist -->
+  <plist version="1.0"><dict>
+    <key>Label</key><string>skilltotal.watch</string>
+    <key>ProgramArguments</key><array>
+      <string>/usr/local/bin/skilltotal</string><string>watch</string><string>--quiet</string>
+    </array>
+    <key>StartInterval</key><integer>3600</integer>
+  </dict></plist>
+  ```
+
+  ```powershell
+  # Task Scheduler (Windows)
+  schtasks /Create /SC HOURLY /TN "SkillTotal watch" /TR "skilltotal watch --quiet"
+  ```
+
+**At session start** the hook answers at once from the last run and starts a sweep in the
+background, with one worker process, so the session does not wait. What the sweep finds reaches the
+agent at the next session start, not in the running one. In CI no sweep starts.
+
+**What the agent is told.** A flagged component is the last place to take words from, so the agent
+gets our fixed sentences and the component's kind and name, and a name that holds anything but
+plain characters is withheld. It never gets a finding, a reason or a description. The findings are
+in `skilltotal watch`.
+
+**What it does not see.**
+
+- A local component is fingerprinted by its manifests, its top folder, the folders that hold its
+  code (`hooks`, `commands`, `scripts`, `bin`, `dist`, `src` and a few more) and its entry points. A
+  change deeper down that keeps the version is not noticed. `guard --installed` reads everything.
+- It runs after the fact: a component that runs code the moment it is installed has already run.
+- An MCP server started with `npx -y x` changes on the registry, not on disk, so its release is
+  looked up once a day and a new one is scanned. Between lookups it is not seen.
+- A package whose installer reads a custom registry is listed and not scanned, so a sweep nobody
+  asked for never sends a company's package name to the public registry.
+- It does not look at skills an agent writes itself as they are written, by `Write` or `Edit`: the
+  next sweep reads them.
+
+**Network.** A sweep fetches what changed and is not on disk from npm, PyPI or GitHub, and asks the
+registry for the current release of an unpinned server once a day, as `guard --installed` does. A
+component on disk is scanned without a network request.

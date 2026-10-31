@@ -10,6 +10,7 @@ Every `skilltotal` command and flag, the sources it reads, the exit codes and th
 | [`guard <source>`](#guard) | Allow or block one component before you install it (exit 2 on a block) |
 | [`guard --installed`](#guard) | Allow or block everything installed on this machine |
 | [`inventory`](#inventory) | List and scan what is installed; export an AI-BOM |
+| [`watch`](#watch) | Scan only what changed among the installed components |
 | [`rules list`](#rules-list) | List the detection rules |
 | [`mcp`](#mcp) | Run SkillTotal as an MCP server for your agent |
 | [`hook claude-code`](#hook-claude-code) | The Claude Code plugin's install check |
@@ -277,6 +278,20 @@ skilltotal inventory --json --state ~/.skilltotal-state.json --accept accept.jso
 | `--state FILE` | Record versions and risk fingerprints in `FILE` and report drift |
 | `--accept FILE` | Accept the reviewed findings this accept file lists |
 | `--write-accept FILE` | Add an entry for each component flagged as high risk, malicious or blocked, and exit 0 |
+
+## watch
+
+```bash
+skilltotal watch [--json] [--quiet] [--project DIR] [--state FILE] [--no-extensions]
+                 [--accept FILE] [--block-on malicious|high|medium] [--disable]
+```
+
+The sentinel: lists what is installed, compares a fingerprint of each component with the last run,
+and scans only what is new or changed. It catches what no hook sees, such as an automatic update or
+a plugin installed by hand. Exit code 2 while a component is flagged, 1 when a scan failed, else 0.
+It changes nothing unless `--disable` is given, which turns off a Claude Code plugin with malicious
+indicators. `--quiet` prints only what is flagged. See
+[docs/agent-hooks.md](agent-hooks.md#the-sentinel).
 
 ## rules list
 

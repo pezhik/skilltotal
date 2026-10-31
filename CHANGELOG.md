@@ -18,6 +18,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
   marketplace on disk and scans what its entry fetches. What it cannot resolve is asked about by
   name, as is an entry that adds hooks or MCP servers of its own. `claude plugin marketplace add`
   and `code|cursor|codium|windsurf --install-extension` are checked too.
+- `skilltotal watch`, the sentinel for what no hook sees (automatic updates, a plugin installed by
+  hand, the Extensions panel): it compares a cheap fingerprint of every installed component with
+  the last run and scans only what is new or changed. Exit 2 while one is flagged. `--disable`
+  turns off a Claude Code plugin with malicious indicators; nothing else is ever edited. The
+  plugin runs it in the background at session start and when skills or user settings change, and
+  tells the agent which component is flagged at the next session start, in fixed sentences with
+  validated names only. Cursor's `sessionStart` does the same.
 - Editor extensions can be scanned by marketplace id or link before they are installed:
   `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`
   link for the Visual Studio Marketplace, and `openvsx:<namespace>.<name>[@<version>]` or an

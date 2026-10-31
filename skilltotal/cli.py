@@ -32,6 +32,9 @@ Commands:
         --write-accept FILE drafts entries for what blocks, each reason left to fill in.
     skilltotal inventory [--json] [--no-scan] [--project DIR] [--accept FILE]
         discover AI components installed on this machine (agent configs / MCP servers), then scan.
+    skilltotal watch [--json] [--quiet] [--project DIR] [--state FILE] [--accept FILE] [--disable]
+        scan only what is new or changed among the installed components: installs and updates no
+        hook sees. Exit 2 while one is flagged; nothing is edited unless --disable is given.
     skilltotal rules list [--json]
     skilltotal mcp
         run SkillTotal as an MCP server on stdio, so agents can scan components before
@@ -43,6 +46,9 @@ Commands:
         CI strict mode (CI or SKILLTOTAL_STRICT set), where what would be asked is denied. A
         scan that outlasts the wait goes on in the background and keeps its verdict for the
         next run of the command.
+    skilltotal hook install|uninstall|status
+        register the same check with Cursor, Windsurf, Devin, Codex, Gemini CLI and VS Code
+        Copilot (`skilltotal hook <agent>` answers each in its format).
 
 Exit codes:
     0  success
@@ -354,6 +360,32 @@ def build_parser() -> argparse.ArgumentParser:
     _installed_arguments(inv, "")
     _accept_arguments(inv, "flags (high risk, malicious, or blocked by the guard)")
 
+    watch = sub.add_parser(
+        "watch",
+        help="Scan only what changed among the installed components (the sentinel).",
+        description="Compare what is installed with the last run and scan only what is new or "
+                    "changed: updates and installs no hook sees. Exit 2 while a component is "
+                    "flagged, 1 when a scan failed, 0 otherwise. Nothing is edited unless "
+                    "--disable is given.",
+    )
+    watch.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
+    watch.add_argument(
+        "--project", metavar="DIR", help="Also look for project-local agent configs in DIR."
+    )
+    _installed_arguments(watch, "")
+    watch.add_argument("--accept", metavar="FILE",
+                       help="Accepted findings (one component at one exact version).")
+    watch.add_argument("--block-on", choices=BLOCK_LEVELS, default=None,
+                       help="What flags a component, as in `guard`.")
+    watch.add_argument(
+        "--disable", action="store_true",
+        help="Turn a Claude Code plugin with malicious indicators off in enabledPlugins. "
+             "Nothing else is ever changed.",
+    )
+    watch.add_argument("--quiet", action="store_true", help="Print only what is flagged.")
+    watch.add_argument("--session", action="store_true", help=argparse.SUPPRESS)
+    watch.set_defaults(write_accept=None)
+
     rules = sub.add_parser("rules", help="Inspect the detection rules.")
     rules_sub = rules.add_subparsers(dest="rules_command", required=True)
     rules_list = rules_sub.add_parser("list", help="List all detection rules.")
@@ -511,6 +543,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_guard(args)
     if args.command == "inventory":
         return _cmd_inventory(args)
+    if args.command == "watch":
+        return _cmd_watch(args)
     if args.command == "rules":
         return _cmd_rules(args)
     if args.command == "mcp":
@@ -1820,9 +1854,170 @@ def _cmd_hook_setup(args: argparse.Namespace) -> int:
     return EXIT_ERROR if failed else EXIT_OK
 
 
+def _watch_state_path() -> Path:
+    return _hook_cache_path().parent / "watch-state.json"
+
+
 def _watch_session(project: str | None) -> tuple[str, str]:
-    """Placeholder replaced with the sentinel."""
-    return "", ""
+    """(for the agent, for the person) from what the sentinel found last, at once, and a sweep of
+    what changed started in the background: a session must not wait for it, and its result is
+    read at the next start. In CI there is no next start, and nobody to read it."""
+    from skilltotal.drift import StateError, load_state
+    from skilltotal.sentinel import session_message
+
+    try:
+        state = load_state(_watch_state_path().read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, StateError):
+        state = {}
+    if not _hook_strict(os.environ):
+        _start_watch(project)
+    return session_message(state, project)
+
+
+def _start_watch(project: str | None) -> None:
+    """Start `skilltotal watch` detached: it outlives the hook and holds none of its handles. One
+    worker: it shares the machine with the session that started it."""
+    from skilltotal import hook_scan
+
+    folder = _hook_cache_path().parent
+    argv = [hook_scan._interpreter()[0], *(["-P"] if sys.version_info >= (3, 11) else []),
+            "-m", "skilltotal", "watch", "--quiet"]
+    if project:
+        argv += ["--project", project]
+    env = {**os.environ, **hook_scan._interpreter()[1], "PYTHONIOENCODING": "utf-8"}
+    env.setdefault("SKILLTOTAL_WORKERS", "1")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        hook_scan._spawn(argv, cwd=str(folder), env=env, **hook_scan.detached())
+    except OSError:
+        pass  # the next session tries again; `hook status` shows what is installed
+
+
+def _watch_session_hook() -> int:
+    """`watch --session`, as the Claude Code plugin's SessionStart and ConfigChange hooks run it:
+    only a session's start can take context."""
+    event = _hook_event(_hook_stdin()) or {}
+    cwd = event.get("cwd")
+    context, line = _watch_session(cwd if isinstance(cwd, str) and cwd else None)
+    if context and event.get("hook_event_name") == "SessionStart":
+        print(json.dumps({"systemMessage": line, "hookSpecificOutput": {
+            "hookEventName": "SessionStart", "additionalContext": context}}))
+    return EXIT_OK
+
+
+# How long one background sweep may run; what it did not reach, the next one does.
+WATCH_BACKGROUND_BUDGET_S = 20 * 60
+
+
+def _watch_components(discover, args: argparse.Namespace) -> list:
+    """What is installed. A package whose installer reads another registry stays unscanned: the
+    sentinel runs on its own, and must not take a company's package name to the public registry."""
+    from dataclasses import replace
+
+    from skilltotal.agent_hook import Install, _registry_from_config
+
+    components = _discovered(discover, args)
+    out = []
+    for component in components:
+        source = component.source or ""
+        if source.startswith(("npm:", "pypi:")):
+            found = _registry_from_config([Install(source)], args.project, os.environ, _home())
+            if found and found[0].source is None:
+                component = replace(component, source=None, scannable=False,
+                                    note="comes from a custom registry; not scanned")
+        out.append(component)
+    return out
+
+
+def _cmd_watch(args: argparse.Namespace) -> int:
+    """Scan what changed among the installed components: exit 2 while any of them blocks, else 1
+    when a scan failed, else 0."""
+    from skilltotal import engine
+    from skilltotal.collector import resolve_release
+    from skilltotal.hook_scan import file_lock
+    from skilltotal.inventory import _claude_dir, discover
+    from skilltotal.report import one_line
+    from skilltotal.sentinel import (
+        SettingsError,
+        disable_plugin,
+        disable_targets,
+        flagged,
+        key_of,
+        sweep,
+    )
+
+    if args.session:
+        return _watch_session_hook()
+    if _project_missing(args.project):
+        return EXIT_ERROR
+    state_path = Path(args.state).expanduser() if args.state else _watch_state_path()
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        lock = file_lock(state_path.with_name(state_path.name + ".lock"), wait_s=0)
+        lock.__enter__()
+    except (TimeoutError, OSError):
+        if not args.quiet:
+            print("Another `skilltotal watch` is running.")
+        return EXIT_OK
+    try:
+        state = _open_state(str(state_path))
+        acc = _open_accept(args) if state is not None else None
+        if state is None or acc is None:
+            return EXIT_ERROR
+
+        def scan(component):
+            report, version, accepted = _scan_accepting(
+                engine.analyze, str(component.source), acc.entries, key_of(component),
+                component.version)
+            return report, version, set(accepted.risk_fingerprints) if accepted else set()
+
+        def decide(report, component, drift):
+            decision = evaluate_installed(report, component.kind, args.block_on, drift)
+            return not decision.allow, decision.reasons
+
+        def release(source):
+            found = _hook_lookup(source, 5.0)
+            return found.source if found else None
+
+        project = str(Path(args.project).expanduser()) if args.project else None
+        outcome = sweep(
+            _watch_components(discover, args), state, scan, decide, ruleset=RULESET_VERSION,
+            project=project, release=release, save=lambda: _save_state(str(state_path), state),
+            budget_s=WATCH_BACKGROUND_BUDGET_S if args.quiet else None)
+        if not _save_state(str(state_path), state):
+            return EXIT_ERROR
+        bad = flagged(state, project)
+        turned_off: list[str] = []
+        if args.disable:
+            settings = _claude_dir(_home() or Path.home(), os.environ) / "settings.json"
+            for plugin in disable_targets(state):
+                try:
+                    if disable_plugin(settings, plugin):
+                        turned_off.append(plugin)
+                except (SettingsError, OSError) as exc:
+                    print(f"error: {_one_line(str(exc))}", file=sys.stderr)
+    finally:
+        lock.__exit__(None, None, None)
+    if args.json:
+        print(json.dumps({
+            "components": outcome.total, "scanned": outcome.scanned, "drifted": outcome.drifted,
+            "flagged": bad, "disabled": turned_off,
+            "errors": [{"name": name, "why": why} for name, why in outcome.errors]}, indent=2))
+    elif not args.quiet or bad:
+        for entry in bad:
+            print(f"SKILLTOTAL ALERT: {one_line(str(entry.get('name')))} "
+                  f"({one_line(str(entry.get('kind')))}) is flagged.")
+            for reason in entry.get("reasons") or []:
+                print(f"      - {one_line(str(reason))}")
+        for plugin in turned_off:
+            print(f"Turned {one_line(plugin)} off in Claude Code's settings.")
+        for name, why in outcome.errors:
+            print(f"Could not scan {one_line(name)}: {one_line(why)}")
+        print(f"{outcome.total} component(s), {len(outcome.scanned)} scanned, {len(bad)} flagged"
+              + (", the rest next run." if outcome.stopped else "."))
+    if bad:
+        return EXIT_FAIL_ON_HIGH
+    return EXIT_ERROR if outcome.errors else EXIT_OK
 
 
 def _hook_stdin() -> str:

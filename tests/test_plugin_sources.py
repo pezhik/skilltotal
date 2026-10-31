@@ -1,4 +1,4 @@
-"""`claude plugin install`, `claude plugin marketplace add` and `--install-extension`: real sources."""
+"""`claude plugin install`, `marketplace add` and `--install-extension`: their real sources."""
 
 from __future__ import annotations
 
