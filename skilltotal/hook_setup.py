@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import re
 import shutil
 from collections.abc import Mapping
@@ -110,11 +111,13 @@ def config_path(agent: Agent, scope: str, home: Path, project: Path,
     return home / agent.user_file
 
 
-def hook_command(agent: Agent, scope: str, which=shutil.which) -> str:
+def hook_command(agent: Agent, scope: str, which=shutil.which, os_name: str = os.name) -> str:
     """The command that runs the hook. In the person's own config, the CLI's full path: an editor
     started from a dock does not see a shell's PATH, and a hook that cannot start lets the command
-    run. A project's config is shared, so there it is the bare name."""
-    found = which("skilltotal") if scope == "user" else None
+    run. A project's config is shared, so there it is the bare name. So it is on Windows, where a
+    program inherits the person's PATH, and a quoted path is no command to PowerShell, which runs
+    Cursor's hooks."""
+    found = which("skilltotal") if scope == "user" and os_name != "nt" else None
     if not found or '"' in found:
         return f"skilltotal hook {agent.name}"
     return f'"{found}" hook {agent.name}'

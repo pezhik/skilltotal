@@ -225,10 +225,16 @@ def test_the_hook_outlasts_the_longest_budget():
 def test_the_person_gets_the_full_path_and_a_project_the_bare_name():
     agent = BY_NAME["cursor"]
     which = lambda _: "/home/me/.local/bin/skilltotal"  # noqa: E731
-    assert hook_setup.hook_command(agent, "user", which) == (
-        '"/home/me/.local/bin/skilltotal" hook cursor')
-    assert hook_setup.hook_command(agent, "project", which) == "skilltotal hook cursor"
-    assert hook_setup.hook_command(agent, "user", lambda _: None) == "skilltotal hook cursor"
+    command = hook_setup.hook_command
+    assert command(agent, "user", which, "posix") == '"/home/me/.local/bin/skilltotal" hook cursor'
+    assert command(agent, "project", which, "posix") == "skilltotal hook cursor"
+    assert command(agent, "user", lambda _: None, "posix") == "skilltotal hook cursor"
+
+
+def test_on_windows_a_quoted_path_is_no_command_to_powershell():
+    agent = BY_NAME["cursor"]
+    which = lambda _: r"C:\Users\me\.local\bin\skilltotal.exe"  # noqa: E731
+    assert hook_setup.hook_command(agent, "user", which, "nt") == "skilltotal hook cursor"
 
 
 def test_only_agents_found_here_are_changed(tmp_path):

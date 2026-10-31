@@ -143,8 +143,9 @@ Shortened. The full report also prints descriptions, recommendations, capabiliti
 
 - The [Claude Code plugin](https://github.com/pezhik/skilltotal#claude-code-plugin) checks each `npx`,
   `npm install`, `pip install` or `claude mcp add` command before the agent runs it.
-- It runs on your machine without an account, API token, upload or telemetry, and never runs the
-  code it reads ([Network access](https://github.com/pezhik/skilltotal#network-access)).
+- Scans run on your machine without an account, API token, upload or telemetry, and it never runs
+  the code it reads. The agent hooks also look lockfiles up in OSV, which sends public package names
+  and versions, and which `SKILLTOTAL_OSV=0` turns off ([Network access](https://github.com/pezhik/skilltotal#network-access)).
 - Detection is regex and AST matching with no LLM, so the same input on the same Python version
   gives the same findings and score. Every finding cites a file and line, and recall and precision
   are [published](https://github.com/pezhik/skilltotal#measured-not-asserted).
@@ -191,17 +192,24 @@ Each install command gets a console line saying what was checked, or what was no
 so anything it would ask about is denied. Installs it could not check are denied too, unless
 `SKILLTOTAL_ALLOW_UNCHECKED` lists their kind.
 
-It does not check the dependencies of the named package, installs that name no package (`npm ci`,
-`pip install -r`, `uv sync`; the console says so), scripts on disk, shell-profile aliases or
-functions, downloaded scripts (`curl ... | bash`, reported as not checked), repositories fetched
-with `git clone`, or code already running on your account (it can rewrite the verdict cache or the
-CLI). Updates that install themselves, such as an editor extension or an `npx -y` server that runs
-its latest release, run no install command; schedule
-[`guard --installed --state`](https://github.com/pezhik/skilltotal/blob/main/docs/installed-components.md#catching-a-malicious-update)
-for them. The plugin has no override for a denied install, and it is a static check, not a
+It does not scan the dependencies of the named package, the code of installs that name no package
+(`npm ci`, `pip install -r`, `uv sync`: their lockfile is only looked up in OSV, and the console
+says what was and was not covered), scripts on disk, shell-profile aliases or functions, downloaded
+scripts (`curl ... | bash`, reported as not checked), repositories fetched with `git clone`, or code
+already running on your account (it can rewrite the verdict cache or the CLI). Updates that install
+themselves, such as an editor extension or an `npx -y` server that runs its latest release, run no
+install command. The plugin's [sentinel](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#the-sentinel)
+scans what changed at session start, and tells the agent at the next one. The plugin has no override for a denied install, and it is a static check, not a
 sandbox: run the agent in a container for code you don't trust. It also adds a `/skilltotal:scan <target>` command and registers the SkillTotal MCP server.
 Recognized commands, settings, cache, timing, [team rollout](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#rolling-out-to-a-team)
 and [troubleshooting](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md#troubleshooting) are in [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md).
+
+### Other agents
+
+`skilltotal hook install` adds the same check to Cursor, Windsurf, Devin, Codex, Gemini CLI and VS
+Code Copilot, leaving their other hooks alone. An agent that cannot ask you gets a denial that says
+how to go ahead. [docs/agent-hooks.md](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md)
+has what each one can and cannot see, and the managed templates for a fleet.
 
 ## CI / GitHub Action
 
@@ -355,9 +363,10 @@ A scan of a local folder, archive or file makes no network request. SkillTotal g
 - **`vscode:` / `openvsx:` sources:** extension metadata and the `.vsix` from
   `marketplace.visualstudio.com` or `open-vsx.org`, and their download hosts
 - **`--provenance`:** the package's registry metadata
-- **`inventory`, `guard --installed`, the Claude Code plugin and the MCP server:** the same registries and git hosts, for the packages they check
+- **`inventory`, `guard --installed`, `watch`, the agent hooks and the MCP server:** the same registries and git hosts, for the packages they check
+- **The agent hook's lockfile lookup:** for an install that names no package (`npm ci`, `uv sync`), the hook sends the names and exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google) and nothing else. A scoped or private entry, or one the lockfile does not prove public, is never sent. Set `SKILLTOTAL_OSV=0` to turn it off. [What is sent, and its limits](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md#what-goes-over-the-network)
 
-It sends no telemetry, needs no account and makes no LLM call.
+Only the agent hook does that lookup: scanning sends nothing about your code anywhere. It sends no telemetry, needs no account and makes no LLM call.
 
 ## Open source vs SkillTotal Cloud
 
@@ -379,6 +388,7 @@ services on top of it; their code is not part of this repository ([docs/open-cor
 | Malware archetypes and the rules that catch them | [docs/detection-coverage.md](https://github.com/pezhik/skilltotal/blob/main/docs/detection-coverage.md) |
 | <a id="output"></a>Output formats: scan report (traits, OWASP mapping), SARIF, diff, guard and inventory JSON, AI-BOM properties | [docs/report-schema.md](https://github.com/pezhik/skilltotal/blob/main/docs/report-schema.md) |
 | Claude Code plugin reference | [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md) |
+| Hooks for other agents, the sentinel, fleet rollout | [docs/agent-hooks.md](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md) |
 | <a id="architecture"></a>Architecture | [docs/architecture.md](https://github.com/pezhik/skilltotal/blob/main/docs/architecture.md) |
 
 ## Contributing, security and license

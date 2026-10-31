@@ -89,8 +89,10 @@ Everything under `skilltotal/` is a pure library â€” no `print`, no `sys.exit` â
 - **Static and deterministic.** No code from the analyzed component is executed; no LLM
   is consulted. Results are reproducible. Analysis of a local folder, archive or file is
   offline; fetching a remote source (a git clone, the GitHub API size pre-check, the npm or PyPI
-  registry, `--provenance` metadata, and the packages `inventory` and the plugin hook check) is
-  the only network use, and it happens in `collector.py` / `provenance.py`, before analysis.
+  registry, `--provenance` metadata, and the packages `inventory` and the hooks check) happens in
+  `collector.py` / `provenance.py`, before analysis. The only other network use is outside the
+  engine: the agent hook's lockfile lookup in OSV (`osv_lookup.py`, `SKILLTOTAL_OSV=0` turns it
+  off), which `engine.analyze` never reaches.
 
 ## Extending
 

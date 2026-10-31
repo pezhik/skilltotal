@@ -159,8 +159,9 @@ def _is_current(old: dict[str, Any] | None, mark: str, ruleset: int) -> bool:
 
 def sweep(components: list[DiscoveredComponent], state: dict[str, dict[str, Any]], scan: Scan,
           decide: Decide, *, ruleset: int, project: str | None = None,
-          release: Callable[[str], str | None] | None = None, save: Callable[[], object] | None = None,
-          now: float | None = None, budget_s: float | None = None) -> Outcome:
+          release: Callable[[str], str | None] | None = None,
+          save: Callable[[], object] | None = None, now: float | None = None,
+          budget_s: float | None = None) -> Outcome:
     """Scan what is new or changed in ``components`` and bring ``state`` up to date.
 
     ``release(source)`` names the release a launcher would fetch now. ``save`` keeps ``state`` after

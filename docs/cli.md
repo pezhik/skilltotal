@@ -282,15 +282,16 @@ skilltotal inventory --json --state ~/.skilltotal-state.json --accept accept.jso
 ## watch
 
 ```bash
-skilltotal watch [--json] [--quiet] [--project DIR] [--state FILE] [--no-extensions]
-                 [--accept FILE] [--block-on malicious|high|medium] [--disable]
+skilltotal watch
+skilltotal watch --quiet --disable
 ```
 
 The sentinel: lists what is installed, compares a fingerprint of each component with the last run,
 and scans only what is new or changed. It catches what no hook sees, such as an automatic update or
 a plugin installed by hand. Exit code 2 while a component is flagged, 1 when a scan failed, else 0.
 It changes nothing unless `--disable` is given, which turns off a Claude Code plugin with malicious
-indicators. `--quiet` prints only what is flagged. See
+indicators. `--quiet` prints only what is flagged. `--project DIR`, `--state FILE`,
+`--no-extensions`, `--accept FILE`, `--block-on` and `--json` work as in [`guard`](#guard). See
 [docs/agent-hooks.md](agent-hooks.md#the-sentinel).
 
 ## rules list
@@ -327,14 +328,15 @@ environment variables the hook reads. Behavior and settings are in [docs/plugin.
 ## hook install
 
 ```bash
-skilltotal hook install [--agent all|claude-code|cursor|windsurf|devin|codex|gemini|copilot]
-                        [--scope user|project] [--dry-run]
-skilltotal hook uninstall [--agent ...] [--scope user|project] [--dry-run]
-skilltotal hook status [--json]
+skilltotal hook install --dry-run
+skilltotal hook install --agent cursor --scope project
+skilltotal hook uninstall
+skilltotal hook status --json
 ```
 
 `install` merges SkillTotal's hook into the config of each agent found on this machine, or the one
-`--agent` names, and leaves every other entry alone. It is safe to run twice, and it keeps a backup
+`--agent` names (`all`, `claude-code`, `cursor`, `windsurf`, `devin`, `codex`, `gemini`, `copilot`),
+in your own config or, with `--scope project`, the project's, and leaves every other entry alone. It is safe to run twice, and it keeps a backup
 beside the file. `--dry-run` shows the change as a diff and writes nothing. `uninstall` removes
 only that entry. `status` lists which agents are protected, a plugin and CLI whose versions differ,
 and a hook whose CLI is gone. For Claude Code, `install` says how to get the plugin and writes

@@ -16,8 +16,9 @@ skilltotal hook uninstall           # take it out again
 ```
 
 `--agent cursor` picks one agent. `--scope project` writes the project's config instead of yours.
-In your own config the hook runs the CLI by its full path, because an editor started from a dock
-does not see your shell's `PATH`; in a project's config, which others share, it runs `skilltotal`.
+On macOS and Linux your own config runs the CLI by its full path, because an editor started from a
+dock does not see your shell's `PATH`. On Windows, and in a project's config, which others share, it
+runs `skilltotal`.
 
 The install merges one entry into the agent's config and leaves every other entry alone. A second
 run changes nothing, the file as it was is kept beside it as `<file>.skilltotal-backup`, and
@@ -168,3 +169,183 @@ in `skilltotal watch`.
 **Network.** A sweep fetches what changed and is not on disk from npm, PyPI or GitHub, and asks the
 registry for the current release of an unpinned server once a day, as `guard --installed` does. A
 component on disk is scanned without a network request.
+
+## What goes over the network
+
+Scanning itself stays offline: `scan` of a local folder, archive or file, `guard` on a file and
+everything `engine.analyze` does on a folder make no network request. The hook does two things that
+do:
+
+1. **It fetches the packages a command names**, from the npm registry, PyPI, GitHub or a
+   marketplace, to scan them on your machine. Those hosts see an ordinary download.
+2. **For an install that names no package, it looks the lockfile up in OSV.** It sends the names and
+   exact versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by
+   Google), and nothing else: no path, project name, file content, hash, account or identifier. To
+   turn it off, set `SKILLTOTAL_OSV=0`.
+
+### The lockfile lookup
+
+`npm ci`, `npm install` and `yarn` with no package named, `pip install -r`, `uv sync`,
+`poetry install` and similar name no package to scan, but a lockfile lists every package at an exact
+version, transitive ones included. OSV publishes known malicious releases under `MAL-` ids, and the
+hook asks about them in one batch.
+
+| Result | What happens |
+|---|---|
+| A version is listed as `MAL-...` | Denied, in and out of CI. The answer names the package, the version and the id |
+| None of those looked up is listed | The console says "No known-malicious version in OSV for the N package(s) looked up" |
+| OSV is unreachable or times out | The console says they were not checked, with the number. Outside CI the install goes on. In CI it is denied unless `SKILLTOTAL_ALLOW_UNCHECKED` includes `osv` |
+| An entry could not be parsed, or a batch was cut short | Counted as not checked, with the number, and treated as above |
+
+**What is sent.** An entry is sent only when the lockfile itself records that it resolved from the
+public registry, and its name and version are taken from that record:
+
+| Lockfile | Sent | Never sent |
+|---|---|---|
+| `package-lock.json`, `npm-shrinkwrap.json` | Entries resolved from `registry.npmjs.org` | Scoped packages (`@scope/x`), other hosts, git, file and link dependencies, entries with no `resolved` URL |
+| `yarn.lock` (v1) | Entries resolved from `registry.npmjs.org` or `registry.yarnpkg.com` | The same |
+| `yarn.lock` (berry), `pnpm-lock.yaml` | Nothing: they do not record a registry | Everything |
+| `uv.lock` | Entries whose `source` is `pypi.org/simple` | Other indexes, git and path dependencies |
+| `poetry.lock` | Entries whose `[package.source]` names `pypi.org/simple` | All others. Poetry records no source for its default index, so most entries are not sent |
+| Requirements files | Nothing: they do not record an index | Everything |
+
+A custom registry configured in `.npmrc`, `pip.conf` or the environment changes nothing here, because
+an entry is sent only on the lockfile's own proof. The console says how many entries were not sent.
+`bun.lock`, `Pipfile.lock` and other formats are not read, and the console says so.
+
+**Limits.**
+
+- OSV lists known malware only. A package nobody has reported yet is not on the list, and a
+  brand-new malicious release will not be there.
+- A lookup is not a scan of the code. "No known-malicious version" says what OSV knows and nothing
+  about the package.
+- `npm install` with no lockfile: transitive packages are not known until the installer resolves
+  them, so OSV is not asked, and the console says so.
+- `npm update` and similar choose new versions when they run, so nothing is looked up.
+- Installers can resolve a version the lockfile does not hold when it is out of date.
+- `guard --installed` and `watch` do not do this lookup, so they add no network request of this
+  kind.
+
+**Requests.** One batch per command, of at most 1,000 packages, for at most 5 seconds in all, with no
+retry. Answers are kept for an hour by name and version in `osv-cache.json` in the
+[cache folder](plugin.md#git-sources-the-verdict-cache-and-timing), so the next command sends only
+what is new. There is no telemetry.
+
+## What each surface can and cannot see
+
+| What happens | Agent hook | Sentinel |
+|---|---|---|
+| The agent runs an install command | Checked before it runs | Seen afterwards |
+| The agent runs a lockfile install | Looked up in OSV before it runs; code not scanned | No |
+| The agent calls an MCP server (Cursor, Windsurf) | Checked on the first call | Seen in the config |
+| A person types `/plugin install` | Not seen | Seen at the next sweep |
+| A person uses the Extensions panel | Not seen | Seen at the next sweep |
+| A plugin or extension updates itself | Not seen | Seen at the next sweep |
+| `npx -y server` starts a new release | Not seen | Seen within a day |
+| An agent writes a skill or `.mcp.json` itself | Not seen | Seen at the next sweep |
+| A script on disk installs something | Not seen | Seen if it lands where an agent looks |
+
+Neither is a sandbox. A hook reads a command line, and the sentinel runs after the fact. Code that
+runs the moment it is installed has run by the time a sweep finds it. For code you do not trust, run
+the agent in a container.
+
+## Rolling out to a fleet
+
+Install the CLI at a pinned version on each machine, then put the hook where a person cannot remove
+it. All of these run `skilltotal`, so it must be on the `PATH` of the process that starts the agent.
+Run `skilltotal hook status` on a machine to confirm it.
+
+### Claude Code
+
+`managed-settings.json` goes in `/Library/Application Support/ClaudeCode/` (macOS),
+`/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). This enables the
+plugin, which brings the hook and the sentinel, and allows no other hooks. Under
+`allowManagedHooksOnly`, the hooks of a plugin that managed settings force-enable keep running.
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "skilltotal": { "source": { "source": "github", "repo": "pezhik/skilltotal" } }
+  },
+  "enabledPlugins": { "skilltotal@skilltotal": true },
+  "allowManagedHooksOnly": true,
+  "strictKnownMarketplaces": [{ "source": "github", "repo": "pezhik/skilltotal" }]
+}
+```
+
+`strictKnownMarketplaces` allows only the marketplaces it lists, so add your own. Where plugins are
+not an option, use a managed hook instead. It starts Python for every command, as it lacks the
+plugin's pre-filter, and it brings no sentinel:
+
+```json
+{
+  "allowManagedHooksOnly": true,
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [{ "type": "command", "command": "skilltotal hook claude-code", "timeout": 900 }]
+      }
+    ]
+  }
+}
+```
+
+### Cursor
+
+`hooks.json` goes in `/Library/Application Support/Cursor/` (macOS), `/etc/cursor/` (Linux and WSL)
+or `C:\ProgramData\Cursor\` (Windows). With `failClosed`, a crash, a timeout or no output blocks the
+action. That also means a machine with no working CLI can run no shell command through the agent,
+so roll out the CLI first.
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      { "command": "skilltotal hook cursor", "timeout": 900, "failClosed": true }
+    ],
+    "beforeMCPExecution": [
+      { "command": "skilltotal hook cursor", "timeout": 900, "failClosed": true }
+    ],
+    "sessionStart": [{ "command": "skilltotal hook cursor", "timeout": 10 }]
+  }
+}
+```
+
+### Windsurf
+
+`hooks.json` goes in `/Library/Application Support/Windsurf/` (macOS), `/etc/windsurf/` (Linux and
+WSL) or `C:\ProgramData\Windsurf\` (Windows). It runs before the user's and the workspace's hooks.
+
+```json
+{
+  "hooks": {
+    "pre_run_command": [{ "command": "skilltotal hook windsurf", "show_output": true }],
+    "pre_mcp_tool_use": [{ "command": "skilltotal hook windsurf", "show_output": true }]
+  }
+}
+```
+
+### VS Code Copilot
+
+A file in `/etc/github-copilot/policy.d/` (Linux and macOS) or `C:\ProgramData\GitHub\Copilot\policy.d\`
+(Windows) applies to the Copilot CLI across the machine. Copilot's cloud agent reads only
+`.github/hooks/*.json` from the repository, and there `ask` counts as `deny`. A hook that crashes
+denies the call, and one that times out does not.
+
+```json
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [{ "type": "command", "command": "skilltotal hook copilot", "timeoutSec": 900 }]
+  }
+}
+```
+
+### Everywhere
+
+Schedule `skilltotal watch --quiet` on each machine and act on exit code 2. For CI, set
+`SKILLTOTAL_STRICT=1` if your CI service is not one SkillTotal recognizes, and list what you allow in
+`SKILLTOTAL_ALLOW_UNCHECKED` ([CI strict mode](plugin.md#ci-strict-mode)). If your policy forbids
+sending package names to a third party, set `SKILLTOTAL_OSV=0` in the same place.

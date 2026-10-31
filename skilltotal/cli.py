@@ -1687,8 +1687,11 @@ Environment:
                               unchecked install whose kind is not allowed.
   SKILLTOTAL_ALLOW_UNCHECKED  the kinds of unchecked install strict mode lets through, comma-
                               separated: lockfile, local, script, partial, remote, container,
-                              registry (a package from a configured registry or mirror)
+                              registry, osv (registry: a package from a configured registry or
+                              mirror; osv: a lockfile lookup that did not cover everything)
   SKILLTOTAL_STRICT_PARTIAL   1: strict mode also denies a partly analyzed package
+  SKILLTOTAL_OSV              0/false/no/off turns off the lockfile lookup, which sends the names
+                              and exact versions of public-registry packages to OSV (api.osv.dev)
   SKILLTOTAL_HOOK_BUDGET      seconds all checks of one command share (default 60, at most 100;
                               in strict mode 600, at most 840)
   SKILLTOTAL_WORKERS          processes one large check may use (1 turns it off)
@@ -1933,7 +1936,6 @@ def _cmd_watch(args: argparse.Namespace) -> int:
     """Scan what changed among the installed components: exit 2 while any of them blocks, else 1
     when a scan failed, else 0."""
     from skilltotal import engine
-    from skilltotal.collector import resolve_release
     from skilltotal.hook_scan import file_lock
     from skilltotal.inventory import _claude_dir, discover
     from skilltotal.report import one_line
@@ -2116,11 +2118,21 @@ def _hook_decide(event, strict_by: str = "") -> dict | None:
                            strict=bool(strict_by), strict_by=strict_by,
                            allow_unchecked=_hook_allowed_unchecked(os.environ),
                            deny_partial=_hook_strict_partial(os.environ),
-                           environ=os.environ, home=_home())
+                           environ=os.environ, home=_home(), osv=_hook_osv())
     note = _hook_settings_note(os.environ, ceiling)
     if answer is not None and note:
         answer["systemMessage"] = f"{answer.get('systemMessage', '')} {note}".strip()
     return answer
+
+
+def _hook_osv():
+    """The lockfile lookup, unless SKILLTOTAL_OSV turns it off. Only the hook has one."""
+    from skilltotal import osv_lookup
+
+    if not osv_lookup.enabled(os.environ):
+        return None
+    cache = _hook_cache_path().parent / "osv-cache.json"
+    return lambda files, cwd: osv_lookup.lookup(files, cwd, osv_lookup.post, cache)
 
 
 def _home() -> Path | None:
@@ -2147,7 +2159,10 @@ def _hook_settings_note(environ, ceiling: float) -> str:
     word = environ.get(STRICT_PARTIAL_ENV, "").strip().lower()
     if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
         notes.append(f"{STRICT_PARTIAL_ENV} is {word!r}, read as on; use 1 or 0.")
-    named = {p.strip().lower() for p in environ.get(ALLOW_UNCHECKED_ENV, "").split(",")} - {""}
+    word = environ.get("SKILLTOTAL_OSV", "").strip().lower()
+    if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
+        notes.append(f"SKILLTOTAL_OSV is {word!r}, read as on; use 1 or 0.")
+    named ={p.strip().lower() for p in environ.get(ALLOW_UNCHECKED_ENV, "").split(",")} - {""}
     unknown = sorted(named - set(UNCHECKED_KINDS))
     if unknown:
         notes.append(f"{ALLOW_UNCHECKED_ENV} names unknown kind(s) {', '.join(unknown)}; the "

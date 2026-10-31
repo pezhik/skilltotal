@@ -125,7 +125,10 @@ REMOTE, CONTAINER = "remote", "container"
 # about outside CI; in strict mode denied unless allowed under this name, so a CI job behind a
 # mirror can opt in without turning strict mode off.
 REGISTRY = "registry"
-UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER, REGISTRY)
+# A lockfile lookup in OSV that did not cover what it should have: OSV did not answer, or entries
+# could not be read. Said in the console; denied in strict mode unless allowed under this name.
+OSV = "osv"
+UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER, REGISTRY, OSV)
 # A git clone fetches code the hook does not check, and runs none of it by itself: said in the
 # console, never denied for that alone (in CI too), so it is not one of UNCHECKED_KINDS.
 GIT_CLONE = "clone"
@@ -137,7 +140,7 @@ def _lockfile(file: str) -> list[Install]:
     """An install of the packages ``file`` lists (a lockfile, manifest or requirements file)."""
     shown = file if _PLAIN_PATH.fullmatch(file) or _PLAIN_URL.fullmatch(file) else None
     does = f"installs from {shown}" if shown else "installs from a requirements file"
-    return [Install(None, unchecked=LOCKFILE, does=does)]
+    return [Install(None, unchecked=LOCKFILE, does=does, lockfile=shown)]
 
 
 def _updates(file: str) -> list[Install]:
@@ -4580,7 +4583,7 @@ def hook_response(
     event: dict[str, Any], scan: Scan, budget_s: float = DEFAULT_BUDGET_S, *,
     strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
     deny_partial: bool = False, environ: Mapping[str, str] | None = None,
-    home: Path | None = None,
+    home: Path | None = None, osv: Callable[[list[str], str | None], Any] | None = None,
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -4607,6 +4610,12 @@ def hook_response(
     When that registry is the mirror ``SKILLTOTAL_NPM_REGISTRY`` / ``SKILLTOTAL_PYPI_INDEX``
     names, the package is checked there instead (``scan(..., mirror=True)``). Without
     ``environ`` nothing outside the command line is read.
+
+    ``osv(files, cwd)`` looks up the exact versions the lockfiles of a command name on OSV's list
+    of known malicious packages (``skilltotal.osv_lookup``), for an install that names none. A
+    listed version is denied, in and out of CI. A lookup that covered less than it should have is
+    said, and in strict mode denied unless ``osv`` is an allowed kind. Without it nothing is
+    looked up.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -4712,6 +4721,17 @@ def hook_response(
                 partial.append(f"{label} was only partly analyzed ({'; '.join(gaps)})")
             clean.append(entry)
 
+    osv_listed: list[str] = []
+    osv_line = ""
+    lockfiles = [i.lockfile for i in unchecked if i.unchecked == LOCKFILE and i.lockfile]
+    if osv is not None and lockfiles:
+        found = osv(lockfiles, cwd)
+        osv_listed = found.hit_lines()
+        osv_line = found.line()
+        if strict and found.incomplete:
+            unchecked.append(Install(None, unchecked=OSV,
+                                     does="has entries that were not looked up in OSV"))
+
     # What was not checked is the person's call, never a silent pass: otherwise a package padded
     # until its scan times out, or named sixth, would walk past the guard.
     if late:
@@ -4732,12 +4752,19 @@ def hook_response(
     passed = [i for i in unchecked if i not in blocked]
     held = partial if strict and deny_partial and PARTIAL not in allow_unchecked else []
 
+    if osv_listed and not denied:
+        reason = ("SkillTotal blocked this install: OSV lists these exact versions in the lockfile "
+                  f"as malicious: {'; '.join(osv_listed)}.")
+        return _answer(permission="deny", reason=reason,
+                       message=_line(reason, _not_checked(unchecked, rest=True), osv_line))
     if denied:
         reason = "SkillTotal blocked this install: it found malicious indicators. " + " ".join(
             denied)
         reason = f"{reason} {_details(scanned)}"
+        if osv_listed:
+            reason += f" OSV also lists as malicious: {'; '.join(osv_listed)}."
         return _answer(permission="deny", reason=reason,
-                       message=_line(reason, _not_checked(unchecked, rest=True)))
+                       message=_line(reason, _not_checked(unchecked, rest=True), osv_line))
     if strict and (asked or blocked or held):
         why: list[str] = []
         if asked:
@@ -4765,19 +4792,19 @@ def hook_response(
             allow = f"To allow it in CI, set {ALLOW_UNCHECKED_ENV}={kinds}."
         return _answer(permission="deny", reason=reason,
                        message=_line(reason, allow, strict_note(strict_by),
-                                     _not_checked(passed, rest=True)))
+                                     _not_checked(passed, rest=True), osv_line))
     current = _runs_current_release(command, installs)
     if asked:
         reason = "SkillTotal needs your approval for this install. " + " ".join(asked)
         # The hint only helps for what the scanner read; a custom index or archive it can't.
         reason = f"{reason} {_details(scanned)}" if scanned else reason
         return _answer(permission="ask", reason=reason,
-                       message=_line(reason, _not_checked(unchecked, rest=True), current))
+                       message=_line(reason, _not_checked(unchecked, rest=True), current, osv_line))
     context = ("SkillTotal checked " + "; ".join(clean) + ", no malicious indicators."
                if clean else None)
     return _answer(context=context,
                    message=_line(_checked(clean), _not_checked(unchecked, rest=bool(clean)),
-                                 current))
+                                 current, osv_line))
 
 
 # Registering an MCP server: what it names is started again at every launch of the agent.

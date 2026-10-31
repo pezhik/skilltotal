@@ -7,7 +7,8 @@ it out to a team, and what to do when it does not work.
 
 Coding agents install packages in the middle of a task, and the permission prompt, if there is
 one, shows only the command. The plugin checks each package on your machine, with the same engine
-as the CLI, before the install command runs.
+as the CLI, before the install command runs. The same check runs in
+[other agents](agent-hooks.md).
 
 ## Commands the hook recognizes
 
@@ -88,7 +89,10 @@ alone does not count).
   (`npm ci`, `npm install`, `pip install -r`, `uv sync`, `poetry install`, updates such as
   `npm update`, and `uv run` in a project), from a local path (`pip install -e .`,
   `npm install ./dir`), or a script downloaded and run (`curl ... | bash`,
-  `curl -o i.sh ... && bash i.sh`, `iex (irm ...)`). Outside CI they run as usual.
+  `curl -o i.sh ... && bash i.sh`, `iex (irm ...)`). Outside CI they run as usual. Nothing in them
+  is scanned, but a lockfile's public-registry entries are looked up on OSV's list of known
+  malicious packages, and a listed version is denied, in and out of CI
+  ([Lockfile lookup](#the-lockfile-lookup)).
 - **MCP servers with no package:** a server reached at a URL (`claude mcp add --transport http`
   or `--transport sse`, `codex mcp add --url`, `claude mcp add-json` with a `url`) or run from a
   container image (`claude mcp add x -- docker run ... image`, `podman run`). Nothing is
@@ -168,6 +172,23 @@ A package whose installer reads the public registry is checked on the public reg
 mirror is set. Only checks of mirror packages get the mirror settings and the token. A verdict for a
 mirror package is cached separately from the public one, for an hour.
 
+### The lockfile lookup
+
+For an install that names no package, the hook reads the lockfile and sends the names and exact
+versions of public-registry packages to [OSV](https://osv.dev) (`api.osv.dev`, operated by Google).
+Nothing else is sent. To turn it off, set `SKILLTOTAL_OSV=0`. An entry goes out only when the
+lockfile itself proves it resolved from the public registry: scoped, mirrored, git, file and link
+entries are never sent, nor is any entry of a lockfile that records no registry (pnpm, yarn berry,
+a requirements file).
+
+A version listed as `MAL-...` is denied. A clean result reads "No known-malicious version in OSV",
+which says what OSV knows: it lists known malware only, a brand-new package is not on it, and a
+lookup is not a scan of the code. If OSV cannot be reached, the console says the packages were not
+checked, outside CI the install goes on, and in CI it is denied unless `osv` is allowed. Scanning
+itself sends none of your code anywhere: to scan a named package, the hook downloads it from its
+registry. The full table of what is sent, and the limits, are in
+[docs/agent-hooks.md](agent-hooks.md#what-goes-over-the-network).
+
 ### The console line
 
 Every install command gets one line in the Claude Code console: what was checked and its score,
@@ -190,6 +211,7 @@ So is every install it could not check, unless `SKILLTOTAL_ALLOW_UNCHECKED` list
 | `remote` | An MCP server reached at a URL (`claude mcp add --transport http\|sse`, `codex mcp add --url`, `claude mcp add-json` with a `url`) |
 | `container` | An MCP server run from a container image (`claude mcp add x -- docker run ... image`, `podman run`) |
 | `registry` | A named package from a configured registry or mirror (see [Custom registries](#custom-registries-and-mirrors)) |
+| `osv` | A [lockfile lookup](#the-lockfile-lookup) that covered less than it should have: OSV did not answer, or entries could not be read |
 
 `registry` lets a CI job behind a company mirror install named packages without turning strict
 mode off (`SKILLTOTAL_STRICT=0`), which would also let through everything else it asks about.
@@ -278,8 +300,9 @@ The hook reads these environment variables from the environment Claude Code runs
 | Variable | Default | What it sets |
 |---|---|---|
 | `SKILLTOTAL_STRICT` | unset | `1` (or `true`, `yes`, `on`) turns CI strict mode on anywhere, `0` (or `false`, `no`, `off`) turns it off. Unset, strict mode follows the CI variables (see [CI](#ci-strict-mode)) |
-| `SKILLTOTAL_ALLOW_UNCHECKED` | empty | Comma-separated kinds of unchecked install that strict mode lets through: `lockfile`, `local`, `script`, `partial`, `remote`, `container`, `registry` |
+| `SKILLTOTAL_ALLOW_UNCHECKED` | empty | Comma-separated kinds of unchecked install that strict mode lets through: `lockfile`, `local`, `script`, `partial`, `remote`, `container`, `registry`, `osv` |
 | `SKILLTOTAL_STRICT_PARTIAL` | off | `1`: strict mode also denies a partly analyzed package |
+| `SKILLTOTAL_OSV` | on | `0` (or `false`, `no`, `off`) turns off the [lockfile lookup](#the-lockfile-lookup), which sends the names and exact versions of public-registry packages to OSV |
 | `SKILLTOTAL_HOOK_BUDGET` | 60 (600 in strict mode) | Seconds all checks of one command share; at most 100 (840 in strict mode) |
 | `SKILLTOTAL_WORKERS` | up to 4 | Processes one large check may use; `1` turns this off |
 | `SKILLTOTAL_CACHE_DIR` | see [the verdict cache](#git-sources-the-verdict-cache-and-timing) | Folder for the verdict cache |
@@ -296,7 +319,8 @@ CI.
 
 - **Dependencies.** It scans the package a command names, not the packages it pulls in.
 - **Installs that name no package.** `npm install`, `npm ci`, `pip install -r requirements.txt` and
-  `uv sync` install from a lockfile or a requirements file, which the hook does not read. The hook
+  `uv sync` install from a lockfile or a requirements file. Their code is not scanned: the lockfile
+  is only [looked up in OSV](#the-lockfile-lookup), where it proves its entries public. The hook
   says so in the console. In CI it denies them unless `SKILLTOTAL_ALLOW_UNCHECKED` includes
   `lockfile`.
 - **Scripts and shell-profile definitions.** The hook reads only the command line. It does not
@@ -339,6 +363,9 @@ CI.
 It is a static guardrail, not a sandbox. For code you don't trust, run the agent in a container.
 
 ## Rolling out to a team
+
+Templates for other agents, and `allowManagedHooksOnly`, are in
+[docs/agent-hooks.md](agent-hooks.md#rolling-out-to-a-fleet).
 
 1. **Install the CLI at a pinned version** on each machine, for example
    `pipx install skilltotal==0.88.0`, with the same version as the plugin.

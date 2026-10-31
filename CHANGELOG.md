@@ -25,6 +25,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
   plugin runs it in the background at session start and when skills or user settings change, and
   tells the agent which component is flagged at the next session start, in fixed sentences with
   validated names only. Cursor's `sessionStart` does the same.
+- Lockfile installs (`npm ci`, `npm install`, `pip install -r`, `uv sync`, `poetry install`) are
+  looked up in OSV: the hook sends the names and exact versions of public-registry packages to
+  `api.osv.dev`, operated by Google, and denies a version listed as `MAL-...`, in and out of CI. On
+  by default; `SKILLTOTAL_OSV=0` turns it off. Only an entry the lockfile proves public is sent:
+  scoped, mirrored, git, file and link entries never are, nor is any entry of a lockfile that
+  records no registry. A clean result reads "No known-malicious version in OSV". An unreachable OSV
+  reads "not checked" with the number, and in CI is denied unless the new `osv` kind is allowed in
+  `SKILLTOTAL_ALLOW_UNCHECKED`. One batch per command, 5 seconds at most, no retry, an hour's cache.
+  It lives in the hook only: `engine.analyze`, `scan`, `guard` and `watch` make no such request.
 - Editor extensions can be scanned by marketplace id or link before they are installed:
   `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`
   link for the Visual Studio Marketplace, and `openvsx:<namespace>.<name>[@<version>]` or an
