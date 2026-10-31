@@ -33,7 +33,8 @@ stderr (stdout stays the MCP session).
 
 Tools exposed, all annotated read-only:
 
-- `scan_component` scans a local path, git URL, `npm:` or `pypi:` source. By default it answers
+- `scan_component` scans a local path, git URL, `npm:`, `pypi:`, `vscode:` or `openvsx:` source
+  (see [sources](cli.md#sources)). By default it answers
   with a summary of a few kilobytes: the verdict, the risk, why (each finding with up to three
   locations), the capabilities, notes to check by hand and what the scan does not cover. Pass
   `detail: "full"` for the complete report.

@@ -105,6 +105,20 @@ every login. `--no-extensions` leaves extensions out of both commands.
 Extensions in a folder an editor was started with (`--extensions-dir`), or in a portable
 install's own folder, are not read: that setting exists only inside the editor's process.
 
+### Scan one extension before installing
+
+To check an extension before it is on the machine, name it by its marketplace id or paste its
+marketplace link. `vscode:` reads the Visual Studio Marketplace; `openvsx:` reads Open VSX, which
+Cursor, VSCodium and Windsurf install from:
+
+```bash
+skilltotal guard vscode:publisher.name
+skilltotal scan openvsx:namespace.name@1.2.3
+```
+
+The same extension can differ between the two marketplaces, so scan the one your editor uses. See
+[sources](cli.md#sources) for the version and platform build that is scanned.
+
 ## Catching a malicious update
 
 An editor extension updates itself from its marketplace, and an MCP server started with

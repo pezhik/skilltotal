@@ -230,6 +230,7 @@ skilltotal scan . --fail-on high
 ```bash
 skilltotal scan ./path/to/component           # a folder, archive, file, git URL, npm:name or pypi:name
 skilltotal scan ./downloads/some-extension.vsix   # also .mcpb, .dxt and .whl files
+skilltotal scan vscode:publisher.name         # an editor extension by id (openvsx: for Open VSX)
 skilltotal scan ./component --json            # JSON to stdout
 skilltotal scan ./component --sarif --output report.sarif
 skilltotal scan ./component --fail-on high    # exit 2 on a high/critical risk finding
@@ -265,7 +266,8 @@ For Claude Desktop, Cursor, Windsurf or any client that reads `mcpServers`:
 { "mcpServers": { "skilltotal": { "command": "skilltotal", "args": ["mcp"] } } }
 ```
 
-It has three read-only tools: `scan_component` (a local path, git URL, `npm:` or `pypi:` source),
+It has three read-only tools: `scan_component` (a local path, git URL, `npm:`, `pypi:`, `vscode:`
+or `openvsx:` source),
 `diff_components` (what changed between two versions) and `list_rules`. VS Code, the `uvx`/`npx`
 forms and the path rules are in [docs/mcp-server.md](https://github.com/pezhik/skilltotal/blob/main/docs/mcp-server.md).
 
@@ -350,6 +352,8 @@ A scan of a local folder, archive or file makes no network request. SkillTotal g
   first, to check the size of what would be cloned
 - **`npm:` / `pypi:` sources:** package metadata and archive from `registry.npmjs.org` or PyPI
   (`pypi.org` and its file host), or from your mirror (`SKILLTOTAL_NPM_REGISTRY`, `SKILLTOTAL_PYPI_INDEX`)
+- **`vscode:` / `openvsx:` sources:** extension metadata and the `.vsix` from
+  `marketplace.visualstudio.com` or `open-vsx.org`, and their download hosts
 - **`--provenance`:** the package's registry metadata
 - **`inventory`, `guard --installed`, the Claude Code plugin and the MCP server:** the same registries and git hosts, for the packages they check
 

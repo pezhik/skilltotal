@@ -58,8 +58,9 @@ MAX_CONCURRENT_CALLS = 2
 
 _SOURCE_DESCRIPTION = (
     "What to scan: an absolute path to a local folder, file or archive, a git URL (a subfolder "
-    "as https://github.com/<owner>/<repo>/tree/<ref>/<path>), npm:<name>[@version], or "
-    "pypi:<name>[==version]."
+    "as https://github.com/<owner>/<repo>/tree/<ref>/<path>), npm:<name>[@version], "
+    "pypi:<name>[==version], or an editor extension as vscode:<publisher>.<name>[@version] "
+    "(Visual Studio Marketplace) or openvsx:<namespace>.<name>[@version] (Open VSX)."
 )
 _DETAIL_PROPERTY = {
     "type": "string",
@@ -97,7 +98,8 @@ TOOLS: list[dict[str, Any]] = [
             "capabilities, prompt-injection surfaces, and exfiltration paths. Use this "
             "BEFORE installing or trusting a component. The scan is local, deterministic, "
             "and never executes the component's code. A local path is read in place; a git URL "
-            "or npm:/pypi: source is downloaded to a temp folder that is removed afterwards. A "
+            "or npm:/pypi:/vscode:/openvsx: source is downloaded to a temp folder that is "
+            "removed afterwards. A "
             "source over the size limit is refused with an error naming the setting that "
             "raises it."
             + _HOW_TO_READ + _SUMMARY_SHAPE

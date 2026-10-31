@@ -47,7 +47,9 @@ Everything under `skilltotal/` is a pure library â€” no `print`, no `sys.exit` â
    read in place; a single file is copied into a temp dir; an archive (`.zip`, `.tar.gz`,
    `.tgz`, `.tar`, ...) is extracted into one (links, devices and path escapes are refused, sizes
    and entry counts are capped); a git URL is shallow-cloned; an `npm:` / `pypi:` spec is fetched
-   from the registry as the package archive and extracted. Temp dirs are removed when the
+   from the registry as the package archive and extracted; a `vscode:` / `openvsx:` extension is
+   resolved through its marketplace's API and its `.vsix` fetched from fixed hosts and extracted
+   the same way. Temp dirs are removed when the
    `SourceContext` closes. `Component` (name/type/version) is derived solely from files in the
    component (`package.json`, `pyproject.toml`/`setup.py`, MCP manifests, `SKILL.md`).
 2. **Index** (`file_index.py`): walk once, skipping VCS/dependency dirs and binaries; cache

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -22,11 +23,12 @@ import unicodedata
 import urllib.error
 import urllib.request
 import zipfile
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import NamedTuple
-from urllib.parse import quote, urljoin, urlparse, urlsplit
+from urllib.parse import parse_qsl, quote, urljoin, urlparse, urlsplit
 
 from skilltotal import bounded_json
 from skilltotal.file_index import MAX_FILE_BYTES
@@ -47,6 +49,13 @@ _PYPI_URL_RE = re.compile(r"^https?://pypi\.org/project/([\w.-]+)", re.I)
 # and reach the registry, whose 404 then reflected the raw input back to the user.
 _NPM_NAME_RE = re.compile(r"^@?[a-z0-9][a-z0-9._-]*(?:/[a-z0-9][a-z0-9._-]*)?$", re.I)
 _PYPI_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$", re.I)
+# Editor extensions by marketplace id (`publisher.name`). Spelled out rather than `re.I`, which
+# lets `[a-z]` match the Kelvin sign and the long s. Used with fullmatch: `$` would allow a
+# trailing newline.
+_VSM_URL_RE = re.compile(r"^https?://marketplace\.visualstudio\.com/items/?\?", re.I)
+_OPENVSX_URL_RE = re.compile(r"^https?://(?:www\.)?open-vsx\.org/extension/", re.I)
+_EXTENSION_PART_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}")
+_EXTENSION_VERSION_RE = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+-]{0,63}")
 
 _HTTP_TIMEOUT = 60  # seconds for a registry/download request
 # Every temporary folder a scan downloads, clones or extracts into starts with this, in
@@ -242,12 +251,16 @@ def is_url(source: str) -> bool:
 
 
 def classify_source(source: str) -> str:
-    """Classify a source string into 'npm', 'pypi', 'git', or 'local'."""
+    """Classify a source string into 'npm', 'pypi', 'vscode', 'openvsx', 'git', or 'local'."""
     s = source.strip()
     if s.lower().startswith("npm:") or _NPMJS_URL_RE.match(s):
         return "npm"
     if s.lower().startswith("pypi:") or _PYPI_URL_RE.match(s):
         return "pypi"
+    if s.lower().startswith("vscode:") or _VSM_URL_RE.match(s):
+        return "vscode"
+    if s.lower().startswith("openvsx:") or _OPENVSX_URL_RE.match(s):
+        return "openvsx"
     if is_url(s):
         return "git"
     return "local"
@@ -294,6 +307,45 @@ def pypi_package_spec(source: str) -> tuple[str | None, str | None]:
     return spec, version
 
 
+def extension_spec(source: str) -> tuple[str | None, str | None]:
+    """Parse an editor extension source into ``(publisher.name, version)``.
+
+    ``vscode:<publisher>.<name>[@<version>]`` and a Visual Studio Marketplace item URL
+    (``.../items?itemName=<publisher>.<name>``); ``openvsx:<namespace>.<name>[@<version>]`` and an
+    Open VSX URL (``https://open-vsx.org/extension/<namespace>/<name>[/<version>]``). ``@latest``
+    is no pin. Returns ``(None, None)`` for anything else: no URL is ever built from it.
+    """
+    s = source.strip()
+    lower = s.lower()
+    version: str | None = None
+    if lower.startswith(("vscode:", "openvsx:")):
+        spec = s.split(":", 1)[1].strip()
+        if "@" in spec:
+            spec, _, version = spec.partition("@")
+    elif _VSM_URL_RE.match(s):
+        parts = urlsplit(s)
+        names = [value for key, value in parse_qsl(parts.query, keep_blank_values=True)
+                 if key == "itemName"]
+        spec = names[0] if len(names) == 1 else ""
+    elif _OPENVSX_URL_RE.match(s):
+        path = urlsplit(s).path
+        segments = path[len("/extension/"):].rstrip("/").split("/")
+        if len(segments) not in (2, 3):
+            return None, None
+        spec = ".".join(segments[:2])
+        version = segments[2] if len(segments) == 3 else None
+    else:
+        return None, None
+    publisher, dot, name = spec.partition(".")
+    if not (dot and _EXTENSION_PART_RE.fullmatch(publisher) and _EXTENSION_PART_RE.fullmatch(name)):
+        return None, None
+    if version is not None and version.lower() == "latest":
+        version = None
+    if version is not None and not _EXTENSION_VERSION_RE.fullmatch(version):
+        return None, None
+    return f"{publisher}.{name}", version
+
+
 def npm_package_name(source: str) -> str | None:
     """Extract the npm package name from an `npm:<name>` spec or an npmjs.com URL."""
     return npm_package_spec(source)[0]
@@ -307,9 +359,11 @@ def pypi_package_name(source: str) -> str | None:
 def collect(source: str, *, on_size: Callable[[TreeSize], None] | None = None) -> SourceContext:
     """Resolve ``source`` into a :class:`SourceContext`.
 
-    Supports a local directory, a git URL (shallow clone), and npm / PyPI packages
+    Supports a local directory, a git URL (shallow clone), npm / PyPI packages
     (`npm:<name>` / `pypi:<name>` specs or npmjs.com / pypi.org URLs — the latest published
-    release is downloaded from the registry and extracted).
+    release is downloaded from the registry and extracted), and editor extensions from the
+    Visual Studio Marketplace or Open VSX (`vscode:<publisher>.<name>` /
+    `openvsx:<namespace>.<name>` or their item URLs — the .vsix is downloaded and extracted).
 
     ``on_size`` is called once, before the clone starts, with the :class:`TreeSize` of a GitHub
     repository whose tree the API could list. It exists so a caller running this as a job can
@@ -322,6 +376,10 @@ def collect(source: str, *, on_size: Callable[[TreeSize], None] | None = None) -
         return _collect_npm(source)
     if kind == "pypi":
         return _collect_pypi(source)
+    if kind == "vscode":
+        return _collect_vscode(source)
+    if kind == "openvsx":
+        return _collect_openvsx(source)
     if kind == "git":
         return _collect_remote(source, on_size=on_size)
     return _collect_local(source)
@@ -1316,12 +1374,14 @@ def _safe_extract_zip(data: bytes, dest: Path) -> int:
 
 def _collect_archive(
     source: str, ctype: str, version: str, archive_url: str, filename: str,
-    *, name: str | None = None,
+    *, name: str | None = None, data: bytes | None = None,
 ) -> SourceContext:
     """Download and extract a registry artifact. ``name`` is the registry's own name for the
     project, when the artifact may not carry a manifest that says it (a wheel has none at its
-    root, and an sdist folder is named ``project-1.2.3``)."""
-    data = _http_get(archive_url)
+    root, and an sdist folder is named ``project-1.2.3``). ``data`` is the artifact when the
+    caller has already downloaded it."""
+    if data is None:
+        data = _http_get(archive_url)
     tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
     try:
         extract_dir = Path(tmp.name) / "x"
@@ -1692,6 +1752,339 @@ def _collect_pypi(source: str) -> SourceContext:
     if mirrored:
         ctx.mirror_note = _mirror_note("pypi", base)
     return ctx
+
+
+# --------------------------------------------------------------- editor extension marketplaces
+
+class _Marketplace(NamedTuple):
+    """Where one kind of extension source is resolved and downloaded from. The hosts are fixed:
+    neither a scanned component nor the environment can point a scan elsewhere, and a redirect is
+    followed only to them (the marketplace's own download CDN included)."""
+
+    label: str
+    hosts: frozenset[str]
+    cdn: re.Pattern[str] | None = None
+
+
+_VS_MARKETPLACE = _Marketplace(
+    "the Visual Studio Marketplace", frozenset({"marketplace.visualstudio.com"}),
+    re.compile(r"[a-z0-9-]{1,128}\.gallery(?:cdn)?\.vsassets\.io"))
+_OPEN_VSX = _Marketplace("Open VSX", frozenset({"open-vsx.org", "openvsx.eclipsecontent.org"}))
+_VSM_GALLERY = "https://marketplace.visualstudio.com/_apis/public/gallery"
+_OPENVSX_API = "https://open-vsx.org/api"
+_OPENVSX_GALLERY = "https://open-vsx.org/vscode/gallery"
+_MAX_REDIRECTS = 5
+_REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
+_READ_CHUNK = 1024 * 1024
+# A marketplace's answer about one extension: a popular one's version list runs to a few MB.
+_MAX_GALLERY_JSON_BYTES = 32 * 1024 * 1024
+# A whole download (redirects included) may take as long as a clone may, no longer.
+_DOWNLOAD_DEADLINE = _CLONE_TIMEOUT
+# Gallery query flags (the API VS Code itself uses): each version with its properties, which carry
+# the pre-release marker; unpinned, only the latest stable and pre-release build per platform.
+_GALLERY_FLAGS = 0x1 | 0x10
+_GALLERY_LATEST_ONLY = 0x10000
+_GALLERY_BY_NAME = 7
+_PRERELEASE_PROPERTY = "Microsoft.VisualStudio.Code.PreRelease"
+_TARGET_PLATFORM_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+# The build scanned when an extension ships one per platform: the one every editor installs when
+# there is one, else the one CI and servers run (as for PyPI wheels), else the first by name. The
+# choice depends on the release alone, never on the machine running the scan.
+_PLATFORM_PREFERENCE = ("universal", "linux-x64")
+
+
+class _Build(NamedTuple):
+    version: str
+    platform: str
+    prerelease: bool
+
+
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Hands a redirect back to the caller, which checks where it points before following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: D102
+        return None
+
+
+def _marketplace_send(request: urllib.request.Request, timeout: float):
+    """One HTTP exchange, without following redirects: a 3xx comes back as the response."""
+    opener = urllib.request.build_opener(_NoRedirects())
+    try:
+        return opener.open(request, timeout=timeout)  # nosec B310 - https and host checked first
+    except urllib.error.HTTPError as exc:
+        if exc.code in _REDIRECT_CODES:
+            return exc
+        raise
+
+
+def _on_marketplace(url: str, market: _Marketplace) -> bool:
+    """``url`` is https on one of ``market``'s hosts, on the default port, with no credentials."""
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme.lower() != "https" or "@" in parts.netloc or port not in (None, 443):
+        return False
+    return host in market.hosts or bool(market.cdn and market.cdn.fullmatch(host))
+
+
+def _shown_host(url: str) -> str:
+    host = (urlsplit(url).hostname or "").lower()
+    return host if re.fullmatch(r"[a-z0-9.-]{1,200}", host) else "another host"
+
+
+def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = None,
+                       archive: bool = False) -> bytes:
+    """GET ``url`` (or POST ``body`` as JSON) on ``market``'s hosts and return the body, decoded
+    when it is served gzip-encoded. Redirects are followed only to the same hosts; the body may be
+    at most the archive limit (``archive``) or _MAX_GALLERY_JSON_BYTES, and the whole fetch must
+    finish within _DOWNLOAD_DEADLINE."""
+    deadline = time.monotonic() + _DOWNLOAD_DEADLINE
+    for _ in range(_MAX_REDIRECTS + 1):
+        if not _on_marketplace(url, market):
+            raise CollectionError(
+                f"refusing to fetch from {_shown_host(url)}: it is not a {market.label} host")
+        headers = {"Accept-Encoding": "gzip"}
+        if body is not None:
+            headers.update({"Content-Type": "application/json",
+                            "Accept": "application/json;api-version=3.0-preview.1"})
+        request = urllib.request.Request(url, data=body, headers=headers,
+                                         method="GET" if body is None else "POST")
+        try:
+            resp = _marketplace_send(request, min(_HTTP_TIMEOUT, _DOWNLOAD_DEADLINE))
+        except (OSError, ValueError) as exc:  # URLError/HTTPError are OSError subclasses
+            raise CollectionError(f"failed to fetch {url}: {exc}") from exc
+        with resp:
+            if resp.status not in _REDIRECT_CODES:
+                return _read_bounded(resp, url, archive=archive, deadline=deadline)
+            if body is not None:
+                raise CollectionError(f"failed to fetch {url}: the query was redirected")
+            url = urljoin(url, resp.headers.get("Location") or "")
+    raise CollectionError(f"failed to fetch {url}: too many redirects")
+
+
+def _read_bounded(resp, url: str, *, archive: bool, deadline: float) -> bytes:
+    """The response body, gunzipped when its Content-Encoding says gzip, refused once either the
+    bytes received or the bytes decoded pass the limit (a small gzip body can inflate a lot)."""
+    limit = _MAX_ARCHIVE_BYTES if archive else _MAX_GALLERY_JSON_BYTES
+    gzipped = "gzip" in (resp.headers.get("Content-Encoding") or "").lower()
+    inflate = zlib.decompressobj(16 + zlib.MAX_WBITS) if gzipped else None
+    out = bytearray()
+    received = 0
+    try:
+        while chunk := resp.read(_READ_CHUNK):
+            received += len(chunk)
+            if inflate is None:
+                out += chunk
+            while inflate is not None and chunk and len(out) <= limit:
+                out += inflate.decompress(chunk, limit + 1 - len(out))
+                chunk = inflate.unconsumed_tail
+            if received > limit or len(out) > limit:
+                if archive:
+                    raise SizeLimitError(
+                        f"response from {url} exceeds the size limit of {_mb(limit)} MB.",
+                        variable="SKILLTOTAL_MAX_ARCHIVE_MB")
+                raise CollectionError(f"unexpected response from {url}: over {_mb(limit)} MB")
+            if time.monotonic() > deadline:
+                raise CollectionError(f"failed to fetch {url}: timed out")
+    except OSError as exc:
+        raise CollectionError(f"failed to fetch {url}: {exc}") from exc
+    except zlib.error as exc:
+        raise CollectionError(f"failed to fetch {url}: the gzip encoding is damaged") from exc
+    if inflate is not None and not inflate.eof:
+        raise CollectionError(f"failed to fetch {url}: the response ended early")
+    return bytes(out)
+
+
+def _marketplace_json(url: str, market: _Marketplace, *, body: bytes | None = None,
+                      not_found: str = "") -> dict:
+    """A marketplace answer as a JSON object; a 404 is reported as ``not_found`` when given."""
+    try:
+        data = _marketplace_fetch(url, market, body=body)
+    except CollectionError as exc:
+        cause = exc.__cause__
+        if not_found and isinstance(cause, urllib.error.HTTPError) and cause.code == 404:
+            raise CollectionError(not_found) from exc
+        raise
+    try:
+        doc = bounded_json.loads(data)
+    except ValueError as exc:
+        raise CollectionError(f"unexpected response from {url}") from exc
+    if not isinstance(doc, dict):
+        raise CollectionError(f"unexpected response from {url}")
+    return doc
+
+
+def _gallery_builds(market: _Marketplace, gallery: str, ext_id: str, *,
+                    latest_only: bool) -> list[_Build]:
+    """Every published build of ``ext_id`` the gallery query lists (or, ``latest_only``, the
+    latest stable and pre-release one per platform). Entries that do not read as a version and a
+    platform are left out."""
+    query = {"filters": [{"criteria": [{"filterType": _GALLERY_BY_NAME, "value": ext_id}],
+                          "pageNumber": 1, "pageSize": 1}],
+             "flags": _GALLERY_FLAGS | (_GALLERY_LATEST_ONLY if latest_only else 0)}
+    doc = _marketplace_json(f"{gallery}/extensionquery", market,
+                            body=json.dumps(query).encode("utf-8"))
+    results = doc.get("results")
+    first = results[0] if isinstance(results, list) and results else None
+    extensions = first.get("extensions") if isinstance(first, dict) else None
+    match = None
+    for ext in extensions if isinstance(extensions, list) else []:
+        publisher = ext.get("publisher") if isinstance(ext, dict) else None
+        found = (f"{publisher.get('publisherName')}.{ext.get('extensionName')}"
+                 if isinstance(publisher, dict) else "")
+        if found.lower() == ext_id.lower():
+            match = ext
+            break
+    if match is None:
+        raise CollectionError(f"extension '{ext_id}' was not found on {market.label}")
+    builds = []
+    for entry in match.get("versions") or []:
+        if not isinstance(entry, dict):
+            continue
+        version, platform = entry.get("version"), entry.get("targetPlatform") or "universal"
+        if not (isinstance(version, str) and _EXTENSION_VERSION_RE.fullmatch(version)
+                and isinstance(platform, str) and _TARGET_PLATFORM_RE.fullmatch(platform)):
+            continue
+        properties = entry.get("properties")
+        prerelease = any(
+            isinstance(p, dict) and p.get("key") == _PRERELEASE_PROPERTY
+            and str(p.get("value")).lower() == "true"
+            for p in (properties if isinstance(properties, list) else []))
+        builds.append(_Build(version, platform, prerelease))
+    return builds
+
+
+def _version_key(version: str) -> tuple:
+    """Sort key for an extension version (``major.minor.patch``, numbers compared as numbers)."""
+    return tuple((0, int(p), "") if p.isdigit() else (1, 0, p)
+                 for p in re.split(r"[.+-]", version))
+
+
+def _latest_builds(builds: list[_Build]) -> tuple[list[_Build], bool]:
+    """The builds of the newest stable version, as an editor installs by default; when only
+    pre-releases are published, those of the newest pre-release (and True)."""
+    stable = [b for b in builds if not b.prerelease]
+    pool = stable or builds
+    if not pool:
+        return [], False
+    newest = max(pool, key=lambda b: _version_key(b.version)).version
+    return [b for b in pool if b.version == newest], not stable
+
+
+def _pick_platform(platforms: list[str]) -> str:
+    available = sorted(set(platforms))
+    return next((p for p in _PLATFORM_PREFERENCE if p in available), available[0])
+
+
+def _build_note(ext_id: str, version: str, chosen: str, platforms: list[str],
+                prerelease_only: bool) -> str | None:
+    """What the report says about the builds of a release that were not scanned, if anything."""
+    parts = []
+    if prerelease_only:
+        parts.append(f"{ext_id} has no stable release, so the newest pre-release ({version}) "
+                     "was scanned.")
+    others = sorted(set(platforms) - {chosen})
+    if others:
+        parts.append(f"Scanned the {chosen} build of {ext_id} {version}; the builds for "
+                     f"{', '.join(others)} were not read (a platform build can carry different "
+                     "code, such as native binaries).")
+    return " ".join(parts) or None
+
+
+def _invalid_extension(prefix: str, market: _Marketplace, link: str) -> CollectionError:
+    return CollectionError(
+        f"invalid {market.label} extension: expected {prefix}:<publisher>.<name>[@<version>] or "
+        f"a {link} link, with letters, digits and hyphens in each name")
+
+
+def _vsix_context(source: str, ext_id: str, version: str, url: str, data: bytes,
+                  market: _Marketplace, note: str | None) -> SourceContext:
+    if not data.startswith(_ZIP_MAGIC):
+        raise CollectionError(f"{market.label} did not return a .vsix package for {ext_id}")
+    ctx = _collect_archive(source, "vscode_extension", version, url, url, data=data)
+    ctx.distribution_note = note
+    return ctx
+
+
+def _collect_vscode(source: str) -> SourceContext:
+    """An extension from the Visual Studio Marketplace: the gallery query names the version and
+    its platform builds, and the public ``vspackage`` endpoint serves the .vsix (gzip-encoded)."""
+    ext_id, pin = extension_spec(source)
+    if not ext_id:
+        raise _invalid_extension("vscode", _VS_MARKETPLACE,
+                                 "marketplace.visualstudio.com/items?itemName=")
+    builds = _gallery_builds(_VS_MARKETPLACE, _VSM_GALLERY, ext_id, latest_only=pin is None)
+    prerelease_only = False
+    if pin:
+        chosen = [b for b in builds if b.version == pin]
+        if not chosen:
+            raise CollectionError(
+                f"extension '{ext_id}' has no version '{pin}' on {_VS_MARKETPLACE.label}")
+    else:
+        chosen, prerelease_only = _latest_builds(builds)
+        if not chosen:
+            raise CollectionError(
+                f"extension '{ext_id}' has no resolvable release on {_VS_MARKETPLACE.label}")
+    version = chosen[0].version
+    platforms = [b.platform for b in chosen]
+    platform = _pick_platform(platforms)
+    publisher, name = ext_id.split(".", 1)
+    url = (f"{_VSM_GALLERY}/publishers/{quote(publisher)}/vsextensions/{quote(name)}/"
+           f"{quote(version, safe='')}/vspackage")
+    if platform != "universal":
+        url += f"?targetPlatform={quote(platform, safe='')}"
+    data = _marketplace_fetch(url, _VS_MARKETPLACE, archive=True)
+    note = _build_note(ext_id, version, platform, platforms, prerelease_only)
+    return _vsix_context(source, ext_id, version, url, data, _VS_MARKETPLACE, note)
+
+
+def _collect_openvsx(source: str) -> SourceContext:
+    """An extension from Open VSX (what Cursor, VSCodium and Windsurf install from): its API names
+    the version, a download URL per platform build and each build's size."""
+    ext_id, pin = extension_spec(source)
+    if not ext_id:
+        raise _invalid_extension("openvsx", _OPEN_VSX, "open-vsx.org/extension/<namespace>/<name>")
+    namespace, name = ext_id.split(".", 1)
+    base = f"{_OPENVSX_API}/{quote(namespace)}/{quote(name)}"
+    wanted = f"extension '{ext_id}'" + (f" {pin}" if pin else "")
+    doc = _marketplace_json(f"{base}/{quote(pin, safe='')}" if pin else base, _OPEN_VSX,
+                            not_found=f"{wanted} was not found on Open VSX")
+    prerelease_only = False
+    if not pin and doc.get("preRelease") is True:
+        # Open VSX's latest may be a pre-release; an editor installs the newest stable one.
+        latest, prerelease_only = _latest_builds(
+            _gallery_builds(_OPEN_VSX, _OPENVSX_GALLERY, ext_id, latest_only=True))
+        if latest and not prerelease_only and latest[0].version != doc.get("version"):
+            doc = _marketplace_json(f"{base}/{quote(latest[0].version, safe='')}", _OPEN_VSX,
+                                    not_found=f"{wanted} was not found on Open VSX")
+    version = doc.get("version")
+    if not (isinstance(version, str) and _EXTENSION_VERSION_RE.fullmatch(version)):
+        raise CollectionError(f"{wanted} has no resolvable release on Open VSX")
+    downloads = doc.get("downloads")
+    if not isinstance(downloads, dict) or not downloads:
+        files = doc.get("files")
+        download = files.get("download") if isinstance(files, dict) else None
+        downloads = {str(doc.get("targetPlatform") or "universal"): download}
+    usable = {p: u for p, u in downloads.items()
+              if isinstance(p, str) and _TARGET_PLATFORM_RE.fullmatch(p) and isinstance(u, str)}
+    if doc.get("downloadable") is False or not usable:
+        raise CollectionError(
+            f"extension '{ext_id}' {version} has no downloadable distribution on Open VSX")
+    platform = _pick_platform(list(usable))
+    url = usable[platform]
+    sizes = doc.get("downloadSizes")
+    size = sizes.get(platform) if isinstance(sizes, dict) else None
+    if isinstance(size, int) and size > _MAX_ARCHIVE_BYTES:
+        # Open VSX states the size: refuse before downloading what would be refused anyway.
+        raise SizeLimitError(
+            f"the {platform} package of {ext_id} {version} ({_mb(size)} MB) exceeds the size "
+            f"limit of {_mb(_MAX_ARCHIVE_BYTES)} MB.", variable="SKILLTOTAL_MAX_ARCHIVE_MB")
+    data = _marketplace_fetch(url, _OPEN_VSX, archive=True)
+    note = _build_note(ext_id, version, platform, list(usable), prerelease_only)
+    return _vsix_context(source, ext_id, version, url, data, _OPEN_VSX, note)
 
 
 def detect_component(root: Path, source: str, default_name: str | None = None) -> Component:

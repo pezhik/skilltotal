@@ -8,8 +8,10 @@ Commands:
                              [--baseline FILE | --write-baseline FILE]
                              [--sarif-uri-prefix PATH] [--sarif-category NAME]
         <source>: a local directory, an archive (.zip/.tar.gz/.tgz/.tar/.tar.bz2/.tar.xz,
-        or a .mcpb/.dxt/.whl/.vsix package) or a single file, a git URL, or an
-        npm:<name> / pypi:<name> package spec.
+        or a .mcpb/.dxt/.whl/.vsix package) or a single file, a git URL, an
+        npm:<name> / pypi:<name> package spec, or an editor extension as
+        vscode:<publisher>.<name> (Visual Studio Marketplace) / openvsx:<namespace>.<name>
+        (Open VSX) or its marketplace link.
         Optional project config: .skilltotal.toml (fail_on, fail_on_score, fail_on_unanalyzed,
         exclude, ignore, baseline, and a per-rule [policy] table with block/warn/ignore
         actions), read from the current directory (or --config FILE; --no-config ignores it).
@@ -106,13 +108,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan = sub.add_parser(
         "scan",
-        help="Scan a component: a local path/archive/file, a git URL, or an npm:/pypi: package.",
+        help=("Scan a component: a local path/archive/file, a git URL, an npm:/pypi: package, or "
+              "a vscode:/openvsx: editor extension."),
     )
     scan.add_argument(
         "source",
         help=(
             "Local directory, archive (.zip/.tar.gz/.tgz/.tar/.tar.bz2/.tar.xz, "
-            ".mcpb/.dxt/.whl/.vsix) or single file, git URL, or npm:<name> / pypi:<name>."
+            ".mcpb/.dxt/.whl/.vsix) or single file, git URL, npm:<name> / pypi:<name>, or "
+            "vscode:<publisher>.<name> / openvsx:<namespace>.<name> (or a Visual Studio "
+            "Marketplace / Open VSX link)."
         ),
     )
     output_format = scan.add_mutually_exclusive_group()

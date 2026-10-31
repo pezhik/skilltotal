@@ -66,6 +66,7 @@ would run instead of the standard library or the engine.
 works air-gapped: download a pinned wheel on a connected machine
 (`pip download skilltotal==0.88.0 --no-deps`), copy it over and `pip install` the file. `npm:`,
 `pypi:` and git sources need the network, or a [registry mirror](configuration.md#scanning-through-a-registry-mirror).
+`vscode:` and `openvsx:` sources need the network too.
 
 ## Sources
 
@@ -77,6 +78,8 @@ works air-gapped: download a pinned wheel on a connected machine
 | A git URL | `https://github.com/owner/repo` | A shallow clone. `/tree/<ref>/<path>` scans one folder at a ref |
 | An npm package | `npm:left-pad`, `npm:left-pad@1.3.0`, `npm:@scope/name@next` | The latest release, a version or a dist-tag |
 | A PyPI package | `pypi:requests`, `pypi:requests==2.31.0` | One file of the release: a pure-Python wheel when there is one |
+| A VS Code extension from the Visual Studio Marketplace | `vscode:publisher.name`, `vscode:publisher.name@1.2.3`, `https://marketplace.visualstudio.com/items?itemName=publisher.name` | The newest stable release, or a version. Its `.vsix` is downloaded and scanned |
+| An extension from Open VSX (Cursor, VSCodium, Windsurf) | `openvsx:namespace.name`, `openvsx:namespace.name@1.2.3`, `https://open-vsx.org/extension/namespace/name` | The same, from `open-vsx.org` |
 | An archive | `./project.zip`, `./app.tar.gz` | `.zip`, `.tar.gz`, `.tgz`, `.tar`, `.tar.bz2`, `.tar.xz`, and any other file that starts with the zip signature |
 | A packaged extension or wheel | `./server.mcpb`, `./ext.vsix`, `./pkg-1.0-py3-none-any.whl` | Claude Desktop extensions (`.mcpb`, `.dxt`), VS Code extensions (`.vsix`) and Python wheels are unpacked and scanned like a folder |
 | A single file | `./suspicious.py` | |
@@ -91,6 +94,21 @@ skilltotal scan ./downloads/some-server.mcpb
 skilltotal scan ./downloads/some-extension.vsix
 skilltotal guard ./downloads/some-extension.vsix
 ```
+
+An editor extension can also be scanned by its marketplace id or link, before you install it:
+
+```bash
+skilltotal scan vscode:publisher.name
+skilltotal scan openvsx:namespace.name@1.2.3
+skilltotal scan "https://open-vsx.org/extension/namespace/name"
+```
+
+Without a version, the newest stable release is scanned, as an editor would install it (the
+newest pre-release when there is no stable one). An extension published as one build per platform
+is scanned as its `universal` build when it has one, else its `linux-x64` build; the report names
+the builds that were not read. The `.vsix` is fetched only from `marketplace.visualstudio.com`,
+`open-vsx.org` and their download hosts, and the archive size limit applies to it
+(`SKILLTOTAL_MAX_ARCHIVE_MB`, 150 MB by default).
 
 ## scan
 

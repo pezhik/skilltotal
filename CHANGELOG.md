@@ -4,6 +4,19 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+### Added
+- Editor extensions can be scanned by marketplace id or link before they are installed:
+  `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`
+  link for the Visual Studio Marketplace, and `openvsx:<namespace>.<name>[@<version>]` or an
+  `open-vsx.org/extension/<namespace>/<name>` link for Open VSX (what Cursor, VSCodium and
+  Windsurf install from). `scan`, `diff`, `guard` and the MCP server accept them. Without a version
+  the newest stable release is scanned. An extension published as one build per platform is
+  scanned as its `universal` build, else its `linux-x64` build, and the report lists the builds
+  that were not read. Downloads come only from the two marketplaces and their download hosts,
+  within the archive size limit.
+
 ## [0.88.0]
 
 Ruleset 87 checks MCP tool annotations against the code that implements the tool. Report schema
