@@ -189,11 +189,22 @@ def applied(entries: list[Acceptance], hits: dict[str, str],
 
 
 def source_key(source: str) -> str:
-    """The component key of a ``guard <source>``: ``npm:<name>`` or ``pypi:<name>`` (normalized,
-    without the version), else the source as written."""
-    from skilltotal.collector import npm_package_spec, pypi_package_spec
+    """The component key of a ``guard <source>``: ``npm:<name>``, ``pypi:<name>``,
+    ``vscode:<id>`` or ``openvsx:<id>`` (normalized, without the version), else the source as
+    written."""
+    from skilltotal.collector import (
+        classify_source,
+        extension_spec,
+        npm_package_spec,
+        pypi_package_spec,
+    )
 
     text = source.strip()
+    kind = classify_source(text)
+    if kind in ("vscode", "openvsx"):
+        ext_id, _ = extension_spec(text)
+        if ext_id:
+            return f"{kind}:{ext_id.lower()}"
     if text.lower().startswith("npm:"):
         name, _ = npm_package_spec(text)
         if name:

@@ -20,7 +20,7 @@ from skilltotal.agent_skill import skill_capability_mismatch
 from skilltotal.autorun import autorun_commands
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
-from skilltotal.collector import collect, vscode_extension_package
+from skilltotal.collector import SourceContext, collect, vscode_extension_package
 from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
     MAX_ENTRY_POINT_BYTES,
@@ -114,17 +114,29 @@ def analyze(
             report.needs_review.append(
                 NeedsReview(category="source", title="Scan target normalized", reason=ctx.note)
             )
-        if ctx.skipped_entries:
-            report.needs_review.append(_skipped_entries_note(ctx.skipped_entries))
-        if ctx.distribution_note:
-            report.needs_review.append(NeedsReview(
-                category="coverage", title="One distribution of the release scanned",
-                reason=ctx.distribution_note))
-        if ctx.mirror_note:
-            report.needs_review.append(NeedsReview(
-                category="source", title="Fetched through a registry mirror",
-                reason=ctx.mirror_note))
+        report.needs_review.extend(source_notes(ctx))
         return report
+
+
+def source_notes(ctx: SourceContext) -> list[NeedsReview]:
+    """What a report must say about how ``ctx`` was collected: entries left out, what of a release
+    was scanned and what was not read. For a caller that runs ``analyze_directory`` on a
+    ``collect`` of its own; ``analyze`` adds these itself."""
+    notes: list[NeedsReview] = []
+    if ctx.skipped_entries:
+        notes.append(_skipped_entries_note(ctx.skipped_entries))
+    if ctx.distribution_note:
+        notes.append(NeedsReview(
+            category="coverage", title="One distribution of the release scanned",
+            reason=ctx.distribution_note))
+    if ctx.unpacked_note:
+        notes.append(NeedsReview(
+            category="coverage", title="Binary files not read", reason=ctx.unpacked_note))
+    if ctx.mirror_note:
+        notes.append(NeedsReview(
+            category="source", title="Fetched through a registry mirror",
+            reason=ctx.mirror_note))
+    return notes
 
 
 def analyze_directory(

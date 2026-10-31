@@ -71,7 +71,8 @@ scanned component.
 | Variable | Default | What it sets |
 |---|---|---|
 | `SKILLTOTAL_MAX_ARCHIVE_MB` | 150 | Largest archive downloaded or read |
-| `SKILLTOTAL_MAX_EXTRACT_MB` | 400 | Largest total size an archive may extract to |
+| `SKILLTOTAL_MAX_EXTENSION_MB` | 400 | Most bytes fetched for a `vscode:` or `openvsx:` extension. It has a limit of its own because most of a large `.vsix` is binaries the scan does not read |
+| `SKILLTOTAL_MAX_EXTRACT_MB` | 400 | Largest total size an archive may extract to (the binary files of a `vscode:` or `openvsx:` extension do not count) |
 | `SKILLTOTAL_MAX_ARCHIVE_MEMBERS` | 30000 | Most entries an archive may hold |
 | `SKILLTOTAL_MAX_CLONE_MB` | 200 | Largest git working tree cloned |
 | `SKILLTOTAL_MAX_READABLE_MB` | same as clone | Most text a scan reads |

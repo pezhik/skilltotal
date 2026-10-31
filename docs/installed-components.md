@@ -119,6 +119,14 @@ skilltotal scan openvsx:namespace.name@1.2.3
 The same extension can differ between the two marketplaces, so scan the one your editor uses. See
 [sources](cli.md#sources) for the version and platform build that is scanned.
 
+`guard` treats these sources like installed extensions: only malicious indicators and the reasons
+that always block stop it, and the name is not checked, unless you pass `--block-on`.
+
+A large extension is mostly native binaries. Only their first bytes are downloaded, none of it is
+analyzed, and the report lists how many there are and their total size under `needs_review`. Text
+files are downloaded by
+range requests within `SKILLTOTAL_MAX_EXTENSION_MB` (400 MB by default).
+
 ## Catching a malicious update
 
 An editor extension updates itself from its marketplace, and an MCP server started with

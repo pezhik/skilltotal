@@ -1149,8 +1149,9 @@ def _resolve_diff_side(source: str, config: Config, exclude: list[str]) -> tuple
 
 
 def _cmd_guard(args: argparse.Namespace) -> int:
-    from skilltotal.collector import CollectionError
+    from skilltotal.collector import CollectionError, classify_source
     from skilltotal.engine import analyze
+    from skilltotal.inventory import EDITOR_EXTENSION
     from skilltotal.report import render_guard_json, render_guard_text
 
     if args.installed == bool(args.source):
@@ -1173,7 +1174,11 @@ def _cmd_guard(args: argparse.Namespace) -> int:
     except CollectionError as exc:
         print(f"error: {_diagnostic(str(exc))}", file=sys.stderr)
         return EXIT_ERROR
-    decision = evaluate(report, args.block_on or DEFAULT_BLOCK_LEVEL)
+    if classify_source(args.source) in ("vscode", "openvsx"):
+        # The same extension is judged the same before and after it is installed.
+        decision = evaluate_installed(report, EDITOR_EXTENSION, args.block_on)
+    else:
+        decision = evaluate(report, args.block_on or DEFAULT_BLOCK_LEVEL)
     shown = accepted.to_dict() if accepted else None
     if args.json:
         print(render_guard_json(args.source, report, decision, shown))

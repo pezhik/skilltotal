@@ -108,9 +108,16 @@ skilltotal scan "https://open-vsx.org/extension/namespace/name"
 Without a version, the newest stable release is scanned, as an editor would install it (the
 newest pre-release when there is no stable one). An extension published as one build per platform
 is scanned as its `universal` build when it has one, else its `linux-x64` build; the report names
-the builds that were not read. The `.vsix` is fetched only from `marketplace.visualstudio.com`,
-`open-vsx.org` and their download hosts, and the archive size limit applies to it
-(`SKILLTOTAL_MAX_ARCHIVE_MB`, 150 MB by default).
+the builds that were not read.
+
+Only the parts of the `.vsix` the scanner reads are downloaded, by HTTP range requests, from
+`marketplace.visualstudio.com`, `open-vsx.org` and their download hosts. Of a native executable,
+only the first bytes are fetched, to tell it from text. `needs_review` gives the number and total
+size of the binary files that were not read: the scan says nothing about what they do. For
+`anthropic.claude-code` that means about 4 MB of a 157 MB package. If a server does not serve ranges, or the
+package looks wrong in any way, the whole file is streamed to disk instead, up to
+`SKILLTOTAL_MAX_EXTENSION_MB` (400 MB by default). The same limit bounds what the range requests
+fetch, and `SKILLTOTAL_MAX_EXTRACT_MB` bounds what is unpacked.
 
 ## scan
 
@@ -224,7 +231,7 @@ A component blocks (exit 2) when any of these holds, at every `--block-on` level
 - a script it runs at install time could not be read;
 - nothing in it could be read;
 - its name is a letter or two away from a popular npm or PyPI package (possible typosquatting;
-  not checked for installed editor extensions).
+  not checked for editor extensions, installed or named by `vscode:` or `openvsx:`).
 
 With `--installed --state`, an update that added a malicious indicator or a high or critical
 risky construct also blocks. Each reason is printed under `Decision  : BLOCK` and listed in the
@@ -239,7 +246,7 @@ the publisher at risk, not the person installing it.
 |---|---|
 | `<source>` | The component to check, any [source](#sources). Give either a source or `--installed` |
 | `--installed` | Check every installed MCP server, plugin, skill and editor extension |
-| `--block-on LEVEL` | `malicious`: only the reasons that always block. `high` (the default): also high or critical risk. `medium`: also medium risk. With `--installed`, editor extensions default to `malicious` |
+| `--block-on LEVEL` | `malicious`: only the reasons that always block. `high` (the default): also high or critical risk. `medium`: also medium risk. Editor extensions, with `--installed` or as a `vscode:` or `openvsx:` source, default to `malicious` |
 | `--json` | Print JSON ([format](report-schema.md#guard-json)) |
 | `--accept FILE` | Accept the reviewed findings this accept file lists ([accept file](accepting-findings.md#accept-file)) |
 | `--write-accept FILE` | Add an entry to `FILE` for each component that blocks, with an empty `reason` to fill in, and exit 0 |

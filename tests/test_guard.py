@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from skilltotal.cli import EXIT_ERROR, EXIT_FAIL_ON_HIGH, EXIT_OK, main
 from skilltotal.engine import analyze
-from skilltotal.guard import evaluate
+from skilltotal.guard import TYPOSQUAT_FINDING_ID, evaluate
 from skilltotal.inventory import DiscoveredComponent
 
 # Decode-and-exec -> ST-OBF-DECODE-EXEC, a malicious indicator (verdict: malicious).
@@ -182,6 +183,38 @@ def test_cli_guard_installed_sweep(tmp_path: Path, capsys, monkeypatch):
 def _unscannable(name: str, note: str = "remote server (not scanned)") -> DiscoveredComponent:
     return DiscoveredComponent(host="Cursor", name=name, kind="mcp_server", source=None,
                                scannable=False, note=note)
+
+
+def _extension_report(**overrides) -> SimpleNamespace:
+    report = {"component": {"name": "tiny", "version": "1.0.0", "type": "vscode_extension"},
+              "risk_level": "high", "risk_score": 60, "findings": [], "needs_review": [],
+              "verdict": {"has_malicious_indicators": False, "headline": "high"}, **overrides}
+    return SimpleNamespace(to_dict=lambda: report)
+
+
+@pytest.mark.parametrize("source", ["vscode:acme.tiny", "openvsx:acme.tiny@1.0.0",
+                                    "https://open-vsx.org/extension/acme/tiny"])
+def test_guard_on_a_marketplace_extension_follows_the_installed_policy(capsys, monkeypatch, source):
+    monkeypatch.setattr("skilltotal.engine.analyze", lambda *a, **k: _extension_report())
+    assert main(["guard", source]) == EXIT_OK  # high risk alone does not block an extension
+    assert main(["guard", source, "--block-on", "high"]) == EXIT_FAIL_ON_HIGH
+
+
+def test_guard_on_a_marketplace_extension_skips_the_name_check_and_keeps_the_rest(capsys,
+                                                                                  monkeypatch):
+    typosquat = {"id": TYPOSQUAT_FINDING_ID, "threat_class": "risky_construct"}
+    monkeypatch.setattr("skilltotal.engine.analyze",
+                        lambda *a, **k: _extension_report(findings=[typosquat]))
+    assert main(["guard", "vscode:acme.tiny"]) == EXIT_OK
+    monkeypatch.setattr("skilltotal.engine.analyze", lambda *a, **k: _extension_report(
+        findings=[{"id": "ST-X", "title": "t", "threat_class": "malicious_indicator"}],
+        verdict={"has_malicious_indicators": True, "headline": "bad"}))
+    assert main(["guard", "vscode:acme.tiny"]) == EXIT_FAIL_ON_HIGH
+
+
+def test_guard_on_a_package_keeps_its_policy(capsys, monkeypatch):
+    monkeypatch.setattr("skilltotal.engine.analyze", lambda *a, **k: _extension_report())
+    assert main(["guard", "npm:tiny"]) == EXIT_FAIL_ON_HIGH
 
 
 def test_guard_installed_with_nothing_checked_fails(capsys, monkeypatch):

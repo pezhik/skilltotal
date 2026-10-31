@@ -313,6 +313,17 @@ def _package(root: Path, version: str) -> Path:
     return root
 
 
+@pytest.mark.parametrize(("source", "key"), [
+    ("vscode:Acme.Tiny@1.2.3", "vscode:acme.tiny"),
+    ("https://open-vsx.org/extension/acme/tiny/1.2.3", "openvsx:acme.tiny"),
+    ("https://marketplace.visualstudio.com/items?itemName=acme.tiny", "vscode:acme.tiny"),
+])
+def test_an_extension_source_is_one_key_however_it_is_written(source, key):
+    from skilltotal.accept import source_key
+
+    assert source_key(source) == key
+
+
 def test_guard_source_accepts_by_source_and_version(tmp_path, capsys):
     src = str(_package(tmp_path / "quill", "1.0.0"))
     assert main(["guard", src]) == EXIT_FAIL_ON_HIGH

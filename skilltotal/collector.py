@@ -24,10 +24,10 @@ import urllib.error
 import urllib.request
 import zipfile
 import zlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import NamedTuple
+from typing import BinaryIO, NamedTuple
 from urllib.parse import parse_qsl, quote, urljoin, urlparse, urlsplit
 
 from skilltotal import bounded_json
@@ -91,9 +91,10 @@ def _env_int(name: str, default: int) -> int:
 _MAX_ARCHIVE_BYTES = _env_int("SKILLTOTAL_MAX_ARCHIVE_MB", 150) * 1024 * 1024
 _MAX_EXTRACT_BYTES = _env_int("SKILLTOTAL_MAX_EXTRACT_MB", 400) * 1024 * 1024
 _MAX_ARCHIVE_MEMBERS = _env_int("SKILLTOTAL_MAX_ARCHIVE_MEMBERS", 30000)
-# A .vsix downloaded from a marketplace (`vscode:` / `openvsx:`) has a limit of its own. Most of a
-# large extension is native binaries (a 313 MB `claude` executable in a 150 MB package), which are
-# streamed to disk and never unpacked or read; the extract limit still bounds what is unpacked.
+# A .vsix from a marketplace (`vscode:` / `openvsx:`) has a limit of its own: most of a large
+# extension is native binaries (a 313 MB executable in a 150 MB package) that are never read. It
+# bounds the bytes fetched, by byte ranges or as a whole file on disk; the extract limit still
+# bounds what is unpacked.
 _MAX_EXTENSION_BYTES = _env_int("SKILLTOTAL_MAX_EXTENSION_MB", 400) * 1024 * 1024
 # Local archive sources accepted by `scan <path>` (besides a directory and a single file). Zip is
 # also the container of formats that carry their own extension: Claude Desktop extensions (.mcpb,
@@ -1342,29 +1343,36 @@ def _safe_extract_tar(data: bytes, dest: Path) -> int:
     return skipped
 
 
-def _safe_extract_zip(data: bytes | Path, dest: Path, *,
+def _safe_extract_zip(data: bytes | Path | _RemoteZip, dest: Path, *,
                       binaries: list[tuple[str, int]] | None = None) -> int:
-    """Extract a zip archive (its bytes, or a file) into ``dest``; return how many entries were
-    left out (symlinks).
+    """Extract a zip archive (its bytes, a file, or a remote one) into ``dest``; return how many
+    entries were left out (symlinks).
 
     Every check runs on the central directory before anything is written. Declared sizes bound
     the work, since an entry never inflates past its declared size. A damaged, truncated,
     password-protected or unsupported archive is a CollectionError.
 
-    With ``binaries``, an entry whose content the index would skip as binary is not extracted and
-    does not count toward the extract limit; its name and size are appended there. Only the start
-    of the entry is inflated to tell. Bytecode and archives stay: the engine lists the one and
-    opens the other.
+    With ``binaries``, an entry whose content the index would skip as binary is cut down to its
+    first bytes, which is all the index reads of it, and counts toward the extract limit as that;
+    its name and real size are appended there. The file stays in place because the engine goes by
+    it: a binary install script or entry point is reported as code it could not read. Only the
+    start of the entry is inflated to tell. Bytecode and archives stay whole: the engine lists the
+    one and opens the other.
     """
     dest_resolved = dest.resolve()
+    remote = data if isinstance(data, _RemoteZip) else None
     try:
-        with zipfile.ZipFile(data if isinstance(data, Path) else io.BytesIO(data)) as zf:
+        if remote is not None:
+            remote.fetch_end()
+        with zipfile.ZipFile(io.BytesIO(data) if isinstance(data, bytes) else data) as zf:
             infos = zf.infolist()
             if len(infos) > _MAX_ARCHIVE_MEMBERS:
                 raise SizeLimitError(
                     f"archive has too many entries: more than {_MAX_ARCHIVE_MEMBERS:,}.",
                     variable="SKILLTOTAL_MAX_ARCHIVE_MEMBERS")
-            safe, total, skipped = [], 0, 0
+            if remote is not None:
+                remote.fetch_heads(infos)
+            safe, whole, total, skipped = [], [], 0, 0
             names = _PortableNames(zip_names=True)
             for info in infos:
                 # zipfile.extractall can create symlinks from the stored unix mode on some
@@ -1377,17 +1385,24 @@ def _safe_extract_zip(data: bytes | Path, dest: Path, *,
                         "archive is password-protected, so its contents cannot be read")
                 if not _within(dest_resolved, info.filename, dest):
                     raise CollectionError("archive contains an unsafe path")
-                if binaries is not None and _binary_entry(zf, info):
-                    binaries.append((info.filename, info.file_size))
-                    continue
                 # The name as stored: on Windows zipfile has already turned `\` into `/`.
                 names.add(info.orig_filename, info.is_dir())
+                head = _binary_head(zf, info) if binaries is not None else None
+                if head is not None:
+                    binaries.append((info.filename, info.file_size))
+                    # What the extraction below reads of it: zipfile stops at these.
+                    info.file_size, info.CRC = len(head), zlib.crc32(head)
+                    info.compress_size = min(info.compress_size, _HEAD_BYTES)
+                else:
+                    whole.append(info)
                 total += info.file_size
                 if total > _MAX_EXTRACT_BYTES:
                     raise SizeLimitError(
                         "archive too large when extracted: more than "
                         f"{_mb(_MAX_EXTRACT_BYTES)} MB.", variable="SKILLTOTAL_MAX_EXTRACT_MB")
                 safe.append(info)
+            if remote is not None:
+                remote.fetch_members(whole)
             zf.extractall(dest, members=safe)  # nosec B202 - members validated above
     except CollectionError:
         raise
@@ -1401,25 +1416,26 @@ def _safe_extract_zip(data: bytes | Path, dest: Path, *,
 _KEPT_BINARY_SUFFIXES = (*BYTECODE_SUFFIXES, *_ZIP_SUFFIXES, *_TAR_SUFFIXES)
 
 
-def _binary_entry(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> bool:
-    """Whether a zip entry is a file the index would skip as binary, from its first bytes."""
+def _binary_head(zf: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | None:
+    """The first bytes of a zip entry the index would skip as binary; None for any other entry."""
     if info.is_dir() or info.filename.lower().endswith(_KEPT_BINARY_SUFFIXES):
-        return False
+        return None
     with zf.open(info) as entry:
-        return is_binary_content(info.filename, entry.read(BINARY_SNIFF_BYTES))
+        head = entry.read(BINARY_SNIFF_BYTES)
+    return head if is_binary_content(info.filename, head) else None
 
 
 def _binaries_note(binaries: list[tuple[str, int]]) -> str | None:
-    """What the report says about the binary files of a package that were left packed."""
+    """What the report says about the binary files of a package: they were not read."""
     if not binaries:
         return None
     largest = sorted(binaries, key=lambda b: -b[1])[:3]
     named = ", ".join(neutralize_hidden(name) for name, _ in largest)
-    total = sum(size for _, size in binaries)
-    files = "binary file was" if len(binaries) == 1 else "binary files were"
-    return (f"{len(binaries)} {files} not unpacked ({_mb(total)} MB, largest: {named}). The "
-            "scanner does not read binary content, so native executables and other binaries in "
-            "the package were not analyzed.")
+    total = sum(size for _, size in binaries) / (1024 * 1024)
+    files = "binary file" if len(binaries) == 1 else "binary files"
+    return (f"{len(binaries)} {files} in this package ({total:.1f} MB in total; largest: {named}) "
+            "were not read. A native executable in an extension runs with the extension's "
+            "rights, and this scan says nothing about what it does.")
 
 
 def _collect_archive(
@@ -1833,13 +1849,28 @@ _OPENVSX_GALLERY = "https://open-vsx.org/vscode/gallery"
 _MAX_REDIRECTS = 5
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
 _READ_CHUNK = 1024 * 1024
+# Reading a .vsix by byte ranges (_RemoteZip). Requests are bounded; past the bound the whole file
+# is downloaded. Ranges closer than _RANGE_GAP are fetched as one. A member over _HEAD_BYTES is
+# first fetched only this far, which is enough to tell a binary from text.
+_MAX_RANGE_REQUESTS = 128
+_RANGE_GAP = 256 * 1024
+_HEAD_BYTES = 32 * 1024
+_READ_AHEAD = 256 * 1024
+_LOCAL_HEADER_SLACK = 4096  # a local header with its name and extra field, as usually sized
+_ZIP_MIN_BYTES = 22  # an end record alone
+_END_RECORD_REACH = 65_557  # the end record and the longest comment it may carry
+_MAX_RANGED_READ = 64 * 1024 * 1024  # one read: the central directory, sizes taken from the file
+_MAX_RANGED_PACKAGE_BYTES = 16 * 1024 * 1024 * 1024
+_CONTENT_RANGE_RE = re.compile(r"bytes (\d{1,15})-(\d{1,15})/(\d{1,15})")
 # A marketplace's answer about one extension: a popular one's version list runs to a few MB.
 _MAX_GALLERY_JSON_BYTES = 32 * 1024 * 1024
 # A whole download (redirects included) may take as long as a clone may, no longer.
 _DOWNLOAD_DEADLINE = _CLONE_TIMEOUT
 # Gallery query flags (the API VS Code itself uses): each version with its properties, which carry
-# the pre-release marker; unpinned, only the latest stable and pre-release build per platform.
-_GALLERY_FLAGS = 0x1 | 0x10
+# the pre-release marker, and its asset URL on the CDN, which serves byte ranges where the public
+# `vspackage` endpoint does not; unpinned, only the latest stable and pre-release per platform.
+_GALLERY_FLAGS = 0x1 | 0x10 | 0x80
+_VSIX_ASSET = "Microsoft.VisualStudio.Services.VSIXPackage"
 _GALLERY_LATEST_ONLY = 0x10000
 _GALLERY_BY_NAME = 7
 _PRERELEASE_PROPERTY = "Microsoft.VisualStudio.Code.PreRelease"
@@ -1854,6 +1885,7 @@ class _Build(NamedTuple):
     version: str
     platform: str
     prerelease: bool
+    asset_url: str = ""
 
 
 class _NoRedirects(urllib.request.HTTPRedirectHandler):
@@ -1892,6 +1924,12 @@ def _shown_host(url: str) -> str:
     return host if re.fullmatch(r"[a-z0-9.-]{1,200}", host) else "another host"
 
 
+def _require_marketplace(url: str, market: _Marketplace) -> None:
+    if not _on_marketplace(url, market):
+        raise CollectionError(
+            f"refusing to fetch from {_shown_host(url)}: it is not a {market.label} host")
+
+
 def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = None,
                        sink: BinaryIO | None = None, timeout: float = _HTTP_TIMEOUT) -> bytes:
     """GET ``url`` (or POST ``body`` as JSON) on ``market``'s hosts, decoded when it is served
@@ -1901,9 +1939,7 @@ def _marketplace_fetch(url: str, market: _Marketplace, *, body: bytes | None = N
     finish within _DOWNLOAD_DEADLINE."""
     deadline = time.monotonic() + _DOWNLOAD_DEADLINE
     for _ in range(_MAX_REDIRECTS + 1):
-        if not _on_marketplace(url, market):
-            raise CollectionError(
-                f"refusing to fetch from {_shown_host(url)}: it is not a {market.label} host")
+        _require_marketplace(url, market)
         headers = {"Accept-Encoding": "gzip"}
         if body is not None:
             headers.update({"Content-Type": "application/json",
@@ -1974,6 +2010,183 @@ def _read_bounded(resp, url: str, sink: BinaryIO, *, archive: bool, deadline: fl
         raise CollectionError(f"failed to fetch {url}: the response ended early")
 
 
+class _RangeUnusable(CollectionError):
+    """A package could not be read by byte ranges: the whole file is downloaded instead."""
+
+
+class _RemoteZip:
+    """A .vsix on a marketplace, read by HTTP Range requests as the seekable file zipfile asks for.
+
+    zipfile itself parses the end record, zip64 and the central directory, so the archive goes
+    through the same code and checks as a local one. Fetched bytes land at their own offsets in
+    ``store``, a sparse file; a read of bytes not fetched yet fetches them (never zeros), within
+    the bounds on requests and bytes. Any answer that is not exactly the range asked for of the
+    same file (a 200, a gzip body, another length, another ETag) raises _RangeUnusable.
+    """
+
+    def __init__(self, url: str, market: _Marketplace, store: Path) -> None:
+        self._market = market
+        self._deadline = time.monotonic() + _DOWNLOAD_DEADLINE
+        self._have: list[tuple[int, int]] = []
+        self._pos = 0
+        self.requests = 0
+        self.fetched = 0
+        self._url, self.size, self._etag = self._probe(url)
+        self._file = store.open("w+b")
+        self._file.truncate(self.size)
+
+    def __enter__(self) -> _RemoteZip:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._file.close()
+
+    # ------------------------------------------------------------------ the file zipfile reads
+    def seekable(self) -> bool:
+        return True
+
+    def tell(self) -> int:
+        return self._pos
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        base = {0: 0, 1: self._pos, 2: self.size}[whence]
+        if base + offset < 0:
+            raise ValueError("negative seek position")
+        self._pos = base + offset
+        return self._pos
+
+    def read(self, n: int = -1) -> bytes:
+        start = min(self._pos, self.size)
+        stop = self.size if n is None or n < 0 else min(self.size, start + n)
+        if stop - start > _MAX_RANGED_READ:
+            raise _RangeUnusable("a read of the package is out of proportion")
+        for gap_start, gap_stop in self._gaps(start, stop):
+            self._fetch(gap_start, min(self.size, max(gap_stop, gap_start + _READ_AHEAD)))
+        self._file.seek(start)
+        data = self._file.read(stop - start)
+        self._pos = start + len(data)
+        return data
+
+    # ------------------------------------------------------------------ what to fetch
+    def fetch_end(self) -> None:
+        """Fetch the end of the file, in one request, where zipfile looks first."""
+        self._fetch(max(0, self.size - _END_RECORD_REACH), self.size)
+
+    def fetch_heads(self, infos: list[zipfile.ZipInfo]) -> None:
+        """Fetch small members whole and the start of large ones, after checking every offset
+        and size in the central directory against the file."""
+        self._check(infos)
+        self._fetch_all((i.header_offset,
+                         self._end_of(i, min(i.compress_size, _HEAD_BYTES))) for i in infos)
+
+    def fetch_members(self, infos: list[zipfile.ZipInfo]) -> None:
+        self._fetch_all((i.header_offset, self._end_of(i, i.compress_size)) for i in infos)
+
+    def _end_of(self, info: zipfile.ZipInfo, length: int) -> int:
+        return min(self.size, info.header_offset + _LOCAL_HEADER_SLACK + length)
+
+    def _check(self, infos: list[zipfile.ZipInfo]) -> None:
+        """Offsets inside the file, no two members overlapping, compression zipfile reads here.
+        Anything else is left to the whole-file path and its error messages."""
+        end = 0
+        for info in sorted(infos, key=lambda i: i.header_offset):
+            if (info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED)
+                    or info.header_offset < end
+                    or info.header_offset + info.compress_size > self.size):
+                raise _RangeUnusable("the central directory does not fit the file")
+            end = info.header_offset + info.compress_size
+
+    def _fetch_all(self, spans: Iterable[tuple[int, int]]) -> None:
+        """Fetch what is missing of ``spans``, joining ranges that lie close together."""
+        merged: list[tuple[int, int]] = []
+        missing = sorted(gap for start, stop in spans for gap in self._gaps(start, stop))
+        for start, stop in missing:
+            if merged and start - merged[-1][1] <= _RANGE_GAP:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], stop))
+            else:
+                merged.append((start, stop))
+        if self.requests + len(merged) > _MAX_RANGE_REQUESTS:
+            raise _RangeUnusable("too many separate ranges")
+        for start, stop in merged:
+            self._fetch(start, stop)
+
+    def _gaps(self, start: int, stop: int) -> list[tuple[int, int]]:
+        """The parts of ``start``..``stop`` not fetched yet."""
+        gaps = []
+        for low, high in self._have:
+            if start >= stop or low >= stop:
+                break
+            if low > start:
+                gaps.append((start, low))
+            start = max(start, high)
+        if start < stop:
+            gaps.append((start, stop))
+        return gaps
+
+    # ------------------------------------------------------------------ the network
+    def _send(self, url: str, start: int, stop: int):
+        """A request for bytes ``start`` up to ``stop``, counted against the bounds."""
+        self.requests += 1
+        if self.requests > _MAX_RANGE_REQUESTS or time.monotonic() > self._deadline:
+            raise _RangeUnusable("past the bounds on requests or time")
+        request = urllib.request.Request(url, headers={
+            "Range": f"bytes={start}-{stop - 1}", "Accept-Encoding": "identity"})
+        try:
+            return _marketplace_send(request, _HTTP_TIMEOUT)
+        except (OSError, ValueError) as exc:
+            raise _RangeUnusable(f"range request failed: {exc}") from exc
+
+    def _probe(self, url: str) -> tuple[str, int, str | None]:
+        """The URL that serves ranges (after redirects), the file's length and its ETag."""
+        for _ in range(_MAX_REDIRECTS + 1):
+            _require_marketplace(url, self._market)
+            with self._send(url, 0, 1) as resp:
+                if resp.status in _REDIRECT_CODES:
+                    url = urljoin(url, resp.headers.get("Location") or "")
+                    continue
+                size = self._served_size(resp, 0, 1)
+                if not _ZIP_MIN_BYTES <= size <= _MAX_RANGED_PACKAGE_BYTES:
+                    raise _RangeUnusable("the file's length is out of bounds")
+                return url, size, resp.headers.get("ETag")
+        raise _RangeUnusable("too many redirects")
+
+    @staticmethod
+    def _served_size(resp, start: int, stop: int) -> int:
+        """The file length a 206 states, when it is exactly the range asked for, unencoded."""
+        match = _CONTENT_RANGE_RE.fullmatch(resp.headers.get("Content-Range") or "")
+        if (resp.status != 206 or not match or resp.headers.get("Content-Encoding")
+                or (int(match[1]), int(match[2])) != (start, stop - 1)):
+            raise _RangeUnusable("the server did not answer with the range asked for")
+        return int(match[3])
+
+    def _fetch(self, start: int, stop: int) -> None:
+        if self.fetched + stop - start > _MAX_EXTENSION_BYTES:
+            raise _RangeUnusable("more to fetch than the extension limit allows")
+        with self._send(self._url, start, stop) as resp:
+            if (self._served_size(resp, start, stop) != self.size
+                    or resp.headers.get("ETag") != self._etag):
+                raise _RangeUnusable("the file changed between requests")
+            self._file.seek(start)
+            at = start
+            try:
+                while at < stop:
+                    chunk = resp.read(min(_READ_CHUNK, stop - at))
+                    if not chunk:
+                        raise _RangeUnusable("a range ended early")
+                    self._file.write(chunk)
+                    at += len(chunk)
+            except OSError as exc:
+                raise _RangeUnusable(f"range request failed: {exc}") from exc
+        self.fetched += stop - start
+        merged: list[tuple[int, int]] = []
+        for low, high in sorted([*self._have, (start, stop)]):
+            if merged and low <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], high))
+            else:
+                merged.append((low, high))
+        self._have = merged
+
+
 def _marketplace_json(url: str, market: _Marketplace, *, body: bytes | None = None,
                       not_found: str = "", timeout: float = _HTTP_TIMEOUT) -> dict:
     """A marketplace answer as a JSON object; a 404 is reported as ``not_found`` when given."""
@@ -2029,7 +2242,9 @@ def _gallery_builds(market: _Marketplace, gallery: str, ext_id: str, *,
             isinstance(p, dict) and p.get("key") == _PRERELEASE_PROPERTY
             and str(p.get("value")).lower() == "true"
             for p in (properties if isinstance(properties, list) else []))
-        builds.append(_Build(version, platform, prerelease))
+        asset = entry.get("assetUri")
+        builds.append(_Build(version, platform, prerelease,
+                             f"{asset}/{_VSIX_ASSET}" if isinstance(asset, str) else ""))
     return builds
 
 
@@ -2076,17 +2291,60 @@ def _invalid_extension(prefix: str, market: _Marketplace, link: str) -> Collecti
         f"a {link} link, with letters, digits and hyphens in each name")
 
 
-def _vsix_context(source: str, ext_id: str, version: str, url: str, data: bytes,
+def _fetch_vsix(ranged_url: str, whole_url: str, market: _Marketplace, ext_id: str, package: Path,
+                extract_dir: Path) -> tuple[int, list[tuple[str, int]]]:
+    """Unpack a .vsix into ``extract_dir``: only the parts the engine reads, by byte ranges; if
+    that does not work, from the whole file, streamed to ``package`` on disk. Returns how many
+    entries were left out and the binary files that were not read."""
+    binaries: list[tuple[str, int]] = []
+    size = None
+    try:
+        remote = _RemoteZip(ranged_url, market, package)
+        size = remote.size
+        with remote:
+            return _safe_extract_zip(remote, extract_dir, binaries=binaries), binaries
+    except SizeLimitError:
+        raise  # a limit is the answer, however the bytes arrive
+    except (CollectionError, OSError, ValueError):
+        pass  # whatever is really wrong, the whole file says it with the usual message
+    binaries.clear()
+    shutil.rmtree(extract_dir)
+    extract_dir.mkdir()
+    if size is not None and size > _MAX_EXTENSION_BYTES:
+        raise SizeLimitError(
+            f"package of {ext_id} exceeds the size limit of {_mb(_MAX_EXTENSION_BYTES)} MB.",
+            variable="SKILLTOTAL_MAX_EXTENSION_MB")
+    with package.open("wb") as sink:
+        _marketplace_fetch(whole_url, market, sink=sink)
+    with package.open("rb") as fh:
+        if fh.read(len(_ZIP_MAGIC)) != _ZIP_MAGIC:
+            raise CollectionError(f"{market.label} did not return a .vsix package for {ext_id}")
+    return _safe_extract_zip(package, extract_dir, binaries=binaries), binaries
+
+
+def _vsix_context(source: str, ext_id: str, version: str, ranged_url: str, whole_url: str,
                   market: _Marketplace, note: str | None) -> SourceContext:
-    if not data.startswith(_ZIP_MAGIC):
-        raise CollectionError(f"{market.label} did not return a .vsix package for {ext_id}")
-    ctx = _collect_archive(source, "vscode_extension", version, url, url, data=data)
-    ctx.distribution_note = note
-    return ctx
+    tmp = tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX)
+    try:
+        package = Path(tmp.name) / "package.vsix"
+        extract_dir = Path(tmp.name) / "x"
+        extract_dir.mkdir()
+        skipped, binaries = _fetch_vsix(ranged_url, whole_url, market, ext_id, package, extract_dir)
+        package.unlink(missing_ok=True)
+        root = _single_root(extract_dir)
+        component = detect_component(root, source=source)
+        component = replace(component, type="vscode_extension",
+                            version=component.version or version, download_url=whole_url)
+        return SourceContext(root=root, component=component, _tempdir=tmp,
+                             skipped_entries=skipped, distribution_note=note,
+                             unpacked_note=_binaries_note(binaries))
+    except Exception:
+        tmp.cleanup()
+        raise
 
 
 def _vscode_release(ext_id: str, pin: str | None,
-                    timeout: float = _HTTP_TIMEOUT) -> tuple[str, list[str], bool]:
+                    timeout: float = _HTTP_TIMEOUT) -> tuple[str, list[_Build], bool]:
     """``(version, its platform builds, whether only pre-releases exist)`` on the Visual Studio
     Marketplace, from the gallery query alone."""
     builds = _gallery_builds(_VS_MARKETPLACE, _VSM_GALLERY, ext_id, latest_only=pin is None,
@@ -2102,7 +2360,7 @@ def _vscode_release(ext_id: str, pin: str | None,
         if not chosen:
             raise CollectionError(
                 f"extension '{ext_id}' has no resolvable release on {_VS_MARKETPLACE.label}")
-    return chosen[0].version, [b.platform for b in chosen], prerelease_only
+    return chosen[0].version, chosen, prerelease_only
 
 
 def _collect_vscode(source: str) -> SourceContext:
@@ -2112,16 +2370,17 @@ def _collect_vscode(source: str) -> SourceContext:
     if not ext_id:
         raise _invalid_extension("vscode", _VS_MARKETPLACE,
                                  "marketplace.visualstudio.com/items?itemName=")
-    version, platforms, prerelease_only = _vscode_release(ext_id, pin)
+    version, builds, prerelease_only = _vscode_release(ext_id, pin)
+    platforms = [b.platform for b in builds]
     platform = _pick_platform(platforms)
     publisher, name = ext_id.split(".", 1)
     url = (f"{_VSM_GALLERY}/publishers/{quote(publisher)}/vsextensions/{quote(name)}/"
            f"{quote(version, safe='')}/vspackage")
     if platform != "universal":
         url += f"?targetPlatform={quote(platform, safe='')}"
-    data = _marketplace_fetch(url, _VS_MARKETPLACE, archive=True)
+    asset = next(b.asset_url for b in builds if b.platform == platform)
     note = _build_note(ext_id, version, platform, platforms, prerelease_only)
-    return _vsix_context(source, ext_id, version, url, data, _VS_MARKETPLACE, note)
+    return _vsix_context(source, ext_id, version, asset or url, url, _VS_MARKETPLACE, note)
 
 
 def _openvsx_release(ext_id: str, pin: str | None,
@@ -2166,16 +2425,8 @@ def _collect_openvsx(source: str) -> SourceContext:
             f"extension '{ext_id}' {version} has no downloadable distribution on Open VSX")
     platform = _pick_platform(list(usable))
     url = usable[platform]
-    sizes = doc.get("downloadSizes")
-    size = sizes.get(platform) if isinstance(sizes, dict) else None
-    if isinstance(size, int) and size > _MAX_ARCHIVE_BYTES:
-        # Open VSX states the size: refuse before downloading what would be refused anyway.
-        raise SizeLimitError(
-            f"the {platform} package of {ext_id} {version} ({_mb(size)} MB) exceeds the size "
-            f"limit of {_mb(_MAX_ARCHIVE_BYTES)} MB.", variable="SKILLTOTAL_MAX_ARCHIVE_MB")
-    data = _marketplace_fetch(url, _OPEN_VSX, archive=True)
     note = _build_note(ext_id, version, platform, list(usable), prerelease_only)
-    return _vsix_context(source, ext_id, version, url, data, _OPEN_VSX, note)
+    return _vsix_context(source, ext_id, version, url, url, _OPEN_VSX, note)
 
 
 def detect_component(root: Path, source: str, default_name: str | None = None) -> Component:
