@@ -6,8 +6,12 @@ hint means something only for a tool that is not read-only). Clients and app dir
 them to decide which calls can run without asking, and nothing checks them against the code. This
 scanner reads the handler a tool is registered with and reports:
 
-* ``readOnlyHint: true`` on a handler that writes or deletes a file, runs a process, or sends a
-  POST, PUT, PATCH or DELETE request;
+* ``readOnlyHint: true`` on a handler that writes or deletes a file, sends a PUT, PATCH or DELETE
+  request, or runs a process whose command is not fully written out in the source (built from the
+  tool's arguments or a variable, so the tool runs whatever it is handed) or is a written-out
+  command from a short list that changes things (``rm``, ``git push``, ``kubectl delete``, a
+  ``>`` redirect, ...). A POST does not count, since GraphQL and search APIs read through POST;
+  nor does a literal ``git log`` / ``kubectl get`` / ``ls``;
 * an explicit ``destructiveHint: false`` on a handler that deletes a file or directory or sends a
   DELETE request. A tool that leaves the hint out is never reported.
 
@@ -18,7 +22,8 @@ The annotations may be named by a constant defined in the same file. The handler
 passed inline, the decorated ``def``, or a function of the same file passed by name. Only that
 function's own body is read: a helper it calls is not followed, in this file or another, so a
 write done in a helper is not reported. Calls are recognised by the same signatures as
-ST-FS-*-WRITE, ST-SHELL-* and ST-NET-*; calls in comments and strings do not count. Nothing is run.
+ST-FS-*-WRITE, ST-SHELL-* and ST-NET-*, plus ``fs.promises.*`` and names imported from
+``fs/promises``; calls in comments and strings do not count. Nothing is run.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from __future__ import annotations
 import ast
 import bisect
 import re
+import shlex
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Evidence, Severity, ThreatClass
@@ -45,6 +51,9 @@ from skilltotal.scanners.python_ast import (
     EFFECT_WRITE,
     PY_SUFFIXES,
     CallEffect,
+    _command_arg,
+    _is_dynamic_command,
+    _literal_text,
     python_call_effects,
 )
 from skilltotal.scanners.shell_exec import exec_call_pattern
@@ -58,12 +67,30 @@ _HINT_NAMES = frozenset({READ_ONLY, DESTRUCTIVE})
 # What a handler does, as far as the annotations go.
 _WRITE = "write"  # writes or deletes a file
 _DELETE = "delete"  # deletes a file or directory
-_EXEC = "exec"  # runs a process
-_MUTATING_REQUEST = "mutating_request"  # POST / PUT / PATCH / DELETE
+_EXEC = "exec"  # runs a process that is not a written-out read-only command
+_MUTATING_REQUEST = "mutating_request"  # PUT / PATCH / DELETE
 _DELETE_REQUEST = "delete_request"  # DELETE
 _READ_ONLY_EXCLUDES = frozenset({_WRITE, _DELETE, _EXEC, _MUTATING_REQUEST, _DELETE_REQUEST})
 _NOT_DESTRUCTIVE_EXCLUDES = frozenset({_DELETE, _DELETE_REQUEST})
-_MUTATING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+# POST is left out: GraphQL, search and JSON-RPC APIs read through POST.
+_MUTATING_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+
+# --- written-out commands that change things ----------------------------------------------------
+_MUTATING_PROGRAMS = frozenset(
+    {"rm", "rmdir", "mv", "cp", "dd", "chmod", "chown", "tee", "truncate"}
+)
+_MUTATING_SUBCOMMANDS = {
+    "git": frozenset({"push", "commit", "reset", "checkout", "clean", "rm"}),
+    "kubectl": frozenset({"apply", "delete", "patch", "create", "scale"}),
+    "docker": frozenset({"rm", "rmi", "run"}),
+    "npm": frozenset({"install", "uninstall"}),
+    "pip": frozenset({"install", "uninstall"}),
+}
+# Options of those programs that take a value before the subcommand (`git -C repo push`).
+_VALUE_OPTIONS = frozenset({"-C", "-c", "-n", "--namespace", "--context", "--kubeconfig"})
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+_PIP = re.compile(r"pip\d*(?:\.\d+)?")
+_SEPARATOR_CHARS = frozenset(";&|()")
 
 # A hint as written: its declared value and where it is declared (character offsets in a
 # JavaScript/TypeScript file, first and last line in a Python one).
@@ -91,13 +118,32 @@ _JS_FS_WRITE = alternation(*NODE_FS_WRITE_CALLS)
 _JS_FS_DELETE = alternation(*NODE_FS_DELETE_CALLS)
 # The request calls ST-NET-NODE counts, and the axios shorthands that name a mutating verb.
 _JS_REQUEST = re.compile(r"\bfetch\s*\(|\baxios(?:\.request)?\s*\(|\bhttps?\.request\s*\(")
-_JS_AXIOS_VERB = re.compile(r"\baxios\.(post|put|patch|delete)\s*\(")
+_JS_AXIOS_VERB = re.compile(r"\baxios\.(put|patch|delete)\s*\(")
+# fs/promises reached as `fs.promises.x(`, or by a name imported from it.
+_JS_FS_PROMISE_WRITES = frozenset({"writeFile", "appendFile", "rm", "unlink", "rmdir"})
+_JS_FS_PROMISE_DELETES = frozenset({"rm", "unlink", "rmdir"})
+_JS_FS_PROMISES_CALL = re.compile(r"\bfs\.promises\.(writeFile|appendFile|rm|unlink|rmdir)\s*\(")
+# Matched in the raw text (the module name is a string); the keyword must be code.
+_JS_FS_PROMISES_IMPORT = re.compile(
+    r"""\bimport[ \t]*(?:type[ \t]+)?\{([^{}]{0,2000})\}\s*from\s*(["'])(?:node:)?fs/promises\2"""
+)
+_JS_FS_PROMISES_REQUIRE = re.compile(
+    r"""\b(?:const|let|var)[ \t]*\{([^{}]{0,2000})\}\s*=\s*require\(\s*(["'])(?:node:)?"""
+    r"""fs/promises\2\s*\)"""
+)
+_JS_IMPORT_ITEM = re.compile(r"\s*([A-Za-z_$][\w$]*)(?:\s*(?:as\b|:)\s*([A-Za-z_$][\w$]*))?\s*")
+# A string literal argument, read from the raw text (a template only without `${`).
+_JS_LITERAL = re.compile(
+    r"""\s*(?:"((?:[^"\\\n]|\\.){0,4000})"|'((?:[^'\\\n]|\\.){0,4000})'|`([^`\\$]{0,4000})`)\s*"""
+)
+# The name of the process call ST-SHELL-NODE matched (`execSync(`, `cp.spawn(`, `Bun.spawn(`).
+_JS_CALL_NAME = re.compile(r"(\w+)\s*\($")
 # Matched in the raw text; the key and the colon must be code in the code view.
 _JS_HINT = re.compile(
     r"""(?<![\w$])(["']?)(readOnlyHint|destructiveHint)\1[ \t]*(:)[ \t]*(true|false)(?![\w$])"""
 )
 _JS_METHOD = re.compile(
-    r"""(?<![\w$])(["']?)method\1[ \t]*(:)[ \t]*["'`]((?i:post|put|patch|delete))["'`]"""
+    r"""(?<![\w$])(["']?)method\1[ \t]*(:)[ \t]*["'`]((?i:put|patch|delete))["'`]"""
 )
 # How far a return-type annotation between a function's parameters and its body is read.
 _JS_TYPE_REACH = 400
@@ -113,9 +159,10 @@ class McpAnnotationScanner(Scanner):
             title="Tool annotation contradicted by its code",
             description=(
                 "An MCP tool declares itself read-only (readOnlyHint: true) while its handler "
-                "writes or deletes files, runs a process or sends a POST/PUT/PATCH/DELETE "
-                "request, or declares itself non-destructive (destructiveHint: false) while its "
-                "handler deletes files or sends a DELETE request. Clients use these hints to "
+                "writes or deletes files, sends a PUT/PATCH/DELETE request, or runs a command "
+                "built from its arguments or one that changes things (rm, git push, kubectl "
+                "delete, ...), or declares itself non-destructive (destructiveHint: false) while "
+                "its handler deletes files or sends a DELETE request. Clients use these hints to "
                 "decide which tool calls run without asking. Each pair of evidence lines is the "
                 "hint and the first call in the handler that contradicts it. Only the handler's "
                 "own body is read; calls made through helper functions are not followed."
@@ -159,6 +206,101 @@ def _excluded(hints: dict[str, Hint]) -> tuple[str, frozenset[str]] | None:
     return None
 
 
+def command_line_mutates(command: str) -> bool:
+    """Whether a written-out shell command line changes things: one of its commands (split on
+    ``;``, ``&&``, ``||``, ``|``) is in the mutating list, or it redirects output into a file
+    (``> out.txt``; ``2>/dev/null`` does not count). A line that cannot be split counts as not
+    mutating."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    segment: list[str] = []
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token and set(token) <= _SEPARATOR_CHARS:
+            if argv_mutates(segment):
+                return True
+            segment = []
+        elif token in (">", ">>"):
+            target = tokens[i + 1] if i + 1 < len(tokens) else ""
+            if not target.startswith(("/dev/", "&")):
+                return True
+            i += 1
+        else:
+            segment.append(token)
+        i += 1
+    return argv_mutates(segment)
+
+
+def argv_mutates(argv: list[str | None]) -> bool:
+    """Whether an argument list runs something that changes things, or something the tool is
+    handed. ``None`` stands for an argument computed at run time. True for a program that is not
+    written out, for ``rm``, ``mv``, ``tee``, ...; for ``git push``, ``kubectl delete``, ``docker
+    rm``, ``npm install``, ... (or such a program whose subcommand is not written out); and for a
+    shell given such a command, or a computed one, with ``-c``. A computed argument after a
+    written-out read command (``["git", "-C", repo, "log"]``, ``["du", "-sh", path]``) does not
+    make it count: it cannot change which program runs or what it does."""
+    argv = list(argv)
+    while argv and argv[0] is not None and (
+        "=" in argv[0] and not argv[0].startswith("-") or argv[0] == "sudo"
+    ):
+        argv.pop(0)  # `FOO=1 git push`, `sudo rm`
+    if not argv:
+        return False
+    if argv[0] is None:
+        return True
+    program = argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower().removesuffix(".exe")
+    rest = argv[1:]
+    if program in _SHELLS:
+        words = [a for a in rest if a is not None]
+        if len(words) != len(rest):
+            return True  # a computed script or command line
+        for i, arg in enumerate(words[:-1]):
+            if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
+                return command_line_mutates(words[i + 1])
+        return False
+    if program in _MUTATING_PROGRAMS:
+        return True
+    if _PIP.fullmatch(program):
+        program = "pip"
+    subcommands = _MUTATING_SUBCOMMANDS.get(program)
+    if subcommands is None:
+        return False
+    skip = False
+    for arg in rest:
+        if skip:
+            skip = False
+        elif arg is None:
+            return True  # the subcommand is computed
+        elif arg in _VALUE_OPTIONS:
+            skip = True
+        elif not arg.startswith("-"):
+            return arg in subcommands
+    return False
+
+
+def _js_fs_promise_imports(text: str, view: str) -> dict[str, str]:
+    """Local name -> fs/promises function, for the write and delete functions a file imports
+    by name (``import { writeFile, rm as remove } from "fs/promises"``, ``const { unlink } =
+    require("node:fs/promises")``)."""
+    names: dict[str, str] = {}
+    for pattern in (_JS_FS_PROMISES_IMPORT, _JS_FS_PROMISES_REQUIRE):
+        if "fs/promises" not in text:
+            break
+        for m in pattern.finditer(text):
+            if view[m.start()] != text[m.start()]:
+                continue  # in a comment or a string
+            for item in m.group(1).split(","):
+                parsed = _JS_IMPORT_ITEM.fullmatch(item)
+                if parsed and parsed.group(1) in _JS_FS_PROMISE_WRITES:
+                    names[parsed.group(2) or parsed.group(1)] = parsed.group(1)
+    return names
+
+
 # --- JavaScript / TypeScript ---------------------------------------------------------------------
 def _js_mismatches(f: IndexedFile) -> list[Evidence]:
     if ".tool" not in f.text and ".registerTool" not in f.text:
@@ -199,11 +341,30 @@ class _JsSource:
         self.pairs = _bracket_pairs(view)
         self._decls: tuple[dict[str, int], dict[str, int]] | None = None
         self.effects: dict[str, list[tuple[int, int]]] = {kind: [] for kind in _READ_ONLY_EXCLUDES}
-        for m in _JS_FS_WRITE.finditer(view):
-            self.effects[_WRITE].append(m.span())
-            if _JS_FS_DELETE.match(view, m.start()):
-                self.effects[_DELETE].append(m.span())
-        self.effects[_EXEC] = [m.span() for m in exec_call_pattern(f).finditer(view)]
+        writes: list[tuple[int, int, bool]] = [
+            (m.start(), m.end(), _JS_FS_DELETE.match(view, m.start()) is not None)
+            for m in _JS_FS_WRITE.finditer(view)
+        ]
+        writes += [
+            (m.start(), m.end(), m.group(1) in _JS_FS_PROMISE_DELETES)
+            for m in _JS_FS_PROMISES_CALL.finditer(view)
+        ]
+        imported = _js_fs_promise_imports(text, view)
+        if imported:
+            bare = re.compile(
+                r"(?<![\w$.])(" + "|".join(re.escape(n) for n in imported) + r")\s*\("
+            )
+            writes += [
+                (m.start(), m.end(), imported[m.group(1)] in _JS_FS_PROMISE_DELETES)
+                for m in bare.finditer(view)
+            ]
+        for start, end, delete in sorted(writes):
+            self.effects[_WRITE].append((start, end))
+            if delete:
+                self.effects[_DELETE].append((start, end))
+        self.effects[_EXEC] = [
+            m.span() for m in exec_call_pattern(f).finditer(view) if self._exec_counts(m)
+        ]
         for m in _JS_AXIOS_VERB.finditer(view):
             self.effects[_MUTATING_REQUEST].append(m.span())
             if m.group(1) == "delete":
@@ -240,6 +401,55 @@ class _JsSource:
                 hits.append(_first_in(self.requests, start, end))
         found = [h for h in hits if h is not None]
         return min(found) if found else None
+
+    def _exec_counts(self, m: re.Match[str]) -> bool:
+        """Whether a process call contradicts a read-only claim: the tool runs what it is
+        handed (a command line with a computed part, a computed program or subcommand), or a
+        written-out command that changes things. ``exec(cmd)`` takes a command line; ``spawn`` /
+        ``execFile(program, [args])`` and ``Bun.spawn([argv])`` take an argument list."""
+        open_at = m.end() - 1
+        close = self.pairs.get(open_at)
+        if close is None:
+            return True
+        args = self.top_level_args(open_at, close)
+        if not args:
+            return True
+        name = _JS_CALL_NAME.search(m.group())
+        call = name.group(1) if name else ""
+        if call in ("exec", "execSync"):
+            command = self._literal(args[0])
+            return command is None or command_line_mutates(command)
+        if call in ("spawn", "spawnSync") and m.group().startswith("Bun"):
+            argv = self._literal_array(args[0])
+            return argv is None or argv_mutates(argv)
+        program = self._literal(args[0])
+        if program is None:
+            return True
+        rest: list[str | None] = []
+        if len(args) > 1 and self.view[_skip_space(self.view, args[1][0], args[1][1])] != "{":
+            listed = self._literal_array(args[1])
+            rest = [None] if listed is None else listed  # a computed argument list
+        try:
+            head: list[str | None] = list(shlex.split(program))  # `spawn("git log", {shell})`
+        except ValueError:
+            return False
+        return argv_mutates(head + rest)
+
+    def _literal(self, arg: tuple[int, int]) -> str | None:
+        """The text of a string literal argument, or None for anything else."""
+        m = _JS_LITERAL.fullmatch(self.text, arg[0], arg[1])
+        if m is None or self.view[_skip_space(self.view, arg[0], arg[1])] not in "\"'`":
+            return None
+        return next(g for g in m.groups() if g is not None)
+
+    def _literal_array(self, arg: tuple[int, int]) -> list[str | None] | None:
+        """The elements of an array literal (None for an element that is not a string
+        literal, such as a variable or a spread), or None when the argument is not one."""
+        i = _skip_space(self.view, arg[0], arg[1])
+        close = self.pairs.get(i) if i < arg[1] and self.view[i] == "[" else None
+        if close is None:
+            return None
+        return [self._literal(a) for a in self.top_level_args(i, close)]
 
     # -- registration arguments -----------------------------------------------------------------
     def top_level_args(self, open_at: int, close_at: int) -> list[tuple[int, int]]:
@@ -551,7 +761,7 @@ def _py_kinds(effect: CallEffect) -> frozenset[str]:
         kinds.add(_WRITE)
     if EFFECT_DELETE in effect.effects:
         kinds |= {_WRITE, _DELETE}
-    if EFFECT_EXEC in effect.effects:
+    if EFFECT_EXEC in effect.effects and _py_exec_counts(effect):
         kinds.add(_EXEC)
     if EFFECT_NETWORK in effect.effects:
         method = _py_http_method(effect)
@@ -560,6 +770,42 @@ def _py_kinds(effect: CallEffect) -> frozenset[str]:
         if method == "DELETE":
             kinds.add(_DELETE_REQUEST)
     return frozenset(kinds)
+
+
+def _py_exec_counts(effect: CallEffect) -> bool:
+    """Whether a process call contradicts a read-only claim (see ``_JsSource._exec_counts``):
+    ``subprocess.run(["git", "log", repo])`` and ``os.system("ls")`` do not;
+    ``subprocess.run(cmd)``, an f-string command line and ``subprocess.run(["git", "push"])`` do.
+    ``os.exec*`` / ``os.spawn*`` are not read and always count."""
+    call, name = effect.call, effect.name
+    if name.endswith("create_subprocess_exec"):  # argv as positional arguments
+        return argv_mutates(_py_argv(call.args)) if call.args else True
+    if name.startswith("os.") and name not in ("os.system", "os.popen"):
+        return True
+    command = _command_arg(call)
+    if command is None:
+        return True
+    if isinstance(command, (ast.List, ast.Tuple)):
+        return argv_mutates(_py_argv(command.elts)) if command.elts else True
+    if _is_dynamic_command(command):
+        return True  # a command line with a computed part
+    text = _literal_text(command)
+    return text is None or command_line_mutates(text)
+
+
+def _py_argv(exprs: list[ast.expr]) -> list[str | None]:
+    """Each argument's written-out value (a string or a number), or None when it is computed.
+    A ``*spread`` hides the positions after it, so it ends the list with one None."""
+    out: list[str | None] = []
+    for e in exprs:
+        if isinstance(e, ast.Starred):
+            out.append(None)
+            break
+        if isinstance(e, ast.Constant) and type(e.value) in (int, float):
+            out.append(str(e.value))
+        else:
+            out.append(None if _is_dynamic_command(e) else _literal_text(e))
+    return out
 
 
 def _py_http_method(effect: CallEffect) -> str | None:

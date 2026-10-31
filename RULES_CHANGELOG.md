@@ -7,10 +7,17 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 ## ruleset 87 (unreleased)
 
 - **`ST-MCP-ANNOTATION-MISMATCH`** (new, medium, risky construct): an MCP tool whose annotations
-  its own handler contradicts. `readOnlyHint: true` over a handler that writes or deletes a file,
-  runs a process, or sends a POST, PUT, PATCH or DELETE request; an explicit
-  `destructiveHint: false` over a handler that deletes a file or directory or sends a DELETE
-  request. Clients use these hints to decide which calls run without asking. Read in TypeScript
+  its own handler contradicts. `readOnlyHint: true` over a handler that writes or deletes a file
+  (also `fs.promises.*` and names imported from `fs/promises`), sends a PUT, PATCH or DELETE
+  request, or runs a process that is either handed its command (a command line with a computed
+  part, a computed program, subcommand or `sh -c` script) or runs a written-out command from a
+  short mutating list (`rm`, `mv`, `cp`, `dd`, `chmod`, `chown`, `tee`, `truncate`, a `>`
+  redirect into a file, `git push/commit/reset/checkout/clean/rm`, `kubectl
+  apply/delete/patch/create/scale`, `docker rm/rmi/run`, `npm`/`pip install/uninstall`); an
+  explicit `destructiveHint: false` over a handler that deletes a file or directory or sends a
+  DELETE request. A POST does not fire (GraphQL and search APIs read through POST), nor does a
+  written-out `git log`, `kubectl get` or `ls`, with or without a computed path argument.
+  Clients use these hints to decide which calls run without asking. Read in TypeScript
   and JavaScript (`server.registerTool(name, { annotations }, handler)`, `server.tool(name, ...,
   annotations, handler)`) and Python (`@mcp.tool(annotations=...)` with a dict or
   `ToolAnnotations(...)`, `mcp.add_tool(fn, annotations=...)`); annotations may be a constant of

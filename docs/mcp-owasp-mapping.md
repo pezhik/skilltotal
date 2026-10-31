@@ -20,7 +20,7 @@ listed at the end as honest gaps (planned for the hosted SkillTotal Cloud).
 | Input-validation gaps (untrusted input → dangerous sink) | `ST-TAINT-EXEC-PY`, `ST-TAINT-SHELL-PY`, `ST-TAINT-DESERIAL-PY` | intra-procedural taint (incl. MCP tool parameters as a source) |
 | Hardcoded credentials / secrets in code or config | `ST-SECRET-EMBEDDED`, `ST-SENS-PATH` | known-prefix tokens, credential paths |
 | Dangerous tool capabilities (shell/fs/network/browser/credential) | `ST-MCP-DANGEROUS-TOOL` | classified from tool name/description |
-| Tool annotations that misstate what a tool does | `ST-MCP-ANNOTATION-MISMATCH` | `readOnlyHint: true` on a handler that writes, deletes, runs a process or sends POST/PUT/PATCH/DELETE; `destructiveHint: false` on one that deletes; the handler's own body only |
+| Tool annotations that misstate what a tool does | `ST-MCP-ANNOTATION-MISMATCH` | `readOnlyHint: true` on a handler that writes, deletes, sends PUT/PATCH/DELETE, or runs a command it is handed or one that changes things; `destructiveHint: false` on one that deletes; the handler's own body only |
 | Data-exfiltration surface (sensitive access + egress) | `ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, MCP exfiltration-surface review | credential access + network; lethal-trifecta flow |
 | Supply-chain payload in the server's own code | `ST-OBF-DECODE-EXEC*`, `ST-PTH-EXEC`, `ST-INSTALL-DROPPER`, `ST-ENCRYPTED-ARCHIVE`, `ST-HIDDEN-UNICODE` | obfuscation, auto-exec persistence, install droppers, evasion |
 

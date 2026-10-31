@@ -92,9 +92,10 @@ def _call_prefixes(f: IndexedFile) -> list[str]:
 
 
 def exec_call_pattern(f: IndexedFile) -> re.Pattern[str]:
-    """The process-running call sites ST-SHELL-NODE counts in this file (imports left out)."""
+    """The process-running call sites in this file: those ST-SHELL-NODE counts, with execFile /
+    execFileSync as ST-SHELL-PIPE-EXEC-NODE reads them (imports left out)."""
     prefixes = "|".join(f"(?:{p})" for p in _call_prefixes(f))
-    return alternation(rf"(?:{prefixes}){_CALLS}\s*\(", *_ANYWHERE_CALLS, flags=re.MULTILINE)
+    return alternation(rf"(?:{prefixes}){_PIPE_CALLS}\s*\(", *_ANYWHERE_CALLS, flags=re.MULTILINE)
 
 
 SHELL_RULE = RuleSpec(

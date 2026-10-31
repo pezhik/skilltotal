@@ -73,10 +73,11 @@ every dependency.
 - Sensitive-data access combined with outbound network egress
 - Hardcoded API keys or tokens
 - An MCP server with auto-approved or overprivileged tools
-- An MCP tool annotated `readOnlyHint: true` whose handler writes or deletes files, runs a
-  process or sends a POST/PUT/PATCH/DELETE request, or annotated `destructiveHint: false` whose
-  handler deletes files or sends a DELETE request (`ST-MCP-ANNOTATION-MISMATCH`). Clients read
-  these hints to decide which calls run without asking.
+- An MCP tool annotated `readOnlyHint: true` whose handler writes or deletes files, sends a
+  PUT/PATCH/DELETE request, or runs a command it is handed or one that changes things, or
+  annotated `destructiveHint: false` whose handler deletes files or sends a DELETE request
+  (`ST-MCP-ANNOTATION-MISMATCH`). Clients read these hints to decide which calls run without
+  asking.
 - Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
   shell: a traced path, not just a dangerous API in isolation
 - Code that opens a way into the machine (a reverse tunnel to the local SSH port, a key written
@@ -184,7 +185,15 @@ a substitute for:
   annotation (the write itself is still reported as a filesystem write). A missing
   `destructiveHint` is never reported: the MCP specification defaults it to true. Annotations a
   server builds at run time (a helper that returns them, a low-level `tools/list` handler) are not
-  read.
+  read. A read-only claim is contradicted by a file write or delete (`fs.promises.*` and names
+  imported from `fs/promises` included), by a PUT, PATCH or DELETE request, and by a process
+  call that either runs what the tool is handed (a command line with a computed part, a computed
+  program, subcommand or `sh -c` script) or runs a written-out command that changes things:
+  `rm`, `rmdir`, `mv`, `cp`, `dd`, `chmod`, `chown`, `tee`, `truncate`, a `>` redirect into a
+  file, `git push/commit/reset/checkout/clean/rm`, `kubectl apply/delete/patch/create/scale`,
+  `docker rm/rmi/run`, `npm`/`pip install/uninstall`. A POST does not count, because GraphQL
+  and search APIs read through POST. A written-out `git log`, `kubectl get` or `ls` does not
+  count, and neither does a computed argument after one (`["git", "-C", repo, "log"]`).
 - SARIF, JSON and baseline files that SkillTotal wrote into the scanned folder are recognised by
   their content, listed in `needs_review` and not scanned (their rule descriptions quote detection
   patterns).
