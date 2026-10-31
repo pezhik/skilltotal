@@ -14,9 +14,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
   Windsurf install from). `scan`, `diff`, `guard` and the MCP server accept them. Without a version
   the newest stable release is scanned. An extension published as one build per platform is
   scanned as its `universal` build, else its `linux-x64` build, and the report lists the builds
-  that were not read. Downloads come only from the two marketplaces and their download hosts,
-  within the archive size limit. `collector.resolve_release` names the version such a source
-  resolves to from marketplace metadata alone, without downloading the extension.
+  that were not read. Downloads come only from the two marketplaces and their download hosts.
+  `collector.resolve_release` names the version such a source resolves to from marketplace
+  metadata alone, without downloading the extension.
+- A `vscode:` or `openvsx:` extension is fetched by HTTP range requests: the central directory,
+  then only the files the scanner reads. Native binaries stay on the server, and `needs_review`
+  gives their number and total size ("Binary files not read"). If ranges do not work or the
+  package looks wrong, the whole file is streamed to disk. `SKILLTOTAL_MAX_EXTENSION_MB` (400 by
+  default) bounds both, and `SKILLTOTAL_MAX_EXTRACT_MB` still bounds what is unpacked, without
+  counting binaries.
+- `guard vscode:...` and `guard openvsx:...` use the policy of `guard --installed` for editor
+  extensions: malicious indicators and the reasons that always block, no typosquat check, unless
+  `--block-on` is given.
+- `engine.source_notes(ctx)`: the collection notes `analyze` adds, for a caller that runs
+  `analyze_directory` on its own `collect`.
 
 ## [0.88.0]
 

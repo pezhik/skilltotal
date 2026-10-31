@@ -54,6 +54,36 @@ def _not_found(url: str) -> urllib.error.HTTPError:
     return urllib.error.HTTPError(url, 404, "Not Found", {}, io.BytesIO(b"{}"))
 
 
+class _Ranged:
+    """A file served the way the CDNs serve one: a Range request gets a 206, no Range the whole
+    file. ``answer`` overrides the reply to a Range request, to play a misbehaving server."""
+
+    def __init__(self, blob: bytes, answer=None):
+        self.blob = blob
+        self.answer = answer
+        self.spans: list[tuple[int, int]] = []
+        self.whole = 0
+
+    def serve(self, request):
+        spec = request.get_header("Range")
+        if spec is None:
+            self.whole += 1
+            return _Resp(self.blob)
+        start, stop = (int(n) for n in spec.removeprefix("bytes=").split("-"))
+        self.spans.append((start, stop + 1))
+        body = self.blob[start:stop + 1]
+        headers = {"Content-Range": f"bytes {start}-{stop}/{len(self.blob)}", "ETag": '"v1"'}
+        if self.answer is not None:
+            return self.answer(len(self.spans), body, headers)
+        return _Resp(body, 206, headers)
+
+    def bytes_served(self) -> int:
+        return sum(stop - start for start, stop in self.spans)
+
+    def served(self, offset: int) -> bool:
+        return any(start <= offset < stop for start, stop in self.spans)
+
+
 class _Transport:
     """Answers each request from ``routes`` (method, url) -> response or exception; records them."""
 
@@ -69,6 +99,8 @@ class _Transport:
             raise _not_found(request.full_url)
         if isinstance(answer, BaseException):
             raise answer
+        if isinstance(answer, _Ranged):
+            return answer.serve(request)
         if callable(answer):
             return answer()
         return _Resp(answer.body, answer.status, answer.headers)  # a fresh one for each request
@@ -245,7 +277,7 @@ def test_vscode_pinned_version_and_missing_version(transport):
     })
     with collector.collect("vscode:acme.tiny@1.0.0") as ctx:
         assert ctx.component.version == "1.0.0"
-    assert not json.loads(t.requests[-2][2])["flags"] & 0x10000  # a pin reads every version
+    assert not json.loads(t.requests[0][2])["flags"] & 0x10000  # a pin reads every version
     with pytest.raises(CollectionError, match="has no version '9.9.9'") as exc:
         collector.collect("vscode:acme.tiny@9.9.9")
     assert collector.failure_category(exc.value) == "not-found"
@@ -309,7 +341,7 @@ def test_redirect_loops_stop(transport):
 
 
 def test_download_over_the_archive_limit_is_refused(transport, monkeypatch):
-    monkeypatch.setattr(collector, "_MAX_ARCHIVE_BYTES", 4096)
+    monkeypatch.setattr(collector, "_MAX_EXTENSION_BYTES", 4096)
     package = _VSM_PACKAGE.format(version="1.0.0")
     query = _gallery(("1.0.0", None, False))
     # Plain body over the cap, and a small gzip body that inflates past it.
@@ -321,7 +353,7 @@ def test_download_over_the_archive_limit_is_refused(transport, monkeypatch):
                    ("GET", package): lambda b=body, h=headers: _Resp(b, headers=h)})
         with pytest.raises(SizeLimitError, match="exceeds the size limit of 0 MB") as exc:
             collector.collect("vscode:acme.tiny")
-        assert exc.value.variable == "SKILLTOTAL_MAX_ARCHIVE_MB"
+        assert exc.value.variable == "SKILLTOTAL_MAX_EXTENSION_MB"
 
 
 def test_damaged_or_truncated_gzip_and_non_vsix_bodies_are_errors(transport):
@@ -362,7 +394,8 @@ def test_openvsx_scans_the_linux_x64_build_named_by_its_api(transport):
         assert ctx.component.version == "2.1.316"
         assert ctx.component.download_url == _ovsx_file("2.1.316", "linux-x64")
         assert "alpine-arm64, win32-x64 were not read" in ctx.distribution_note
-    assert t.urls() == [_OVSX_API, _ovsx_file("2.1.316", "linux-x64")]
+    # A file that ignores Range is read whole: asked once with a Range, once without.
+    assert t.urls() == [_OVSX_API] + [_ovsx_file("2.1.316", "linux-x64")] * 2
 
 
 def test_openvsx_link_with_a_version(transport):
@@ -397,15 +430,6 @@ def test_openvsx_prerelease_latest_resolves_to_the_newest_stable(transport):
     with collector.collect("openvsx:acme.tiny") as ctx:
         assert ctx.component.version == "2.0.0"
     assert f"{_OVSX_API}/2.0.0" in t.urls()
-
-
-def test_openvsx_stated_size_over_the_limit_refuses_before_downloading(transport, monkeypatch):
-    monkeypatch.setattr(collector, "_MAX_ARCHIVE_BYTES", 150 * 1024 * 1024)
-    t = transport({("GET", _OVSX_API): _Resp(_ovsx_doc(
-        "2.1.316", ("linux-x64",), sizes={"linux-x64": 160_417_327}))})
-    with pytest.raises(SizeLimitError, match=r"\(152 MB\) exceeds the size limit of 150 MB"):
-        collector.collect("openvsx:acme.tiny")
-    assert t.urls() == [_OVSX_API]
 
 
 def test_openvsx_download_off_its_hosts_is_refused(transport):
