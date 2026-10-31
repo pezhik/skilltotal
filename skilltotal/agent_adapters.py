@@ -10,7 +10,7 @@ Formats, from each agent's documentation (read 2026-10-31; ``docs/agent-hooks.md
 ========  ==============================  =====  ==========================================
 agent     event                           ask    how it blocks
 ========  ==============================  =====  ==========================================
-cursor    beforeShellExecution,           yes    ``{"permission": "deny"}``
+cursor    beforeShellExecution,           no*    ``{"permission": "deny"}``
           beforeMCPExecution, sessionStart
 windsurf  pre_run_command,                no     exit code 2, the reason on stderr
           pre_mcp_tool_use
@@ -21,7 +21,8 @@ copilot   preToolUse / PreToolUse         yes    top-level ``permissionDecision:
 ========  ==============================  =====  ==========================================
 
 An agent with no way to ask gets a denial that says why and how to go ahead. Codex parses ``ask``
-but reports the hook as failed and lets the call run, which is why it is on that list.
+but reports the hook as failed and lets the call run, which is why it is on that list. Cursor (*)
+documents ``ask``, but does not stop for it in every mode: see :class:`Cursor`.
 
 Pure library: the CLI reads stdin, and prints what ``render`` returns.
 """
@@ -101,7 +102,11 @@ def _json(value: dict[str, Any]) -> str:
 
 
 class Adapter:
-    """One agent's hook format. ``label`` is how a message names the agent."""
+    """One agent's hook format. ``label`` is how a message names the agent.
+
+    A hook's "allow" could widen what the agent does alone, by skipping a question the person
+    would otherwise be asked. So ``write`` never says it, except Cursor with ``failClosed``: with
+    no decision it answers in the form each agent documents as none."""
 
     label = ""
     asks = False  # the agent has a form of "ask"
@@ -109,10 +114,13 @@ class Adapter:
     def read(self, event: dict[str, Any]) -> Request:
         raise NotImplementedError
 
+    def refuse(self, reason: str) -> str:
+        return _no_ask(self.label, reason)
+
     def render(self, answer: dict[str, Any] | None, request: Request) -> Reply:
         permission, reason, line = decision_of(answer)
         if permission == "ask" and not self.asks:
-            permission, reason = "deny", _no_ask(self.label, reason)
+            permission, reason = "deny", self.refuse(reason)
             line = reason
         return self.write(permission, reason, line)
 
@@ -125,8 +133,30 @@ class Adapter:
 
 
 class Cursor(Adapter):
+    """Cursor's documentation names no reply that means "no opinion" and does not say what
+    ``allow`` does to its own approval settings. Its staff say on its forum that only ``deny`` is
+    enforced everywhere: ``ask`` does not stop every mode. So:
+
+    * what would be asked about is denied, with how to go ahead: a question it may not stop for
+      would let a risky install through;
+    * an install that passed, the only command the hook has an opinion on, is ``ask``: no approval
+      from here. If Cursor ignores it, its own flow stands;
+    * any other command gets exit code 1, which the documentation says lets the action proceed as
+      a failed hook, the one documented outcome that cannot be an approval.
+
+    ``failClosed`` turns that exit code into a block, so a config that sets it passes
+    ``--fail-closed``, and there the last case is ``allow``: the docs' only other non-blocking form.
+    """
+
     label = "Cursor"
-    asks = True
+
+    def __init__(self, *, fail_closed: bool = False) -> None:
+        self.fail_closed = fail_closed
+
+    def refuse(self, reason: str) -> str:
+        return (f"{reason} Cursor does not stop for a hook's question in every mode, so SkillTotal "
+                f"blocked this. To go ahead, review it and run the command yourself outside the "
+                f"agent.")
 
     def read(self, event: dict[str, Any]) -> Request:
         name = _text(event.get("hook_event_name"))
@@ -145,10 +175,9 @@ class Cursor(Adapter):
         return Request()
 
     def write(self, permission: str, reason: str, line: str) -> Reply:
-        # Empty output and a reply without `permission` are not safe here: Cursor blocks on a
-        # reply that does not match its schema, and `failClosed` on no output. So every reply
-        # carries one, and "allow" is what the hook says when it has no objection.
-        reply: dict[str, Any] = {"permission": permission or "allow"}
+        if not permission and not line:
+            return Reply(_json({"permission": "allow"})) if self.fail_closed else Reply(code=1)
+        reply: dict[str, Any] = {"permission": permission or "ask"}
         if line:
             reply["user_message"] = line
         if reason:
@@ -227,6 +256,11 @@ class Codex(Adapter):
 
 
 class Gemini(Adapter):
+    """Gemini CLI's hooks page names allow and deny only. Version 0.45.2 also reads
+    ``decision: "ask"``, but with ``gemini -p``, where nobody can answer, that hangs until the
+    process is killed (run 2026-10-31), so a question is a denial here. A reply with no decision
+    leaves its approval flow as it was, so nothing here ever says "allow"."""
+
     label = "Gemini CLI"
 
     def read(self, event: dict[str, Any]) -> Request:

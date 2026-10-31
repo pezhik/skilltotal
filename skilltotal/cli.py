@@ -419,12 +419,17 @@ def build_parser() -> argparse.ArgumentParser:
              f"one exits 1, so the plugin can tell a CLI older than itself.",
     )
     for name, title in HOOK_AGENTS.items():
-        agents.add_parser(
+        answers = agents.add_parser(
             name, help=f"{title} hook: the same check, in {title}'s hook format.",
             description=f"{title} hook: reads one hook event (JSON) on stdin and answers in "
                         f"{title}'s format. `skilltotal hook install` registers it. The settings "
                         f"are those of `skilltotal hook claude-code --help`.",
         )
+        if name == "cursor":
+            answers.add_argument(
+                "--fail-closed", action="store_true",
+                help="For a hooks.json that sets failClosed, where the exit code this hook "
+                     "otherwise uses for no opinion would block the command.")
     for name, what in (("install", "Register the hook with the agents installed here."),
                        ("uninstall", "Remove SkillTotal's hook from the agents' configs.")):
         setup = agents.add_parser(name, help=what, description=what)
@@ -1785,7 +1790,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     if args.agent in HOOK_SETUP_COMMANDS:
         return _cmd_hook_setup(args)
     if args.agent != "claude-code":
-        return _cmd_hook_agent(args.agent)
+        return _cmd_hook_agent(args.agent, getattr(args, "fail_closed", False))
     if args.supervise or args.scan_into:  # one of the processes of a check the hook started
         from skilltotal import hook_scan
 
@@ -1828,7 +1833,7 @@ def _cmd_hook_setup(args: argparse.Namespace) -> int:
         for row in rows:
             state = ("protected" if row["protected"] else
                      "not protected" if row["found"] else "not found")
-            print(f"{row['label']}: {state}")
+            print(f"{row['label']}: {state} ({row['tier']})")
             for where in row["where"]:
                 print(f"  {_one_line(where)}")
             if row["problem"]:
@@ -1836,12 +1841,14 @@ def _cmd_hook_setup(args: argparse.Namespace) -> int:
         return EXIT_OK
     failed = False
     if args.target in ("all", "claude-code") and args.agent == "install":
-        print(hook_setup.PLUGIN_ADVICE)
+        print(f"{hook_setup.PLUGIN_ADVICE} ({hook_setup.tier('claude-code')})")
     agents = [] if args.target == "claude-code" else hook_setup.selected(args.target, home)
     if not agents and args.target == "all":
         print("No other agent found on this machine: nothing to change.")
     for agent in agents:
         path = hook_setup.config_path(agent, args.scope, home, project, os.environ)
+        if args.agent == "install":
+            print(f"{agent.label}: {hook_setup.tier(agent.name)}")
         try:
             if args.agent == "install":
                 command = hook_setup.hook_command(agent, args.scope)
@@ -2034,14 +2041,14 @@ def _hook_stdin() -> str:
     return sys.stdin.read()
 
 
-def _cmd_hook_agent(agent: str) -> int:
+def _cmd_hook_agent(agent: str, fail_closed: bool = False) -> int:
     """One hook event of an agent other than Claude Code: the same decision in its format. A
     failure of ours is the same too: what is asked (for an agent with no way to ask, refused with
     how to go ahead), denied in CI strict mode; text that is no event stays out of the way outside
     CI. The session event of an agent that has one starts the sentinel (see skilltotal.sentinel)."""
-    from skilltotal.agent_adapters import ADAPTERS, MCP, SESSION, SHELL, Request, first_call
+    from skilltotal.agent_adapters import ADAPTERS, MCP, SESSION, SHELL, Cursor, Request, first_call
 
-    adapter = ADAPTERS[agent]
+    adapter = Cursor(fail_closed=True) if fail_closed and agent == "cursor" else ADAPTERS[agent]
     strict_by = _hook_strict(os.environ)
     request = Request()
     try:

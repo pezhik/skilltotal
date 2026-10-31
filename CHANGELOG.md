@@ -7,11 +7,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ## [Unreleased]
 
 ### Added
-- The install check now runs in Cursor, Windsurf, Devin, Codex, Gemini CLI and VS Code Copilot as
-  well: `skilltotal hook <agent>` reads that agent's hook event and answers in its format, with
-  the same parser, verdicts and CI strict mode as Claude Code. An agent with no way to ask gets a
-  denial that says how to go ahead. Cursor and Windsurf also check an MCP server on its first call,
-  by the command that starts it. `skilltotal hook install` merges the hook into each agent's config
+- Hooks for other agents: `skilltotal hook <agent>` reads an agent's hook event and answers in its
+  format, with the same parser, verdicts and CI strict mode as Claude Code. Each has a tier, shown
+  by `hook status` and `hook install`: Gemini CLI is verified against 0.45.2 with its real hook
+  runner and a stand-in model; Cursor, Windsurf, Devin, Codex and VS Code Copilot are preview,
+  built to the agent's documented hook format and not yet run in the agent. A hook never approves:
+  it answers in the form each agent documents as no decision. An agent with no way to ask gets a
+  denial that says how to go ahead. A command that cannot install anything is answered without
+  loading the CLI. Cursor and Windsurf also check an MCP server on its first call, by the command
+  that starts it. `skilltotal hook install` merges the hook into each agent's config
   (`--agent`, `--scope`, `--dry-run`) and keeps a backup, `hook uninstall` takes it out, and
   `hook status` lists what is protected. See `docs/agent-hooks.md`.
 - `claude plugin install name@marketplace` is now checked: the hook finds the plugin in the

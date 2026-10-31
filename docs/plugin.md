@@ -7,8 +7,9 @@ it out to a team, and what to do when it does not work.
 
 Coding agents install packages in the middle of a task, and the permission prompt, if there is
 one, shows only the command. The plugin checks each package on your machine, with the same engine
-as the CLI, before the install command runs. The same check runs in
-[other agents](agent-hooks.md).
+as the CLI, before the install command runs. Hooks for
+[other agents](agent-hooks.md) use the same check, each with a tier that says how far it has been
+proven.
 
 ## Commands the hook recognizes
 

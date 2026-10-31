@@ -6,16 +6,34 @@ which is the thin I/O shell. Future web and enterprise products are intended to 
 :func:`skilltotal.engine.analyze` directly.
 """
 
-from skilltotal.models import (
-    Capability,
-    Component,
-    Evidence,
-    Finding,
-    NeedsReview,
-    Report,
-    RiskLevel,
-    Severity,
-)
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from skilltotal.models import (
+        Capability,
+        Component,
+        Evidence,
+        Finding,
+        NeedsReview,
+        Report,
+        RiskLevel,
+        Severity,
+    )
+
+# Loaded on first use: an agent's hook runs before every shell command (see hook_fast).
+_MODELS = ("Capability", "Component", "Evidence", "Finding", "NeedsReview", "Report", "RiskLevel",
+           "Severity")
+
+
+def __getattr__(name: str) -> object:
+    if name in _MODELS:
+        from skilltotal import models
+
+        return getattr(models, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # --- Versioned contract (consumed by downstream products such as the web app) -----------
 # ENGINE_VERSION: semver of the code / public API; pin this from a consumer.

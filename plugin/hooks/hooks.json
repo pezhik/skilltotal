@@ -25,7 +25,7 @@
     ],
     "ConfigChange": [
       {
-        "matcher": "skills|user_settings",
+        "matcher": "skills|user_settings|project_settings|local_settings",
         "hooks": [
           {
             "type": "command",

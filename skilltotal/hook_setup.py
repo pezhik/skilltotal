@@ -41,6 +41,21 @@ _OURS = re.compile(r"""skilltotal(?:\.exe|\.cmd)?["']?\s+hook\s+(?P<agent>[a-z-]
                    re.IGNORECASE)
 
 
+# What has been run in the agent itself, not only built to its documentation. A line here is added
+# by running the agent, with the version and the date.
+VERIFIED = {
+    "claude-code": "verified against Claude Code 2.1.316 on 2026-10-31",
+    "gemini": "verified against Gemini CLI 0.45.2 on 2026-10-31, with its real hook runner and a "
+              "stand-in model",
+}
+PREVIEW = "preview: built to the agent's documented hook format, not yet run in the agent"
+
+
+def tier(name: str) -> str:
+    """How far an agent's hook has been proven: said wherever support is claimed."""
+    return VERIFIED.get(name, PREVIEW)
+
+
 class SetupError(ValueError):
     """A config file that cannot be changed safely."""
 
@@ -322,7 +337,7 @@ def status(home: Path, project: Path, environ: Mapping[str, str], cli_version: s
         problem = f"plugin {plugin} and CLI {cli_version} differ; update both together"
     rows.append({"agent": "claude-code", "label": "Claude Code", "found": claude_dir.is_dir(),
                  "protected": bool(plugin), "where": [f"plugin {plugin}"] if plugin else [],
-                 "problem": problem})
+                 "problem": problem, "tier": tier("claude-code")})
     found = installed_agents(home)
     for agent in AGENTS:
         where: list[str] = []
@@ -342,7 +357,7 @@ def status(home: Path, project: Path, environ: Mapping[str, str], cli_version: s
                                 f"`skilltotal hook install` again")
         rows.append({"agent": agent.name, "label": agent.label, "found": agent in found,
                      "protected": bool(where) and not problems, "where": where,
-                     "problem": "; ".join(problems)})
+                     "problem": "; ".join(problems), "tier": tier(agent.name)})
     return rows
 
 

@@ -206,10 +206,17 @@ and [troubleshooting](https://github.com/pezhik/skilltotal/blob/main/docs/plugin
 
 ### Other agents
 
-`skilltotal hook install` adds the same check to Cursor, Windsurf, Devin, Codex, Gemini CLI and VS
-Code Copilot, leaving their other hooks alone. An agent that cannot ask you gets a denial that says
-how to go ahead. [docs/agent-hooks.md](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md)
-has what each one can and cannot see, and the managed templates for a fleet.
+`skilltotal hook install` adds the same check to other agents, leaving their other hooks alone. An
+agent that cannot ask you gets a denial that says how to go ahead.
+
+| Agent | Tier |
+|---|---|
+| Claude Code | verified against Claude Code 2.1.316 on 2026-10-31 |
+| Gemini CLI | verified against Gemini CLI 0.45.2 on 2026-10-31, with its real hook runner and a stand-in model |
+| Cursor, Windsurf, Devin, Codex, VS Code Copilot | preview: built to the agent's documented hook format, not yet run in the agent |
+
+[docs/agent-hooks.md](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md) has what
+each one can and cannot see, and the managed templates for a fleet.
 
 ## CI / GitHub Action
 

@@ -22,9 +22,10 @@ from pathlib import Path
 
 import pytest
 
+from skilltotal import hook_fast
 from skilltotal.agent_hook import parse_installs
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT =Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "plugin" / "hooks" / "pretooluse.sh"
 _TRIGGERS = re.search(r'^TRIGGERS="([^"]*)"', WRAPPER.read_text(encoding="utf-8"), re.MULTILINE)
 assert _TRIGGERS
@@ -141,6 +142,52 @@ def _wrapper_calls_cli(tmp_path: Path, command: str, env: dict[str, str] | None 
                           capture_output=True, timeout=60)
     assert done.returncode == 0
     return called.exists()
+
+
+def test_the_python_prefilter_has_the_wrappers_words():
+    assert hook_fast.TRIGGERS == TRIGGERS
+
+
+def test_the_python_prefilter_agrees_with_the_wrapper_on_every_command():
+    differ = [c for c in CORPUS if "\\" not in c and hook_fast.cannot_install(c) != _plain(c)
+              and c.isascii() and not any(ord(ch) < 0x20 for ch in c) and len(c) <= 4096]
+    assert differ == []
+
+
+def test_the_python_prefilter_skips_nothing_the_parser_finds():
+    missed = [c for c in CORPUS if hook_fast.cannot_install(c)
+              and parse_installs(c, "bash") + parse_installs(c, "powershell")]
+    assert missed == []
+
+
+@pytest.mark.parametrize("command", ["", "NPM install x", "n''px x", "n\"pm i x", "$X i x",
+                                     "a\nnpm i x", "code --install-extension a.b", "é npm i",
+                                     "x" * 5000])
+def test_doubt_goes_to_the_cli(command):
+    assert not hook_fast.cannot_install(command)
+
+
+@pytest.mark.parametrize("name", ["CI", "SKILLTOTAL_STRICT", "GITLAB_CI"])
+def test_in_ci_nothing_skips_the_cli(name):
+    event = b'{"tool_name": "Bash", "tool_input": {"command": "ls"}}'
+    assert hook_fast._skip("codex", event, {}) is True
+    assert hook_fast._skip("codex", event, {name: "1"}) is False
+
+
+@pytest.mark.parametrize("agent, event", [
+    ("cursor", {"hook_event_name": "beforeMCPExecution", "command": "ls"}),
+    ("cursor", {"hook_event_name": "sessionStart"}),
+    ("windsurf", {"agent_action_name": "pre_mcp_tool_use", "tool_info": {"command_line": "ls"}}),
+    ("codex", {"tool_input": "ls"}),
+    ("copilot", {"toolArgs": "{not json"}),
+    ("gemini", ["not", "an", "object"]),
+])
+def test_an_event_that_is_not_a_plain_shell_command_goes_to_the_cli(agent, event):
+    assert not hook_fast._skip(agent, json.dumps(event).encode(), {})
+
+
+def test_text_that_is_no_event_goes_to_the_cli():
+    assert not hook_fast._skip("codex", b"not json", {})
 
 
 @needs_sh

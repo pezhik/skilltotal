@@ -273,6 +273,41 @@ def test_install_and_status_through_the_cli(home, capsys):
     assert not rows["claude-code"]["protected"]
 
 
+def test_a_preview_agent_is_called_one_before_anything_is_written(home, capsys, monkeypatch):
+    (home / ".cursor").mkdir()
+    real = hook_setup.install
+    printed: list[str] = []
+
+    def install(*args, **kwargs):
+        printed.append(capsys.readouterr().out)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(hook_setup, "install", install)
+    assert cli.main(["hook", "install", "--agent", "cursor"]) == 0
+    assert hook_setup.PREVIEW in printed[0]
+
+
+def test_status_carries_the_tier_of_every_agent(home, capsys):
+    assert cli.main(["hook", "status"]) == 0
+    out = capsys.readouterr().out
+    assert hook_setup.VERIFIED["claude-code"] in out and hook_setup.VERIFIED["gemini"] in out
+    assert out.count(hook_setup.PREVIEW) == 5
+
+
+def test_only_what_was_run_in_the_agent_is_verified():
+    assert set(hook_setup.VERIFIED) == {"claude-code", "gemini"}
+    for name in BY_NAME:
+        assert hook_setup.tier(name).startswith(("verified against", "preview:"))
+
+
+def test_the_docs_carry_the_same_tiers():
+    root = Path(__file__).resolve().parent.parent
+    for doc in ("docs/agent-hooks.md", "README.md"):
+        text = " ".join((root / doc).read_text(encoding="utf-8").split())
+        for line in (*hook_setup.VERIFIED.values(), hook_setup.PREVIEW):
+            assert line in text, (doc, line)
+
+
 def test_dry_run_through_the_cli_writes_nothing(home, capsys):
     (home / ".cursor").mkdir()
     assert cli.main(["hook", "install", "--dry-run"]) == 0

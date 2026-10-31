@@ -228,8 +228,8 @@ def _yarn_lock(text: str) -> Entries | None:
 
 # Any key of the section, whatever its version holds: a key this misses would hand its body to the
 # entry before it. A version that is a URL or a path fails the plain test further on.
-_PNPM_KEY = re.compile(r"""^  ['"]?/?(@?[^@\s'"(/]+(?:/[^@\s'"(/]+)?)[@/]([^\s'"(]+)[^\s'"]*['"]?:"""
-                       r"""\s*(?:\{.*\})?\s*$""")
+_PNPM_KEY = re.compile(r"""^  ['"]?/?(@?[^@\s'"(/]+(?:/[^@\s'"(/]+)?)[@/]([^\s'"(]+)[^\s'"]*"""
+                       r"""['"]?:\s*(?:\{.*\})?\s*$""")
 _PNPM_TARBALL = re.compile(r"tarball:\s*([^\s,}]+)")
 
 

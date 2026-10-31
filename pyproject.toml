@@ -60,7 +60,7 @@ dev = [
 ]
 
 [project.scripts]
-skilltotal = "skilltotal.cli:main"
+skilltotal = "skilltotal.hook_fast:main"
 
 [project.urls]
 Homepage = "https://www.skilltotal.ai"

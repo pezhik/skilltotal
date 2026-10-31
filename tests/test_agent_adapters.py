@@ -8,7 +8,7 @@ import json
 import pytest
 
 from skilltotal import agent_adapters, cli
-from skilltotal.agent_adapters import ADAPTERS, MCP, SESSION, SHELL, Request, first_call
+from skilltotal.agent_adapters import ADAPTERS, MCP, SESSION, SHELL, Cursor, Request, first_call
 
 COMMAND = "npm install left-pad"
 
@@ -73,20 +73,64 @@ def test_an_event_about_something_else_asks_for_nothing(agent, event):
 
 
 def test_cursor_answers_in_its_own_fields():
-    cursor = ADAPTERS["cursor"]
-    for permission in ("deny", "ask"):
-        assert json.loads(cursor.render(answer(permission), Request()).stdout) == {
-            "permission": permission, "user_message": "the line", "agent_message": "the reason"}
+    assert json.loads(ADAPTERS["cursor"].render(answer("deny"), Request()).stdout) == {
+        "permission": "deny", "user_message": "the line", "agent_message": "the reason"}
 
 
-@pytest.mark.parametrize("given", [None, answer()])
-def test_cursor_always_gets_a_reply_its_schema_takes(given):
-    assert json.loads(ADAPTERS["cursor"].render(given, Request()).stdout)["permission"] == "allow"
+def test_a_question_is_a_denial_in_cursor_which_may_not_stop_for_one():
+    reply = json.loads(ADAPTERS["cursor"].render(answer("ask"), Request()).stdout)
+    assert reply["permission"] == "deny"
+    assert "does not stop for a hook's question" in reply["agent_message"]
+    assert "yourself outside the agent" in reply["user_message"]
 
 
-def test_a_cursor_console_line_with_no_decision_reaches_the_person():
+def test_a_cursor_install_that_passed_is_ask_never_allow():
     reply = json.loads(ADAPTERS["cursor"].render(answer(), Request()).stdout)
-    assert reply == {"permission": "allow", "user_message": "the line"}
+    assert reply == {"permission": "ask", "user_message": "the line"}
+
+
+def test_a_cursor_command_with_nothing_to_say_is_the_documented_failed_hook():
+    reply = ADAPTERS["cursor"].render(None, Request())
+    assert (reply.stdout, reply.stderr, reply.code) == ("", "", 1)
+
+
+def test_under_fail_closed_that_exit_code_would_block_so_it_is_allow():
+    reply = Cursor(fail_closed=True).render(None, Request())
+    assert (json.loads(reply.stdout), reply.code) == ({"permission": "allow"}, 0)
+
+
+CLEAN_LINE = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": "ok"},
+              "systemMessage": "SkillTotal checked x."}
+
+
+@pytest.mark.parametrize("agent", EVENTS)
+@pytest.mark.parametrize("given", [None, CLEAN_LINE], ids=["no-install", "clean-install"])
+def test_no_hook_widens_what_the_agent_would_do_alone(agent, given):
+    """A hook's approval can skip a question the person would otherwise be asked."""
+    reply = ADAPTERS[agent].render(given, Request())
+    text = (reply.stdout + reply.stderr).lower()
+    assert "allow" not in text and "approve" not in text
+    assert reply.code != 2  # nor does it stop what it has no objection to
+
+
+def test_the_only_allow_is_under_fail_closed_on_a_command_with_no_opinion():
+    assert "allow" not in Cursor(fail_closed=True).render(CLEAN_LINE, Request()).stdout
+
+
+def test_the_fast_path_answers_as_the_adapter_does(monkeypatch, capsys):
+    from skilltotal import hook_fast
+
+    for agent in EVENTS:
+        event = json.loads(json.dumps(EVENTS[agent]).replace(COMMAND, "git status"))
+        monkeypatch.setattr("sys.argv", ["skilltotal", "hook", agent])
+
+        class Stdin:
+            buffer = io.BytesIO(json.dumps(event).encode())
+
+        monkeypatch.setattr("sys.stdin", Stdin)
+        code = hook_fast.main()
+        expected = ADAPTERS[agent].render(None, Request())
+        assert (code, capsys.readouterr().out.strip()) == (expected.code, expected.stdout), agent
 
 
 def test_windsurf_blocks_with_exit_code_2_and_the_reason_on_stderr():
@@ -160,11 +204,8 @@ def run(monkeypatch, capsys, agent, raw):
 @pytest.mark.parametrize("raw", ["not json", "[1, 2]", "{", '"text"', "null"])
 def test_malformed_stdin_never_crashes_and_stays_out_of_the_way(monkeypatch, capsys, agent, raw):
     code, out, _ = run(monkeypatch, capsys, agent, raw)
-    assert code == 0
-    if agent == "cursor":
-        assert json.loads(out)["permission"] == "allow"  # no output could block every command
-    else:
-        assert out == ""
+    assert out == ""
+    assert code == (1 if agent == "cursor" else 0)
 
 
 @pytest.mark.parametrize("agent", EVENTS)
@@ -197,14 +238,13 @@ def test_the_event_reaches_the_one_decision(monkeypatch, capsys, agent):
     assert calls[0]["tool_name"] in ("Bash", "PowerShell")
 
 
-@pytest.mark.parametrize("agent", ["cursor", "copilot"])
-def test_a_failure_of_ours_asks_where_the_agent_can(monkeypatch, capsys, agent):
+def test_a_failure_of_ours_asks_where_the_agent_can(monkeypatch, capsys):
     stub_decide(monkeypatch, boom=True)
-    _, out, _ = run(monkeypatch, capsys, agent, json.dumps(EVENTS[agent]))
+    _, out, _ = run(monkeypatch, capsys, "copilot", json.dumps(EVENTS["copilot"]))
     assert "ask" in out and "could not check" in out
 
 
-@pytest.mark.parametrize("agent", ["windsurf", "devin", "codex", "gemini"])
+@pytest.mark.parametrize("agent", ["cursor", "windsurf", "devin", "codex", "gemini"])
 def test_a_failure_of_ours_is_never_a_silent_pass(monkeypatch, capsys, agent):
     stub_decide(monkeypatch, boom=True)
     _, out, err = run(monkeypatch, capsys, agent, json.dumps(EVENTS[agent]))
@@ -324,7 +364,7 @@ def test_the_cli_checks_a_server_once(monkeypatch, capsys, tmp_path):
     calls = stub_decide(monkeypatch)
     for _ in range(2):
         code, out, _ = run(monkeypatch, capsys, "cursor", json.dumps(CURSOR_MCP))
-        assert code == 0 and json.loads(out)["permission"] == "allow"
+        assert (code, out) == (1, "")
     assert len(calls) == 1
 
 

@@ -1,8 +1,24 @@
 # Agent hooks
 
-SkillTotal checks installs in six coding agents besides Claude Code, with one parser and one set of
-verdicts. This page says what each hook can and cannot see, how to install it, and how to roll it
-out to a team. For what the check decides, its settings, its cache and CI strict mode, see
+SkillTotal has one parser and one set of verdicts, with a hook for Claude Code and six other coding
+agents. Not all of them have been proven in the agent itself, so each carries a tier:
+
+| Agent | Tier |
+|---|---|
+| Claude Code | verified against Claude Code 2.1.316 on 2026-10-31 |
+| Gemini CLI | verified against Gemini CLI 0.45.2 on 2026-10-31, with its real hook runner and a stand-in model |
+| Cursor | preview: built to the agent's documented hook format, not yet run in the agent |
+| Windsurf | preview: built to the agent's documented hook format, not yet run in the agent |
+| Devin | preview: built to the agent's documented hook format, not yet run in the agent |
+| Codex | preview: built to the agent's documented hook format, not yet run in the agent |
+| VS Code Copilot | preview: built to the agent's documented hook format, not yet run in the agent |
+
+Gemini CLI's run used a local stand-in for the model, since no account was signed in: the CLI, its
+tool scheduler and its hook runner were real, and so were the deny, the denial of a question and the
+install that went through. `hook status` and `hook install` show the same tier.
+
+This page says what each hook can and cannot see, how to install it, and how to roll it out to a
+team. For what the check decides, its settings, its cache and CI strict mode, see
 [docs/plugin.md](plugin.md): all of it applies to every agent here.
 
 ## Install
@@ -33,7 +49,7 @@ brings the sentinel and updates with its marketplace.
 | Agent | Config (user / project) | Hook events | Can ask? | Blocks with |
 |---|---|---|---|---|
 | Claude Code | [the plugin](plugin.md) | `PreToolUse` on Bash and PowerShell | Yes | `permissionDecision` |
-| Cursor | `~/.cursor/hooks.json` / `.cursor/hooks.json` | `beforeShellExecution`, `beforeMCPExecution`, `sessionStart` | Yes | `permission` |
+| Cursor | `~/.cursor/hooks.json` / `.cursor/hooks.json` | `beforeShellExecution`, `beforeMCPExecution`, `sessionStart` | Not reliably | `permission` |
 | Windsurf | `~/.codeium/windsurf/hooks.json` / `.windsurf/hooks.json` | `pre_run_command`, `pre_mcp_tool_use` | No | Exit code 2 |
 | Devin | `~/.config/devin/config.json` (`%APPDATA%\devin\config.json`) / `.devin/hooks.v1.json` | `PreToolUse` on `exec` | No | `decision: block` and exit code 2 |
 | Codex | `~/.codex/hooks.json` / `.codex/hooks.json` | `PreToolUse` on `Bash` | No | `permissionDecision` |
@@ -43,7 +59,27 @@ brings the sentinel and updates with its marketplace.
 **An agent that cannot ask.** Where SkillTotal would ask you, these agents get a denial that gives
 the reason and says how to go ahead: review it, then run the command yourself outside the agent.
 Codex is on this list because it parses `ask` but then reports the hook as failed and runs the
-command.
+command. Gemini CLI 0.45.2 reads `ask` too, though its documentation does not list it, but with
+`gemini -p`, where nobody can answer, the run hangs until it is killed, so SkillTotal denies there.
+
+**A hook never approves.** An `allow` from a hook could skip a question you would otherwise be
+asked, so SkillTotal never sends one, with one exception below. With nothing to object to it answers
+in the form each agent documents as no decision: no output for Gemini CLI, Codex, Copilot, Windsurf
+and Devin, whose normal approval flow then applies.
+
+**Cursor.** Cursor documents no reply that means "no opinion", and does not say what `allow` does to
+its own approval settings. Cursor's staff say on its forum that only `deny` is enforced in every
+mode, and that `ask` does not stop every mode. So in Cursor:
+
+- what SkillTotal would ask about is denied, with how to go ahead;
+- an install that passed gets `ask`, which approves nothing;
+- any other command gets exit code 1, which the documentation says lets the action proceed as a
+  failed hook. It is the one documented outcome that cannot be an approval, and Cursor may log it
+  as a hook failure;
+- with `failClosed`, that exit code would block every command, so a config that sets it runs
+  `skilltotal hook cursor --fail-closed`, and there such a command gets `allow`. Whether that skips
+  Cursor's own approval is not documented. Forum reports say its allowlist still decides, but we
+  have not checked that in Cursor.
 
 **Trust.** Codex runs a new hook only after you approve it under `/hooks`. Until then it is
 installed but does nothing. `hook install` says so.
@@ -61,13 +97,14 @@ crashes or times out does not block, apart from Copilot, which denies on a crash
 timeout is 900 seconds so that a slow check ends in an answer. Windsurf documents no timeout
 setting, so its default applies.
 
-**Cursor's `allow`.** A Cursor hook must answer with a `permission`, so SkillTotal answers `allow`
-when it has no objection. Cursor's documentation does not say whether that also skips Cursor's own
-approval settings.
+**The cost.** A hook starts before every shell command. A command that cannot install anything is
+answered with nothing loaded but `json`, by the same test as the Claude Code plugin's pre-filter:
+about 130 to 150 ms here, of which about 120 ms is Python starting (Windows, on a busy machine).
+Anything else takes about 500 ms before a check starts.
 
 **Gemini CLI and Antigravity CLI.** Gemini CLI's documentation says Antigravity CLI replaced it in
-June 2026. The hook follows Gemini CLI's documented format, and it has not been tested on
-Antigravity CLI.
+June 2026, but Gemini CLI 0.45.2 still runs `BeforeTool` hooks from `settings.json`. The hook has not
+been tested on Antigravity CLI.
 
 **Windsurf and Devin.** Windsurf's hooks page now redirects to Devin Desktop, which uses
 `.devin/hooks.v1.json`. `--agent windsurf` writes the format Windsurf documented
@@ -119,7 +156,8 @@ is your call. The settings file is backed up first, and one that is not plain JS
 
 **Where it runs.**
 
-- Claude Code: the plugin runs it at session start and when skills or user settings change.
+- Claude Code: the plugin runs it at session start and when skills or settings change. A plugin
+  install fires that change, as a run confirmed at project scope.
 - Cursor: `hook install` adds it to `sessionStart`.
 - Anywhere else, or as well, schedule it:
 
@@ -312,17 +350,18 @@ plugin's pre-filter, and it brings no sentinel:
 `hooks.json` goes in `/Library/Application Support/Cursor/` (macOS), `/etc/cursor/` (Linux and WSL)
 or `C:\ProgramData\Cursor\` (Windows). With `failClosed`, a crash, a timeout or no output blocks the
 action. That also means a machine with no working CLI can run no shell command through the agent,
-so roll out the CLI first.
+so roll out the CLI first. Note `--fail-closed`, and what it means for
+[`allow`](#what-each-agents-hook-sees).
 
 ```json
 {
   "version": 1,
   "hooks": {
     "beforeShellExecution": [
-      { "command": "skilltotal hook cursor", "timeout": 900, "failClosed": true }
+      { "command": "skilltotal hook cursor --fail-closed", "timeout": 900, "failClosed": true }
     ],
     "beforeMCPExecution": [
-      { "command": "skilltotal hook cursor", "timeout": 900, "failClosed": true }
+      { "command": "skilltotal hook cursor --fail-closed", "timeout": 900, "failClosed": true }
     ],
     "sessionStart": [{ "command": "skilltotal hook cursor", "timeout": 10 }]
   }
