@@ -185,15 +185,20 @@ a substitute for:
   annotation (the write itself is still reported as a filesystem write). A missing
   `destructiveHint` is never reported: the MCP specification defaults it to true. Annotations a
   server builds at run time (a helper that returns them, a low-level `tools/list` handler) are not
-  read. A read-only claim is contradicted by a file write or delete (`fs.promises.*` and names
-  imported from `fs/promises` included), by a PUT, PATCH or DELETE request, and by a process
+  read. A read-only claim is contradicted by a file write or delete (`fs.promises.*`, names
+  imported from `fs/promises`, and the module bound to a name of its own, as in
+  `import * as fsp from "fs/promises"` or `import { promises as fsp } from "fs"`, included), by
+  a PUT, PATCH or DELETE request, and by a process
   call that either runs what the tool is handed (a command line with a computed part, a computed
   program, subcommand or `sh -c` script) or runs a written-out command that changes things:
   `rm`, `rmdir`, `mv`, `cp`, `dd`, `chmod`, `chown`, `tee`, `truncate`, a `>` redirect into a
   file, `git push/commit/reset/checkout/clean/rm`, `kubectl apply/delete/patch/create/scale`,
-  `docker rm/rmi/run`, `npm`/`pip install/uninstall`. A POST does not count, because GraphQL
-  and search APIs read through POST. A written-out `git log`, `kubectl get` or `ls` does not
-  count, and neither does a computed argument after one (`["git", "-C", repo, "log"]`).
+  `docker rm/rmi/run`, `npm install/i/ci/add/uninstall`, `yarn add/remove`,
+  `pnpm add/remove/install`, `pip install/uninstall` (also `python -m pip`). A POST does not
+  count, because GraphQL and search APIs read through POST. A written-out `git log`,
+  `kubectl get` or `ls` does not count, and neither does a computed argument after one
+  (`["git", "-C", repo, "log"]`). In Python a command held in a module-level name that is
+  assigned once in the file, to a string or a list of strings, reads as written out.
 - SARIF, JSON and baseline files that SkillTotal wrote into the scanned folder are recognised by
   their content, listed in `needs_review` and not scanned (their rule descriptions quote detection
   patterns).

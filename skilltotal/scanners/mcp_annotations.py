@@ -83,9 +83,13 @@ _MUTATING_SUBCOMMANDS = {
     "git": frozenset({"push", "commit", "reset", "checkout", "clean", "rm"}),
     "kubectl": frozenset({"apply", "delete", "patch", "create", "scale"}),
     "docker": frozenset({"rm", "rmi", "run"}),
-    "npm": frozenset({"install", "uninstall"}),
+    "npm": frozenset({"install", "i", "ci", "add", "uninstall"}),
+    "yarn": frozenset({"add", "remove"}),
+    "pnpm": frozenset({"add", "remove", "install"}),
     "pip": frozenset({"install", "uninstall"}),
 }
+# `python -m pip install` (also python3, python3.12, py).
+_PYTHON = re.compile(r"python\d*(?:\.\d+)?|py")
 # Options of those programs that take a value before the subcommand (`git -C repo push`).
 _VALUE_OPTIONS = frozenset({"-C", "-c", "-n", "--namespace", "--context", "--kubeconfig"})
 _SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
@@ -130,6 +134,20 @@ _JS_FS_PROMISES_IMPORT = re.compile(
 _JS_FS_PROMISES_REQUIRE = re.compile(
     r"""\b(?:const|let|var)[ \t]*\{([^{}]{0,2000})\}\s*=\s*require\(\s*(["'])(?:node:)?"""
     r"""fs/promises\2\s*\)"""
+)
+# A name bound to the fs/promises module as a whole: `import fsp from "fs/promises"`,
+# `import * as fsp from ...`, `const fsp = require("fs/promises")`, `require("fs").promises`.
+_JS_FS_PROMISES_NAMESPACE = re.compile(
+    r"""\bimport[ \t]+(?:\*[ \t]*as[ \t]+)?([A-Za-z_$][\w$]*)\s*(?:,\s*\{[^{}]{0,2000}\}\s*)?"""
+    r"""from\s*(["'])(?:node:)?fs/promises\2"""
+    r"""|\b(?:const|let|var)[ \t]+([A-Za-z_$][\w$]*)\s*=\s*require\(\s*(["'])(?:node:)?"""
+    r"""(?:fs/promises\4\s*\)|fs\4\s*\)\s*\.\s*promises\b)"""
+)
+# `promises` destructured from the fs module: `import { promises as fsp } from "fs"`,
+# `const { promises: fsp } = require("node:fs")`.
+_JS_FS_IMPORT = re.compile(
+    r"""\bimport[ \t]*\{([^{}]{0,2000})\}\s*from\s*(["'])(?:node:)?fs\2"""
+    r"""|\b(?:const|let|var)[ \t]*\{([^{}]{0,2000})\}\s*=\s*require\(\s*(["'])(?:node:)?fs\4\s*\)"""
 )
 _JS_IMPORT_ITEM = re.compile(r"\s*([A-Za-z_$][\w$]*)(?:\s*(?:as\b|:)\s*([A-Za-z_$][\w$]*))?\s*")
 # A string literal argument, read from the raw text (a template only without `${`).
@@ -265,6 +283,10 @@ def argv_mutates(argv: list[str | None]) -> bool:
         return False
     if program in _MUTATING_PROGRAMS:
         return True
+    if _PYTHON.fullmatch(program) and "-m" in rest:
+        module = rest.index("-m") + 1
+        if module < len(rest) and rest[module] is not None and _PIP.fullmatch(rest[module]):
+            program, rest = "pip", rest[module + 1:]
     if _PIP.fullmatch(program):
         program = "pip"
     subcommands = _MUTATING_SUBCOMMANDS.get(program)
@@ -298,6 +320,26 @@ def _js_fs_promise_imports(text: str, view: str) -> dict[str, str]:
                 parsed = _JS_IMPORT_ITEM.fullmatch(item)
                 if parsed and parsed.group(1) in _JS_FS_PROMISE_WRITES:
                     names[parsed.group(2) or parsed.group(1)] = parsed.group(1)
+    return names
+
+
+def _js_fs_promise_namespaces(text: str, view: str) -> set[str]:
+    """Names a file binds to the fs/promises module as a whole (``fsp`` in ``import * as fsp
+    from "fs/promises"`` or ``import { promises as fsp } from "fs"``), so ``fsp.writeFile(``
+    is a write."""
+    if "fs" not in text:
+        return set()
+    names: set[str] = set()
+    for m in _JS_FS_PROMISES_NAMESPACE.finditer(text):
+        if view[m.start()] == text[m.start()]:
+            names.add(m.group(1) or m.group(3))
+    for m in _JS_FS_IMPORT.finditer(text):
+        if view[m.start()] != text[m.start()]:
+            continue  # in a comment or a string
+        for item in (m.group(1) or m.group(3)).split(","):
+            parsed = _JS_IMPORT_ITEM.fullmatch(item)
+            if parsed and parsed.group(1) == "promises":
+                names.add(parsed.group(2) or "promises")
     return names
 
 
@@ -358,7 +400,18 @@ class _JsSource:
                 (m.start(), m.end(), imported[m.group(1)] in _JS_FS_PROMISE_DELETES)
                 for m in bare.finditer(view)
             ]
-        for start, end, delete in sorted(writes):
+        namespaces = _js_fs_promise_namespaces(text, view)
+        if namespaces:
+            member = re.compile(
+                r"(?<![\w$.])(?:" + "|".join(re.escape(n) for n in sorted(namespaces))
+                + r")\s*\.\s*(writeFile|appendFile|rm|unlink|rmdir)\s*\("
+            )
+            writes += [
+                (m.start(), m.end(), m.group(1) in _JS_FS_PROMISE_DELETES)
+                for m in member.finditer(view)
+            ]
+        # `import fs from "fs/promises"` names the module `fs`, already matched as fs.x(.
+        for start, end, delete in sorted(set(writes)):
             self.effects[_WRITE].append((start, end))
             if delete:
                 self.effects[_DELETE].append((start, end))
@@ -662,7 +715,8 @@ def _py_mismatches(f: IndexedFile) -> list[Evidence]:
     tools = _py_tools(tree)
     if not tools:
         return []
-    kinds = {id(e.call): _py_kinds(e) for e in python_call_effects(f, tree)}
+    constants = _py_literal_constants(tree)
+    kinds = {id(e.call): _py_kinds(e, constants) for e in python_call_effects(f, tree)}
     found: list[Evidence] = []
     for fn, hints in tools:
         constraint = _excluded(hints)
@@ -755,13 +809,53 @@ def _py_hints(
     return hints
 
 
-def _py_kinds(effect: CallEffect) -> frozenset[str]:
+def _py_literal_constants(tree: ast.Module) -> dict[str, ast.expr]:
+    """Module-level names bound exactly once in the whole file, to a string or a list/tuple of
+    strings (``GIT_LOG = ["git", "log"]``): a command named by one is written out. A name bound
+    again anywhere (another assignment, a ``global`` write, a loop, a local of the same name)
+    is computed."""
+    stores: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            stores[node.id] = stores.get(node.id, 0) + 1
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            stores[node.name] = stores.get(node.name, 0) + 1
+        elif isinstance(node, ast.arg):
+            stores[node.arg] = stores.get(node.arg, 0) + 1
+        elif isinstance(node, ast.alias):
+            local = node.asname or node.name.split(".")[0]
+            stores[local] = stores.get(local, 0) + 1
+
+    def text(value: ast.expr) -> bool:
+        return isinstance(value, ast.Constant) and isinstance(value.value, str)
+
+    def literal(value: ast.expr) -> bool:
+        if isinstance(value, (ast.List, ast.Tuple)):
+            return all(text(e) for e in value.elts)
+        return text(value)
+
+    constants: dict[str, ast.expr] = {}
+    for stmt in tree.body:
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)):
+            name, value = stmt.targets[0].id, stmt.value
+        elif (isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name)
+              and stmt.value is not None):
+            name, value = stmt.target.id, stmt.value
+        else:
+            continue
+        if stores.get(name) == 1 and literal(value):
+            constants[name] = value
+    return constants
+
+
+def _py_kinds(effect: CallEffect, constants: dict[str, ast.expr]) -> frozenset[str]:
     kinds: set[str] = set()
     if EFFECT_WRITE in effect.effects:
         kinds.add(_WRITE)
     if EFFECT_DELETE in effect.effects:
         kinds |= {_WRITE, _DELETE}
-    if EFFECT_EXEC in effect.effects and _py_exec_counts(effect):
+    if EFFECT_EXEC in effect.effects and _py_exec_counts(effect, constants):
         kinds.add(_EXEC)
     if EFFECT_NETWORK in effect.effects:
         method = _py_http_method(effect)
@@ -772,35 +866,48 @@ def _py_kinds(effect: CallEffect) -> frozenset[str]:
     return frozenset(kinds)
 
 
-def _py_exec_counts(effect: CallEffect) -> bool:
+def _py_exec_counts(effect: CallEffect, constants: dict[str, ast.expr]) -> bool:
     """Whether a process call contradicts a read-only claim (see ``_JsSource._exec_counts``):
-    ``subprocess.run(["git", "log", repo])`` and ``os.system("ls")`` do not;
-    ``subprocess.run(cmd)``, an f-string command line and ``subprocess.run(["git", "push"])`` do.
-    ``os.exec*`` / ``os.spawn*`` are not read and always count."""
+    ``subprocess.run(["git", "log", repo])``, ``os.system("ls")`` and a module constant that
+    holds a read command do not; ``subprocess.run(cmd)``, an f-string command line and
+    ``subprocess.run(["git", "push"])`` do. ``os.exec*`` / ``os.spawn*`` are not read and always
+    count. ``constants`` is ``_py_literal_constants`` of the module."""
     call, name = effect.call, effect.name
     if name.endswith("create_subprocess_exec"):  # argv as positional arguments
-        return argv_mutates(_py_argv(call.args)) if call.args else True
+        return argv_mutates(_py_argv(call.args, constants)) if call.args else True
     if name.startswith("os.") and name not in ("os.system", "os.popen"):
         return True
     command = _command_arg(call)
+    if isinstance(command, ast.Name) and command.id in constants:
+        command = constants[command.id]
     if command is None:
         return True
     if isinstance(command, (ast.List, ast.Tuple)):
-        return argv_mutates(_py_argv(command.elts)) if command.elts else True
+        return argv_mutates(_py_argv(command.elts, constants)) if command.elts else True
     if _is_dynamic_command(command):
         return True  # a command line with a computed part
     text = _literal_text(command)
     return text is None or command_line_mutates(text)
 
 
-def _py_argv(exprs: list[ast.expr]) -> list[str | None]:
-    """Each argument's written-out value (a string or a number), or None when it is computed.
-    A ``*spread`` hides the positions after it, so it ends the list with one None."""
+def _py_argv(exprs: list[ast.expr], constants: dict[str, ast.expr]) -> list[str | None]:
+    """Each argument's written-out value (a string, a number, or a module string constant), or
+    None when it is computed. A ``*spread`` hides the positions after it, so it ends the list
+    with one None; a spread of a constant list is read in place."""
     out: list[str | None] = []
     for e in exprs:
         if isinstance(e, ast.Starred):
+            spread = constants.get(e.value.id) if isinstance(e.value, ast.Name) else None
+            if isinstance(spread, (ast.List, ast.Tuple)):
+                out.extend(_py_argv(spread.elts, {}))
+                continue
             out.append(None)
             break
+        if isinstance(e, ast.Name) and e.id in constants:
+            e = constants[e.id]
+            if isinstance(e, (ast.List, ast.Tuple)):  # a list where one argument goes
+                out.append(None)
+                continue
         if isinstance(e, ast.Constant) and type(e.value) in (int, float):
             out.append(str(e.value))
         else:

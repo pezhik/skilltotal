@@ -8,12 +8,15 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 
 - **`ST-MCP-ANNOTATION-MISMATCH`** (new, medium, risky construct): an MCP tool whose annotations
   its own handler contradicts. `readOnlyHint: true` over a handler that writes or deletes a file
-  (also `fs.promises.*` and names imported from `fs/promises`), sends a PUT, PATCH or DELETE
-  request, or runs a process that is either handed its command (a command line with a computed
+  (also `fs.promises.*`, names imported from `fs/promises`, and the module bound to a name such
+  as `import * as fsp from "fs/promises"` or `{ promises as fsp }` from `fs`), sends a PUT,
+  PATCH or DELETE request, or runs a process that is either handed its command (a command line with a computed
   part, a computed program, subcommand or `sh -c` script) or runs a written-out command from a
   short mutating list (`rm`, `mv`, `cp`, `dd`, `chmod`, `chown`, `tee`, `truncate`, a `>`
   redirect into a file, `git push/commit/reset/checkout/clean/rm`, `kubectl
-  apply/delete/patch/create/scale`, `docker rm/rmi/run`, `npm`/`pip install/uninstall`); an
+  apply/delete/patch/create/scale`, `docker rm/rmi/run`, `npm install/i/ci/add/uninstall`,
+  `yarn add/remove`, `pnpm add/remove/install`, `pip install/uninstall` and `python -m pip`; a
+  Python module-level name assigned once in the file to strings reads as written out); an
   explicit `destructiveHint: false` over a handler that deletes a file or directory or sends a
   DELETE request. A POST does not fire (GraphQL and search APIs read through POST), nor does a
   written-out `git log`, `kubectl get` or `ls`, with or without a computed path argument.

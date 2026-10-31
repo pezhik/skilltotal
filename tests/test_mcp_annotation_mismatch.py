@@ -369,9 +369,99 @@ def test_fs_promises_names_not_written_in_the_handler_are_not_reported(tmp_path,
     ("echo hi >> /tmp/notes.txt", True),
     ("ls; rm -f /tmp/x", True),
     ("/usr/bin/chmod 600 key", True),
+    ("npm i left-pad", True),
+    ("npm ci", True),
+    ("npm add left-pad", True),
+    ("npm ls", False),
+    ("yarn add left-pad", True),
+    ("yarn remove left-pad", True),
+    ("yarn list", False),
+    ("pnpm add left-pad", True),
+    ("pnpm remove left-pad", True),
+    ("pnpm install", True),
+    ("pnpm list", False),
+    ("python -m pip install requests", True),
+    ("python3 -m pip uninstall -y requests", True),
+    ("python3.12 -m pip install requests", True),
+    ("py -m pip install requests", True),
+    ("python -m pip list", False),
+    ("python -m http.server", False),
 ])
 def test_command_line_mutates(command: str, mutates: bool):
     assert command_line_mutates(command) is mutates
+
+
+# A module-level name bound once in the file to written-out strings is a written-out command.
+PY_CONSTANT_SILENT = {
+    "argv-constant": ('GIT_LOG = ["git", "log", "--oneline"]\n', "subprocess.run(GIT_LOG)"),
+    "command-line-constant": (
+        'STATUS = "git status --short"\n', "subprocess.run(STATUS, shell=True)"),
+    "spread-constant": ('BASE = ("kubectl", "get")\n', 'subprocess.run([*BASE, "pods"])'),
+    "constant-subcommand": ('SUB = "log"\n', 'subprocess.run(["git", SUB, "-n", "5"])'),
+}
+PY_CONSTANT_FIRES = {
+    "reassigned": ('CMD = "git log"\nCMD = "git push"\n', "subprocess.run(CMD, shell=True)"),
+    "rebound-by-global": (
+        'CMD = "git log"\n\n\ndef reset(value):\n    global CMD\n    CMD = value\n',
+        "subprocess.run(CMD, shell=True)"),
+    "function-local-of-the-same-name": (
+        'CMD = "git log"\n', "CMD = name\n    subprocess.run(CMD, shell=True)"),
+    "computed-constant": ('CMD = "git " + "log"\n', "subprocess.run(CMD, shell=True)"),
+    "constant-holds-a-mutating-command": ('PUSH = ["git", "push"]\n', "subprocess.run(PUSH)"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(PY_CONSTANT_SILENT))
+def test_a_module_constant_command_is_read_as_written_out(tmp_path: Path, case: str):
+    prelude, body = PY_CONSTANT_SILENT[case]
+    source = _py_readonly_tool(body).replace('mcp = FastMCP("notes")\n', 'mcp = FastMCP("notes")\n'
+                                             + prelude)
+    assert _finding(_scan(tmp_path, {"server.py": source})) is None, case
+
+
+@pytest.mark.parametrize("case", sorted(PY_CONSTANT_FIRES))
+def test_a_rebound_or_computed_constant_command_counts(tmp_path: Path, case: str):
+    prelude, body = PY_CONSTANT_FIRES[case]
+    source = _py_readonly_tool(body).replace('mcp = FastMCP("notes")\n', 'mcp = FastMCP("notes")\n'
+                                             + prelude)
+    finding = _finding(_scan(tmp_path, {"server.py": source}))
+    assert finding is not None, case
+    assert "subprocess.run(" in finding.evidence[1].snippet
+
+
+# The fs/promises module bound to a name of its own.
+FS_NAMESPACE_FIRES = {
+    "default-import": ('import fsp from "fs/promises";\n', 'await fsp.writeFile(name, "");'),
+    "namespace-import": ('import * as fsp from "node:fs/promises";\n', "await fsp.rm(name);"),
+    "promises-from-fs": (
+        'import { promises as fsp } from "fs";\n', 'await fsp.appendFile(name, "x");'),
+    "promises-destructured-require": (
+        'const { promises: pfs } = require("node:fs");\n', "await pfs.unlink(name);"),
+    "require-fs-promises": ('const fsp = require("fs/promises");\n', "await fsp.rmdir(name);"),
+    "require-fs-dot-promises": (
+        'const fsp = require("fs").promises;\n', 'await fsp.writeFile(name, "");'),
+}
+FS_NAMESPACE_SILENT = {
+    "namespace-read-only": ('import fsp from "fs/promises";\n', "await fsp.readFile(name);"),
+    "import-in-a-comment": (
+        '// import { promises as fsp } from "fs";\n', 'await fsp.writeFile(name, "");'),
+    "other-module": ('import fsp from "fs-extra-lite";\n', 'await fsp.writeFile(name, "");'),
+}
+
+
+@pytest.mark.parametrize("case", sorted(FS_NAMESPACE_FIRES))
+def test_a_named_fs_promises_module_write_is_a_write(tmp_path: Path, case: str):
+    head, body = FS_NAMESPACE_FIRES[case]
+    source = _ts_readonly_tool(body, head)
+    finding = _finding(_scan(tmp_path, {"index.ts": source}))
+    assert finding is not None, case
+    assert finding.evidence[1].line_start == _line_of(source, "    " + body), case
+
+
+@pytest.mark.parametrize("case", sorted(FS_NAMESPACE_SILENT))
+def test_a_name_not_bound_to_fs_promises_is_not_a_write(tmp_path: Path, case: str):
+    head, body = FS_NAMESPACE_SILENT[case]
+    assert _finding(_scan(tmp_path, {"index.ts": _ts_readonly_tool(body, head)})) is None, case
 
 
 @pytest.mark.parametrize("case", sorted(FIRES))
