@@ -386,6 +386,26 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"The hook protocol the caller needs (this CLI speaks {HOOK_PROTOCOL}); a higher "
              f"one exits 1, so the plugin can tell a CLI older than itself.",
     )
+    for name, title in HOOK_AGENTS.items():
+        agents.add_parser(
+            name, help=f"{title} hook: the same check, in {title}'s hook format.",
+            description=f"{title} hook: reads one hook event (JSON) on stdin and answers in "
+                        f"{title}'s format. `skilltotal hook install` registers it. The settings "
+                        f"are those of `skilltotal hook claude-code --help`.",
+        )
+    for name, what in (("install", "Register the hook with the agents installed here."),
+                       ("uninstall", "Remove SkillTotal's hook from the agents' configs.")):
+        setup = agents.add_parser(name, help=what, description=what)
+        setup.add_argument("--agent", dest="target", default="all",
+                           choices=("all", *HOOK_INSTALLABLE),
+                           help="One agent, or every agent found on this machine (default).")
+        setup.add_argument("--scope", default="user", choices=("user", "project"),
+                           help="The person's config, or the current project's.")
+        setup.add_argument("--dry-run", action="store_true",
+                           help="Show the change as a diff and write nothing.")
+    status = agents.add_parser(
+        "status", help="List which agents are protected, and any version mismatch.")
+    status.add_argument("--json", action="store_true", help="Emit JSON to stdout.")
 
     return parser
 
@@ -1600,6 +1620,11 @@ HOOK_FAILED = {
 # denies). Raise it, with the wrapper's PROTOCOL (a test keeps them equal), when the wrapper comes
 # to rely on something an older CLI does not do.
 HOOK_PROTOCOL = 2
+# The agents `skilltotal hook <agent>` answers besides Claude Code, and what sets them all up.
+HOOK_AGENTS = {"cursor": "Cursor", "windsurf": "Windsurf", "devin": "Devin", "codex": "Codex",
+               "gemini": "Gemini CLI", "copilot": "VS Code Copilot"}
+HOOK_INSTALLABLE = ("claude-code", *HOOK_AGENTS)
+HOOK_SETUP_COMMANDS = ("install", "uninstall", "status")
 # How to update the CLI, whichever way it was installed (the plugin's wrapper says the same).
 HOOK_UPDATE = "update the skilltotal CLI (pipx upgrade skilltotal or pip install -U skilltotal)"
 # Set by the plugin's wrapper: the answer starts with a line naming this CLI's version
@@ -1710,7 +1735,15 @@ def _hook_strict_partial(environ) -> bool:
     return environ.get(STRICT_PARTIAL_ENV, "").strip().lower() not in _OFF_WORDS
 
 
+def _hook_failed(strict_by: str) -> dict:
+    return _hook_failed_strict(strict_by) if strict_by else HOOK_FAILED
+
+
 def _cmd_hook(args: argparse.Namespace) -> int:
+    if args.agent in HOOK_SETUP_COMMANDS:
+        return _cmd_hook_setup(args)
+    if args.agent != "claude-code":
+        return _cmd_hook_agent(args.agent)
     if args.supervise or args.scan_into:  # one of the processes of a check the hook started
         from skilltotal import hook_scan
 
@@ -1726,7 +1759,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     try:
         answer = _hook_answer(strict_by)
     except Exception:  # noqa: BLE001 - a failure of ours asks (in CI denies), never passes silently
-        answer = _hook_failed_strict(strict_by) if strict_by else HOOK_FAILED
+        answer = _hook_failed(strict_by)
     if os.environ.get(HOOK_VERSION_LINE_ENV):
         print(f"skilltotal {__version__}")
     if answer is not None:
@@ -1734,19 +1767,145 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def _hook_answer(strict_by: str = "") -> dict | None:
-    from skilltotal.agent_hook import BUDGET_ENV, hook_response
+def _cmd_hook_setup(args: argparse.Namespace) -> int:
+    """`hook install`, `hook uninstall` and `hook status`: the agents' configs, nothing else."""
+    from skilltotal import hook_setup
+    from skilltotal.inventory import _claude_dir
 
+    home = _home()
+    if home is None:
+        print("error: the home folder is not known", file=sys.stderr)
+        return EXIT_ERROR
+    project = Path.cwd()
+    claude_dir = _claude_dir(home, os.environ)
+    if args.agent == "status":
+        rows = hook_setup.status(home, project, os.environ, __version__, claude_dir)
+        if args.json:
+            print(json.dumps(rows, indent=2))
+            return EXIT_OK
+        for row in rows:
+            state = ("protected" if row["protected"] else
+                     "not protected" if row["found"] else "not found")
+            print(f"{row['label']}: {state}")
+            for where in row["where"]:
+                print(f"  {_one_line(where)}")
+            if row["problem"]:
+                print(f"  problem: {_one_line(row['problem'])}")
+        return EXIT_OK
+    failed = False
+    if args.target in ("all", "claude-code") and args.agent == "install":
+        print(hook_setup.PLUGIN_ADVICE)
+    agents = [] if args.target == "claude-code" else hook_setup.selected(args.target, home)
+    if not agents and args.target == "all":
+        print("No other agent found on this machine: nothing to change.")
+    for agent in agents:
+        path = hook_setup.config_path(agent, args.scope, home, project, os.environ)
+        try:
+            if args.agent == "install":
+                command = hook_setup.hook_command(agent, args.scope)
+                change = hook_setup.install(agent, path, args.scope, command, dry_run=args.dry_run)
+            else:
+                change = hook_setup.uninstall(agent, path, args.scope, dry_run=args.dry_run)
+        except (hook_setup.SetupError, OSError) as exc:
+            print(f"{agent.label}: not changed: {_one_line(str(exc))}", file=sys.stderr)
+            failed = True
+            continue
+        would = "would be " if args.dry_run and change.diff else ""
+        print(f"{agent.label}: {would}{change.action}: {_one_line(change.path)}")
+        if change.diff:
+            if args.dry_run:
+                print(change.diff, end="")
+        if change.note:
+            print(f"  {change.note}")
+    return EXIT_ERROR if failed else EXIT_OK
+
+
+def _watch_session(project: str | None) -> tuple[str, str]:
+    """Placeholder replaced with the sentinel."""
+    return "", ""
+
+
+def _hook_stdin() -> str:
     if hasattr(sys.stdin, "reconfigure"):  # Windows consoles default to a legacy codepage
         sys.stdin.reconfigure(encoding="utf-8")
         sys.stdout.reconfigure(encoding="utf-8")
-    raw = sys.stdin.read()
+    return sys.stdin.read()
+
+
+def _cmd_hook_agent(agent: str) -> int:
+    """One hook event of an agent other than Claude Code: the same decision in its format. A
+    failure of ours is the same too: what is asked (for an agent with no way to ask, refused with
+    how to go ahead), denied in CI strict mode; text that is no event stays out of the way outside
+    CI. The session event of an agent that has one starts the sentinel (see skilltotal.sentinel)."""
+    from skilltotal.agent_adapters import ADAPTERS, MCP, SESSION, SHELL, Request, first_call
+
+    adapter = ADAPTERS[agent]
+    strict_by = _hook_strict(os.environ)
+    request = Request()
+    try:
+        event = _hook_event(_hook_stdin())
+        if event is None:
+            answer = _hook_failed_strict(strict_by) if strict_by else None
+        else:
+            request = adapter.read(event)
+            if request.kind == SESSION:
+                return _print_reply(adapter.session(*_watch_session(request.cwd)))
+            if request.kind == SHELL:
+                answer = _hook_decide(request.event(), strict_by)
+            elif request.kind == MCP:
+                answer = first_call(agent, _with_server_command(agent, request),
+                                    _hook_cache_path().parent / "hook-mcp-seen.json",
+                                    lambda shell_event: _hook_decide(shell_event, strict_by))
+            else:
+                answer = None
+    except Exception:  # noqa: BLE001 - a failure of ours never passes silently
+        answer = _hook_failed(strict_by)
+    return _print_reply(adapter.render(answer, request))
+
+
+def _hook_event(raw: str) -> dict | None:
+    """The event on stdin, or None when the text is no event."""
+    try:
+        event = json.loads(raw or "{}")
+    except ValueError:
+        return None
+    return event if isinstance(event, dict) else None
+
+
+def _with_server_command(agent: str, request):
+    """Windsurf's event names only the server: its command comes from the config."""
+    from dataclasses import replace
+
+    from skilltotal.agent_adapters import windsurf_server_command
+
+    if agent == "windsurf" and not request.command:
+        return replace(request, command=windsurf_server_command(request.server, _home()))
+    return request
+
+
+def _print_reply(reply) -> int:
+    if reply.stdout:
+        print(reply.stdout)
+    if reply.stderr:
+        print(reply.stderr, file=sys.stderr)
+    return reply.code
+
+
+def _hook_answer(strict_by: str = "") -> dict | None:
+    raw = _hook_stdin()
     try:
         event = json.loads(raw or "{}")
     except json.JSONDecodeError:
         # Not a hook event at all: stay out of the agent's way, except in CI, where a command the
         # hook could not read must not pass.
         return _hook_failed_strict(strict_by) if strict_by else None
+    return _hook_decide(event, strict_by)
+
+
+def _hook_decide(event, strict_by: str = "") -> dict | None:
+    """The decision on one event in Claude Code's form, which every agent's adapter starts from."""
+    from skilltotal.agent_hook import BUDGET_ENV, hook_response
+
     # In CI nobody can answer a question, so a check the hook stopped waiting for is a denial:
     # there the hook waits for the full check of all but the largest packages instead.
     default, ceiling = ((HOOK_STRICT_BUDGET_S, HOOK_STRICT_MAX_BUDGET_S) if strict_by

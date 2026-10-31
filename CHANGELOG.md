@@ -7,6 +7,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ## [Unreleased]
 
 ### Added
+- The install check now runs in Cursor, Windsurf, Devin, Codex, Gemini CLI and VS Code Copilot as
+  well: `skilltotal hook <agent>` reads that agent's hook event and answers in its format, with
+  the same parser, verdicts and CI strict mode as Claude Code. An agent with no way to ask gets a
+  denial that says how to go ahead. Cursor and Windsurf also check an MCP server on its first call,
+  by the command that starts it. `skilltotal hook install` merges the hook into each agent's config
+  (`--agent`, `--scope`, `--dry-run`) and keeps a backup, `hook uninstall` takes it out, and
+  `hook status` lists what is protected. See `docs/agent-hooks.md`.
 - Editor extensions can be scanned by marketplace id or link before they are installed:
   `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`
   link for the Visual Studio Marketplace, and `openvsx:<namespace>.<name>[@<version>]` or an

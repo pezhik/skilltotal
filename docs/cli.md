@@ -13,6 +13,7 @@ Every `skilltotal` command and flag, the sources it reads, the exit codes and th
 | [`rules list`](#rules-list) | List the detection rules |
 | [`mcp`](#mcp) | Run SkillTotal as an MCP server for your agent |
 | [`hook claude-code`](#hook-claude-code) | The Claude Code plugin's install check |
+| [`hook install`](#hook-install) | Register the install check with Cursor, Windsurf, Devin, Codex, Gemini CLI and VS Code Copilot |
 
 `skilltotal --version` prints the version, and `skilltotal <command> --help` the flags of a
 command. Options must be spelled out in full: `--out` is an error, not `--output`. A usage error
@@ -307,6 +308,26 @@ event (JSON) on stdin and prints Claude Code's answer on stdout. It always exits
 in the answer. `--protocol N` names the hook protocol the caller needs, and a CLI that speaks an
 older one exits 1, so the plugin can tell that the CLI needs an update. `--help` lists the
 environment variables the hook reads. Behavior and settings are in [docs/plugin.md](plugin.md).
+
+## hook install
+
+```bash
+skilltotal hook install [--agent all|claude-code|cursor|windsurf|devin|codex|gemini|copilot]
+                        [--scope user|project] [--dry-run]
+skilltotal hook uninstall [--agent ...] [--scope user|project] [--dry-run]
+skilltotal hook status [--json]
+```
+
+`install` merges SkillTotal's hook into the config of each agent found on this machine, or the one
+`--agent` names, and leaves every other entry alone. It is safe to run twice, and it keeps a backup
+beside the file. `--dry-run` shows the change as a diff and writes nothing. `uninstall` removes
+only that entry. `status` lists which agents are protected, a plugin and CLI whose versions differ,
+and a hook whose CLI is gone. For Claude Code, `install` says how to get the plugin and writes
+nothing. It exits 1 when a config could not be changed.
+
+The hooks themselves are `skilltotal hook cursor`, `windsurf`, `devin`, `codex`, `gemini` and
+`copilot`. Each reads one hook event on stdin and answers in that agent's format, and Windsurf and
+Devin also exit 2 to block. Details are in [docs/agent-hooks.md](agent-hooks.md).
 
 ## Exit codes
 
