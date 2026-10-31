@@ -90,7 +90,7 @@ positive whole number is an error.
 | `SKILLTOTAL_NPM_REGISTRY`, `SKILLTOTAL_PYPI_INDEX`, `SKILLTOTAL_REGISTRY_TOKEN` | unset | A registry mirror to fetch `npm:` and `pypi:` sources from ([below](#scanning-through-a-registry-mirror)) |
 | `VSCODE_EXTENSIONS` | unset | VS Code's own setting for its extensions folder; `inventory` and `guard --installed` read that folder too |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | Where `inventory` and `guard --installed` look for Claude Code's config, plugins and skills, as Claude Code does |
-| `SKILLTOTAL_STRICT`, `SKILLTOTAL_ALLOW_UNCHECKED`, `SKILLTOTAL_STRICT_PARTIAL`, `SKILLTOTAL_HOOK_BUDGET`, `SKILLTOTAL_CACHE_DIR`, `SKILLTOTAL_OSV` | | The agent hooks: CI strict mode, what they let through, their time budget, their cache and the lockfile lookup in OSV ([plugin settings](plugin.md#settings)) |
+| `SKILLTOTAL_STRICT`, `SKILLTOTAL_ALLOW_UNCHECKED`, `SKILLTOTAL_STRICT_PARTIAL`, `SKILLTOTAL_STRICT_OSV`, `SKILLTOTAL_HOOK_BUDGET`, `SKILLTOTAL_CACHE_DIR`, `SKILLTOTAL_OSV` | | The agent hooks: CI strict mode, what they let through, their time budget, their cache and the lockfile lookup in OSV ([plugin settings](plugin.md#settings)) |
 
 `SKILLTOTAL_GITHUB_TOKEN`: before cloning a GitHub repository, SkillTotal asks the GitHub API how
 large the checkout will be. Without a token GitHub allows 60 such requests an hour per address.

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from skilltotal import cli, osv_lookup
-from skilltotal.agent_hook import hook_response
+from skilltotal.agent_hook import UNCHECKED_KINDS, hook_response
 from skilltotal.osv_lookup import Package, lookup, read_lockfile
 
 REPO = Path(__file__).resolve().parent.parent
@@ -788,27 +788,57 @@ def test_outside_ci_a_failed_lookup_lets_the_install_go_on_and_says_not_checked(
     assert "not checked" in answer["systemMessage"] and "7 package(s)" in answer["systemMessage"]
 
 
-def test_in_ci_a_failed_lookup_is_an_unchecked_kind():
+def test_in_ci_a_failed_lookup_only_says_so():
     answer = hook_response(event(), no_scan, strict=True,
                            allow_unchecked=frozenset({"lockfile"}),
-                           osv=stand_in(failed=True, not_checked=7, asked=0))
-    assert decision(answer) == "deny"
-    assert "SKILLTOTAL_ALLOW_UNCHECKED=lockfile,osv" in answer["systemMessage"]
-
-
-def test_in_ci_allowing_osv_lets_a_failed_lookup_through_with_its_line():
-    answer = hook_response(event(), no_scan, strict=True,
-                           allow_unchecked=frozenset({"lockfile", "osv"}),
                            osv=stand_in(failed=True, not_checked=7, asked=0))
     assert decision(answer) is None
     assert "not checked" in answer["systemMessage"]
 
 
-def test_in_ci_partial_coverage_is_held_too():
-    answer = hook_response(event(), no_scan, strict=True,
-                           allow_unchecked=frozenset({"lockfile"}),
-                           osv=stand_in(not_checked=2))
+@pytest.mark.parametrize("gap", [{"failed": True, "not_checked": 7, "asked": 0},
+                                 {"not_checked": 2}])
+def test_strict_osv_denies_an_incomplete_lookup_in_ci(gap):
+    answer = hook_response(event(), no_scan, strict=True, deny_osv_gap=True,
+                           allow_unchecked=frozenset({"lockfile"}), osv=stand_in(**gap))
     assert decision(answer) == "deny"
+    reason = answer["hookSpecificOutput"]["permissionDecisionReason"]
+    assert "lockfile lookup in OSV was incomplete" in reason and "SKILLTOTAL_STRICT_OSV" in reason
+
+
+def test_strict_osv_changes_nothing_when_the_lookup_was_complete():
+    answer = hook_response(event(), no_scan, strict=True, deny_osv_gap=True,
+                           allow_unchecked=frozenset({"lockfile"}), osv=stand_in())
+    assert decision(answer) is None
+
+
+def test_strict_osv_is_a_ci_setting():
+    answer = hook_response(event(), no_scan, deny_osv_gap=True,
+                           osv=stand_in(failed=True, not_checked=7, asked=0))
+    assert decision(answer) is None
+
+
+def test_a_hit_still_denies_with_lockfile_allowed_and_strict_osv_off():
+    answer = hook_response(event(), no_scan, strict=True,
+                           allow_unchecked=frozenset({"lockfile"}), deny_osv_gap=False,
+                           osv=stand_in([("evil", "1.0.0", "MAL-2026-9")]))
+    assert decision(answer) == "deny"
+    assert "evil 1.0.0 (MAL-2026-9)" in answer["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+def test_osv_is_no_kind_of_unchecked_install():
+    assert "osv" not in UNCHECKED_KINDS
+
+
+@pytest.mark.parametrize("value, on", [("", False), ("0", False), ("off", False), ("1", True),
+                                       ("true", True), ("ture", True)])
+def test_strict_osv_reads_as_strict_partial_does(value, on):
+    assert cli._hook_strict_osv({"SKILLTOTAL_STRICT_OSV": value}) is on
+
+
+def test_a_typo_in_strict_osv_is_said():
+    note = cli._hook_settings_note({"SKILLTOTAL_STRICT_OSV": "ture"}, 600.0)
+    assert "SKILLTOTAL_STRICT_OSV is 'ture', read as on; use 1 or 0." in note
 
 
 def test_without_a_lookup_a_lockfile_install_is_as_before():

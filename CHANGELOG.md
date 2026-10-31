@@ -9,8 +9,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ### Added
 - Hooks for other agents: `skilltotal hook <agent>` reads an agent's hook event and answers in its
   format, with the same parser, verdicts and CI strict mode as Claude Code. Each has a tier, shown
-  by `hook status` and `hook install`: Gemini CLI is verified against 0.45.2 with its real hook
-  runner and a stand-in model; Cursor, Windsurf, Devin, Codex and VS Code Copilot are preview,
+  by `hook status` and `hook install`: the Gemini CLI hook is tested in 0.45.2 with a stand-in
+  model and not yet run with a live model; Cursor, Windsurf, Devin, Codex and VS Code Copilot are preview,
   built to the agent's documented hook format and not yet run in the agent. A hook never approves:
   it answers in the form each agent documents as no decision. An agent with no way to ask gets a
   denial that says how to go ahead. A command that cannot install anything is answered without
@@ -36,8 +36,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
   it from the public registry: its lockfile records a public URL, or the lockfile records none and
   no custom registry is configured. A scope an `.npmrc` maps elsewhere or holds a token for, a git,
   file or link dependency and an entry from another host are never sent. A clean result reads "No known-malicious version in OSV". An unreachable OSV
-  reads "not checked" with the number, and in CI is denied unless the new `osv` kind is allowed in
-  `SKILLTOTAL_ALLOW_UNCHECKED`. One batch per command, 5 seconds at most, no retry, an hour's cache.
+  reads "not checked" with the number, and the install goes on, in CI too unless
+  `SKILLTOTAL_STRICT_OSV=1` denies it. One batch per command, 5 seconds at most, no retry, an hour's cache.
   It lives in the hook only: `engine.analyze`, `scan`, `guard` and `watch` make no such request.
 - Editor extensions can be scanned by marketplace id or link before they are installed:
   `vscode:<publisher>.<name>[@<version>]` or a `marketplace.visualstudio.com/items?itemName=`

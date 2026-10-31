@@ -290,21 +290,24 @@ def test_a_preview_agent_is_called_one_before_anything_is_written(home, capsys, 
 def test_status_carries_the_tier_of_every_agent(home, capsys):
     assert cli.main(["hook", "status"]) == 0
     out = capsys.readouterr().out
-    assert hook_setup.VERIFIED["claude-code"] in out and hook_setup.VERIFIED["gemini"] in out
+    assert hook_setup.TESTED["claude-code"] in out and hook_setup.TESTED["gemini"] in out
     assert out.count(hook_setup.PREVIEW) == 5
 
 
-def test_only_what_was_run_in_the_agent_is_verified():
-    assert set(hook_setup.VERIFIED) == {"claude-code", "gemini"}
+def test_only_what_was_run_with_a_live_model_is_verified():
+    assert set(hook_setup.TESTED) == {"claude-code", "gemini"}
+    assert hook_setup.tier("claude-code").startswith("verified against")
+    assert "verified" not in hook_setup.tier("gemini")
+    assert "not yet run with a live model" in hook_setup.tier("gemini")
     for name in BY_NAME:
-        assert hook_setup.tier(name).startswith(("verified against", "preview:"))
+        assert hook_setup.tier(name).startswith(("preview:", "hook tested in"))
 
 
 def test_the_docs_carry_the_same_tiers():
     root = Path(__file__).resolve().parent.parent
     for doc in ("docs/agent-hooks.md", "README.md"):
         text = " ".join((root / doc).read_text(encoding="utf-8").split())
-        for line in (*hook_setup.VERIFIED.values(), hook_setup.PREVIEW):
+        for line in (*hook_setup.TESTED.values(), hook_setup.PREVIEW):
             assert line in text, (doc, line)
 
 

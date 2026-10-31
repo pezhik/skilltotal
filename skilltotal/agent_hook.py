@@ -125,10 +125,7 @@ REMOTE, CONTAINER = "remote", "container"
 # about outside CI; in strict mode denied unless allowed under this name, so a CI job behind a
 # mirror can opt in without turning strict mode off.
 REGISTRY = "registry"
-# A lockfile lookup in OSV that did not cover what it should have: OSV did not answer, or entries
-# could not be read. Said in the console; denied in strict mode unless allowed under this name.
-OSV = "osv"
-UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER, REGISTRY, OSV)
+UNCHECKED_KINDS = (LOCKFILE, LOCAL, SCRIPT, PARTIAL, REMOTE, CONTAINER, REGISTRY)
 # A git clone fetches code the hook does not check, and runs none of it by itself: said in the
 # console, never denied for that alone (in CI too), so it is not one of UNCHECKED_KINDS.
 GIT_CLONE = "clone"
@@ -4584,6 +4581,7 @@ def hook_response(
     strict: bool = False, allow_unchecked: frozenset[str] = frozenset(), strict_by: str = "",
     deny_partial: bool = False, environ: Mapping[str, str] | None = None,
     home: Path | None = None, osv: Callable[[list[str], str | None, str], Any] | None = None,
+    deny_osv_gap: bool = False,
 ) -> dict[str, Any] | None:
     """Claude Code's answer for one PreToolUse event, or None to stay silent.
 
@@ -4613,10 +4611,9 @@ def hook_response(
 
     ``osv(files, cwd, command)`` looks up the exact versions the lockfiles of a command name on
     OSV's list of known malicious packages (``skilltotal.osv_lookup``), for an install that names
-    none. A
-    listed version is denied, in and out of CI. A lookup that covered less than it should have is
-    said, and in strict mode denied unless ``osv`` is an allowed kind. Without it nothing is
-    looked up.
+    none. A listed version is denied, in and out of CI. A lookup that covered less than it should
+    have is said, and denied only with ``deny_osv_gap`` (SKILLTOTAL_STRICT_OSV) in strict mode.
+    Without ``osv`` nothing is looked up.
     """
     shell = _TOOL_SHELLS.get(str(event.get("tool_name")))
     if shell is None:
@@ -4724,14 +4721,13 @@ def hook_response(
 
     osv_listed: list[str] = []
     osv_line = ""
+    osv_gap = False  # strict mode denies a lookup that covered less than it should have
     lockfiles = [i.lockfile for i in unchecked if i.unchecked == LOCKFILE and i.lockfile]
     if osv is not None and lockfiles:
         found = osv(lockfiles, cwd, command)
         osv_listed = found.hit_lines()
         osv_line = found.line()
-        if strict and found.incomplete:
-            unchecked.append(Install(None, unchecked=OSV,
-                                     does="has entries that were not looked up in OSV"))
+        osv_gap = strict and deny_osv_gap and found.incomplete
 
     # What was not checked is the person's call, never a silent pass: otherwise a package padded
     # until its scan times out, or named sixth, would walk past the guard.
@@ -4766,7 +4762,7 @@ def hook_response(
             reason += f" OSV also lists as malicious: {'; '.join(osv_listed)}."
         return _answer(permission="deny", reason=reason,
                        message=_line(reason, _not_checked(unchecked, rest=True), osv_line))
-    if strict and (asked or blocked or held):
+    if strict and (asked or blocked or held or osv_gap):
         why: list[str] = []
         if asked:
             why.append("SkillTotal blocked this install; outside CI it would ask for approval. "
@@ -4778,6 +4774,9 @@ def hook_response(
         if held:
             sentence = _sentence("; ".join(held))
             why.append(sentence if why else f"SkillTotal blocked this install: {sentence}")
+        if osv_gap:
+            sentence = f"its lockfile lookup in OSV was incomplete ({STRICT_OSV_ENV} is set)."
+            why.append(f"And {sentence}" if why else f"SkillTotal blocked this install: {sentence}")
         if scanned:
             why.append(_details(scanned))
         reason = _STRICT + " ".join(why)
@@ -4834,6 +4833,9 @@ _STRICT = "(CI rule) "
 ALLOW_UNCHECKED_ENV = "SKILLTOTAL_ALLOW_UNCHECKED"
 # Turns on denying a partly analyzed package in CI strict mode (off by default).
 STRICT_PARTIAL_ENV = "SKILLTOTAL_STRICT_PARTIAL"
+# Turns on denying a lockfile lookup in OSV that did not cover everything, in CI strict mode (off
+# by default: OSV being down must not stop a build that allowed its lockfile).
+STRICT_OSV_ENV = "SKILLTOTAL_STRICT_OSV"
 
 
 def strict_note(strict_by: str) -> str:

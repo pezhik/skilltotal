@@ -43,17 +43,17 @@ _OURS = re.compile(r"""skilltotal(?:\.exe|\.cmd)?["']?\s+hook\s+(?P<agent>[a-z-]
 
 # What has been run in the agent itself, not only built to its documentation. A line here is added
 # by running the agent, with the version and the date.
-VERIFIED = {
+TESTED = {
     "claude-code": "verified against Claude Code 2.1.316 on 2026-10-31",
-    "gemini": "verified against Gemini CLI 0.45.2 on 2026-10-31, with its real hook runner and a "
-              "stand-in model",
+    "gemini": "hook tested in Gemini CLI 0.45.2 on 2026-10-31 with a stand-in model; not yet run "
+              "with a live model",
 }
 PREVIEW = "preview: built to the agent's documented hook format, not yet run in the agent"
 
 
 def tier(name: str) -> str:
     """How far an agent's hook has been proven: said wherever support is claimed."""
-    return VERIFIED.get(name, PREVIEW)
+    return TESTED.get(name, PREVIEW)
 
 
 class SetupError(ValueError):

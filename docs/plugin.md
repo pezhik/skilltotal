@@ -186,7 +186,7 @@ for is never sent, nor is a git, file or link dependency or an entry from anothe
 A version listed as `MAL-...` is denied. A clean result reads "No known-malicious version in OSV",
 which says what OSV knows: it lists known malware only, a brand-new package is not on it, and a
 lookup is not a scan of the code. If OSV cannot be reached, the console says the packages were not
-checked, outside CI the install goes on, and in CI it is denied unless `osv` is allowed. Scanning
+checked and the install goes on, in CI too unless `SKILLTOTAL_STRICT_OSV=1` denies it. Scanning
 itself sends none of your code anywhere: to scan a named package, the hook downloads it from its
 registry. The full table of what is sent, and the limits, are in
 [docs/agent-hooks.md](agent-hooks.md#what-goes-over-the-network).
@@ -213,7 +213,6 @@ So is every install it could not check, unless `SKILLTOTAL_ALLOW_UNCHECKED` list
 | `remote` | An MCP server reached at a URL (`claude mcp add --transport http\|sse`, `codex mcp add --url`, `claude mcp add-json` with a `url`) |
 | `container` | An MCP server run from a container image (`claude mcp add x -- docker run ... image`, `podman run`) |
 | `registry` | A named package from a configured registry or mirror (see [Custom registries](#custom-registries-and-mirrors)) |
-| `osv` | A [lockfile lookup](#the-lockfile-lookup) that covered less than it should have: OSV did not answer, or entries could not be read |
 
 `registry` lets a CI job behind a company mirror install named packages without turning strict
 mode off (`SKILLTOTAL_STRICT=0`), which would also let through everything else it asks about.
@@ -302,8 +301,9 @@ The hook reads these environment variables from the environment Claude Code runs
 | Variable | Default | What it sets |
 |---|---|---|
 | `SKILLTOTAL_STRICT` | unset | `1` (or `true`, `yes`, `on`) turns CI strict mode on anywhere, `0` (or `false`, `no`, `off`) turns it off. Unset, strict mode follows the CI variables (see [CI](#ci-strict-mode)) |
-| `SKILLTOTAL_ALLOW_UNCHECKED` | empty | Comma-separated kinds of unchecked install that strict mode lets through: `lockfile`, `local`, `script`, `partial`, `remote`, `container`, `registry`, `osv` |
+| `SKILLTOTAL_ALLOW_UNCHECKED` | empty | Comma-separated kinds of unchecked install that strict mode lets through: `lockfile`, `local`, `script`, `partial`, `remote`, `container`, `registry` |
 | `SKILLTOTAL_STRICT_PARTIAL` | off | `1`: strict mode also denies a partly analyzed package |
+| `SKILLTOTAL_STRICT_OSV` | off | `1`: strict mode also denies a [lockfile lookup](#the-lockfile-lookup) that covered less than it should have: OSV did not answer, or entries could not be read |
 | `SKILLTOTAL_OSV` | on | `0` (or `false`, `no`, `off`) turns off the [lockfile lookup](#the-lockfile-lookup), which sends the names and exact versions of public-registry packages to OSV |
 | `SKILLTOTAL_HOOK_BUDGET` | 60 (600 in strict mode) | Seconds all checks of one command share; at most 100 (840 in strict mode) |
 | `SKILLTOTAL_WORKERS` | up to 4 | Processes one large check may use; `1` turns this off |

@@ -6,7 +6,7 @@ agents. Not all of them have been proven in the agent itself, so each carries a 
 | Agent | Tier |
 |---|---|
 | Claude Code | verified against Claude Code 2.1.316 on 2026-10-31 |
-| Gemini CLI | verified against Gemini CLI 0.45.2 on 2026-10-31, with its real hook runner and a stand-in model |
+| Gemini CLI | hook tested in Gemini CLI 0.45.2 on 2026-10-31 with a stand-in model; not yet run with a live model |
 | Cursor | preview: built to the agent's documented hook format, not yet run in the agent |
 | Windsurf | preview: built to the agent's documented hook format, not yet run in the agent |
 | Devin | preview: built to the agent's documented hook format, not yet run in the agent |
@@ -232,7 +232,7 @@ hook asks about them in one batch.
 |---|---|
 | A version is listed as `MAL-...` | Denied, in and out of CI. The answer names the package, the version and the id |
 | None of those looked up is listed | The console says "No known-malicious version in OSV for the N package(s) looked up" |
-| OSV is unreachable or times out | The console says they were not checked, with the number. Outside CI the install goes on. In CI it is denied unless `SKILLTOTAL_ALLOW_UNCHECKED` includes `osv` |
+| OSV is unreachable or times out | The console says they were not checked, with the number, and the install goes on. In CI too, unless `SKILLTOTAL_STRICT_OSV=1`, which denies it |
 | An entry could not be parsed, or a batch was cut short | Counted as not checked, with the number, and treated as above |
 
 **What is sent.** A package is sent only when the install itself would fetch it from the public

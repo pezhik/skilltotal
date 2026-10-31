@@ -344,8 +344,8 @@ skilltotal hook status --json
 `install` merges SkillTotal's hook into the config of each agent found on this machine, or the one
 `--agent` names (`all`, `claude-code`, `cursor`, `windsurf`, `devin`, `codex`, `gemini`, `copilot`),
 in your own config or, with `--scope project`, the project's, and leaves every other entry alone.
-It prints each agent's [tier](agent-hooks.md) first: "verified against" a version where the hook has
-been run in the agent, else "preview". It is safe to run twice, and it keeps a backup
+It prints each agent's [tier](agent-hooks.md) first: how far the hook has been tested in that agent,
+or "preview". It is safe to run twice, and it keeps a backup
 beside the file. `--dry-run` shows the change as a diff and writes nothing. `uninstall` removes
 only that entry. `status` lists which agents are protected, a plugin and CLI whose versions differ,
 and a hook whose CLI is gone. For Claude Code, `install` says how to get the plugin and writes

@@ -1697,9 +1697,10 @@ Environment:
                               unchecked install whose kind is not allowed.
   SKILLTOTAL_ALLOW_UNCHECKED  the kinds of unchecked install strict mode lets through, comma-
                               separated: lockfile, local, script, partial, remote, container,
-                              registry, osv (registry: a package from a configured registry or
-                              mirror; osv: a lockfile lookup that did not cover everything)
+                              registry (a package from a configured registry or mirror)
   SKILLTOTAL_STRICT_PARTIAL   1: strict mode also denies a partly analyzed package
+  SKILLTOTAL_STRICT_OSV       1: strict mode also denies a lockfile lookup that did not cover
+                              everything
   SKILLTOTAL_OSV              0/false/no/off turns off the lockfile lookup, which sends the names
                               and exact versions of public-registry packages to OSV (api.osv.dev)
   SKILLTOTAL_HOOK_BUDGET      seconds all checks of one command share (default 60, at most 100;
@@ -1780,6 +1781,14 @@ def _hook_strict_partial(environ) -> bool:
     from skilltotal.agent_hook import STRICT_PARTIAL_ENV
 
     return environ.get(STRICT_PARTIAL_ENV, "").strip().lower() not in _OFF_WORDS
+
+
+def _hook_strict_osv(environ) -> bool:
+    """SKILLTOTAL_STRICT_OSV=1 (or true, yes, on): CI also denies an incomplete lockfile lookup.
+    A value that is neither on nor off turns it on: a typo must not loosen a gate."""
+    from skilltotal.agent_hook import STRICT_OSV_ENV
+
+    return environ.get(STRICT_OSV_ENV, "").strip().lower() not in _OFF_WORDS
 
 
 def _hook_failed(strict_by: str) -> dict:
@@ -2130,7 +2139,8 @@ def _hook_decide(event, strict_by: str = "") -> dict | None:
                            strict=bool(strict_by), strict_by=strict_by,
                            allow_unchecked=_hook_allowed_unchecked(os.environ),
                            deny_partial=_hook_strict_partial(os.environ),
-                           environ=os.environ, home=_home(), osv=_hook_osv())
+                           environ=os.environ, home=_home(), osv=_hook_osv(),
+                           deny_osv_gap=_hook_strict_osv(os.environ))
     note = _hook_settings_note(os.environ, ceiling)
     if answer is not None and note:
         answer["systemMessage"] = f"{answer.get('systemMessage', '')} {note}".strip()
@@ -2172,6 +2182,9 @@ def _hook_settings_note(environ, ceiling: float) -> str:
     word = environ.get(STRICT_PARTIAL_ENV, "").strip().lower()
     if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
         notes.append(f"{STRICT_PARTIAL_ENV} is {word!r}, read as on; use 1 or 0.")
+    word = environ.get("SKILLTOTAL_STRICT_OSV", "").strip().lower()
+    if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
+        notes.append(f"SKILLTOTAL_STRICT_OSV is {word!r}, read as on; use 1 or 0.")
     word = environ.get("SKILLTOTAL_OSV", "").strip().lower()
     if word not in _OFF_WORDS | {"1", "true", "yes", "on"}:
         notes.append(f"SKILLTOTAL_OSV is {word!r}, read as on; use 1 or 0.")

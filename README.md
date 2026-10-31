@@ -212,7 +212,7 @@ agent that cannot ask you gets a denial that says how to go ahead.
 | Agent | Tier |
 |---|---|
 | Claude Code | verified against Claude Code 2.1.316 on 2026-10-31 |
-| Gemini CLI | verified against Gemini CLI 0.45.2 on 2026-10-31, with its real hook runner and a stand-in model |
+| Gemini CLI | hook tested in Gemini CLI 0.45.2 on 2026-10-31 with a stand-in model; not yet run with a live model |
 | Cursor, Windsurf, Devin, Codex, VS Code Copilot | preview: built to the agent's documented hook format, not yet run in the agent |
 
 [docs/agent-hooks.md](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md) has what
