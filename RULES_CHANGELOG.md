@@ -4,6 +4,33 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 88 (engine 0.89.0)
+
+Four rules gave honest projects a finding for a construct that only looked like the attack. Each
+now needs the link it was missing, and each change has a sample that must stay flagged.
+
+- **`ST-OBF-DECODE-SPAWN`** (narrowed): the decoded value must reach the launch, decode first. It
+  may sit in the launch's own arguments, in a variable assigned from the decode (followed through
+  further assignments), in a function that returns it or takes it as a parameter, or in a file that
+  is then run. A decode and a spawn that merely share a file no longer fire.
+  `Buffer.from(x).toString("base64")` encodes and is no longer read as a decode. New: a decoded file
+  run directly, or as the script of an interpreter, fires without an inline-code flag.
+- **`ST-MCP-STATIC-AUTH-EXEC`** (narrowed): the compared literal must look like a secret, or the
+  compared side must come from the request, its headers or the environment. An `@keyword`, an
+  identifier-like word, a placeholder and a mode such as `no-auth` do not count. A host command must
+  stand within about 500 lines of the check or of a use of the token constant. A
+  `'Bearer realm="api"'` challenge is no token, and a RegExp's `.exec(` is no host command. New:
+  `===` and `!==` are read, and so are methods of a `child_process` alias.
+- **`ST-PROMPT-INJECTION`** (narrowed): a theft phrase with a third-person subject and an ability
+  verb is a threat description and goes to `needs_review`. The subjects now include a compromised,
+  hijacked, rogue, infected or backdoored party, an agent with some access, and anyone with some
+  access. Tightened at the same time: a table cell is a clause of its own, so a threat subject in
+  one cell does not cover the next, and "Act as a rogue agent that can ..." stays a directive.
+- **`ST-POSTEX-PERSIST`** (narrowed): a `>>>` marker line of an installer block is not an append to
+  a shell profile.
+- Test paths: `*.selftest.*`, `selftest.*`, `selftest-*` and a `selftest/` folder count as test
+  code, unless `package.json` names the file as an entry point or an install script runs it.
+
 ## ruleset 87 (engine 0.88.0)
 
 One new rule checks an MCP tool's annotations against the tool's own handler. Clients use these

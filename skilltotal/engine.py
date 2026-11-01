@@ -40,6 +40,7 @@ from skilltotal.file_index import (
     is_doc_path,
     is_example_path,
     is_regular_file,
+    is_self_test_path,
     is_test_path,
     skill_dirs,
 )
@@ -320,7 +321,11 @@ def analyze_directory(
     # install time: a dropper that postinstall runs from dist/ or tests/ is the attack, whatever
     # the folder suggests. The content layers (6, 7) still apply to it.
     install_files = frozenset(install_scripts)
-    findings, test_review = _hold_out(install_files, _split_test_evidence, findings, index)
+    # A `selftest` name is not enough to clear what package.json names as the code that runs.
+    self_test_entries = frozenset(p for p in entry_points if is_self_test_path(p))
+    findings, test_review = _hold_out(
+        install_files | self_test_entries, _split_test_evidence, findings, index
+    )
     needs_review.extend(test_review)
     # Skills, subagents and commands: their markdown is read by the agent, not by a person.
     relpaths = [f.relpath for f in index.files]

@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.89.0 · ruleset 87 · Python 3.14 · offline corpus.
+Engine 0.89.0 · ruleset 88 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (158/158 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/120 benign samples wrongly flagged)
+- **recall: 100.0%** (165/165 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/127 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -79,10 +79,10 @@ Engine 0.89.0 · ruleset 87 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 26 | 31 | 23 | 4 |
-| AST02 | 20 | 13 | 4 | 1 |
+| AST01 | 26 | 32 | 24 | 4 |
+| AST02 | 20 | 16 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
-| AST04 | 20 | 3 | 8 | 0 |
+| AST04 | 22 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -103,7 +103,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-FLOW-TRIFECTA` | AST01 | 1 | 0 | - | - |
 | `ST-HTML-FILE-URL-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-MCP-SERVER-HIDDEN-EXEC` | AST01 | 1 | 0 | - | - |
-| `ST-MCP-STATIC-AUTH-EXEC` | AST01 | 1 | 0 | - | - |
+| `ST-MCP-STATIC-AUTH-EXEC` | AST01 | 3 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC` | AST01 | 16 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-PY` | AST01 | 2 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-SH` | AST01 | 8 | 0 | - | - |
@@ -126,7 +126,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-SKILL-MEMORY-WRITE-HIDDEN` | AST01 | 2 | 0 | - | - |
 | `ST-WORKFLOW-HISTORY-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 5 | 0 | - | - |
-| `ST-OBF-DECODE-SPAWN` | AST01, AST02 | 1 | 0 | - | - |
+| `ST-OBF-DECODE-SPAWN` | AST01, AST02 | 4 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC-HIDDEN` | AST01, AST02 | 2 | 0 | - | - |
 | `ST-STARTUP-HOOK-EXEC` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
@@ -172,7 +172,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-SAMPLING-INJECTION` | AST04 | 1 | 0 | - | - |
 | `ST-MCP-TOOL-POISONING` | AST04 | 12 | 0 | - | - |
 | `ST-MCP-TOOL-SHADOWING` | AST04 | 0 | 0 | - | - |
-| `ST-PROMPT-INJECTION` | AST04 | 17 | 0 | - | - |
+| `ST-PROMPT-INJECTION` | AST04 | 19 | 0 | - | - |
 | `ST-PROMPT-WEAK` | AST04 | 0 | 0 | - | - |
 | `ST-SKILL-AUDIT-OVERRIDE` | AST04 | 2 | 0 | - | - |
 | `ST-DESERIALIZE-PY` | AST05 | 0 | 0 | 1/1 | 1/1 |

@@ -114,7 +114,18 @@
  "negative/AST01/mcp-sampling-sysprompt/task-scoped-ts": [
   "ST-MCP-DETECTED"
  ],
+ "negative/AST01/mcp-static-auth-exec/auth-mode-setting": [
+  "ST-MCP-DETECTED",
+  "ST-SHELL-PY"
+ ],
+ "negative/AST01/mcp-static-auth-exec/bearer-challenge-header": [
+  "ST-MCP-DETECTED"
+ ],
  "negative/AST01/mcp-static-auth-exec/env-token-server": [
+  "ST-MCP-DETECTED",
+  "ST-SHELL-PY"
+ ],
+ "negative/AST01/mcp-static-auth-exec/template-parser-token": [
   "ST-MCP-DETECTED",
   "ST-SHELL-PY"
  ],
@@ -173,6 +184,15 @@
   "ST-AGENT-AUTORUN"
  ],
  "negative/AST02/decode-spawn/cli-token-git": [
+  "ST-SHELL-NODE"
+ ],
+ "negative/AST02/decode-spawn/decodes-script-output": [
+  "ST-SHELL-NODE"
+ ],
+ "negative/AST02/decode-spawn/encode-test-data-driver": [
+  "ST-SHELL-NODE"
+ ],
+ "negative/AST02/decode-spawn/polyfill-after-spawn": [
   "ST-SHELL-NODE"
  ],
  "negative/AST02/decode-spawn/spawn-worker-file": [
@@ -273,6 +293,7 @@
   "ST-FS-PY-READ",
   "ST-NET-PY"
  ],
+ "negative/AST04/prompt-injection/threat-table-compromised-host": [],
  "negative/AST04/prompt-injection/triage-skill-elided-citation": [],
  "negative/AST04/skill-scanner-directed-audit-override-text/reviewer-note-no-verdict": [],
  "negative/AST04/skill-scanner-directed-audit-override-text/security-review-skill": [],
@@ -557,6 +578,17 @@
   "ST-MCP-STATIC-AUTH-EXEC",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/mcp-static-auth-exec/strict-equal-literal": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-STATIC-AUTH-EXEC",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST01/mcp-static-auth-exec/word-token-from-header": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-STATIC-AUTH-EXEC",
+  "ST-SHELL-PY",
+  "ST-TAINT-SHELL-PY"
+ ],
  "positive/AST01/password-archive/skill-download-protected-zip": [
   "ST-ARCHIVE-PASSWORD-EXTRACT"
  ],
@@ -720,6 +752,19 @@
   "ST-SENS-PATH"
  ],
  "positive/AST02/decode-spawn/gunzip-detached-worker": [
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST02/decode-spawn/helper-takes-decoded": [
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST02/decode-spawn/two-step-variable": [
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST02/decode-spawn/written-file-run": [
+  "ST-FS-NODE-WRITE",
   "ST-OBF-DECODE-SPAWN",
   "ST-SHELL-NODE"
  ],
@@ -981,10 +1026,16 @@
  "positive/AST04/prompt-injection/skill-env-key-in-urls": [
   "ST-PROMPT-INJECTION"
  ],
+ "positive/AST04/prompt-injection/skill-injection-in-table": [
+  "ST-PROMPT-INJECTION"
+ ],
  "positive/AST04/prompt-injection/skill-reference-injection": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-remote-instructions-override": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/skill-rogue-agent-role": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-silent-credential-read": [

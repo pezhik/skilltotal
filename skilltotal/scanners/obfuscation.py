@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import bisect
 import re
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from itertools import islice
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
@@ -196,12 +199,17 @@ _EXEC_SINK = re.compile(
 # the decoded-variable flow only recognize in-process sinks (eval / new Function / vm); a spawned
 # interpreter running the decoded text is the same decode-and-execute with an out-of-process sink,
 # the shape of an import-time detached worker in a compromised npm package. Both halves must be
-# present in one file and be code (not a comment/string literal).
+# code (not a comment/string literal) and the decoded value must reach the launch: a test helper
+# that builds base64 test data shares a file with a spawn of its own driver script without either
+# touching the other.
 _JS_DECODE_SOURCE = re.compile(
     r"\b(?:gunzipSync|gunzip|inflateSync|inflate|brotliDecompressSync|unzipSync)\s*\(|"
-    r"\bBuffer\.from\s*\([^;\n]{0,200}?['\"](?:base64|hex)['\"]|"
+    r"\bBuffer\.from\s*\(|"
     r"(?:window\.|globalThis\.)?\batob\s*\("
 )
+# `Buffer.from(x, "base64")` decodes. `Buffer.from(x).toString("base64")` encodes, so the encoding
+# must be the last argument of the Buffer.from call itself.
+_JS_DECODE_ENCODING = re.compile(r"['\"](?:base64(?:url)?|hex)['\"]\s*,?\s*$")
 # A launch of a code INTERPRETER (node / python / powershell, or this node binary itself) with an
 # inline-code flag -- what makes the child process a code sink rather than an ordinary command.
 # The interpreter is required: `-c`, `-e` and `-p` are also ordinary flags of everyday commands
@@ -219,21 +227,285 @@ _JS_SPAWN_EVAL = re.compile(
     r"(?:node|nodejs|python[\d.]*|pwsh|powershell)(?:\.exe)?\s+"
     r"(?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)\b"
 )
+# How a decoded value travels to a launch: an assignment or `+=`, also to a member (`this.stage`)
+# and with a TypeScript annotation.
+_JS_ASSIGNMENT = re.compile(
+    r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)"
+    r"(?:\s*:\s*[\w$.<>\[\]| ]{1,40}?)?\s*\+?=(?![=>])"
+)
+# A named function: its parameter list opens at the end of the match.
+_JS_FUNCTION = re.compile(
+    r"\bfunction\s+([A-Za-z_$][\w$]*)\s*\(|"
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\("
+)
+# After the parameter list: a return type, then a `{` body or an arrow.
+_JS_FUNCTION_BODY = re.compile(r"\s*(?::[^={\n]{1,60})?\s*(=>)?\s*(\{)?")
+_JS_NAME = re.compile(r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*")
+_JS_QUOTED = re.compile(r"'(?:[^'\\\n]|\\.)*'|\"(?:[^\"\\\n]|\\.)*\"")
+_JS_TEMPLATE = re.compile(r"`[^`]{0,2000}`")
+_JS_TEMPLATE_VALUE = re.compile(r"\$\{([^}]*)\}")
+_JS_WRITE_FILE = re.compile(r"\bwriteFile(?:Sync)?\s*\(")
+_JS_LAUNCH = re.compile(r"\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync|fork)\s*\(")
+# A decoded file is run when it is the program, or the script an interpreter is given (flags may
+# come first). A fixed script that gets it as input (`spawn("python3", ["convert.py", tmp])`) does
+# not run it.
+_JS_RUN_FILE_PREFIX = (
+    r"(?:process\.execPath|['\"`](?:[\w.:/\\-]*[/\\])?"
+    r"(?:node|nodejs|python[\d.]*|pwsh|powershell|sh|bash|zsh|cmd)(?:\.exe)?\b)?"
+    r"[\s\"'`,\[+]*(?:-[\w-]+[\s\"'`,+]*)*(?:\$\{)?"
+)
 _DECODE_SPAWN_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _DECRYPT_EXEC_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 # Matches looked at per file for one in code; past this a file of comments is not read further.
 _MAX_CODE_TRIES = 200
 
 
-def _first_in_code(f: IndexedFile, pattern: re.Pattern[str]) -> re.Match[str] | None:
-    """The first match of ``pattern`` that is code: not in a comment or a string literal."""
+# Names followed from the decodes of one file, and the uses of each one looked at: enough for a
+# loader, and a bound on what a large bundle can cost.
+_MAX_FLOW_NAMES = 16
+_MAX_NAME_USES = 64
+
+
+def _matches_in_code(f: IndexedFile, pattern: re.Pattern[str]) -> Iterator[re.Match[str]]:
+    """The matches of ``pattern`` that are code: not in a comment or a string literal."""
     for k, m in enumerate(pattern.finditer(f.text)):
         if k >= _MAX_CODE_TRIES:
-            return None
+            return
         at = m.start()
         if not (f.in_comment(at) or f.in_string(at) or f.in_c_comment(at) or f.in_c_string(at)):
-            return m
-    return None
+            yield m
+
+
+def _first_in_code(f: IndexedFile, pattern: re.Pattern[str]) -> re.Match[str] | None:
+    """The first match of ``pattern`` that is code: not in a comment or a string literal."""
+    return next(_matches_in_code(f, pattern), None)
+
+
+def _balanced_end(text: str, start: int, *, statement: bool = False) -> int:
+    """Where the bracket opened just before ``start`` closes, or with ``statement`` where the
+    statement starting at ``start`` ends. Skips quoted strings; a template literal stays readable,
+    since its ``${...}`` holds code. Gives up ``_FLOW_REACH`` characters on."""
+    stop = min(len(text), start + _FLOW_REACH)
+    floor = 0 if statement else 1
+    depth = floor
+    quote = ""
+    i = start
+    while i < stop:
+        ch = text[i]
+        if quote:
+            if ch == "\\":
+                i += 1
+            elif ch == quote or ch == "\n":
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth < floor:
+                return i
+        elif statement and depth == 0 and (
+            ch == ";" or (ch == "\n" and not _statement_continues(text, i))
+        ):
+            return i
+        i += 1
+    return stop
+
+
+def _statement_continues(text: str, newline: int) -> bool:
+    """True if the statement goes on past this line: `zlib` then `.gunzipSync(x)`, or `x =`."""
+    before = text[max(0, newline - 80) : newline].rstrip()
+    after = text[newline + 1 : newline + 81].lstrip()
+    return before[-1:] in tuple("=+,(&|?:") or after[:1] in tuple(".?:+|&,")
+
+
+def _expression_names(code: str) -> set[str]:
+    """The names an expression reads, each dotted name with its prefixes (``a.b``, ``a``).
+
+    Strings hold no names: the ``e`` of a ``"-e"`` flag is not a variable called ``e``. Of a
+    template literal only the ``${...}`` values count.
+    """
+    code = _JS_QUOTED.sub(" ", code)
+    code = _JS_TEMPLATE.sub(lambda m: " ".join(_JS_TEMPLATE_VALUE.findall(m.group())), code)
+    names: set[str] = set()
+    for m in _JS_NAME.finditer(code):
+        parts = m.group().split(".")
+        names.update(".".join(parts[: k + 1]) for k in range(len(parts)))
+    return names
+
+
+@dataclass
+class _DecodeFlow:
+    """Where the decoded values of one file go. ``names`` maps a name that holds one to the offset
+    from which it does (-1 for a function, which is hoisted) and the span of its decode."""
+
+    text: str
+    decodes: list[tuple[int, int]]
+    names: dict[str, tuple[int, tuple[int, int]]] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.assignments = list(_JS_ASSIGNMENT.finditer(self.text))
+        self.functions = list(_JS_FUNCTION.finditer(self.text))
+        self.decode_starts = [start for start, _ in self.decodes]
+        self.assignment_starts = [m.start() for m in self.assignments]
+        self.function_starts = [m.start() for m in self.functions]
+        self.statement_ends: dict[int, int] = {}
+
+    def _statement_end(self, assignment: re.Match[str]) -> int:
+        at = assignment.start()
+        if at not in self.statement_ends:
+            self.statement_ends[at] = _balanced_end(self.text, assignment.end(), statement=True)
+        return self.statement_ends[at]
+
+    def _function_at(self, offset: int) -> tuple[str, int, int] | None:
+        """The named function whose body holds ``offset``: its name and parameter list span."""
+        k = bisect.bisect_right(self.function_starts, offset) - 1
+        if k < 0:
+            return None
+        head = self.functions[k]
+        close = _balanced_end(self.text, head.end())
+        body = _JS_FUNCTION_BODY.match(self.text, close + 1)
+        if body is None:
+            return None
+        if body.group(2):
+            start, end = body.end(2), _balanced_end(self.text, body.end(2))
+        elif body.group(1):
+            start, end = body.end(), _balanced_end(self.text, body.end(), statement=True)
+        else:
+            return None
+        if not start <= offset < end:
+            return None
+        return head.group(1) or head.group(2), head.end(), close
+
+    def _holder(self, offset: int) -> tuple[str, int] | None:
+        """The name the value at ``offset`` lands in, and the offset it holds it from."""
+        k = bisect.bisect_right(self.assignment_starts, offset) - 1
+        if k >= 0:
+            assignment = self.assignments[k]
+            if assignment.end() <= offset:
+                end = self._statement_end(assignment)
+                if offset < end:
+                    return assignment.group(1), end
+        # `function decode(s) { return atob(s); }`: the function's name now yields decoded text.
+        returned = self.text.rfind("return", max(0, offset - 200), offset)
+        if returned >= 0 and ";" not in self.text[returned:offset]:
+            function = self._function_at(offset)
+            if function is not None:
+                return function[0], -1
+        return None
+
+    def follow(self) -> None:
+        """Fill ``names`` from every decode, then from every use of a name that holds one."""
+        queue = [(start, (start, end)) for start, end in self.decodes]
+        while queue and len(self.names) < _MAX_FLOW_NAMES:
+            offset, origin = queue.pop()
+            held = self._holder(offset)
+            if held is None or held[0] in self.names:
+                continue
+            name, since = held
+            self.names[name] = (since, origin)
+            uses = re.finditer(rf"(?<![\w$.]){re.escape(name)}(?![\w$])", self.text)
+            for use in islice(uses, _MAX_NAME_USES):
+                if use.start() > since:
+                    queue.append((use.start(), origin))
+
+    def decoded_in(self, start: int, end: int, before: int) -> tuple[int, int] | None:
+        """The decode behind a value read in ``text[start:end]`` by code at offset ``before``."""
+        k = bisect.bisect_left(self.decode_starts, start)
+        if k < len(self.decodes) and self.decode_starts[k] < end:
+            return self.decodes[k]
+        for name in _expression_names(self.text[start:end]):
+            found = self.names.get(name)
+            if found is not None and found[0] < before:
+                return found[1]
+        return None
+
+    def reaches_launch(self, launch: int, args: int) -> tuple[int, int] | None:
+        """The decode whose value is in the arguments of this launch (they start at ``args``),
+        directly or through a parameter of the function around it: `function run(code) {
+        spawn(..., code) }` called as `run(atob(blob))`."""
+        text = self.text
+        close = _balanced_end(text, args)
+        found = self.decoded_in(args, close, launch)
+        if found is not None:
+            return found
+        function = self._function_at(launch)
+        if function is None:
+            return None
+        name, params, params_close = function
+        if not _expression_names(text[params:params_close]) & _expression_names(text[args:close]):
+            return None
+        calls = re.finditer(rf"(?<![\w$.]){re.escape(name)}\s*\(", text)
+        for call in islice(calls, _MAX_NAME_USES):
+            if call.end() != params:  # the declaration itself
+                found = self.decoded_in(call.end(), _balanced_end(text, call.end()), call.start())
+                if found is not None:
+                    return found
+        return None
+
+    def runs_written_file(self) -> tuple[tuple[int, int], tuple[int, int]] | None:
+        """A decoded value written to a file that is run later: the decode, then the launch."""
+        text = self.text
+        written: dict[str, tuple[int, tuple[int, int]]] = {}
+        for call in _JS_WRITE_FILE.finditer(text):
+            close = _balanced_end(text, call.end())
+            target, comma, _ = text[call.end() : close].partition(",")
+            content = call.end() + len(target) + len(comma)
+            origin = self.decoded_in(content, close, call.start()) if comma else None
+            if origin is not None:
+                written[target.strip().strip("'\"`")] = (call.start(), origin)
+        for launch in _JS_LAUNCH.finditer(text) if written else ():
+            args = text[launch.end() : _balanced_end(text, launch.end())]
+            for path, (at, origin) in written.items():
+                run = _JS_RUN_FILE_PREFIX + re.escape(path) + r"(?![\w$.])"
+                if launch.start() > at and re.match(run, args):
+                    return origin, (launch.start(), launch.end())
+        return None
+
+
+def _in_template_value(text: str, at: int) -> bool:
+    """True if ``at`` sits in the ``${...}`` of a template literal: a string, but code."""
+    opened = text.rfind("${", max(0, at - 200), at)
+    return opened >= 0 and "}" not in text[opened:at]
+
+
+def _js_decodes(f: IndexedFile) -> list[tuple[int, int]]:
+    """The spans of the decode calls in ``f`` that are code."""
+    decodes = []
+    for m in islice(_JS_DECODE_SOURCE.finditer(f.text), _MAX_CODE_TRIES):
+        at = m.start()
+        if (
+            f.in_comment(at) or f.in_c_comment(at) or f.in_string(at)
+            or (f.in_c_string(at) and not _in_template_value(f.text, at))
+        ):
+            continue
+        if m.group().startswith("Buffer"):
+            args = f.text[m.end() : _balanced_end(f.text, m.end())]
+            if not _JS_DECODE_ENCODING.search(args):
+                continue
+        decodes.append((m.start(), m.end()))
+    return decodes
+
+
+def _decoded_reaches_spawn(f: IndexedFile) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """The decode and the launch of one file when the decoded value gets there, decode first: in
+    the launch's own arguments, through variables assigned from the decode, through a function that
+    returns it or takes it as an argument, or through a file it was written to."""
+    decodes = _js_decodes(f)
+    if not decodes:
+        return None
+    sinks = list(_matches_in_code(f, _JS_SPAWN_EVAL))
+    # Most bundles that decode something launch nothing: they stop here, before any flow is built.
+    if not sinks and "writeFile" not in f.text:
+        return None
+    flow = _DecodeFlow(f.text, decodes)
+    flow.follow()
+    for sink in sinks:
+        origin = flow.reaches_launch(sink.start(), f.text.index("(", sink.start()) + 1)
+        if origin is not None:
+            return origin, (sink.start(), sink.end())
+    return flow.runs_written_file()
 
 _BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
 _HEX_ESCAPES = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){10,}")
@@ -336,11 +608,11 @@ class ObfuscationScanner(Scanner):
             severity=Severity.HIGH,
             title="Decode-and-spawn (obfuscated payload run as a subprocess)",
             description=(
-                "A file decodes an embedded blob (gzip/brotli/base64/hex) and, in the same file, "
-                "launches a child process with an inline-code flag (e.g. spawn(execPath, "
-                "['-e', stage]) or node -e / python -c). Running decoded text as a spawned "
-                "interpreter hides behavior from review exactly like eval(atob(...)), with the "
-                "execution moved out of process."
+                "A file decodes an embedded blob (gzip/brotli/base64/hex) and passes the result "
+                "to a child process with an inline-code flag (e.g. spawn(execPath, ['-e', stage]) "
+                "or node -e / python -c), or writes it to a file it then runs. Running decoded "
+                "text as a spawned interpreter hides behavior from review exactly like "
+                "eval(atob(...)), with the execution moved out of process."
             ),
             recommendation=(
                 "Decode the payload offline and inspect what it does before trusting this "
@@ -435,20 +707,20 @@ class ObfuscationScanner(Scanner):
 
     @staticmethod
     def _decode_spawn(index: FileIndex) -> list[Evidence]:
-        """Evidence when one JS/TS file both decodes a blob and spawns an interpreter on it.
+        """Evidence when one JS/TS file decodes a blob and spawns an interpreter on it.
 
-        Requires BOTH signals in the same file and both as code (a decode a comment mentions
-        decodes nothing; a spawn in a string literal runs nothing), so a security tool listing
-        the patterns, or a doc example, is not flagged.
+        Both halves must be code (a decode a comment mentions decodes nothing; a spawn in a string
+        literal runs nothing) and the decoded value must reach the spawn: decoding and spawning
+        that merely share a file, a test helper or a polyfill next to a build script, are no
+        decode-and-execute.
         """
         evidence: list[Evidence] = []
         for f in index.select(suffixes=_DECODE_SPAWN_SUFFIXES):
-            dec = _first_in_code(f, _JS_DECODE_SOURCE)
-            sink = _first_in_code(f, _JS_SPAWN_EVAL) if dec else None
-            if not dec or not sink:
+            link = _decoded_reaches_spawn(f)
+            if link is None:
                 continue
-            evidence.append(f.evidence_for_span(dec.start(), dec.end()))
-            evidence.append(f.evidence_for_span(sink.start(), sink.end()))
+            for start, end in link:
+                evidence.append(f.evidence_for_span(start, end))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         return evidence

@@ -294,18 +294,24 @@ _THEFT_START = re.compile(
 # "Attackers may steal credentials". A directive to the agent never has a third-party attacker as
 # its subject with a modal/ability verb. Only the clause leading to the phrase counts: it stops at
 # a sentence boundary and at the last second-person pronoun, so "As an attacker, you can now
-# steal ..." and "Attackers can do this. Steal ..." stay directives.
+# steal ..." and "Attackers can do this. Steal ..." stay directives. A table cell is a clause of its
+# own: "| an attacker can do this | steal the credentials |" hands the agent the second cell.
 _THREAT_ACTOR = re.compile(
     r"(?i)\b(?:attackers?|adversar(?:y|ies)|threat[\s-]actors?|intruders?|hackers?|"
     r"malicious\s+(?:users?|actors?|part(?:y|ies)|insiders?|code|packages?|extensions?|"
-    r"servers?|skills?|tools?|websites?|sites?))\b"
+    r"servers?|skills?|tools?|websites?|sites?)|"
+    # "a compromised host can still steal the private key", "anyone with disk access could ...".
+    r"(?:compromised|hijacked|rogue|infected|backdoored)\s+[\w-]+|"
+    r"an?\s+agent\s+with|any(?:one|body)\s+with|whoever)\b"
 )
+# "Act as a rogue agent that can steal ..." is the directive: a role handed to the reader.
+_ROLE_DIRECTIVE = re.compile(r"(?i)\W*(?:please\s+)?(?:act|behave|pretend|role-?play)\b")
 _ABILITY = re.compile(
     r"(?i)\b(?:can|could|may|might|would|will|(?:is|are)\s+able\s+to|"
     r"(?:try|tries|trying|attempts?|attempting|seeks?)\s+to)\b"
 )
 _SECOND_PERSON = re.compile(r"(?i)\byou(?:rs?|rself|rselves)?\b")
-_CLAUSE_BREAKS = ".;:!?<>\n"
+_CLAUSE_BREAKS = ".;:!?<>|\n"
 _CLAUSE_WINDOW = 300
 
 
@@ -329,6 +335,8 @@ def _describes_attacker(clause: str) -> bool:
     second_person = list(_SECOND_PERSON.finditer(clause))
     if second_person:
         clause = clause[second_person[-1].end():]
+    if _ROLE_DIRECTIVE.match(clause):
+        return False
     actor = _THREAT_ACTOR.search(clause)
     return actor is not None and _ABILITY.search(clause, actor.end()) is not None
 

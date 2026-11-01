@@ -9,9 +9,11 @@ manifest source.
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 from collections.abc import Iterator
+from itertools import islice
 
 from skilltotal import bounded_json
 from skilltotal.autorun import KIND_MCP_SERVER, _strip_jsonc, autorun_commands
@@ -216,22 +218,139 @@ _AUTO_APPROVE_KEYS = ("autoApprove", "alwaysAllow")
 # tell, inside a file that defines an MCP server, is a host-command sink together with a static
 # credential the request's authorization is compared against -- not a token read from the
 # environment or a secret store. An honest server reads its token from os.environ / a secret file.
+# A call that runs a host command. `.exec(` on its own is mostly a RegExp (`/^Bearer (.+)$/.exec(h)`
+# in the very code that reads a header), so a method only counts on the child_process module.
 _SHELL_CALL = re.compile(
-    r"\bsubprocess\.(?:Popen|run|call|check_output|check_call)\b"
-    r"|\bos\.(?:system|popen|spawn\w*)\b"
-    r"|\bchild_process\b|\bexecSync\b|\bspawnSync\b|\.exec(?:File)?(?:Sync)?\s*\(",
-    re.IGNORECASE,
+    r"\bsubprocess\.(?:Popen|run|call|check_output|check_call)\s*\("
+    r"|\bos\.(?:system|popen|spawn\w*)\s*\("
+    r"|(?<![\w$.:])(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)\s*\("
+    r"|\bchild_process\.\w+\s*\("
+    r"|\bpromisify\s*\(\s*(?:[\w$]+\.)?(?:exec|spawn)\w*"
 )
-# The Bearer value must be a literal token (RFC 6750 token68 characters): a placeholder such as
-# "Bearer <token>" in a log-redaction table, or "Bearer $MY_TOKEN" / "Bearer ${VAR}" in help text
-# that tells users to read the token from the environment, is not a hard-coded credential
-# (@anthropic-ai/claude-agent-sdk ships both).
+_CHILD_PROCESS_ALIAS = re.compile(
+    r"""\b(?:const|let|var|import)\s+(?:\*\s+as\s+)?([A-Za-z_$][\w$]*)\s*"""
+    r"""(?:=\s*require\(\s*|from\s+)["'](?:node:)?child_process["']"""
+)
+# The Bearer value must be a literal token (RFC 6750 token68 characters) closed by the quote that
+# opened it: a placeholder such as "Bearer <token>" in a log-redaction table, "Bearer $MY_TOKEN" /
+# "Bearer ${VAR}" in help text that tells users to read the token from the environment
+# (@anthropic-ai/claude-agent-sdk ships both), or a `'Bearer realm="api"'` challenge header is not
+# a hard-coded credential.
 _STATIC_AUTH = re.compile(
-    r"""["']Bearer\s+[A-Za-z0-9._~+/=-]{4,}["']"""
-    r"""|\b(?:authorization|auth|token|bearer|api[_-]?key)\b\s*[!=]=\s*["'][^"']{6,}["']"""
-    r"""|["'][^"']{6,}["']\s*[!=]=\s*\b(?:authorization|auth|token|bearer)\b""",
+    r"""(?P<q1>["'])Bearer\s+(?P<bearer>[A-Za-z0-9._~+/=-]{4,})(?P=q1)"""
+    r"""|\b(?P<name>authorization|auth|token|bearer|api[_-]?key)\b\s*[!=]==?\s*"""
+    r"""(?P<q2>["'])(?P<value>[^"'\n]{6,200})(?P=q2)"""
+    r"""|(?P<q3>["'])(?P<value2>[^"'\n]{6,200})(?P=q3)\s*[!=]==?\s*"""
+    r"""\b(?P<name2>authorization|auth|token|bearer)\b""",
     re.IGNORECASE,
 )
+_BEARER_PREFIX = re.compile(r"(?i)Bearer\s+(?=\S)")
+# Literals that name something rather than hold a secret: placeholders, auth schemes and settings.
+_NOT_A_SECRET = re.compile(
+    r"(?i)(?:^|[-_])your[-_]|example|placeholder|xxx|dummy|sample|redacted|undefined"
+    r"|^(?:null|none|no[-_]?auth|bearer|basic|digest|oauth2?|anonymous|public|disabled|token"
+    r"|api[-_]?key|secret)$"
+)
+# `snake_case`, `kebab-case`, `dotted.name` or `camelCase` words: a keyword or an identifier.
+_WORD_LIKE = re.compile(r"[A-Z]?[a-z]+(?:[-_.]?[A-Z]?[a-z]+)*|[A-Z]+(?:[-_.][A-Z]+)*")
+# A value the request, its headers or the environment supplied, on the compared side itself
+# (`req.headers.authorization`, `ctx.token`) or assigned to that name a little earlier.
+_REQUEST_RECEIVER = re.compile(
+    r"\b(?:req|request|headers?|ctx|context|environ|env)\b[\w$.\[\]()\"'-]*[.\[\"']$", re.IGNORECASE
+)
+_REQUEST_SOURCE = (
+    r"\b(?:req|request|headers?|getHeader|get_header|environ|process\.env|authorization)\b"
+)
+# How far a host command may sit from the static-token check to count as behind it (some 500
+# lines). The rule has no call graph across languages; a check in a template parser and a
+# subprocess call at the other end of a 30,000-line file are not one handler.
+_AUTH_EXEC_REACH = 20_000
+# Static-token matches and uses of a token constant looked at per file.
+_MAX_AUTH_MATCHES = 200
+
+
+def _plain_literal(value: str) -> bool:
+    """False for a value that cannot be a token: an `@keyword`, a path, a template, prose."""
+    return not (
+        value[0] in "@#$%&*<{[(./\\:"
+        or any(ch.isspace() or ch in "${<" for ch in value)
+        or _NOT_A_SECRET.search(value)
+    )
+
+
+def _secret_shaped(value: str) -> bool:
+    """True if a literal looks like a secret by itself: letters with digits, or a long random run.
+
+    Words are not enough: `token == "refresh"` and `auth == "no-auth"` compare a mode or a keyword.
+    """
+    if len(value) < 8:
+        return False
+    if any(ch.isdigit() for ch in value) and any(ch.isalpha() for ch in value):
+        return True
+    return len(value) >= 16 and len(set(value)) >= 10 and not _WORD_LIKE.fullmatch(value)
+
+
+def _compared_to_request(text: str, name_at: int, name: str) -> bool:
+    """True if the variable compared at ``name_at`` holds something from the request or env."""
+    if _REQUEST_RECEIVER.search(text, max(0, name_at - 60), name_at):
+        return True
+    assigned = rf"(?i)\b{re.escape(name)}\b[^=\n]{{0,40}}=(?!=)[^\n]{{0,160}}{_REQUEST_SOURCE}"
+    return re.search(assigned, text[max(0, name_at - _AUTH_EXEC_REACH) : name_at]) is not None
+
+
+def _is_static_credential(f: IndexedFile, auth: re.Match[str]) -> bool:
+    """True if this match of ``_STATIC_AUTH`` is live code holding a hard-coded credential."""
+    bearer = auth.group("bearer")
+    group = "bearer" if bearer else "name" if auth.group("name") else "name2"
+    at = auth.start(group)
+    if f.in_comment(at) or f.in_c_comment(at):
+        return False
+    if bearer:
+        return _plain_literal(bearer)
+    if f.in_string(at) or f.in_c_string(at):
+        return False
+    value = auth.group("value") or auth.group("value2")
+    scheme = _BEARER_PREFIX.match(value)
+    if scheme:  # `authorization != "Bearer abc"`: the same literal, found by the name in front
+        return _plain_literal(value[scheme.end() :])
+    if not _plain_literal(value):
+        return False
+    return _secret_shaped(value) or _compared_to_request(f.text, at, auth.group(group))
+
+
+def _token_uses(text: str, auth: re.Match[str]) -> Iterator[int]:
+    """The literal's own offset, then the uses of the constant it is assigned to, if any: `TOKEN =
+    "Bearer ..."` sits at the top of a file and the check against it in the handler."""
+    yield auth.start()
+    before = text[max(0, auth.start() - 80) : auth.start()]
+    head = re.search(r"([A-Za-z_$][\w$]*)\s*[:=]\s*$", before)
+    if head is not None and auth.group("bearer"):
+        uses = re.finditer(rf"(?<![\w$]){re.escape(head.group(1))}(?![\w$])", text)
+        for use in islice(uses, _MAX_AUTH_MATCHES):
+            yield use.start()
+
+
+def _shell_calls(text: str) -> list[re.Match[str]]:
+    """The host-command calls of one file, in order."""
+    calls = list(_SHELL_CALL.finditer(text))
+    for alias in _CHILD_PROCESS_ALIAS.finditer(text):
+        calls += re.finditer(rf"(?<![\w$.]){re.escape(alias.group(1))}\.\w+\s*\(", text)
+    return sorted(calls, key=lambda m: m.start())
+
+
+def _nearest_shell_call(
+    calls: list[re.Match[str]], offsets: Iterator[int]
+) -> re.Match[str] | None:
+    """The host-command call closest to one of ``offsets``, within ``_AUTH_EXEC_REACH``."""
+    starts = [m.start() for m in calls]
+    best = None
+    for offset in offsets:
+        k = bisect.bisect_left(starts, offset)
+        for near in calls[max(0, k - 1) : k + 1]:
+            distance = abs(near.start() - offset)
+            if distance <= _AUTH_EXEC_REACH and (best is None or distance < best[0]):
+                best = (distance, near)
+    return best[1] if best else None
 
 
 def _concealed_launch_path(value: str) -> str | None:
@@ -858,17 +977,23 @@ class McpScanner(Scanner):
     @staticmethod
     def _scan_static_auth_exec(index: FileIndex) -> list[Evidence]:
         """Evidence for an MCP-server file that runs host commands and gates them on a static,
-        source-embedded token (vs. a token read from the environment / a secret store)."""
+        source-embedded token (vs. a token read from the environment / a secret store). The match
+        must be a real credential check, with a host command near it."""
         evidence: list[Evidence] = []
         for f in index.select(suffixes=CODE_SUFFIXES):
-            if not exposes_mcp_surface(f.text):
+            if _STATIC_AUTH.search(f.text) is None or not exposes_mcp_surface(f.text):
                 continue
-            shell = _SHELL_CALL.search(f.text)
-            auth = _STATIC_AUTH.search(f.text)
-            if shell is None or auth is None:
+            calls = _shell_calls(f.text)
+            if not calls:
                 continue
-            evidence.append(f.evidence_for_span(auth.start(), auth.end()))
-            evidence.append(f.evidence_for_span(shell.start(), shell.end()))
+            for auth in islice(_STATIC_AUTH.finditer(f.text), _MAX_AUTH_MATCHES):
+                if not _is_static_credential(f, auth):
+                    continue
+                shell = _nearest_shell_call(calls, _token_uses(f.text, auth))
+                if shell is not None:
+                    evidence.append(f.evidence_for_span(auth.start(), auth.end()))
+                    evidence.append(f.evidence_for_span(shell.start(), shell.end()))
+                    break
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         return evidence

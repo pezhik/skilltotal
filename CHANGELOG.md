@@ -61,6 +61,11 @@ All notable changes to the SkillTotal engine. Format loosely follows
 - `engine.source_notes(ctx)`: the collection notes `analyze` adds, for a caller that runs
   `analyze_directory` on its own `collect`.
 
+### Fixed
+- `ST-OBF-DECODE-SPAWN`, `ST-MCP-STATIC-AUTH-EXEC`, `ST-PROMPT-INJECTION` and `ST-POSTEX-PERSIST`
+  no longer mark an honest project for constructs that merely resemble them; see
+  `RULES_CHANGELOG.md` (ruleset 88).
+
 ## [0.88.0]
 
 Ruleset 87 checks MCP tool annotations against the code that implements the tool. Report schema

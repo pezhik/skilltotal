@@ -448,7 +448,7 @@ def component_files(root: Path, *, skip_build_output: bool = True) -> Iterator[P
 
 # Directory segments and filename patterns that indicate non-shipped test code.
 _TEST_DIR_SEGMENTS: frozenset[str] = frozenset(
-    {"test", "tests", "__tests__", "__mocks__", "spec", "specs", "e2e"}
+    {"test", "tests", "__tests__", "__mocks__", "spec", "specs", "e2e", "selftest", "selftests"}
 )
 # A compound segment that still names a test tree, in either order: cli-e2e-tests,
 # integration-tests, unit_test, api-spec (suffix form) and test-site, test_data, spec-helpers
@@ -472,6 +472,9 @@ _TEST_FILE_RE = re.compile(
 # `test_render.py`): a hyphenated test script at the repo root carried a literal "IGNORE
 # PREVIOUS INSTRUCTIONS" fixture and scored as a live directive. The `[-_]` boundary keeps
 # `testimonials.md` and `testament.txt` out, as it does for directory names.
+# A self-test named as such: `tools.selftest.mjs`, `selftest.py`, `self-test-all.js`. The boundary
+# keeps a word that merely ends in the letters out (`myselftest.js`).
+_SELF_TEST_FILE_RE = re.compile(r"(?:^|[._-])self[-_]?tests?\.|^self[-_]?tests?[-_]")
 
 
 def is_test_path(relpath: str) -> bool:
@@ -480,7 +483,15 @@ def is_test_path(relpath: str) -> bool:
     for part in parts[:-1]:
         if part in _TEST_DIR_SEGMENTS or _TEST_SEGMENT_RE.fullmatch(part):
             return True
-    return bool(_TEST_FILE_RE.search(parts[-1]))
+    return bool(_TEST_FILE_RE.search(parts[-1]) or _SELF_TEST_FILE_RE.search(parts[-1]))
+
+
+def is_self_test_path(relpath: str) -> bool:
+    """True if a file is a test by a ``selftest`` name alone. Such a file may also be a program's
+    real entry point (a `selftest.js` that package.json names as ``main``), which is behavior."""
+    parts = relpath.lower().split("/")
+    return bool({"selftest", "selftests"} & set(parts[:-1])
+                or _SELF_TEST_FILE_RE.search(parts[-1]))
 
 
 # Data / evaluation / benchmark corpora: reference data, not the component's executed behavior

@@ -72,9 +72,12 @@ _WRITE = (
 # A name written out in full: no variable, placeholder or format field (`$u`, `%1`, `{}`, `<user>`).
 _LITERAL_NAME = r"[^\s\"'`,{}$%<>()\[\]]+"
 _LAUNCHCTL_LOAD =rf"\blaunchctl{_SEP}(?:load|bootstrap|enable)\b"
-# Appending to a file (a shell profile is appended to; a rewrite of it is a dotfiles manager).
+# Appending to a file (a shell profile is appended to; a rewrite of it is a dotfiles manager). A
+# `>>>` is no redirect: it is the marker line of an installer block, here most often on the code
+# that removes the block again.
 _APPEND = (
-    r"\bappendFile|>>|\btee\s+-a\b|\bAdd-Content\b|\bopen\([^)\n]{0,200}?[\"']a\+?[\"']"
+    r"\bappendFile|(?<!>)>>(?!>)|\btee\s+-a\b|\bAdd-Content\b"
+    r"|\bopen\([^)\n]{0,200}?[\"']a\+?[\"']"
     r"|[\"']a\+?[\"']\s*\)|\bmode\s*=\s*[\"']a"
 )
 # Names of the operating system's own vendor and processes, as a third party should never label

