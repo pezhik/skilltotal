@@ -77,6 +77,11 @@ _READ_ONLY_EXCLUDES = frozenset({_WRITE, _DELETE, _EXEC, _MUTATING_REQUEST, _DEL
 _NOT_DESTRUCTIVE_EXCLUDES = frozenset({_DELETE, _DELETE_REQUEST})
 # POST is left out: GraphQL, search and JSON-RPC APIs read through POST.
 _MUTATING_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
+# A file in the temp folder changes nothing the user keeps. A hardcoded "/tmp/x" does not count: it
+# is a fixed path another process can reach first, and the name proves nothing.
+_JS_TEMP_CALL = re.compile(r"(?<![\w$])(?:tmpdir|mkdtemp|mkdtempSync)\s*\(")
+_JS_ASSIGNED_NAME = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?::[^=;\n]{1,60})?=(?![=>])")
+_JS_NAME = re.compile(r"(?<![\w$.])[A-Za-z_$][\w$]*")
 
 # --- written-out commands that change things ----------------------------------------------------
 _MUTATING_PROGRAMS = frozenset(
@@ -451,7 +456,7 @@ class _JsSource:
     ) -> tuple[int, int] | None:
         """The span of the first call in ``body`` whose effect the hint rules out."""
         start, end = body
-        hits = [_first_in(self.effects[kind], start, end) for kind in excluded]
+        hits = [self._first_lasting(kind, body) for kind in excluded]
         for kind in excluded & {_MUTATING_REQUEST, _DELETE_REQUEST}:
             # A fetch / axios / http.request in a body that names the method: the evidence is the
             # request the method belongs to, the last one opened before it.
@@ -462,6 +467,48 @@ class _JsSource:
                 hits.append(own or _first_in(self.requests, start, end))
         found = [h for h in hits if h is not None]
         return min(found) if found else None
+
+    def _first_lasting(self, kind: str, body: tuple[int, int]) -> tuple[int, int] | None:
+        """The first call of ``kind`` in ``body``, past file calls on the temp folder."""
+        start, end = body
+        spans = self.effects[kind]
+        if kind not in (_WRITE, _DELETE):
+            return _first_in(spans, start, end)
+        temp: set[str] | None = None
+        for i in range(bisect.bisect_left(spans, (start, -1)), len(spans)):
+            span = spans[i]
+            if span[0] >= end:
+                break
+            if temp is None:
+                temp = self._temp_names(body)
+            if not self._targets_temp(span, temp):
+                return span
+        return None
+
+    def _temp_names(self, body: tuple[int, int]) -> set[str]:
+        """The names ``body`` assigns from the temp folder, directly or through another such name.
+        An assignment is read once, in file order, so the cost is linear in the body."""
+        view, end = self.view, body[1]
+        names: set[str] = set()
+        for m in _JS_ASSIGNED_NAME.finditer(view, *body):
+            i = m.end()
+            while i < end and view[i] not in ";\n":
+                closes = self.pairs.get(i) if view[i] in "([{" else None
+                i = closes + 1 if closes is not None and closes < end else i + 1
+            value = view[m.end() : i]
+            if _JS_TEMP_CALL.search(value) or names.intersection(_JS_NAME.findall(value)):
+                names.add(m.group(1))
+        return names
+
+    def _targets_temp(self, span: tuple[int, int], temp: set[str]) -> bool:
+        """Whether the path a file call acts on, its first argument, is in the temp folder."""
+        open_at = span[1] - 1
+        close = self.pairs.get(open_at)
+        args = self.top_level_args(open_at, close) if close is not None else []
+        if not args:
+            return False
+        path = self.view[args[0][0] : args[0][1]]
+        return _JS_TEMP_CALL.search(path) is not None or not temp.isdisjoint(_JS_NAME.findall(path))
 
     def _exec_counts(self, m: re.Match[str]) -> bool:
         """Whether a process call contradicts a read-only claim: the tool runs what it is
@@ -711,6 +758,15 @@ def _is_ident_char(view: str, i: int) -> bool:
 
 # --- Python --------------------------------------------------------------------------------------
 _PY_FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
+_FILE_KINDS = frozenset({_WRITE, _DELETE})
+_PY_TEMP_CALLS = frozenset({
+    "gettempdir", "mkdtemp", "mkstemp", "NamedTemporaryFile", "SpooledTemporaryFile",
+    "TemporaryDirectory", "TemporaryFile",
+})
+_PY_TWO_PATH_CALLS = frozenset({
+    "copy", "copy2", "copyfile", "copytree", "link", "move", "rename", "renames", "replace",
+    "symlink",
+})
 
 
 def _py_mismatches(f: IndexedFile) -> list[Evidence]:
@@ -735,6 +791,12 @@ def _py_mismatches(f: IndexedFile) -> list[Evidence]:
             n for stmt in fn.body for n in ast.walk(stmt)
             if isinstance(n, ast.Call) and kinds.get(id(n), frozenset()) & excluded
         ]
+        if hits:
+            temp = _py_temp_names(fn)
+            hits = [
+                c for c in hits
+                if kinds[id(c)] & excluded - _FILE_KINDS or not _py_targets_temp(c, temp)
+            ]
         if not hits:
             continue
         call = min(hits, key=lambda c: (c.lineno, c.col_offset))
@@ -745,6 +807,52 @@ def _py_mismatches(f: IndexedFile) -> list[Evidence]:
 
 
 PyFunction = ast.FunctionDef | ast.AsyncFunctionDef
+
+
+def _py_names(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
+def _py_has_temp_call(node: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and (n.func.attr if isinstance(n.func, ast.Attribute)
+             else getattr(n.func, "id", "")) in _PY_TEMP_CALLS
+        for n in ast.walk(node)
+    )
+
+
+def _py_temp_names(fn: PyFunction) -> set[str]:
+    """The names ``fn`` binds to the temp folder, directly or through another such name."""
+    bindings: list[tuple[int, ast.expr, ast.expr]] = []
+    for stmt in fn.body:
+        for n in ast.walk(stmt):
+            if isinstance(n, ast.Assign):
+                bindings += [(n.lineno, t, n.value) for t in n.targets]
+            elif isinstance(n, (ast.With, ast.AsyncWith)):
+                bindings += [
+                    (n.lineno, i.optional_vars, i.context_expr)
+                    for i in n.items if i.optional_vars is not None
+                ]
+    names: set[str] = set()
+    for _, target, value in sorted(bindings, key=lambda b: b[0]):
+        if isinstance(target, ast.Name) and (_py_has_temp_call(value) or names & _py_names(value)):
+            names.add(target.id)
+    return names
+
+
+def _py_targets_temp(call: ast.Call, temp: set[str]) -> bool:
+    """Whether the path a file call acts on is in the temp folder. That is its first argument or
+    what it is called on; a move or copy leaves its result at its last argument."""
+    func = call.func
+    leaf = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if leaf in _PY_TWO_PATH_CALLS:
+        targets: list[ast.expr] = call.args[-1:]
+    else:
+        targets = call.args[:1]
+        if isinstance(func, ast.Attribute):
+            targets.append(func.value)
+    return any(_py_has_temp_call(t) or temp & _py_names(t) for t in targets)
 
 
 def _py_tools(tree: ast.Module) -> list[tuple[PyFunction, dict[str, Hint]]]:

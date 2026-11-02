@@ -716,3 +716,109 @@ server.registerTool(
     lines = {e.line_start for e in finding.evidence}
     assert _line_of(source, 'method: "DELETE"') in lines
     assert _line_of(source, "fetch(`${base}/env`") not in lines
+
+
+TS_TEMP_TOOL = TS_HEAD + """
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+server.registerTool(
+  "check",
+  { description: "Check", annotations: { readOnlyHint: true } },
+  async ({ doc, out }) => {
+%s
+    return { content: [] };
+  },
+);
+"""
+TEMP_BODIES_TS = {
+    "file in the temp folder": """
+    const scratch = join(tmpdir(), `check-${Date.now()}.json`);
+    await writeFile(scratch, doc);
+    await unlink(scratch);""",
+    "name assigned after its declaration": """
+    let dir;
+    try {
+      dir = await mkdtemp(join(tmpdir(), "check-"));
+      const file = join(dir, "doc.json");
+      await writeFile(file, doc, "utf8");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }""",
+    "assignment over several lines": """
+    const scratch = join(
+      tmpdir(),
+      "check.json",
+    );
+    await writeFile(scratch, doc);""",
+    "temp folder written into the call": """
+    await writeFile(join(tmpdir(), "check.json"), doc);""",
+}
+LASTING_BODIES_TS = {
+    "a path the caller gave": """
+    const scratch = join(tmpdir(), "check.json");
+    await writeFile(scratch, doc);
+    await writeFile(out, doc);""",
+    "a folder that only sits next to a temp name": """
+    const scratch = join(tmpdir(), "check.json");
+    const report = join(out, "report.json");
+    await writeFile(report, doc);""",
+    "a fixed path that merely says tmp": """
+    await writeFile("/tmp/check.json", doc);""",
+}
+PY_TEMP_TOOL = PY_HEAD + """
+import tempfile
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
+def check(doc: str, out: str) -> str:
+%s
+    return "ok"
+"""
+TEMP_BODIES_PY = {
+    "named file then unlink": """
+    with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+        f.write(doc)
+        tmp_path = f.name
+    os.unlink(tmp_path)""",
+    "file inside a temporary directory": """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dest = os.path.join(tmpdir, "doc.yaml")
+        with open(dest, "w") as f:
+            f.write(doc)""",
+    "mkdtemp then rmtree": """
+    work = tempfile.mkdtemp()
+    Path(work, "doc").write_text(doc)
+    shutil.rmtree(work)""",
+}
+LASTING_BODIES_PY = {
+    "a path the caller gave": """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        Path(out).write_text(doc)""",
+    "a temp file moved out to the caller's path": """
+    work = tempfile.mkdtemp()
+    shutil.move(os.path.join(work, "doc"), out)""",
+}
+
+
+@pytest.mark.parametrize("case", sorted(TEMP_BODIES_TS))
+def test_temp_files_do_not_contradict_read_only_ts(tmp_path: Path, case: str):
+    report = _scan(tmp_path, {"index.ts": TS_TEMP_TOOL % TEMP_BODIES_TS[case]})
+    assert _finding(report) is None, case
+
+
+@pytest.mark.parametrize("case", sorted(LASTING_BODIES_TS))
+def test_lasting_writes_beside_temp_files_still_fire_ts(tmp_path: Path, case: str):
+    report = _scan(tmp_path, {"index.ts": TS_TEMP_TOOL % LASTING_BODIES_TS[case]})
+    assert _finding(report) is not None, case
+
+
+@pytest.mark.parametrize("case", sorted(TEMP_BODIES_PY))
+def test_temp_files_do_not_contradict_read_only_py(tmp_path: Path, case: str):
+    report = _scan(tmp_path, {"server.py": PY_TEMP_TOOL % TEMP_BODIES_PY[case]})
+    assert _finding(report) is None, case
+
+
+@pytest.mark.parametrize("case", sorted(LASTING_BODIES_PY))
+def test_lasting_writes_beside_temp_files_still_fire_py(tmp_path: Path, case: str):
+    report = _scan(tmp_path, {"server.py": PY_TEMP_TOOL % LASTING_BODIES_PY[case]})
+    assert _finding(report) is not None, case

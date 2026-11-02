@@ -14,6 +14,10 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   app's own decrypt helper thousands of lines apart, and that pair is not a loader. A value that
   travels through variables, a function's return or a runner's parameter still fires at any
   distance, and every sink in the file is read, not only the first. Python is unchanged.
+- **`ST-MCP-ANNOTATION-MISMATCH`** (narrowed): a file call on the temp folder contradicts no hint,
+  since it changes nothing the user keeps. The path must come from `tmpdir()` or `mkdtemp` in
+  Node.js, or the `tempfile` module in Python, directly or through names the handler assigns. A
+  hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
 
