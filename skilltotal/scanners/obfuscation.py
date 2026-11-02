@@ -507,7 +507,34 @@ def _decoded_reaches_spawn(f: IndexedFile) -> tuple[tuple[int, int], tuple[int, 
             return origin, (sink.start(), sink.end())
     return flow.runs_written_file()
 
-_BASE64_BLOB = re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
+
+def _decrypted_reaches_sink(f: IndexedFile) -> tuple[tuple[int, int], tuple[int, int]] | None:
+    """The decryption and the dynamic-code sink of one file when they belong together.
+
+    Python files are read as a pair, as they are not bundled. In JavaScript the decrypted value
+    must get to the sink, or the two must sit within ``_FLOW_REACH`` of each other: that keeps a
+    loader whose value leaves through a stream callback, which the name flow does not follow.
+    """
+    decrypts = [m.span() for m in _matches_in_code(f, _DECRYPT_CONSTRUCT)]
+    sinks = list(_matches_in_code(f, _EXEC_SINK)) if decrypts else []
+    if not sinks:
+        return None
+    if f.suffix in _PY_SUFFIXES:
+        return decrypts[0], sinks[0].span()
+    for sink in sinks:
+        for decrypt in decrypts:
+            if abs(sink.start() - decrypt[0]) < _FLOW_REACH:
+                return decrypt, sink.span()
+    flow = _DecodeFlow(f.text, decrypts)
+    flow.follow()
+    for sink in sinks:
+        origin = flow.reaches_launch(sink.start(), sink.end())
+        if origin is not None:
+            return origin, sink.span()
+    return None
+
+
+_BASE64_BLOB =re.compile(r"[A-Za-z0-9+/]{160,}={0,2}")
 _HEX_ESCAPES = re.compile(r"(?:\\x[0-9A-Fa-f]{2}){10,}")
 _MINIFIED_LINE_CHARS = 2000
 
@@ -730,20 +757,21 @@ class ObfuscationScanner(Scanner):
         """Evidence when one code file both decrypts data and runs code through a dynamic sink.
 
         Requires BOTH signals in the same file (the staged loader decrypts, then executes the
-        plaintext). Engine-level string/comment demotion (code_context) drops matches that are
-        only pattern literals or doc examples, so a security tool listing these patterns in a
-        message is not flagged.
+        plaintext). In JavaScript the two must also be linked, since a bundle holds a schema
+        validator's `new Function` and the app's own decrypt helper thousands of lines apart.
+        Engine-level string/comment demotion (code_context) drops matches that are only pattern
+        literals or doc examples, so a security tool listing these patterns in a message is not
+        flagged.
         """
         evidence: list[Evidence] = []
         for f in index.select(suffixes=_DECRYPT_EXEC_SUFFIXES):
             # Each half must be code: a decryption a comment mentions decrypts nothing, so it does
             # not pair with an unrelated `eval` elsewhere in the file.
-            dec = _first_in_code(f, _DECRYPT_CONSTRUCT)
-            sink = _first_in_code(f, _EXEC_SINK) if dec else None
-            if not dec or not sink:
+            pair = _decrypted_reaches_sink(f)
+            if pair is None:
                 continue
-            evidence.append(f.evidence_for_span(dec.start(), dec.end()))
-            evidence.append(f.evidence_for_span(sink.start(), sink.end()))
+            for start, end in pair:
+                evidence.append(f.evidence_for_span(start, end))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         return evidence

@@ -9,6 +9,13 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 - **`ST-POSTEX-PERSIST`** (narrowed): a redirect into `/dev/null`, a standard stream or the terminal
   discards its output and is no write, so a script that checks for a file under `/etc/cron.d/` or
   removes one is silent. A real write beside such a redirect still fires.
+- **`ST-OBF-DECRYPT-EXEC`** (narrowed): in JavaScript the decrypted value must reach the code sink,
+  or the two must sit close together. A bundle holds a schema validator's `new Function` and an
+  app's own decrypt helper thousands of lines apart, and that pair is not a loader. A value that
+  travels through variables, a function's return or a runner's parameter still fires at any
+  distance, and every sink in the file is read, not only the first. Python is unchanged.
+- **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
+  that sends it, not the first request in the handler.
 
 ## ruleset 89 (engine 0.90.0)
 

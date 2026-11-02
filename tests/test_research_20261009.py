@@ -109,6 +109,91 @@ def test_decrypt_to_store_stays_clean(tmp_path: Path):
     assert not any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
 
 
+# A bundle holds its libraries: a schema validator's code generator lives in the same file as the
+# app's own decrypt helper, thousands of lines from it, and neither touches the other.
+_FILLER = "// filler line between two modules of a bundle\n" * 200
+
+
+def _decrypt_helper() -> str:
+    return (
+        "function decrypt(data, key, iv) {\n"
+        "  const decipher = createDecipheriv('aes-256-gcm', key, iv);\n"
+        "  let decrypted = decipher.update(data, 'hex', 'utf8');\n"
+        "  decrypted += decipher.final('utf8');\n"
+        "  return decrypted;\n"
+        "}\n"
+    )
+
+
+def test_decrypt_and_unrelated_sink_far_apart_in_a_bundle_stay_clean(tmp_path: Path):
+    content = (
+        "function compileValidator(sch) {\n"
+        "  const sourceCode = generate(sch);\n"
+        "  return new Function('self', 'scope', sourceCode);\n"
+        "}\n"
+        + _FILLER + _decrypt_helper() + "module.exports = { compileValidator, decrypt };\n"
+    )
+    result = _scan_obf(tmp_path, "server.js", content)
+    assert not any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
+
+
+def test_decrypted_value_run_far_from_its_decrypt_is_flagged(tmp_path: Path):
+    content = _decrypt_helper() + _FILLER + (
+        "const stage = decrypt(blob, key, iv);\n"
+        "new Function('require', stage)(require);\n"
+    )
+    result = _scan_obf(tmp_path, "server.js", content)
+    assert any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
+
+
+def test_decrypted_value_passed_to_a_runner_far_away_is_flagged(tmp_path: Path):
+    content = (
+        "function run(code) {\n"
+        "  return vm.runInThisContext(code);\n"
+        "}\n"
+        + _FILLER + _decrypt_helper() + _FILLER + "run(decrypt(blob, key, iv));\n"
+    )
+    result = _scan_obf(tmp_path, "server.js", content)
+    assert any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
+
+
+def test_second_sink_in_a_bundle_is_read_when_the_first_is_a_library(tmp_path: Path):
+    content = (
+        "function compileValidator(sch) {\n"
+        "  return new Function('self', generate(sch));\n"
+        "}\n"
+        + _FILLER + _decrypt_helper() + _FILLER
+        + "eval(decrypt(blob, key, iv));\n"
+    )
+    result = _scan_obf(tmp_path, "server.js", content)
+    assert any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
+
+
+def test_stream_decrypt_next_to_its_sink_is_flagged(tmp_path: Path):
+    # The value leaves through a callback, which the name flow does not follow: the two sitting
+    # together in one loader is what keeps this shape reported.
+    content = (
+        "const d = crypto.createDecipheriv('aes-256-cbc', key, iv);\n"
+        "let out = '';\n"
+        "d.on('data', (c) => { out += c; });\n"
+        "d.on('end', () => new Function(out)());\n"
+        "d.end(blob);\n"
+    )
+    result = _scan_obf(tmp_path, "load.js", content)
+    assert any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
+
+
+def test_python_decrypt_and_eval_in_one_file_stay_flagged(tmp_path: Path):
+    content = (
+        "from cryptography.fernet import Fernet\n"
+        "stage = Fernet(key).decrypt(blob)\n"
+        + "# filler line\n" * 400
+        + "eval(stage)\n"
+    )
+    result = _scan_obf(tmp_path, "load.py", content)
+    assert any(f.id == "ST-OBF-DECRYPT-EXEC" for f in result.findings)
+
+
 def test_new_function_without_decrypt_stays_clean(tmp_path: Path):
     content = (
         "function compile(tmpl) {\n"

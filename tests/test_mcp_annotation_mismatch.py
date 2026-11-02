@@ -694,3 +694,25 @@ def test_crafted_files_are_read_in_linear_time(tmp_path: Path, case: str):
     # Generous, so a busy machine does not make it flaky: quadratic reading of these files
     # takes minutes.
     assert _scanner_seconds(tmp_path, name, text) < 20.0, case
+
+
+def test_evidence_names_the_request_that_sends_the_method(tmp_path: Path):
+    source = TS_HEAD + """
+server.registerTool(
+  "manage_env",
+  { description: "Manage env", annotations: { destructiveHint: false } },
+  async ({ action }) => {
+    if (action === "list") {
+      const res = await fetch(`${base}/env`, { headers });
+      return { content: [{ type: "text", text: await res.text() }] };
+    }
+    const res = await fetch(`${base}/env/${action}`, { method: "DELETE", headers });
+    return { content: [{ type: "text", text: await res.text() }] };
+  },
+);
+"""
+    finding = _finding(_scan(tmp_path, {"index.ts": source}))
+    assert finding is not None
+    lines = {e.line_start for e in finding.evidence}
+    assert _line_of(source, 'method: "DELETE"') in lines
+    assert _line_of(source, "fetch(`${base}/env`") not in lines

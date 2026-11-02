@@ -453,10 +453,13 @@ class _JsSource:
         start, end = body
         hits = [_first_in(self.effects[kind], start, end) for kind in excluded]
         for kind in excluded & {_MUTATING_REQUEST, _DELETE_REQUEST}:
-            # A fetch / axios / http.request in a body that names the method.
+            # A fetch / axios / http.request in a body that names the method: the evidence is the
+            # request the method belongs to, the last one opened before it.
             i = bisect.bisect_left(self.methods[kind], start)
             if i < len(self.methods[kind]) and self.methods[kind][i] < end:
-                hits.append(_first_in(self.requests, start, end))
+                at = bisect.bisect_right(self.requests, (self.methods[kind][i], -1)) - 1
+                own = self.requests[at] if at >= 0 and self.requests[at][0] >= start else None
+                hits.append(own or _first_in(self.requests, start, end))
         found = [h for h in hits if h is not None]
         return min(found) if found else None
 
