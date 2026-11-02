@@ -4,7 +4,7 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.90.0]
 
 ### Changed
 - Ruleset 89. The Node.js rules read compiled output: calls behind tsc, esbuild, Babel and swc
