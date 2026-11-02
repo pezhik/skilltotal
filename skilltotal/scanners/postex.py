@@ -59,13 +59,14 @@ _I = re.IGNORECASE
 # (`", ["` after the program name of `spawn("code", ["tunnel", ...])`).
 _SEP = r"[\"'`\s,\[]{1,6}"
 
-# Code that writes a file: a write call, a shell redirect into a path, or open() for writing.
+# Code that writes a file: a write call, a shell redirect into a path, or open() for writing. A
+# redirect into /dev/null, a standard stream or the terminal discards the output and writes nothing.
 _WRITE = (
     r"\b(?:appendFile|writeFile|createWriteStream|copyFile|outputFile|"
     r"write_text|write_bytes|Add-Content|Set-Content|Out-File|Copy-Item|New-Item|plistlib\.dump"
     r"|shutil\.copy\w*)"
     r"|\b(?:cp|mv|copy|move|tee)\s+[-\w\"'$~/%]"
-    r"|(?<![=>\-<])>>?\s*[\"'$~/%]"
+    r"|(?<![=>\-<])>>?\s*(?![\"']?/dev/(?:null|stdout|stderr|tty)\b)[\"'$~/%]"
     r"|\.write\("
     r"|\bopen\([^)\n]{0,200}?[\"'][wa]b?\+?[\"']"
 )

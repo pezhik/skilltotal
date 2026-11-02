@@ -168,7 +168,10 @@ def main() -> int:
     version = _engine_version(skilltotal, base_env)
     print(f"claude: {_run([claude, '--version']).stdout.decode().strip()}  skilltotal: {version}")
 
-    with tempfile.TemporaryDirectory(prefix="st-plugin-e2e-") as tmp:
+    # A session starts the sentinel's sweep in the background, up to 20 minutes, and it holds a lock
+    # file in `cache` after the last case ends. On Windows that folder cannot be removed yet, and
+    # a leftover folder must not fail a run whose every case passed.
+    with tempfile.TemporaryDirectory(prefix="st-plugin-e2e-", ignore_cleanup_errors=True) as tmp:
         tmp = Path(tmp)
         plugin, shims, cache, work = (tmp / d for d in ("plugin", "shims", "cache", "work"))
         for d in (plugin, shims, cache, work):

@@ -4,6 +4,12 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 90 (unreleased)
+
+- **`ST-POSTEX-PERSIST`** (narrowed): a redirect into `/dev/null`, a standard stream or the terminal
+  discards its output and is no write, so a script that checks for a file under `/etc/cron.d/` or
+  removes one is silent. A real write beside such a redirect still fires.
+
 ## ruleset 89 (engine 0.90.0)
 
 The Node.js rules read what npm packages ship. Published code is compiled, and the rules read the

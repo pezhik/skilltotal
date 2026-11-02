@@ -116,6 +116,10 @@ def test_remote_access_silent(tmp_path: Path, name: str, text: str):
     ("a.js", 'fs.copyFileSync(src, path.join(appData, "Microsoft\\\\Windows\\\\Start Menu\\\\'
              'Programs\\\\Startup\\\\u.cmd"));\n'),
     ("a.sh", "echo 'source ~/.x/init.sh' >> ~/.zshrc\n"),
+    ("a.sh", 'echo "* * * * * root /opt/x" > /etc/cron.d/x\n'),
+    # A discarded redirect next to a real write does not hide the write.
+    ("a.sh", 'id >/dev/null\necho "* * * * * root /opt/x" > /etc/cron.d/x\n'),
+    ("a.sh", "docker version >/dev/null && cp x.job /etc/cron.d/x\n"),
 ])
 def test_persistence_fires(tmp_path: Path, name: str, text: str):
     assert "ST-POSTEX-PERSIST" in _ids(_scan(tmp_path, name, text))
@@ -125,6 +129,10 @@ def test_persistence_fires(tmp_path: Path, name: str, text: str):
     # Reading or listing autostart locations writes nothing.
     ("a.js", 'const agents = fs.readdirSync(path.join(home, "Library/LaunchAgents"));\n'),
     ("a.sh", "crontab -l | grep backup\n"),
+    # Output thrown away is no write, so a check or a removal stays silent.
+    ("a.sh", "docker version >/dev/null && test -f /etc/cron.d/x\n"),
+    ("a.sh", "test -f /etc/cron.d/x 2>/dev/null || exit 1\n"),
+    ("a.sh", 'ls /etc/cron.d/x > "/dev/null"\nsudo rm -f /etc/cron.d/x\n'),
     ("a.js", 'const out = execSync("reg query HKCU\\\\Software\\\\Microsoft\\\\Windows\\\\'
              'CurrentVersion\\\\Run");\n'),
     ("a.sh", 'grep -q init ~/.zshrc && echo "already set up"\n'),
