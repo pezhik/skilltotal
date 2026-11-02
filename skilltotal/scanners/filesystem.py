@@ -52,6 +52,7 @@ class FilesystemScanner(PatternScanner):
             # none. Comment matches are demoted; code, strings included, stays in scope.
             code_context="comments",
             suffixes=NODE_SUFFIXES,
+            node_interop=True,
             pattern=alternation(
                 r"\bfs\.readFile(?:Sync)?\s*\(",
                 r"\bfs\.createReadStream\s*\(",
@@ -70,6 +71,7 @@ class FilesystemScanner(PatternScanner):
             capability=Capability.FILESYSTEM_WRITE,
             code_context="comments",
             suffixes=NODE_SUFFIXES,
+            node_interop=True,
             pattern=alternation(*NODE_FS_WRITE_CALLS),
         ),
     ]

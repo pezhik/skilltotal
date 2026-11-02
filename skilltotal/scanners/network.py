@@ -37,6 +37,7 @@ class NetworkScanner(PatternScanner):
             # A JSDoc example or a `// … axios …` note describes a request; it sends none.
             code_context="comments",
             suffixes=NODE_SUFFIXES,
+            node_interop=True,
             pattern=alternation(
                 r"\bfetch\s*\(",
                 r"\baxios\b",

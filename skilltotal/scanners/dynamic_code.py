@@ -36,6 +36,7 @@ class DynamicCodeScanner(PatternScanner):
             # "guarded string eval (no DOM types)" was reported as dynamic execution.
             code_context="comments",
             suffixes=NODE_SUFFIXES,
+            node_interop=True,
             pattern=alternation(
                 r"\beval\s*\(",
                 r"\bnew\s+Function\s*\(",

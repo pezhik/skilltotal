@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.89.0 · ruleset 88 · Python 3.14 · offline corpus.
+Engine 0.89.0 · ruleset 89 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (165/165 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/127 benign samples wrongly flagged)
+- **recall: 100.0%** (168/168 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/129 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -28,6 +28,7 @@ Engine 0.89.0 · ruleset 88 · Python 3.14 · offline corpus.
 | agent-dotenv-exec | 100% |
 | cli-relay | 100% |
 | clipboard-swap | 100% |
+| compiled-node-output | 100% |
 | credential-exfil | 100% |
 | decode-exec | 100% |
 | decode-spawn | 100% |
@@ -80,9 +81,9 @@ Engine 0.89.0 · ruleset 88 · Python 3.14 · offline corpus.
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
 | AST01 | 26 | 32 | 24 | 4 |
-| AST02 | 20 | 16 | 4 | 1 |
+| AST02 | 20 | 17 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
-| AST04 | 22 | 3 | 8 | 0 |
+| AST04 | 24 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -93,6 +94,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 
 | rule | class | fired on malicious samples | fired on benign samples | rule samples: fired | rule samples: stayed silent |
 |---|---|---|---|---|---|
+| `ST-FS-NODE-WRITE` | - | 9 | 5 | 2/2 | 1/1 |
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 3 | 0 | - | - |
@@ -140,16 +142,16 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-AGENT-AUTORUN-REMOTE` | AST02 | 5 | 0 | - | - |
 | `ST-AGENT-GITCONFIG-EXEC-REMOTE` | AST02 | 0 | 0 | - | - |
 | `ST-GIT-HOOK-PERSIST` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-DROPPER` | AST02 | 10 | 0 | 1/1 | 1/1 |
+| `ST-INSTALL-DROPPER` | AST02 | 11 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 20 | 5 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 21 | 5 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-PREPARE` | AST02 | 0 | 3 | 1/1 | 1/1 |
 | `ST-INSTALL-PY` | AST02 | 3 | 0 | 1/1 | 1/1 |
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | - | - |
 | `ST-NPM-INSTALL-PUBLISH` | AST02 | 2 | 0 | - | - |
 | `ST-NPM-URL-DEP` | AST02 | 0 | 0 | - | - |
 | `ST-SHELL-PIPE-EXEC` | AST02 | 2 | 2 | 1/1 | 1/1 |
-| `ST-SHELL-PIPE-EXEC-NODE` | AST02 | 3 | 0 | - | - |
+| `ST-SHELL-PIPE-EXEC-NODE` | AST02 | 4 | 0 | - | - |
 | `ST-SHELL-PIPE-EXEC-PY` | AST02 | 0 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC` | AST02 | 0 | 3 | - | - |
 | `ST-TYPOSQUAT` | AST02 | 1 | 0 | 2/2 | 1/1 |
@@ -161,7 +163,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-DANGEROUS-TOOL` | AST03 | 0 | 0 | 3/3 | 2/2 |
 | `ST-MCP-OVERBROAD-SCOPE` | AST03 | 0 | 0 | 1/1 | 1/1 |
 | `ST-MCP-SERVER-EXEC` | AST03 | 5 | 3 | 3/3 | 2/2 |
-| `ST-MCP-ANNOTATION-MISMATCH` | AST03, AST04 | 0 | 0 | 2/2 | 1/1 |
+| `ST-MCP-ANNOTATION-MISMATCH` | AST03, AST04 | 0 | 0 | 5/5 | 3/3 |
 | `ST-SKILL-CAP-MISMATCH` | AST03, AST04 | 1 | 2 | - | - |
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
 | `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 1 | - | - |
@@ -172,12 +174,12 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-SAMPLING-INJECTION` | AST04 | 1 | 0 | - | - |
 | `ST-MCP-TOOL-POISONING` | AST04 | 12 | 0 | - | - |
 | `ST-MCP-TOOL-SHADOWING` | AST04 | 0 | 0 | - | - |
-| `ST-PROMPT-INJECTION` | AST04 | 19 | 0 | - | - |
+| `ST-PROMPT-INJECTION` | AST04 | 21 | 0 | - | - |
 | `ST-PROMPT-WEAK` | AST04 | 0 | 0 | - | - |
 | `ST-SKILL-AUDIT-OVERRIDE` | AST04 | 2 | 0 | - | - |
 | `ST-DESERIALIZE-PY` | AST05 | 0 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-74 of 84 rules fire on at least one sample.
+75 of 85 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-NPM-GIT-DEP`, `ST-NPM-URL-DEP`, `ST-SHELL-PIPE-EXEC-PY`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

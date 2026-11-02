@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+### Changed
+- Ruleset 89. The Node.js rules read compiled output: calls behind tsc, esbuild, Babel and swc
+  interop (`fs_1.default.writeFileSync(`, `(0, child_process_1.execSync)(`) are matched through the
+  file's own `require` or `import` of the module, so a package that ships only `dist/` reports what
+  its source would. `ST-MCP-ANNOTATION-MISMATCH` now scores in `dist/` and `build/`, except in
+  minified files and vendored paths.
+
+### Fixed
+- A test string holding an injection phrase in a page's `<script>` bundle is no longer read as a
+  directive: the JavaScript in HTML script blocks gets the same string and comment handling as a
+  `.js` file.
+
 ## [0.89.0]
 
 ### Added

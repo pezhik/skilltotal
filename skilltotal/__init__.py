@@ -43,7 +43,7 @@ def __getattr__(name: str) -> object:
 __version__ = "0.89.0"
 ENGINE_VERSION = __version__
 REPORT_SCHEMA_VERSION = "1.10"
-RULESET_VERSION = 88
+RULESET_VERSION = 89
 
 __all__ = [
     "__version__",

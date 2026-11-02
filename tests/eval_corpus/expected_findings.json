@@ -183,6 +183,10 @@
  "negative/AST02/agent-config-autorun/lint-hook-status-line": [
   "ST-AGENT-AUTORUN"
  ],
+ "negative/AST02/compiled-node-output/tsc-pinned-tool-run": [
+  "ST-FS-NODE-READ",
+  "ST-SHELL-NODE"
+ ],
  "negative/AST02/decode-spawn/cli-token-git": [
   "ST-SHELL-NODE"
  ],
@@ -279,6 +283,7 @@
  "negative/AST04/mcp-tool-poisoning/ts-guard-server-patterns": [
   "ST-MCP-DETECTED"
  ],
+ "negative/AST04/prompt-injection/html-bundle-test-strings": [],
  "negative/AST04/prompt-injection/readme-describes-threat": [],
  "negative/AST04/prompt-injection/reference-cites-example": [],
  "negative/AST04/prompt-injection/reference-negated-defensive": [],
@@ -751,6 +756,15 @@
   "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
  ],
+ "positive/AST02/compiled-node-output/tsc-postinstall-pipe-to-shell": [
+  "ST-CMDI-NODE",
+  "ST-FS-NODE-READ",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-SENS-PATH",
+  "ST-SHELL-NODE",
+  "ST-SHELL-PIPE-EXEC-NODE"
+ ],
  "positive/AST02/decode-spawn/gunzip-detached-worker": [
   "ST-OBF-DECODE-SPAWN",
   "ST-SHELL-NODE"
@@ -1015,6 +1029,12 @@
  "positive/AST04/prompt-injection/evasion-zerowidth": [
   "ST-CONVERGENCE",
   "ST-HIDDEN-UNICODE",
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/html-comment-for-agent": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/html-data-block-for-agent": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-attacker-roleplay": [

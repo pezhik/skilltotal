@@ -77,7 +77,8 @@ every dependency.
   PUT/PATCH/DELETE request, or runs a command it is handed or one that changes things, or
   annotated `destructiveHint: false` whose handler deletes files or sends a DELETE request
   (`ST-MCP-ANNOTATION-MISMATCH`). Clients read these hints to decide which calls run without
-  asking.
+  asking. The check also reads a package's compiled `dist/` and `build/` output, outside
+  minified files and vendored paths.
 - Untrusted input (environment, `sys.argv`, a request/response body) flowing into `exec` or a
   shell: a traced path, not just a dangerous API in isolation
 - Code that opens a way into the machine (a reverse tunnel to the local SSH port, a key written

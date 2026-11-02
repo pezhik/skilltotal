@@ -350,8 +350,9 @@ def analyze_directory(
     findings, provider_review = _split_own_provider_reads(findings, component)
     needs_review.extend(provider_review)
     if published:
+        minified = frozenset(f.relpath for f in index.files if _is_minified(f.name, f.text))
         findings, build_review = _hold_out(
-            install_files, _split_build_output_evidence, findings, bundles,
+            install_files, _split_build_output_evidence, findings, bundles, minified,
         )
         needs_review.extend(build_review)
     else:
@@ -1365,11 +1366,20 @@ _BUILD_OUTPUT_EXEMPT: frozenset[str] = frozenset({
     "ST-POSTEX-REMOTE-ACCESS", "ST-POSTEX-PERSIST", "ST-POSTEX-MASQUERADE", "ST-POSTEX-BEACON",
     "ST-POSTEX-EVASION",
 })
+# A rule that holds in compiled output only where that output is the package's own code. A tool's
+# hint and its handler are two facts in one registration, and tsc keeps both, so a contradiction in
+# `dist/index.js` is as true as in `src/index.ts` and the registry's npm servers ship nothing else.
+# A minified file or a copied-in dependency is someone else's code or cannot be read: still demoted.
+_BUILD_OUTPUT_OWN_CODE_RULES: frozenset[str] = frozenset({"ST-MCP-ANNOTATION-MISMATCH"})
+_THIRD_PARTY_DIRS: frozenset[str] = frozenset(
+    {"node_modules", "vendor", "vendors", "vendored", "third_party", "third-party"}
+)
 
 
 def _split_build_output_evidence(
     findings: list[Finding],
     bundles: frozenset[str] = frozenset(),
+    minified: frozenset[str] = frozenset(),
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """In a published package's build output, keep capability findings and demote risk claims.
 
@@ -1392,10 +1402,16 @@ def _split_build_output_evidence(
     before synthesis so a demoted secret cannot feed ``ST-COMBO-EXFIL``.
 
     ``bundles`` are further files to judge the same way wherever they are filed: the minified
-    entry points of a VS Code extension (``extension.js`` at the package root).
+    entry points of a VS Code extension (``extension.js`` at the package root). ``minified`` are
+    the minified files among those read; see ``_BUILD_OUTPUT_OWN_CODE_RULES``.
     """
     def built_output(e: Evidence) -> bool:
         return e.file in bundles or is_build_output_path(e.file)
+
+    def not_own_code(e: Evidence) -> bool:
+        return built_output(e) and (
+            e.file in minified or not _THIRD_PARTY_DIRS.isdisjoint(e.file.split("/"))
+        )
 
     kept: list[Finding] = []
     review: list[NeedsReview] = []
@@ -1406,8 +1422,9 @@ def _split_build_output_evidence(
         if _THREAT_CLASS_BY_ID.get(finding.id, ThreatClass.CAPABILITY) == ThreatClass.CAPABILITY:
             kept.append(finding)
             continue
-        prod = [e for e in finding.evidence if not built_output(e)]
-        built = [e for e in finding.evidence if built_output(e)]
+        demoted = not_own_code if finding.id in _BUILD_OUTPUT_OWN_CODE_RULES else built_output
+        prod = [e for e in finding.evidence if not demoted(e)]
+        built = [e for e in finding.evidence if demoted(e)]
         if prod:
             kept.append(_finding_with_evidence(finding, prod))
         if built:

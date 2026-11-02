@@ -132,6 +132,8 @@ detection patterns. There are ten `_split_*` layers (`grep '^def _split_' skillt
   working tree or checkout is how the file is meant to be used).
 - `_split_build_output_evidence`: in a published package's build output, capability findings stay
   and risk claims are demoted, because bundling erases the paths the other layers rely on.
+  `ST-MCP-ANNOTATION-MISMATCH` stays scored there, outside minified files and vendored paths: a
+  tool's hint and its handler are the package's own code, and tsc keeps both.
 - `_split_structured_data_evidence`: code-pattern and injection matches in JSON/YAML/TOML data
   files; MCP manifests and other agent-instruction surfaces are excluded.
 - `_split_example_evidence`: example, demo and benchmark scaffolding.

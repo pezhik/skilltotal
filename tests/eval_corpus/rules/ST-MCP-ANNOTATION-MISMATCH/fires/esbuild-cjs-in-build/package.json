@@ -1,0 +1,11 @@
+{
+  "name": "doc-lookup-mcp",
+  "version": "0.3.0",
+  "main": "build/index.js",
+  "bin": {
+    "doc-lookup": "build/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}

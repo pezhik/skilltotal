@@ -125,6 +125,9 @@ class RuleSpec:
     # The ST-POSTEX-CHAIN combination counts distinct tactics among the findings that survive
     # demotion, so a new rule joins the chain by declaring its tactic here. Not serialized.
     tactic: str | None = None
+    # Match against each file's compiled-call view (IndexedFile.interop_view), so a Node.js rule
+    # also reads `fs_1.default.writeFileSync(`. Not serialized.
+    node_interop: bool = False
 
     def to_dict(self) -> dict[str, str]:
         return {
@@ -239,14 +242,21 @@ def findings_from_rules(index: FileIndex, rules: list[RuleSpec]) -> list[Finding
     return findings
 
 
+def _rule_matches(index: FileIndex, rule: RuleSpec) -> Iterator[Evidence]:
+    pattern: re.Pattern[str] = rule.pattern  # type: ignore[assignment]
+    if rule.node_interop:
+        for f in index.select(suffixes=rule.suffixes, names=rule.names):
+            for m in pattern.finditer(f.interop_view()):
+                yield f.evidence_for_span(m.start(), m.end())
+    else:
+        for _f, _m, ev in index.search(pattern, suffixes=rule.suffixes, names=rule.names):
+            yield ev
+
+
 def _collect_evidence(index: FileIndex, rule: RuleSpec) -> list[Evidence]:
     seen: set[tuple[str, int, int]] = set()
     evidence: list[Evidence] = []
-    for _f, _m, ev in index.search(
-        rule.pattern,  # type: ignore[arg-type]
-        suffixes=rule.suffixes,
-        names=rule.names,
-    ):
+    for ev in _rule_matches(index, rule):
         key = (ev.file, ev.line_start, ev.line_end)
         if key in seen:
             continue

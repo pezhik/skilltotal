@@ -10,7 +10,9 @@ counts only where it can be tied to ``child_process``:
 * ``child_process.exec(...)`` spelled out, anywhere;
 * in a file that imports ``child_process``, a bare ``exec(...)`` / ``spawn(...)`` (the destructured
   import) or a call through the alias that file bound (``const cp = require("child_process")`` then
-  ``cp.exec(...)``).
+  ``cp.exec(...)``);
+* the forms tsc, esbuild and Babel compile those to (``child_process_1.default.exec(...)``,
+  ``(0, child_process_1.exec)(...)``), read through ``IndexedFile.interop_view``.
 
 Importing ``child_process`` or a process-spawning library is itself evidence, and ``Bun.spawn`` is
 matched explicitly; the member-call exclusion above would otherwise have dropped it.
@@ -190,13 +192,14 @@ class ShellExecScanner(Scanner):
                 "|".join(rf"(?:(?:{prefixes})exec(?:Sync)?\s*\({t})" for t in _INJECTION_TAILS),
                 re.MULTILINE,
             )
-            _collect(f, (_ANYWHERE, calls), shell, seen_shell)
-            _collect(f, (injections,), cmdi, seen_cmdi)
+            text = f.interop_view()
+            _collect(f, text, (_ANYWHERE, calls), shell, seen_shell)
+            _collect(f, text, (injections,), cmdi, seen_cmdi)
             if len(pipe) < MAX_EVIDENCE_SCANNED and ("curl" in f.text or "wget" in f.text):
                 pipe_calls = re.compile(rf"(?:{prefixes}){_PIPE_CALLS}\s*\(", re.MULTILINE)
-                for m in pipe_calls.finditer(f.text):
-                    end = _call_end(f.text, m.end())
-                    command = " ".join(_string_literals(f.text, m.end(), end))
+                for m in pipe_calls.finditer(text):
+                    end = _call_end(text, m.end())
+                    command = " ".join(_string_literals(text, m.end(), end))
                     if REMOTE_EXEC.search(command):
                         pipe.append(f.evidence_for_span(m.start(), end))
         findings = []
@@ -253,14 +256,17 @@ def _string_literals(text: str, start: int, end: int) -> list[str]:
 
 def _collect(
     f: IndexedFile,
+    text: str,
     patterns: tuple[re.Pattern[str], ...],
     out: list[Evidence],
     seen: set[tuple[str, int, int]],
 ) -> None:
-    """Add this file's matches in line order, the order a single alternation used to yield."""
+    """Add this file's matches in line order, the order a single alternation used to yield.
+    ``text`` is the file's compiled-call view."""
     found: list[Evidence] = []
     for pattern in patterns:
-        for _m, ev in f.finditer(pattern):
+        for m in pattern.finditer(text):
+            ev = f.evidence_for_span(m.start(), m.end())
             key = (ev.file, ev.line_start, ev.line_end)
             if key not in seen:
                 seen.add(key)

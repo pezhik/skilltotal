@@ -4,6 +4,33 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 89 (unreleased)
+
+The Node.js rules read what npm packages ship. Published code is compiled, and the rules read the
+source's spelling, so a call behind tsc, esbuild, Babel or swc interop was invisible.
+
+- **Compiled calls** (widened, new `skilltotal/node_interop.py`): `fs_1.default.writeFileSync(`,
+  `(0, fs_1.writeFileSync)(`, `promises_1.default.writeFile(`, `(0, child_process_1.execSync)(`,
+  `child_process_1.default.exec(`, `import_fs.default.x(`, `_fs.default.x(`, `(0, axios_1.default)(`
+  and `(0, node_fetch_1.default)(` now read as the source wrote them. So do a name other than `fs`
+  bound by `import fs2 from "fs"`, `import * as nodeFs from "node:fs"`, `require("fs").promises`
+  and `__require("fs")`, and `fs.promises.x(` on a bound name. A call counts only through a binding
+  of the module in the same file, in code, directly or through a known compiler helper: an
+  unrelated object called `fs_1` stays silent. Read by `ST-FS-NODE-READ`, `ST-FS-NODE-WRITE`,
+  `ST-SHELL-NODE`, `ST-CMDI-NODE`, `ST-SHELL-PIPE-EXEC-NODE`, `ST-NET-NODE`, `ST-DYN-NODE` and
+  `ST-MCP-ANNOTATION-MISMATCH`. Not covered: a one-letter name, which leaves no room for `fs.`;
+  webpack's `__webpack_require__` forms; a bare name imported from `fs` in the general rules.
+- **`ST-MCP-ANNOTATION-MISMATCH`** (widened): a hit in `dist/` or `build/` now scores. A tool's hint
+  and its handler are both the package's own code there, so the demotion of bundled risk claims does
+  not apply. A minified file and a path under `node_modules/`, `vendor/`, `third_party/` and the like
+  still go to `needs_review`. Names imported from `fs` (`import { writeFileSync } from "fs"`) now
+  count, as names from `fs/promises` did.
+- **`ST-PROMPT-INJECTION`** (narrowed): the JavaScript in an HTML page's `<script>` blocks is lexed
+  like a `.js` file, so a string, a comment or a regex there is treated as in a `.js` file. An app
+  bundled into a page with test strings holding an injection phrase is no longer malicious. Still
+  flagged: an HTML comment, an attribute, a `<script>` block of a non-JavaScript type, and a string
+  passed to `eval`.
+
 ## ruleset 88 (engine 0.89.0)
 
 Four rules gave honest projects a finding for a construct that only looked like the attack. Each

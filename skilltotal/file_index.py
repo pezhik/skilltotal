@@ -25,6 +25,7 @@ from pathlib import Path
 from skilltotal import bounded_json
 from skilltotal.concat_normalize import fold_string_concats
 from skilltotal.models import Evidence
+from skilltotal.node_interop import call_sites, fold
 from skilltotal.text_normalize import normalize_with_map
 
 
@@ -1013,6 +1014,43 @@ def _c_code_spans(
     return comments, strings, regexes
 
 
+_HTML_SUFFIXES: frozenset[str] = frozenset({".html", ".htm"})
+_HTML_SCRIPT_OPEN = re.compile(r"<script\b([^<>]{0,500})>", re.IGNORECASE)
+_HTML_SCRIPT_CLOSE = re.compile(r"</script", re.IGNORECASE)
+_HTML_SCRIPT_TYPE = re.compile(r"""\btype\s*=\s*["']?([^"'\s>]+)""", re.IGNORECASE)
+_HTML_JS_TYPES = frozenset(
+    {"module", "text/javascript", "application/javascript", "text/ecmascript",
+     "application/ecmascript"}
+)
+
+
+def _html_script_spans(
+    text: str,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
+    """What ``_c_code_spans`` finds, in the JavaScript of an HTML page's ``<script>`` blocks.
+
+    A page bundles its app into a script tag, so the strings there are that app's strings, and
+    this is what lets string-literal demotion reach them. A block of another type
+    (``text/plain``, a data block) holds no JavaScript: it is left as text, and so is everything
+    outside the blocks, an HTML comment included.
+    """
+    comments: list[tuple[int, int]] = []
+    strings: list[tuple[int, int]] = []
+    regexes: list[tuple[int, int]] = []
+    at = 0
+    while (opened := _HTML_SCRIPT_OPEN.search(text, at)) is not None:
+        start = opened.end()
+        closed = _HTML_SCRIPT_CLOSE.search(text, start)
+        at = closed.start() if closed else len(text)
+        kind = _HTML_SCRIPT_TYPE.search(opened.group(1))
+        if kind is not None and kind.group(1).lower() not in _HTML_JS_TYPES:
+            continue
+        found = _c_code_spans(text[start:at], ".js")
+        for spans, out in zip(found, (comments, strings, regexes), strict=True):
+            out.extend((a + start, b + start) for a, b in spans)
+    return comments, strings, regexes
+
+
 _RUST_RAW_OPEN = re.compile(r'r#*"')
 _RUST_CHAR = re.compile(r"'(?:\\(?:u\{[0-9a-fA-F]{1,6}\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'")
 # Code sinks that execute their string argument (detection literals, never called here).
@@ -1707,6 +1745,10 @@ class IndexedFile:
     _fold_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
         default=None, repr=False, compare=False
     )
+    # Lazily-computed compiled module calls; see ``interop_sites``.
+    _interop_cache: list[tuple[int, int, str]] | None = field(
+        default=None, repr=False, compare=False
+    )
 
     def normalized_or_none(self) -> tuple[str, list[int]] | None:
         """De-obfuscated ``(normalized_text, index_map)``, or None when normalization is the
@@ -1720,6 +1762,21 @@ class IndexedFile:
             norm, idx = normalize_with_map(self.text)
             self._norm_cache = ((norm, idx),) if norm and norm != self.text else (None,)
         return self._norm_cache[0]
+
+    def interop_sites(self) -> list[tuple[int, int, str]]:
+        """The compiled Node.js module calls in this file (see :mod:`skilltotal.node_interop`)."""
+        if self._interop_cache is None:
+            self._interop_cache = (
+                call_sites(self.text, self.c_code_view)
+                if self.suffix in _JS_FAMILY_SUFFIXES else []
+            )
+        return self._interop_cache
+
+    def interop_view(self) -> str:
+        """The text with each compiled module call spelled as the source wrote it: every offset
+        is the original's, and whatever matches the text matches here too."""
+        sites = self.interop_sites()
+        return fold(self.text, sites) if sites else self.text
 
     def concat_folded_or_none(self) -> tuple[str, Sequence[int]] | None:
         """``(folded_text, index_map)`` with adjacent string-literal concatenations collapsed, or
@@ -1855,7 +1912,8 @@ class IndexedFile:
         return self._line_starts[line_no - 1] + hash_at <= offset
 
     def _ensure_c_code_spans(self) -> None:
-        """Record C-family comment and string-literal char-spans once, for C-family files only."""
+        """Record C-family comment and string-literal char-spans once, for C-family files and the
+        JavaScript in an HTML page's ``<script>`` blocks."""
         if self._c_comment_spans_cache is not None:
             return
         if self.suffix in _C_FAMILY_SUFFIXES:
@@ -1864,6 +1922,12 @@ class IndexedFile:
                 self._c_string_spans_cache,
                 self._c_regex_spans_cache,
             ) = _c_code_spans(self.text, self.suffix)
+        elif self.suffix in _HTML_SUFFIXES:
+            (
+                self._c_comment_spans_cache,
+                self._c_string_spans_cache,
+                self._c_regex_spans_cache,
+            ) = _html_script_spans(self.text)
         else:
             self._c_comment_spans_cache = []
             self._c_string_spans_cache = []
@@ -1974,7 +2038,7 @@ class IndexedFile:
             self._ensure_code_spans()
             spans = self._str_spans
             sink = _PY_EXEC_SINK
-        elif self.suffix in _C_FAMILY_SUFFIXES:
+        elif self.suffix in _C_FAMILY_SUFFIXES or self.suffix in _HTML_SUFFIXES:
             self._ensure_c_code_spans()
             spans = self._c_string_spans_cache
             sink = _JS_EXEC_SINK

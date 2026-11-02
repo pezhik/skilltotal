@@ -307,8 +307,8 @@ npx -y --package=skilltotal@0.89.0 -- skilltotal scan https://github.com/owner/r
 ## Measured, not asserted
 
 - **[Detection efficacy](https://github.com/pezhik/skilltotal/blob/main/docs/efficacy-report.md)**:
-  recall and precision on a labeled corpus we built and publish (165 malicious and
-  127 benign samples), regenerated every release and enforced by CI as a floor. A perfect score on
+  recall and precision on a labeled corpus we built and publish (168 malicious and
+  129 benign samples), regenerated every release and enforced by CI as a floor. A perfect score on
   our own corpus guards against regressions; it is not a claim about every attack in the wild.
   Each rule behind the survey's OWASP class counts also has labeled samples of its own, listed in
   the report's rule coverage table.

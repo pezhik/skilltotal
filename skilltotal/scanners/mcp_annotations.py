@@ -22,8 +22,10 @@ The annotations may be named by a constant defined in the same file. The handler
 passed inline, the decorated ``def``, or a function of the same file passed by name. Only that
 function's own body is read: a helper it calls is not followed, in this file or another, so a
 write done in a helper is not reported. Calls are recognised by the same signatures as
-ST-FS-*-WRITE, ST-SHELL-* and ST-NET-*, plus ``fs.promises.*`` and names imported from
-``fs/promises``; calls in comments and strings do not count. Nothing is run.
+ST-FS-*-WRITE, ST-SHELL-* and ST-NET-*, plus ``fs.promises.*``, names imported from ``fs`` or
+``fs/promises``, and the forms compilers emit for all of these (``fs_1.default.x(``, ``(0,
+import_fs.x)(``; see :mod:`skilltotal.node_interop`); calls in comments and strings do not count.
+Nothing is run.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ import shlex
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Evidence, Severity, ThreatClass
+from skilltotal.node_interop import fold
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
     RuleSpec,
@@ -305,21 +308,21 @@ def argv_mutates(argv: list[str | None]) -> bool:
     return False
 
 
-def _js_fs_promise_imports(text: str, view: str) -> dict[str, str]:
-    """Local name -> fs/promises function, for the write and delete functions a file imports
-    by name (``import { writeFile, rm as remove } from "fs/promises"``, ``const { unlink } =
-    require("node:fs/promises")``)."""
+def _js_fs_imports(text: str, view: str) -> dict[str, str]:
+    """Local name -> function, without ``Sync``, for the write and delete functions a file
+    imports by name from fs or fs/promises (``import { writeFile, rm as remove } from
+    "fs/promises"``, ``const { unlink } = require("node:fs/promises")``, ``import { writeFileSync
+    } from "fs"``)."""
     names: dict[str, str] = {}
-    for pattern in (_JS_FS_PROMISES_IMPORT, _JS_FS_PROMISES_REQUIRE):
-        if "fs/promises" not in text:
-            break
+    for pattern in (_JS_FS_PROMISES_IMPORT, _JS_FS_PROMISES_REQUIRE, _JS_FS_IMPORT):
         for m in pattern.finditer(text):
             if view[m.start()] != text[m.start()]:
                 continue  # in a comment or a string
-            for item in m.group(1).split(","):
+            for item in next(g for g in m.groups()[::2] if g is not None).split(","):
                 parsed = _JS_IMPORT_ITEM.fullmatch(item)
-                if parsed and parsed.group(1) in _JS_FS_PROMISE_WRITES:
-                    names[parsed.group(2) or parsed.group(1)] = parsed.group(1)
+                function = parsed.group(1).removesuffix("Sync") if parsed else ""
+                if function in _JS_FS_PROMISE_WRITES or function == "createWriteStream":
+                    names[parsed.group(2) or parsed.group(1)] = function
     return names
 
 
@@ -379,7 +382,9 @@ class _JsSource:
 
     def __init__(self, f: IndexedFile):
         self.text = text = f.text
-        self.view = view = f.c_code_view()
+        # Compiled module calls read as the source wrote them (`fs_1.default.writeFileSync(`,
+        # `(0, child_process_1.exec)(`), so a tool in dist/ is judged like the one in src/.
+        self.view = view = fold(f.c_code_view(), f.interop_sites())
         self.pairs = _bracket_pairs(view)
         self._decls: tuple[dict[str, int], dict[str, int]] | None = None
         self.effects: dict[str, list[tuple[int, int]]] = {kind: [] for kind in _READ_ONLY_EXCLUDES}
@@ -391,7 +396,7 @@ class _JsSource:
             (m.start(), m.end(), m.group(1) in _JS_FS_PROMISE_DELETES)
             for m in _JS_FS_PROMISES_CALL.finditer(view)
         ]
-        imported = _js_fs_promise_imports(text, view)
+        imported = _js_fs_imports(text, view)
         if imported:
             bare = re.compile(
                 r"(?<![\w$.])(" + "|".join(re.escape(n) for n in imported) + r")\s*\("
