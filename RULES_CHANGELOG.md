@@ -61,6 +61,19 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   is not a discovery document. Endpoint keys and `jwks_uri` are unchanged.
 - **`ST-MCP-STATIC-AUTH-EXEC`** (narrowed): a JavaScript type name (`typeof data.token ===
   "string"`) is a shape check, not a hard-coded token.
+- **`ST-AGENT-AUTORUN-REMOTE`** (narrowed): in the script an auto-run command runs, a download piped
+  into a shell is read as text, not a command, when it is the argument of a print call (`print(`,
+  `console.log(`, `process.stdout.write(`; also across a multi-line help template), a regex pattern
+  (`re.compile(`, `RegExp(`), or the quoted argument of a function in the same shell script that
+  prints and never evaluates, sources or runs what it is given. A SessionStart hook that prints an
+  install hint for the agent, a guard hook's regex of risky commands and an MCP server's help text
+  are silent. A pipe the script runs, a string handed to `os.system`/`execSync`, a function that
+  `eval`s or `bash -c`s its argument, and a printed command piped on into a shell still fire.
+- **`ST-AGENT-CLI-RELAY`** (narrowed): an approvals-off flag named only in a comment or a Python
+  docstring launches nothing and no longer pairs with a network client, and in Python only Python
+  clients count, so `net.connect(container)` on a Docker network object is not a socket. A
+  launch with the flag beside `requests`/`httpx`/`websockets`/`socket`, and Node's `net.connect`,
+  still fire.
 
 ## ruleset 89 (engine 0.90.0)
 

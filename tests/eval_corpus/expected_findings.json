@@ -229,6 +229,10 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE"
  ],
+ "negative/AST02/mcp-launch-command/help-text-install-hint": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-SERVER-EXEC"
+ ],
  "negative/AST02/mcp-launch-command/npx-uvx-docker-servers": [
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
@@ -254,6 +258,10 @@
   "ST-SHELL-NODE"
  ],
  "negative/AST02/plugin-hook-trojan/formatter-plugin-hook": [],
+ "negative/AST02/plugin-hook-trojan/guard-hook-pattern": [],
+ "negative/AST02/plugin-hook-trojan/install-hint-session-hook": [
+  "ST-SHELL-PIPE-EXEC"
+ ],
  "negative/AST02/plugin-hook-trojan/lsp-monitor-plugin": [],
  "negative/AST02/skill-fetch-exec/honest-tool-install": [
   "ST-SKILL-CAP-MISMATCH",
@@ -272,6 +280,7 @@
   "ST-FS-NODE-READ",
   "ST-SHELL-NODE"
  ],
+ "negative/AST03/cli-relay/sandbox-terminal-docstring": [],
  "negative/AST04/mcp-config-inject/agent-settings-scoped-local-gateway": [],
  "negative/AST04/mcp-config-inject/reads-client-config": [
   "ST-FS-NODE-READ"

@@ -48,7 +48,13 @@ from skilltotal.autorun import (
     AutorunCommand,
     autorun_commands,
 )
-from skilltotal.file_index import FileIndex, IndexedFile, is_test_path
+from skilltotal.file_index import (
+    _QUOTED_ARG,
+    FileIndex,
+    IndexedFile,
+    _output_sent_on,
+    is_test_path,
+)
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -553,6 +559,16 @@ _NET_CLIENT = re.compile(
     r"|\burllib\.request\.urlopen\s*\(",
     re.IGNORECASE,
 )
+# In Python only the Python clients count: ``net.connect(container)`` there is a Docker network
+# object joining a container to a network, not Node's ``net`` module opening a socket.
+_NET_CLIENT_PY = re.compile(
+    r"\bwebsockets?\.(?:connect|ClientConnection)\s*\("
+    r"|\bsocket\.(?:connect|create_connection)\s*\("
+    r"|\brequests\.(?:get|post|put|request)\s*\("
+    r"|\bhttpx\.(?:get|post|stream|Client|AsyncClient)\b"
+    r"|\burllib\.request\.urlopen\s*\(",
+    re.IGNORECASE,
+)
 
 
 class AgentConfigScanner(Scanner):
@@ -807,14 +823,23 @@ class AgentConfigScanner(Scanner):
         relay: list[Evidence] = []
         for f in index.select(suffixes=_CODE_SUFFIXES):
             file_bypass: list[Evidence] = []
+            launched = False
             for _m, ev in f.finditer(_CLI_BYPASS):
                 if _flag_in_inline_code(f, _m):
                     if f.relpath not in bypass_described:
                         bypass_described.append(f.relpath)
                     continue
                 file_bypass.append(ev)
+                # A flag named in a comment or a docstring launches nothing, so it cannot be one
+                # half of a relay (the engine later sets it aside for the bypass rule too).
+                at = _m.start(1)
+                launched = launched or not (
+                    f.in_comment(at) or f.in_python_docstring(at) or f.in_shell_comment(at)
+                    or f.in_c_comment(at)
+                )
             if file_bypass and len(bypass) + len(relay) < MAX_EVIDENCE_SCANNED:
-                net = next((ev for _m, ev in f.finditer(_NET_CLIENT)), None)
+                net_client = _NET_CLIENT_PY if f.suffix in (".py", ".pyw") else _NET_CLIENT
+                net = next((ev for _m, ev in f.finditer(net_client)), None) if launched else None
                 if net is not None:
                     # Remote-control shape: approvals-off CLI and an outbound connection, one file.
                     relay.extend(file_bypass)
@@ -1129,16 +1154,82 @@ _MAX_COMMENT_SKIPS = 200
 
 
 def _first_outside_comments(f: IndexedFile, pattern: re.Pattern[str]) -> re.Match[str] | None:
-    """The first match of ``pattern`` in the script ``f`` that is not inside a comment. A hook
+    """The first match of ``pattern`` in the script ``f`` that is code a shell could run. A hook
     script that names the idiom it guards against (``# … | base64 -d | sh``) runs nothing; a match
-    in a string literal still counts, since a script hands strings to a shell."""
+    in a string literal still counts, since a script hands strings to a shell -- unless the string
+    is text the script prints or a pattern it matches (``_text_not_command``)."""
     for k, m in enumerate(pattern.finditer(f.text)):
         if k >= _MAX_COMMENT_SKIPS:
             return None
         at = m.start()
-        if not (f.in_shell_comment(at) or f.in_comment(at) or f.in_c_comment(at)):
+        if not (
+            f.in_shell_comment(at) or f.in_comment(at) or f.in_c_comment(at)
+            or _text_not_command(f, at)
+        ):
             return m
     return None
+
+
+# The call a string literal is the first argument of, read from the text just before it. Output:
+# what an auto-run command prints goes to the agent's context, a status line or the MCP channel,
+# never to a shell. Pattern: a `re.compile(r"curl.{0,40}\|\s*(bash|sh)")` is what a guard hook
+# looks FOR. Detection literals, never called here.
+_PRINTED_STRING = re.compile(
+    r"(?:(?<![\w.])print|\bsys\.std(?:out|err)\.write|\bconsole\.(?:log|info|warn|error|debug)"
+    r"|\bprocess\.std(?:out|err)\.write)\s*\(\s*[rRuUfF]{0,2}$"
+)
+_PATTERN_STRING = re.compile(
+    r"(?:\bre\.(?:compile|search|match|fullmatch|findall|finditer|sub|subn|split)"
+    r"|\bRegExp)\s*\(\s*[rRbBuU]{0,2}$"
+)
+# A shell function body that runs text: its argument could be the command it evaluates.
+_SH_BODY_RUNS_TEXT = re.compile(
+    r"\beval\b|(?<![\w-])-c\b|\bsource\b|(?<![\w.$])\.[ \t]+\S|\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
+    r"|\bexec\b|\$\(|`|(?m:^[ \t]*\"?\$\{?[1-9@*])"
+)
+_SH_BODY_PRINTS = re.compile(r"\b(?:echo|printf|cat)\b")
+
+
+def _text_not_command(f: IndexedFile, at: int) -> bool:
+    """True if offset ``at`` sits in a string a script prints or matches against, not one it runs:
+    an ``echo``/``print``/``console.log`` argument (an install hint in help text), a regex pattern,
+    a shell variable only ever printed, or the quoted argument of a shell function of this script
+    that only prints it (a SessionStart hook's ``emit_context "… curl … | bash …"``)."""
+    if f.in_printed_command(at) or f.in_shell_assigned_hint(at) or f.in_js_regex(at):
+        return True
+    span = f.string_span_at(at)
+    if span is not None:
+        window = f.text[max(0, span[0] - 80) : span[0]]
+        return bool(_PRINTED_STRING.search(window) or _PATTERN_STRING.search(window))
+    return f.is_shell_like and _printing_function_arg(f, at)
+
+
+def _printing_function_arg(f: IndexedFile, at: int) -> bool:
+    """True if ``at`` is inside a quoted argument to a function defined in this shell script whose
+    body prints and never evaluates, sources, pipes to a shell or runs its arguments. The call's
+    output must not be captured (``$(…)``), evaluated or piped/redirected on."""
+    line = f.line_text(f.line_of_offset(at))
+    col = at - (f.text.rfind("\n", 0, at) + 1)
+    region = next((q for q in _QUOTED_ARG.finditer(line) if q.start() < col < q.end()), None)
+    if region is None or _output_sent_on(line[region.end() :]):
+        return False
+    prefix = line[: region.start()]
+    if any(tok in prefix for tok in ("$(", "`", "<(", "eval")):
+        return False
+    words = prefix[max(prefix.rfind(";"), prefix.rfind("&"), prefix.rfind("|")) + 1 :].split()
+    if not words or not re.fullmatch(r"[A-Za-z_][\w-]{0,60}", words[0]):
+        return False
+    head = re.search(
+        rf"(?m)^[ \t]*(?:function[ \t]+)?{re.escape(words[0])}[ \t]*(?:\([ \t]*\))?[ \t]*\{{",
+        f.text,
+    )
+    if head is None:
+        return False
+    close = re.compile(r"(?m)^\}").search(f.text, head.end())
+    if close is None:
+        return False
+    body = f.text[head.end() : close.start()]
+    return bool(_SH_BODY_PRINTS.search(body)) and not _SH_BODY_RUNS_TEXT.search(body)
 
 
 def _is_remote_url(url: str) -> bool:
