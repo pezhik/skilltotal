@@ -2,8 +2,8 @@
 
 Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (169/169 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/130 benign samples wrongly flagged)
+- **recall: 100.0%** (171/171 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/145 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -80,10 +80,10 @@ Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 26 | 32 | 25 | 4 |
+| AST01 | 27 | 32 | 25 | 4 |
 | AST02 | 20 | 17 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
-| AST04 | 24 | 3 | 8 | 0 |
+| AST04 | 25 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -94,7 +94,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 
 | rule | class | fired on malicious samples | fired on benign samples | rule samples: fired | rule samples: stayed silent |
 |---|---|---|---|---|---|
-| `ST-FS-NODE-WRITE` | - | 9 | 5 | 2/2 | 1/1 |
+| `ST-FS-NODE-WRITE` | - | 9 | 6 | 2/2 | 1/1 |
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 3 | 0 | - | - |
@@ -115,14 +115,14 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-POSTEX-CHAIN` | AST01 | 7 | 0 | - | - |
 | `ST-POSTEX-EVASION` | AST01 | 3 | 0 | - | - |
 | `ST-POSTEX-MASQUERADE` | AST01 | 3 | 0 | - | - |
-| `ST-POSTEX-PERSIST` | AST01 | 8 | 3 | - | - |
+| `ST-POSTEX-PERSIST` | AST01 | 8 | 5 | - | - |
 | `ST-POSTEX-REMOTE-ACCESS` | AST01 | 7 | 0 | - | - |
 | `ST-PS-DOWNLOAD-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-IMPORT-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
 | `ST-SECRET-EXFIL` | AST01 | 11 | 0 | - | - |
-| `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
+| `ST-SHELL-EVASION` | AST01 | 0 | 1 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-MEMORY-WRITE-HIDDEN` | AST01 | 2 | 0 | - | - |
@@ -134,7 +134,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
 | `ST-AGENT-CRED-HELPER-EXEC` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-AGENT-DOTENV-EXEC` | AST01, AST04 | 1 | 0 | - | - |
-| `ST-MCP-OAUTH-ENDPOINT-INJECTION` | AST01, AST04 | 1 | 0 | - | - |
+| `ST-MCP-OAUTH-ENDPOINT-INJECTION` | AST01, AST04 | 2 | 0 | - | - |
 | `ST-MCP-SAMPLING-SYSPROMPT` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PROMPT-SPLIT-EXFIL` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PICKLE-REDUCE` | AST01, AST05 | 2 | 0 | - | - |
@@ -150,7 +150,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | - | - |
 | `ST-NPM-INSTALL-PUBLISH` | AST02 | 2 | 0 | - | - |
 | `ST-NPM-URL-DEP` | AST02 | 0 | 0 | - | - |
-| `ST-SHELL-PIPE-EXEC` | AST02 | 2 | 2 | 1/1 | 1/1 |
+| `ST-SHELL-PIPE-EXEC` | AST02 | 2 | 3 | 1/1 | 1/1 |
 | `ST-SHELL-PIPE-EXEC-NODE` | AST02 | 4 | 0 | - | - |
 | `ST-SHELL-PIPE-EXEC-PY` | AST02 | 0 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC` | AST02 | 0 | 3 | - | - |
@@ -162,13 +162,13 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-AUTO-APPROVE` | AST03 | 0 | 0 | 1/1 | 1/1 |
 | `ST-MCP-DANGEROUS-TOOL` | AST03 | 0 | 0 | 3/3 | 2/2 |
 | `ST-MCP-OVERBROAD-SCOPE` | AST03 | 0 | 0 | 1/1 | 1/1 |
-| `ST-MCP-SERVER-EXEC` | AST03 | 5 | 3 | 3/3 | 2/2 |
+| `ST-MCP-SERVER-EXEC` | AST03 | 5 | 4 | 3/3 | 2/2 |
 | `ST-MCP-ANNOTATION-MISMATCH` | AST03, AST04 | 0 | 0 | 5/5 | 3/3 |
 | `ST-SKILL-CAP-MISMATCH` | AST03, AST04 | 1 | 2 | - | - |
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
-| `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 1 | - | - |
+| `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 2 | - | - |
 | `ST-HIDDEN-ANSI` | AST04 | 2 | 0 | - | - |
-| `ST-HIDDEN-UNICODE` | AST04 | 7 | 0 | - | - |
+| `ST-HIDDEN-UNICODE` | AST04 | 8 | 0 | - | - |
 | `ST-HIDDEN-UNICODE-AMBIG` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-ELICIT-SECRET` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-SAMPLING-INJECTION` | AST04 | 1 | 0 | - | - |
