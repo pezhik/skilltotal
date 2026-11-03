@@ -2,8 +2,8 @@
 
 Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (168/168 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/129 benign samples wrongly flagged)
+- **recall: 100.0%** (169/169 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/130 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -80,7 +80,7 @@ Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 26 | 32 | 24 | 4 |
+| AST01 | 26 | 32 | 25 | 4 |
 | AST02 | 20 | 17 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
 | AST04 | 24 | 3 | 8 | 0 |
@@ -121,7 +121,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-PTH-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-IMPORT-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
-| `ST-SECRET-EXFIL` | AST01 | 10 | 0 | - | - |
+| `ST-SECRET-EXFIL` | AST01 | 11 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |

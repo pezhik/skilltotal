@@ -82,6 +82,11 @@
  ],
  "negative/AST01/encrypted-instructions-decoy-key-env-read/decrypt-reference": [],
  "negative/AST01/encrypted-instructions-decoy-key-env-read/sops-deploy-secrets": [],
+ "negative/AST01/env-dump-exfil/api-client-own-config": [
+  "ST-NET-NODE",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
+ ],
  "negative/AST01/env-dump-exfil/bundled-debug-logger": [
   "ST-NET-NODE"
  ],
@@ -526,6 +531,10 @@
  "positive/AST01/env-dump-exfil/node-postinstall-env": [
   "ST-INSTALL-NPM",
   "ST-NET-NODE",
+  "ST-SECRET-EXFIL"
+ ],
+ "positive/AST01/env-dump-exfil/python-env-through-helper": [
+  "ST-NET-PY",
   "ST-SECRET-EXFIL"
  ],
  "positive/AST01/env-dump-exfil/python-env-webhook": [

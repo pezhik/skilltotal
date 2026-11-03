@@ -2,8 +2,8 @@
   "engine_version": "0.90.0",
   "ruleset_version": 89,
   "python_version": "3.14",
-  "positives": 168,
-  "negatives": 129,
+  "positives": 169,
+  "negatives": 130,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -76,7 +76,7 @@
     "AST01": {
       "node": 32,
       "manifest/text": 26,
-      "python": 24,
+      "python": 25,
       "shell": 4
     },
     "AST02": {
@@ -858,7 +858,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 10,
+      "malicious_samples": 11,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
