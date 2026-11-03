@@ -193,17 +193,33 @@ def _instruction_text(text: str, m: re.Match[str]) -> str:
     return text[max(lead_start, lead_from):lead_end] + "\n" + own
 
 
+# A blank line between paragraphs. A file with Windows line ends has `\r\n\r\n` there, and a line
+# of only blanks is blank too: read as one paragraph, the whole file was the command's statement and
+# any "silently" in it made the command hidden.
+_PARAGRAPH_BREAK = re.compile(r"\n[ \t\r]*\n")
+
+
 def _sentence_bounds(text: str, start: int, end: int) -> tuple[int, int]:
     """The statement (sentence, list item) around ``[start, end)``, within its paragraph."""
-    para_start = text.rfind("\n\n", 0, start)
-    para_start = 0 if para_start < 0 else para_start + 2
-    para_end = text.find("\n\n", end)
-    para_end = len(text) if para_end < 0 else para_end
+    para_start = _paragraph_start(text, start)
+    nxt = _PARAGRAPH_BREAK.search(text, end)
+    para_end = len(text) if nxt is None else nxt.start()
     begin = para_start
     for stop in _SENTENCE_END.finditer(text, para_start, start):
         begin = stop.end()
     after = _SENTENCE_END.search(text, end, para_end)
     return begin, after.start() + 1 if after else para_end
+
+
+def _paragraph_start(text: str, pos: int) -> int:
+    """Where the paragraph holding ``pos`` starts: after the nearest blank line above it."""
+    i = text.rfind("\n", 0, pos)
+    while i >= 0:
+        prev = text.rfind("\n", 0, i)
+        if not text[prev + 1 : i].strip():
+            return i + 1
+        i = prev
+    return 0
 
 
 def _frontmatter(text: str) -> str:

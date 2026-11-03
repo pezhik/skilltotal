@@ -160,9 +160,20 @@
  "negative/AST01/post-exploitation/dotfiles-installer": [
   "ST-POSTEX-PERSIST"
  ],
+ "negative/AST01/post-exploitation/ops-provision-own-servers": [
+  "ST-POSTEX-PERSIST"
+ ],
  "negative/AST01/post-exploitation/readme-shows-commands": [],
  "negative/AST01/post-exploitation/security-tool-signatures": [],
+ "negative/AST01/post-exploitation/task-name-from-function": [
+  "ST-POSTEX-PERSIST",
+  "ST-SHELL-PY"
+ ],
+ "negative/AST01/powershell-download-exec/installer-hint-printed": [],
  "negative/AST01/powershell-download-exec/local-iex-and-plain-fetch": [],
+ "negative/AST01/powershell-download-exec/published-installer-script": [
+  "ST-SHELL-EVASION"
+ ],
  "negative/AST01/preview-pane-oversized-html-file-url-csp-bypass/web-api-and-file-link": [],
  "negative/AST01/prompt-split-exfil/dashboard-sync": [],
  "negative/AST01/prompt-split-exfil/deploy-keeps-secret": [],
@@ -212,6 +223,11 @@
   "ST-SHELL-NODE"
  ],
  "negative/AST02/decode-spawn/encode-test-data-driver": [
+  "ST-SHELL-NODE"
+ ],
+ "negative/AST02/decode-spawn/launcher-unpacks-own-binary": [
+  "ST-FS-NODE-READ",
+  "ST-FS-NODE-WRITE",
   "ST-SHELL-NODE"
  ],
  "negative/AST02/decode-spawn/polyfill-after-spawn": [
