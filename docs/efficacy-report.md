@@ -3,7 +3,7 @@
 Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (168/168 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/129 benign samples wrongly flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/133 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -150,7 +150,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | - | - |
 | `ST-NPM-INSTALL-PUBLISH` | AST02 | 2 | 0 | - | - |
 | `ST-NPM-URL-DEP` | AST02 | 0 | 0 | - | - |
-| `ST-SHELL-PIPE-EXEC` | AST02 | 2 | 2 | 1/1 | 1/1 |
+| `ST-SHELL-PIPE-EXEC` | AST02 | 2 | 3 | 1/1 | 1/1 |
 | `ST-SHELL-PIPE-EXEC-NODE` | AST02 | 4 | 0 | - | - |
 | `ST-SHELL-PIPE-EXEC-PY` | AST02 | 0 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC` | AST02 | 0 | 3 | - | - |
@@ -162,7 +162,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-AUTO-APPROVE` | AST03 | 0 | 0 | 1/1 | 1/1 |
 | `ST-MCP-DANGEROUS-TOOL` | AST03 | 0 | 0 | 3/3 | 2/2 |
 | `ST-MCP-OVERBROAD-SCOPE` | AST03 | 0 | 0 | 1/1 | 1/1 |
-| `ST-MCP-SERVER-EXEC` | AST03 | 5 | 3 | 3/3 | 2/2 |
+| `ST-MCP-SERVER-EXEC` | AST03 | 5 | 4 | 3/3 | 2/2 |
 | `ST-MCP-ANNOTATION-MISMATCH` | AST03, AST04 | 0 | 0 | 5/5 | 3/3 |
 | `ST-SKILL-CAP-MISMATCH` | AST03, AST04 | 1 | 2 | - | - |
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
