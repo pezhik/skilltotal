@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.91.0]
+
+### Added
+- Ruleset 90. Five install-time payload shapes in `skilltotal/scanners/install_payload.py`, each a
+  malicious indicator that needs the install context plus a second tell: a second `npm install
+  --registry` whose address is decoded at run time, a DNS lookup named after the host name, a shell
+  interpreter started on a `.js` file, a user service written next to a token-revocation check, and
+  a `setup.py` that downloads a file and starts it.
+
 ## [0.90.0]
 
 ### Changed

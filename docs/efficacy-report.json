@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.90.0",
-  "ruleset_version": 89,
-  "python_version": "3.14",
-  "positives": 168,
-  "negatives": 129,
+  "engine_version": "0.91.0",
+  "ruleset_version": 90,
+  "python_version": "3.11",
+  "positives": 173,
+  "negatives": 134,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -41,6 +41,7 @@
     "gyp-command-substitution": 1.0,
     "hidden-unicode": 1.0,
     "install-dropper": 1.0,
+    "js-shell-polyglot-preinstall": 1.0,
     "lethal-trifecta": 1.0,
     "mcp-config-inject": 1.0,
     "mcp-hidden-dotpath-launcher": 1.0,
@@ -68,21 +69,22 @@
     "skill-writes-agent-memory-files-persistence": 1.0,
     "startup-hook-exec": 1.0,
     "stdlib-shadow": 1.0,
+    "token-revocation-wiper": 1.0,
     "typosquat-dropper": 1.0,
     "wallet-key-exfil": 1.0,
     "workflow-history-exfil": 1.0
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 32,
+      "node": 33,
       "manifest/text": 26,
-      "python": 24,
+      "python": 23,
       "shell": 4
     },
     "AST02": {
       "manifest/text": 20,
-      "node": 17,
-      "python": 4,
+      "node": 21,
+      "python": 5,
       "shell": 1
     },
     "AST03": {
@@ -323,8 +325,8 @@
     },
     "ST-FS-NODE-WRITE": {
       "owasp": [],
-      "malicious_samples": 9,
-      "benign_samples": 5,
+      "malicious_samples": 10,
+      "benign_samples": 6,
       "should_fire": 2,
       "fired": 2,
       "should_stay_silent": 1,
@@ -411,12 +413,34 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 21,
-      "benign_samples": 5,
+      "malicious_samples": 25,
+      "benign_samples": 9,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
       "stayed_silent": 1
+    },
+    "ST-INSTALL-NPM-DNS-BEACON": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-INSTALL-NPM-MASKED-REGISTRY": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
     },
     "ST-INSTALL-NPM-PREPARE": {
       "owasp": [
@@ -441,16 +465,49 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-INSTALL-NPM-SERVICE-TOKEN-WATCH": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-INSTALL-NPM-SHELL-RUNS-JS": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-INSTALL-PY": {
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 3,
-      "benign_samples": 0,
+      "malicious_samples": 4,
+      "benign_samples": 1,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
       "stayed_silent": 1
+    },
+    "ST-INSTALL-PY-DOWNLOAD-EXEC": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
     },
     "ST-MCP-ANNOTATION-MISMATCH": {
       "owasp": [
@@ -759,7 +816,7 @@
         "AST01"
       ],
       "malicious_samples": 8,
-      "benign_samples": 3,
+      "benign_samples": 4,
       "should_fire": 0,
       "fired": 0,
       "should_stay_silent": 0,
