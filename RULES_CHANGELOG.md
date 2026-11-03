@@ -20,6 +20,16 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
+- **`ST-SECRET-EXFIL`** (narrowed): what a helper reads from the environment is not the environment.
+  An API client that hands `process.env` or `os.environ` to a helper reading its token, host or
+  base URL, then sends that token to that URL, is silent. In JavaScript the result of a call to an
+  imported, non-encoding function given the environment is no longer followed. In Python a call to
+  the file's own function is followed only when that function returns the environment or the
+  parameter it was given, and a name holds the environment only in the function that assigned it
+  (a short name such as `env` reused across a module no longer joins unrelated functions). The
+  environment posted directly, through an encoder (`JSON.stringify`, `dict`, `btoa`), through a
+  Python helper of unknown body or through a helper defined in the same file that hands it back
+  still fires, and a Python helper that returns the environment it reads itself now fires too.
 
 ## ruleset 89 (engine 0.90.0)
 

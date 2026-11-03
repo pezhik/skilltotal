@@ -17,7 +17,8 @@ network somewhere. This rule is the narrower, stronger case: a single construct 
   through a variable. The environment is where a machine keeps its tokens (CI secrets, cloud keys,
   ``NPM_TOKEN``), and posting all of it is the first thing dependency-confusion and install-time
   stealers do. One named variable sent as a header is ordinary API use and is not matched, nor is
-  the environment handed to a child process or written to a local file.
+  the environment handed to a child process or written to a local file, nor what a helper reads
+  from it (``token = resolve_token(os.environ)``, ``resolveHost(process.env)``).
 
 Detection patterns below are string literals and parsing; nothing here runs or sends anything.
 """
@@ -436,6 +437,47 @@ def _config_lookup(text: str, start: int, pos: int) -> bool:
     return False
 
 
+def _handed_to_helper(text: str, start: int, pos: int, own: frozenset[str]) -> bool:
+    """True if the environment at ``pos`` is an argument (directly or inside an object or array
+    literal) of a call in text[start:pos] to a function the file does not define and that is not
+    an encoder: ``const host = resolveHost(process.env)``, ``resolveContext({env: process.env})``.
+    What such a call returns is what it read from the environment (a host, a session, a key), not
+    the environment. A function the file defines itself may hand it back, so it still counts."""
+    depth, i = 0, pos - 1
+    while i >= start:
+        ch = text[i]
+        if ch in ")]}":
+            depth += 1
+        elif ch in "([{":
+            if depth == 0 and ch == "(":
+                callee = _JS_CALLEE.search(text, start, i)
+                if not callee:
+                    return False
+                name = callee.group(1)
+                return name not in _JS_ENCODERS and name not in own
+            if depth > 0:
+                depth -= 1
+        i -= 1
+    return False
+
+
+_JS_DEFINES = re.compile(
+    r"\bfunction\s{0,20}\*?\s{0,20}([A-Za-z_$][\w$]{0,200})\s*\("
+    r"|(?<![\w$.])([A-Za-z_$][\w$]{0,200})\s{0,20}[:=]\s{0,20}(?:async\s+)?"
+    r"(?:function\b|\([^()]{0,200}\)\s{0,20}=>|[A-Za-z_$][\w$]{0,200}\s{0,20}=>)"
+    r"|^[ \t]*(?:static\s+)?(?:async\s+)?([A-Za-z_$][\w$]{0,200})\s*\([^()\n]{0,200}\)\s*\{",
+    re.MULTILINE,
+)
+_JS_NOT_A_NAME = frozenset({"if", "for", "while", "switch", "catch", "with", "return", "function"})
+
+
+def _js_own_functions(text: str) -> frozenset[str]:
+    return frozenset(
+        name for m in _JS_DEFINES.finditer(text)
+        for name in m.groups() if name and name not in _JS_NOT_A_NAME
+    )
+
+
 def _js_env_dumps(f: IndexedFile) -> list[Evidence]:
     return _js_env_sends(f)[0]
 
@@ -460,13 +502,23 @@ def _js_env_sends(f: IndexedFile) -> tuple[list[Evidence], bool]:
     truncated = len(whole) > _MAX_ENV_USES
     seeds = whole[:_MAX_ENV_USES]
     declared = frozenset(_JS_DECLARED.findall(text))
+    own = _js_own_functions(text)
     blocks = _Blocks(f)
+
+    def holder(pos: int) -> tuple[str, int] | None:
+        """The variable assigned the environment (or a name holding it) at ``pos``, unless it
+        is only given what a helper read from it."""
+        found_at = _assignment(text, pos, declared)
+        if found_at and _handed_to_helper(text, found_at[1], pos, own):
+            return None
+        return found_at
+
     # (name, the block it holds the environment in), in the order the source gives them (dicts
     # keep it; a set's order changes with each process's string hashing), so the cap below always
     # keeps the same ones.
     tainted: dict[tuple[str, tuple[int, int]], None] = {}
     for pos in seeds:
-        found_at = _assignment(text, pos, declared)
+        found_at = holder(pos)
         if found_at:
             tainted[(found_at[0], blocks.around(found_at[1]))] = None
     for _ in range(3):  # a payload built in a few steps (env -> object -> JSON -> base64)
@@ -478,7 +530,7 @@ def _js_env_sends(f: IndexedFile) -> tuple[list[Evidence], bool]:
                     break
                 if not _code_offset(f, m.start()) or _JS_MEMBER_READ.match(text, m.end()):
                     continue
-                found_at = _assignment(text, m.start(), declared)
+                found_at = holder(m.start())
                 if found_at and found_at[0] != name:
                     key = (found_at[0], blocks.around(found_at[1]))
                     if key not in tainted:
@@ -585,6 +637,7 @@ _PY_ENV_MEMBER = frozenset(
     {"get", "setdefault", "pop", "keys", "__getitem__", "__contains__", "__setitem__", "update",
      "clear", "popitem"}
 )
+_PY_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
 
 class _PyImports:
@@ -650,7 +703,22 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
     env_nodes = {id(n) for n in ast.walk(tree) if whole_environ(n)}
     if not env_nodes:
         return []
-    tainted: set[str] = set()
+
+    # A name holds the environment in the function it was given it in (and the functions nested
+    # in that one): a module reuses short names (`env`, `key`, `body`) in many unrelated functions,
+    # and following a name across the whole file joined them all up.
+    def scope_of(node: ast.AST) -> ast.AST:
+        parent = parents.get(id(node))
+        while parent is not None and not isinstance(parent, _PY_SCOPES):
+            parent = parents.get(id(parent))
+        return parent if parent is not None else tree
+
+    chains: dict[int, list[ast.AST]] = {}
+
+    def chain(scope: ast.AST) -> list[ast.AST]:
+        if id(scope) not in chains:
+            chains[id(scope)] = [scope] + ([] if scope is tree else chain(scope_of(scope)))
+        return chains[id(scope)]
 
     def one_variable(node: ast.Name) -> bool:
         parent = parents.get(id(node))
@@ -658,48 +726,118 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
             return True  # env["X"] on a name assigned the environment
         return isinstance(parent, ast.Attribute) and parent.attr in _PY_ENV_MEMBER
 
-    def walk(expr: ast.AST):
-        # A child process's `env=` is the environment it runs in, not data it carries: what it
-        # returns (its output, a queue line read from it) holds no secret for that alone.
+    # The file's own functions, by name: what one returns is known, so the environment handed to
+    # one (`token = resolve_token(os.environ)`) is followed only into a result that carries it.
+    defs: dict[str, list[ast.AST]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defs.setdefault(node.name, []).append(node)
+
+    def own_function(call: ast.Call) -> list[ast.AST]:
+        func = call.func
+        if isinstance(func, ast.Name) and func.id not in imports.names:
+            return defs.get(func.id, [])
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id in ("self", "cls")):
+            return defs.get(func.attr, [])
+        return []
+
+    Tainted = set[tuple[ast.AST, str]]
+
+    def carries(expr: ast.AST, scope: ast.AST, tainted: Tainted) -> bool:
         stack = [expr]
         while stack:
             node = stack.pop()
-            yield node
+            if id(node) in env_nodes:
+                return True
+            if (isinstance(node, ast.Name) and not one_variable(node)
+                    and any((s, node.id) in tainted for s in chain(scope))):
+                return True
+            if isinstance(node, ast.Call):
+                functions = own_function(node)
+                if functions:
+                    if any(call_carries(node, fn, scope, tainted) for fn in functions):
+                        return True
+                    continue  # its arguments went in; what came back is its own result
             for child in ast.iter_child_nodes(node):
+                # A child process's `env=` is the environment it runs in, not data it carries:
+                # what it returns (its output, a queue line read from it) holds no secret.
                 if isinstance(child, ast.keyword) and child.arg == "env":
                     continue
                 stack.append(child)
+        return False
 
-    def carries(expr: ast.AST) -> bool:
+    def call_carries(call: ast.Call, fn: ast.AST, scope: ast.AST, tainted: Tainted) -> bool:
+        """True if the result of ``call`` to the file's own ``fn`` carries the environment."""
+        if returns(fn, None):
+            return True  # it returns the environment it reads itself
+        params = [a.arg for a in (*fn.args.posonlyargs, *fn.args.args)]
+        if isinstance(call.func, ast.Attribute) and params[:1] in (["self"], ["cls"]):
+            params = params[1:]
+        named = {*params, *(a.arg for a in fn.args.kwonlyargs)}
+        rest_pos = fn.args.vararg.arg if fn.args.vararg else None
+        rest_kw = fn.args.kwarg.arg if fn.args.kwarg else None
+        given: list[tuple[str | None, ast.expr]] = []
+        for i, arg in enumerate(call.args):
+            if isinstance(arg, ast.Starred):
+                given.append((None, arg))
+            else:
+                given.append((params[i] if i < len(params) else rest_pos, arg))
+        for kw in call.keywords:
+            if kw.arg == "env":
+                continue
+            given.append((kw.arg if kw.arg in named else rest_kw if kw.arg else None, kw.value))
+        # A parameter that cannot be named (`*args` unpacked into it) is taken to come back out.
         return any(
-            id(n) in env_nodes
-            or (isinstance(n, ast.Name) and n.id in tainted and not one_variable(n))
-            for n in walk(expr)
+            carries(arg, scope, tainted) and (param is None or returns(fn, param))
+            for param, arg in given
         )
+
+    returned: dict[tuple[int, str | None], bool] = {}
+
+    def returns(fn: ast.AST, param: str | None) -> bool:
+        """True if ``fn`` returns (or yields) its parameter ``param``, or with None, the
+        environment it reads itself."""
+        key = (id(fn), param)
+        if key not in returned:
+            returned[key] = True  # a recursive call meanwhile: assume it does
+            inner: Tainted = {(fn, param)} if param else set()
+            spread(inner, [a for a in assignments if fn in chain(scope_of(a))])
+            returned[key] = any(
+                isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom)) and n.value is not None
+                and scope_of(n) is fn and carries(n.value, fn, inner)
+                for n in ast.walk(fn)
+            )
+        return returned[key]
+
+    def spread(tainted: Tainted, among: list[ast.AST]) -> None:
+        for _ in range(4):
+            grown = False
+            for node in among:
+                value = node.value
+                scope = scope_of(node)
+                if value is None or not carries(value, scope, tainted):
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    # `payload["env"] = os.environ` fills the payload; `self.process = Popen(...)`
+                    # does not make `self` the environment. Following attributes to their base
+                    # marked `self` in a large server and, through it, hundreds of unrelated names.
+                    if isinstance(target, ast.Attribute):
+                        continue
+                    while isinstance(target, ast.Subscript):
+                        target = target.value
+                    if isinstance(target, ast.Name) and (scope, target.id) not in tainted:
+                        tainted.add((scope, target.id))
+                        grown = True
+            if not grown:
+                break
 
     assignments = [
         n for n in ast.walk(tree) if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign))
     ]
-    for _ in range(4):
-        grown = False
-        for node in assignments:
-            value = node.value
-            if value is None or not carries(value):
-                continue
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                # `payload["env"] = os.environ` fills the payload; `self.process = Popen(...)`
-                # does not make `self` the environment. Following attributes to their base
-                # marked `self` in a large server and, through it, hundreds of unrelated names.
-                if isinstance(target, ast.Attribute):
-                    continue
-                while isinstance(target, ast.Subscript):
-                    target = target.value
-                if isinstance(target, ast.Name) and target.id not in tainted:
-                    tainted.add(target.id)
-                    grown = True
-        if not grown:
-            break
+    tainted: Tainted = set()
+    spread(tainted, assignments)
 
     found: list[Evidence] = []
     for node in ast.walk(tree):
@@ -716,7 +854,7 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
         if not (module_send or method_send):
             continue
         args = [*node.args, *(k.value for k in node.keywords)]
-        if any(carries(a) for a in args):
+        if any(carries(a, scope_of(node), tainted) for a in args):
             end = getattr(node, "end_lineno", None) or node.lineno
             found.append(f.evidence_for_lines(node.lineno, end))
             if len(found) >= MAX_EVIDENCE_SCANNED:
