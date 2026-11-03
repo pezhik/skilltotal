@@ -3,7 +3,7 @@
 Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (168/168 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/129 benign samples wrongly flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/131 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -166,7 +166,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-ANNOTATION-MISMATCH` | AST03, AST04 | 0 | 0 | 5/5 | 3/3 |
 | `ST-SKILL-CAP-MISMATCH` | AST03, AST04 | 1 | 2 | - | - |
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
-| `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 1 | - | - |
+| `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 2 | - | - |
 | `ST-HIDDEN-ANSI` | AST04 | 2 | 0 | - | - |
 | `ST-HIDDEN-UNICODE` | AST04 | 7 | 0 | - | - |
 | `ST-HIDDEN-UNICODE-AMBIG` | AST04 | 0 | 0 | - | - |

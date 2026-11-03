@@ -3,7 +3,7 @@
   "ruleset_version": 89,
   "python_version": "3.14",
   "positives": 168,
-  "negatives": 129,
+  "negatives": 131,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -180,7 +180,7 @@
         "AST04"
       ],
       "malicious_samples": 1,
-      "benign_samples": 1,
+      "benign_samples": 2,
       "should_fire": 0,
       "fired": 0,
       "should_stay_silent": 0,

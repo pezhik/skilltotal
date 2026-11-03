@@ -20,6 +20,15 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
+- **`ST-AGENT-CONFIG-PERSIST`** (narrowed): a `setup.py` beside an `__init__.py` is a module of
+  that package (the code behind a `tool setup` command the user runs), not the build script pip
+  runs, so writes inside its functions are judged like any other package module: risky, not
+  install time. A write at its top level still fires, and so does any `setup.py` with no
+  `__init__.py` beside it, at the root or in a sub-project.
+- **`ST-SKILL-MEMORY-WRITE-HIDDEN`** (narrowed): in a list, each item is its own instruction. A
+  concealment word counts only from the start of the memory write's own item onwards, so "never
+  show it to the user" about a draft in step 2 no longer pairs with a memory write in step 5. A
+  concealment in the write's own item or in a later one still fires.
 
 ## ruleset 89 (engine 0.90.0)
 

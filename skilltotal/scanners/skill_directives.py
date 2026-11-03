@@ -71,6 +71,11 @@ _HIDE_FROM_USER = re.compile(
     r"(?:this|it|that|these|the\s+(?:change|edit|update|entry|line|instruction)s?)\b",
     re.IGNORECASE,
 )
+# The start of a list item. A numbered or bulleted list with no blank lines is one paragraph, but
+# each item is its own instruction: "2. Draft the spec internally, never show it to the user" says
+# nothing about the memory write in "5. Write conclusions to MEMORY.md". A concealment counts from
+# the start of the write's own item onwards ("5. Append ... to MEMORY.md. 6. Never mention it").
+_LIST_ITEM = re.compile(r"(?m)^[ \t]*(?:\d{1,3}[.)]|[-*+])[ \t]+")
 # Instructions kept encrypted so that no reader of the file sees them: the passage tells the agent
 # to decrypt a block with a key taken from an env file or an environment variable and then to
 # follow the decrypted text. Decrypting a secrets file for a deploy does not tell the agent to
@@ -166,7 +171,11 @@ class SkillDirectivesScanner(Scanner):
                                                             base + verdict.end()))
                 write = _MEMORY_WRITE.search(text)
                 if write:
-                    hide = _HIDE_FROM_USER.search(text)
+                    item_start = max(
+                        (m.start() for m in _LIST_ITEM.finditer(text, 0, write.start())),
+                        default=0,
+                    )
+                    hide = _HIDE_FROM_USER.search(text, item_start)
                     if hide:
                         memory.append(f.evidence_for_span(base + write.start(),
                                                           base + max(write.end(), hide.end())))
