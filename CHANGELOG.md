@@ -4,6 +4,20 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.91.0]
+
+### Changed
+- Ruleset 90. A full rescan of the MCP registry (about 13,300 servers) produced 35 "malicious"
+  verdicts and 32 annotation mismatches. We read each one by hand. Most came from a rule matching
+  something that only looked like the attack: a sanitizer's list of invisible characters, an install
+  hint a hook only prints, a schema validator's code generator bundled with an unrelated decrypt
+  helper, a temp file, an API client sending its own token to its own server. Sixteen rules are
+  narrowed. Each has a benign sample and a test that keeps the real attack flagged, and
+  `RULES_CHANGELOG.md` lists what each narrowing now lets through. Six verdicts and seventeen
+  mismatches were real and still fire.
+- `ST-AGENT-CLI-BYPASS` also reads `--permission-mode bypassPermissions` and
+  `--ask-for-approval never`.
+
 ## [0.90.0]
 
 ### Changed

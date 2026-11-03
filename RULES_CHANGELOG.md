@@ -4,13 +4,18 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
-## ruleset 90 (unreleased)
+## ruleset 90 (engine 0.91.0)
+
+This ruleset comes from reading by hand every malicious verdict and annotation mismatch of a full
+MCP registry rescan. Sixteen rules are narrowed, because each matched something that only looked
+like the attack, such as a printed hint, a list of characters to strip or an API client's own token.
+Each narrowing keeps a sample of the real attack flagged, and the entries below say what now
+slips. One rule is widened.
 
 - **`ST-AGENT-CLI-BYPASS`** (widened): `--permission-mode bypassPermissions` (Claude Code) and
   `--ask-for-approval never` (Codex) now count as switching approvals off, like
   `--dangerously-skip-permissions` and `--yolo`, whether written as one string or as two list
   elements.
-
 - **`ST-POSTEX-PERSIST`** (narrowed): a redirect into `/dev/null`, a standard stream or the terminal
   discards its output and is no write, so a script that checks for a file under `/etc/cron.d/` or
   removes one is silent. A real write beside such a redirect still fires.
@@ -23,15 +28,14 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   since it changes nothing the user keeps. The path must come from `tmpdir()` or `mkdtemp` in
   Node.js, or the `tempfile` module in Python, directly or through names the handler assigns. A
   hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
-- **`ST-MCP-ANNOTATION-MISMATCH`** (narrowed, second pass): these no longer count as effects. A
-  temp file made by the project's own helper named for it (`makeTmpFileName(`,
-  `_download_file_to_temp(`). A Windows named pipe opened to reach another process.
-  `x.unlink(a, b, c)` on an object that is not a path, since pathlib's `unlink` takes no path
-  argument. A configured program, which the tool's arguments do not reach, run with written-out
-  arguments that only ask it to report (`list`, `--version`, `--list-...`). And, under
+  Five more shapes no longer count as effects: a temp file made by the project's own helper named
+  for it (`makeTmpFileName(`, `_download_file_to_temp(`); a Windows named pipe opened to reach
+  another process; `x.unlink(a, b, c)` on an object that is not a path, since pathlib's `unlink`
+  takes no path argument; a configured program, which the tool's arguments do not reach, run with
+  written-out arguments that only ask it to report (`list`, `--version`, `--list-...`); and, under
   `destructiveHint: false`, removing a scratch file or folder the handler itself wrote or made
-  earlier in the same call. A program
-  the caller picks, a computed argument and a write subcommand still count.
+  earlier in the same call. A program the caller picks, a computed argument and a write subcommand
+  still count.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
 - **`ST-SECRET-EXFIL`** (narrowed): what a helper reads from the environment is not the environment.
@@ -53,14 +57,13 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   concealment word counts only from the start of the memory write's own item onwards, so "never
   show it to the user" about a draft in step 2 no longer pairs with a memory write in step 5. A
   concealment in the write's own item or in a later one still fires.
-- **`ST-HIDDEN-UNICODE`** (narrowed): a run of invisible math operators that names each operator
-  once is a sanitizer's list of characters to strip, not an encoding. A run that repeats an
-  operator, and every Sneaky Bits binary payload, still fires.
-- **`ST-HIDDEN-UNICODE`** (narrowed): hidden text in a YAML or TOML file whose records name the
-  detection a sample must trigger (`expected_pattern_id`, `expected_detection`, ...) is a
-  detector's test vector, so it is noted for review instead of scored. An agent's task file
-  (`expected_output`), an instruction file such as `SKILL.md` and any JSON manifest or tool listing
-  still fire.
+- **`ST-HIDDEN-UNICODE`** (narrowed): two cases are no longer scored. A run of invisible math
+  operators that names each operator once is a sanitizer's list of characters to strip; a run that
+  repeats an operator, and every Sneaky Bits binary payload, still fires. Hidden text in a YAML or
+  TOML file whose records name the detection a sample must trigger (`expected_pattern_id`,
+  `expected_detection`, ...) is a detector's test vector, so it is noted for review instead of
+  scored; an agent's task file (`expected_output`), an instruction file such as `SKILL.md` and any
+  JSON manifest or tool listing still fire.
 - **`ST-MCP-OAUTH-ENDPOINT-INJECTION`** (narrowed): an `issuer` value must be a URL, or start with
   the command itself. A tool parameter named `issuer` whose description quotes `code` in backticks
   is not a discovery document. Endpoint keys and `jwks_uri` are unchanged.
