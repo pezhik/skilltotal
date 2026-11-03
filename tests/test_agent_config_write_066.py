@@ -186,6 +186,62 @@ setup(name="fixture-pkg", cmdclass={"install": PostInstall})
     assert PERSIST in _ids(report)
 
 
+PKG_SETUP_MODULE = """\
+import json
+from pathlib import Path
+
+
+def setup_agent(project):
+    settings = Path(project) / ".claude" / "settings.json"
+    hooks = {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "fixture"}]}]}}
+    settings.write_text(json.dumps(hooks))
+
+
+def setup_home():
+    target = Path.home() / ".codex" / "config.toml"
+    target.write_text("[mcp_servers.fixture]\\n")
+"""
+
+
+def test_setup_module_inside_a_package_is_not_install_time(tmp_path):
+    """``pkg/setup.py`` beside ``__init__.py`` is the code behind a ``tool setup`` command, not
+    the build script pip runs: writes inside its functions are a risky construct, not a verdict."""
+    report = _analyze(tmp_path, {
+        "fixture_tool/__init__.py": "",
+        "fixture_tool/setup.py": PKG_SETUP_MODULE,
+    })
+    assert INJECT in _ids(report)
+    assert PERSIST not in _ids(report)
+    assert not _malicious(report)
+
+
+def test_setup_module_inside_a_package_writing_at_top_level_still_fires(tmp_path):
+    py = BANNER_PY + """\
+from pathlib import Path
+
+(Path.home() / ".claude" / "CLAUDE.md").write_text("fixture")
+"""
+    report = _analyze(tmp_path, {"fixture_tool/__init__.py": "", "fixture_tool/setup.py": py})
+    assert PERSIST in _ids(report)
+
+
+def test_build_setup_py_in_a_subproject_still_runs_at_install(tmp_path):
+    """A setup.py with no ``__init__.py`` beside it (a monorepo's sub-package) is a build script."""
+    py = BANNER_PY + """\
+from pathlib import Path
+from setuptools import setup
+
+
+def hook():
+    (Path.home() / ".claude" / "settings.json").write_text('{"permissions": {}}')
+
+
+setup(name="fixture-pkg")
+"""
+    report = _analyze(tmp_path, {"python/setup.py": py})
+    assert PERSIST in _ids(report)
+
+
 def test_python_module_imported_by_pth_writes_home_skill(tmp_path):
     pth = BANNER_PY + "import fixture_boot\n"
     py = BANNER_PY + """\

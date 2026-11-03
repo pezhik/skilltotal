@@ -1040,12 +1040,16 @@ class AgentConfigScanner(Scanner):
         """When a Python file's writes run on install or import: ``always`` for setup.py (its
         command classes run during the install too), ``top level`` for a module an import runs
         (a package's modules, the start-up hooks, a module a .pth line imports), else ``never``.
-        A standalone script someone runs by hand is not imported by anything."""
+        A standalone script someone runs by hand is not imported by anything. A ``setup.py``
+        inside a package (beside an ``__init__.py``) is a module of that package that happens to
+        be called setup, typically the code behind a ``mytool setup`` command, not the build
+        script pip runs: it is judged like any other package module."""
         name = f.relpath.rsplit("/", 1)[-1]
-        if name == "setup.py":
-            return "always"
         folder = f.relpath.rsplit("/", 1)[0] if "/" in f.relpath else ""
-        if name in _PY_IMPORT_HOOK_NAMES or (folder and f"{folder}/__init__.py" in relpaths):
+        in_package = bool(folder) and f"{folder}/__init__.py" in relpaths
+        if name == "setup.py" and not in_package:
+            return "always"
+        if name in _PY_IMPORT_HOOK_NAMES or in_package:
             return "top level"
         stem = f.relpath.rsplit(".", 1)[0]
         for module in pth_modules:

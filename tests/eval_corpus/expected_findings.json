@@ -11,6 +11,11 @@
   "ST-FS-NODE-WRITE",
   "ST-INSTALL-NPM"
  ],
+ "negative/AST01/agent-config-persist/package-setup-module": [
+  "ST-AGENT-CONFIG-INJECT",
+  "ST-FS-PY-READ",
+  "ST-FS-PY-WRITE"
+ ],
  "negative/AST01/agent-config-persist/scaffold-build-task": [],
  "negative/AST01/agent-cred-helper-exec/static-key-helper": [],
  "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
@@ -165,6 +170,7 @@
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST01/skill-dynamic-exec/benign-dynamic-context": [],
+ "negative/AST01/skill-writes-agent-memory-files-persistence/list-item-hides-other-step": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/memory-file-reference": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/open-memory-notes": [],
