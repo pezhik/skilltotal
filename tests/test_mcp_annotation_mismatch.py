@@ -822,3 +822,78 @@ def test_temp_files_do_not_contradict_read_only_py(tmp_path: Path, case: str):
 def test_lasting_writes_beside_temp_files_still_fire_py(tmp_path: Path, case: str):
     report = _scan(tmp_path, {"server.py": PY_TEMP_TOOL % LASTING_BODIES_PY[case]})
     assert _finding(report) is not None, case
+
+
+# Registry long tail, ruleset 90: calls that read like file or process effects but are not.
+QUIET_BODIES_PY = {
+    "a link removed in a database": 'db.unlink(name, args[0], "related_to")',
+    "a named pipe probed for a running host": r'open(f"\\\\.\\pipe\\runner_{name}", "r+b")',
+    "a configured program asked for its version": 'subprocess.run([GODOT, "--version"])',
+    "a configured program asked to list": (
+        'subprocess.run([PY_BIN, TUI_SCRIPT, "list", "--json"], capture_output=True)'
+    ),
+    "a configured program given a list option": (
+        'subprocess.run([SF_CLI, "--headless", "--list-crawls"], capture_output=True)'
+    ),
+    "a temp file from a project helper": (
+        "tmp = _download_to_temp(name)\n    tmp.unlink(missing_ok=True)"
+    ),
+}
+LOUD_BODIES_PY = {
+    "a pathlib delete": "Path(name).unlink()",
+    "a configured program told to delete": 'subprocess.run([GIT_BIN, "rm", name])',
+    "a program the caller picks": 'subprocess.run([name, "--version"])',
+    "a configured program given a computed argument": 'subprocess.run([SF_CLI, "--list", name])',
+    "a file opened for writing": 'open(f"/var/data/{name}", "r+b")',
+}
+
+
+@pytest.mark.parametrize("case", sorted(QUIET_BODIES_PY))
+def test_calls_that_change_nothing_do_not_contradict_read_only_py(tmp_path: Path, case: str):
+    report = _scan(tmp_path, {"server.py": _py_readonly_tool(QUIET_BODIES_PY[case])})
+    assert _finding(report) is None, case
+
+
+@pytest.mark.parametrize("case", sorted(LOUD_BODIES_PY))
+def test_calls_that_change_things_still_contradict_read_only_py(tmp_path: Path, case: str):
+    report = _scan(tmp_path, {"server.py": _py_readonly_tool(LOUD_BODIES_PY[case])})
+    assert _finding(report) is not None, case
+
+
+TS_RENDER_TOOL = TS_HEAD + """
+server.registerTool(
+  "render",
+  { description: "Render", annotations: { %s } },
+  async ({ outputPath, html }) => {
+%s
+    return { content: [] };
+  },
+);
+"""
+_NOT_DESTRUCTIVE = "readOnlyHint: false, destructiveHint: false"
+
+
+def test_removing_a_scratch_file_the_handler_wrote_is_not_destructive(tmp_path: Path):
+    body = """
+    const scratch = outputPath.replace(".pdf", ".tmp.html");
+    await fs.writeFile(scratch, html, "utf-8");
+    await fs.unlink(scratch);"""
+    report = _scan(tmp_path, {"index.ts": TS_RENDER_TOOL % (_NOT_DESTRUCTIVE, body)})
+    assert _finding(report) is None
+
+
+def test_removing_a_file_the_handler_did_not_write_is_destructive(tmp_path: Path):
+    body = """
+    await fs.writeFile(outputPath + ".html", html, "utf-8");
+    await fs.unlink(outputPath);"""
+    report = _scan(tmp_path, {"index.ts": TS_RENDER_TOOL % (_NOT_DESTRUCTIVE, body)})
+    assert _finding(report) is not None
+
+
+def test_a_temp_file_from_a_project_helper_ts(tmp_path: Path):
+    body = """
+    const scratch = makeTmpFileName("render");
+    await fs.writeFile(scratch, html);
+    await fs.unlink(scratch);"""
+    report = _scan(tmp_path, {"index.ts": TS_RENDER_TOOL % ("readOnlyHint: true", body)})
+    assert _finding(report) is None

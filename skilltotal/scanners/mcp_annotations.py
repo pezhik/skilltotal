@@ -79,7 +79,20 @@ _NOT_DESTRUCTIVE_EXCLUDES = frozenset({_DELETE, _DELETE_REQUEST})
 _MUTATING_METHODS = frozenset({"PUT", "PATCH", "DELETE"})
 # A file in the temp folder changes nothing the user keeps. A hardcoded "/tmp/x" does not count: it
 # is a fixed path another process can reach first, and the name proves nothing.
-_JS_TEMP_CALL = re.compile(r"(?<![\w$])(?:tmpdir|mkdtemp|mkdtempSync)\s*\(")
+# A project's own helper named for it (`makeTmpFileName(`, `_download_file_to_temp(`) counts too.
+_JS_TEMP_CALL = re.compile(
+    r"(?<![\w$])(?:tmpdir|mkdtemp|mkdtempSync|[\w$]*(?:Tmp|Temp)[\w$]*|(?:tmp|temp)(?:[A-Z_][\w$]*)?)"
+    r"\s*\("
+)
+_PY_TEMP_HELPER = re.compile(
+    r"(?:^|_)(?:tmp|temp)(?:_|$)|(?:Tmp|Temp)(?=[A-Z_]|$)|^(?:tmp|temp)(?=[A-Z])"
+)
+# A Windows named pipe (`\\.\pipe\name`) is a channel to another process, not a file.
+_PY_PIPE_PREFIX = "\\\\.\\pipe\\"
+# Written-out arguments that ask a configured program only to report: `[SF_CLI, "--list-crawls"]`,
+# `[godot, "--version"]`, `[python, script, "list", "--json"]`.
+_READ_SUBCOMMANDS = frozenset({"list", "ls", "status", "show", "info", "version", "help", "get"})
+_READ_OPTIONS = frozenset({"--version", "-V", "--help", "-h"})
 _JS_ASSIGNED_NAME = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*(?::[^=;\n]{1,60})?=(?![=>])")
 _JS_NAME = re.compile(r"(?<![\w$.])[A-Za-z_$][\w$]*")
 
@@ -481,9 +494,35 @@ class _JsSource:
                 break
             if temp is None:
                 temp = self._temp_names(body)
-            if not self._targets_temp(span, temp):
-                return span
+            if self._targets_temp(span, temp):
+                continue
+            if kind == _DELETE and self._path_name(span) in self._written_before(body, span[0]):
+                continue  # removes a scratch file the handler itself wrote a moment ago
+            return span
         return None
+
+    def _path_name(self, span: tuple[int, int]) -> str | None:
+        """The bare name a file call's first argument is, if it is one."""
+        open_at = span[1] - 1
+        close = self.pairs.get(open_at)
+        args = self.top_level_args(open_at, close) if close is not None else []
+        bare = _JS_BARE_NAME.fullmatch(self.view, *args[0]) if args else None
+        return bare.group(1) if bare else None
+
+    def _written_before(self, body: tuple[int, int], before: int) -> set[str]:
+        """The bare names ``body`` writes a file to before offset ``before``."""
+        deletes = set(self.effects[_DELETE])
+        names: set[str] = set()
+        spans = self.effects[_WRITE]
+        for i in range(bisect.bisect_left(spans, (body[0], -1)), len(spans)):
+            span = spans[i]
+            if span[0] >= before:
+                break
+            if span not in deletes:
+                name = self._path_name(span)
+                if name:
+                    names.add(name)
+        return names
 
     def _temp_names(self, body: tuple[int, int]) -> set[str]:
         """The names ``body`` assigns from the temp folder, directly or through another such name.
@@ -793,10 +832,7 @@ def _py_mismatches(f: IndexedFile) -> list[Evidence]:
         ]
         if hits:
             temp = _py_temp_names(fn)
-            hits = [
-                c for c in hits
-                if kinds[id(c)] & excluded - _FILE_KINDS or not _py_targets_temp(c, temp)
-            ]
+            hits = [c for c in hits if _py_counts(c, kinds[id(c)] & excluded, fn, temp)]
         if not hits:
             continue
         call = min(hits, key=lambda c: (c.lineno, c.col_offset))
@@ -809,17 +845,65 @@ def _py_mismatches(f: IndexedFile) -> list[Evidence]:
 PyFunction = ast.FunctionDef | ast.AsyncFunctionDef
 
 
+def _py_counts(call: ast.Call, kinds: frozenset[str], fn: PyFunction, temp: set[str]) -> bool:
+    """Whether a call's effects, those the hint rules out, survive the exemptions: a file call on
+    the temp folder or a named pipe, a configured program asked only to report."""
+    if kinds & _FILE_KINDS and not (_py_targets_temp(call, temp) or _py_targets_pipe(call)):
+        return True
+    if _EXEC in kinds and not _py_reads_configured_program(call, fn):
+        return True
+    return bool(kinds - _FILE_KINDS - {_EXEC})
+
+
 def _py_names(node: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
 def _py_has_temp_call(node: ast.AST) -> bool:
-    return any(
-        isinstance(n, ast.Call)
-        and (n.func.attr if isinstance(n.func, ast.Attribute)
-             else getattr(n.func, "id", "")) in _PY_TEMP_CALLS
-        for n in ast.walk(node)
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            name = n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+            if name in _PY_TEMP_CALLS or _PY_TEMP_HELPER.search(name):
+                return True
+    return False
+
+
+def _py_targets_pipe(call: ast.Call) -> bool:
+    """Whether a file call opens a Windows named pipe (``open(f"\\\\.\\pipe\\runner_{pid}")``)."""
+    if not call.args:
+        return False
+    path = call.args[0]
+    if isinstance(path, ast.JoinedStr) and path.values:
+        path = path.values[0]
+    return (
+        isinstance(path, ast.Constant)
+        and isinstance(path.value, str)
+        and path.value.startswith(_PY_PIPE_PREFIX)
     )
+
+
+def _py_reads_configured_program(call: ast.Call, fn: PyFunction) -> bool:
+    """Whether a process call runs a configured program (a name the tool's arguments do not
+    reach) with written-out arguments that only ask it to report (``list``, ``--version``,
+    ``--list-crawls``). ``[path, "rm", x]`` or a program taken from a parameter still counts."""
+    command = _command_arg(call)
+    if not isinstance(command, (ast.List, ast.Tuple)) or not command.elts:
+        return False
+    params = {a.arg for a in (*fn.args.posonlyargs, *fn.args.args, *fn.args.kwonlyargs)}
+    words: list[str] = []
+    for e in command.elts:
+        text = _literal_text(e) if not _is_dynamic_command(e) else None
+        if text is None:
+            if words or isinstance(e, ast.Starred) or params & _py_names(e):
+                return False  # a computed argument after the program, or one the caller picks
+            continue
+        words.append(text)
+    if len(words) == len(command.elts):
+        return False  # a written-out program: argv_mutates already judged it
+    sub = next((w for w in words if not w.startswith("-")), None)
+    if sub is not None:
+        return sub in _READ_SUBCOMMANDS
+    return any(w in _READ_OPTIONS or w.startswith("--list") for w in words)
 
 
 def _py_temp_names(fn: PyFunction) -> set[str]:

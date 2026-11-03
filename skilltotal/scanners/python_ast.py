@@ -2062,7 +2062,9 @@ class _EffectVisitor(_CallVisitor):
         self.names[id(node)] = name
         super()._classify_call(name, node)
         if name in _DELETE_CALLS or (
-            isinstance(node.func, ast.Attribute) and node.func.attr in _DELETE_METHODS
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in _DELETE_METHODS
+            and _path_method_args(node)
         ):
             self._note(node, EFFECT_DELETE)
 
@@ -2075,6 +2077,18 @@ class _EffectVisitor(_CallVisitor):
     def _note(self, node: ast.Call, effect: str) -> None:
         self.names.setdefault(id(node), self._dotted(node.func) or "")
         self.effects.setdefault(id(node), (node, set()))[1].add(effect)
+
+
+def _path_method_args(node: ast.Call) -> bool:
+    """Whether a ``.unlink(...)`` / ``.rmdir(...)`` call takes what pathlib's do: nothing, or the
+    one flag ``missing_ok``. ``db.unlink(a, b, kind)`` removes a link in some other object."""
+    if not node.args:
+        return True
+    return (
+        len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, bool)
+    )
 
 
 def _open_is_write(node: ast.Call) -> bool:

@@ -18,6 +18,14 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   since it changes nothing the user keeps. The path must come from `tmpdir()` or `mkdtemp` in
   Node.js, or the `tempfile` module in Python, directly or through names the handler assigns. A
   hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
+- **`ST-MCP-ANNOTATION-MISMATCH`** (narrowed, second pass): these no longer count as effects. A
+  temp file made by the project's own helper named for it (`makeTmpFileName(`,
+  `_download_file_to_temp(`). A Windows named pipe opened to reach another process.
+  `x.unlink(a, b, c)` on an object that is not a path, since pathlib's `unlink` takes no path
+  argument. A configured program, which the tool's arguments do not reach, run with written-out
+  arguments that only ask it to report (`list`, `--version`, `--list-...`). And, under
+  `destructiveHint: false`, removing a scratch file the handler wrote a moment earlier. A program
+  the caller picks, a computed argument and a write subcommand still count.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
 
