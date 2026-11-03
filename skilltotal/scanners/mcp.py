@@ -249,7 +249,10 @@ _BEARER_PREFIX = re.compile(r"(?i)Bearer\s+(?=\S)")
 _NOT_A_SECRET = re.compile(
     r"(?i)(?:^|[-_])your[-_]|example|placeholder|xxx|dummy|sample|redacted|undefined"
     r"|^(?:null|none|no[-_]?auth|bearer|basic|digest|oauth2?|anonymous|public|disabled|token"
-    r"|api[-_]?key|secret)$"
+    r"|api[-_]?key|secret"
+    # `typeof data.token === "string"`: a JavaScript type name, a shape check on a token a
+    # response carried, not a constant the request is compared against.
+    r"|string|number|boolean|object|function|symbol|bigint)$"
 )
 # `snake_case`, `kebab-case`, `dotted.name` or `camelCase` words: a keyword or an identifier.
 _WORD_LIKE = re.compile(r"[A-Z]?[a-z]+(?:[-_.]?[A-Z]?[a-z]+)*|[A-Z]+(?:[-_.][A-Z]+)*")

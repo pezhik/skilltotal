@@ -15,7 +15,11 @@ invisible code points. We split these by how unambiguous the malice is:
   registered ideographic variation sequences use it), has no legitimate reading. A single
   U+FE0F after an emoji is ordinary emoji presentation.
 * **Invisible math operators** (U+2061-U+2064, "Sneaky Bits"): a run of four or more is an
-  encoding, binary when only U+2062 (0) and U+2064 (1) are used; that binary is decoded.
+  encoding, binary when only U+2062 (0) and U+2064 (1) are used; that binary is decoded. A run
+  that names each operator once is a sanitizer's list of the set, not a payload.
+* **Detector test vectors**: tag characters or a payload run in a YAML/TOML file whose records
+  name the detection a sample must trigger (``expected_pattern_id``) are the sample under test,
+  so they are noted for review, not scored.
 * **Hangul fillers** (U+115F, U+1160, U+3164, U+FFA0) are valid JavaScript identifier letters
   that render as nothing: one used as a variable or parameter outside a string or comment is an
   invisible identifier (the "invisible backdoor" shape).
@@ -109,6 +113,21 @@ _DESCRIPTION_KEY = re.compile(r"""\b(?:description|instructions)['"]?\s*[:=]\s*$
 _TOOL_DESCRIPTION_ARG = re.compile(r"""\.tool\s*\(\s*(['"`])[\w.-]+\1\s*,\s*$""")
 _JSON_DESCRIPTION = re.compile(r'"(?:description|instructions)"\s*:\s*"((?:\\.|[^"\\])*)"')
 _CODE_SUFFIXES = (".py", ".pyw", *_JS_SUFFIXES)
+# A detector's test-vector file: YAML/TOML records that pair an attack sample with the detection
+# it must trigger (`simulate_payload = "..."` + `expected_pattern_id = "..."`). The hidden text is
+# the sample under test. Narrow on purpose: an agent's task file (`expected_output:`) and any
+# JSON manifest or tool listing are not matched.
+_VECTOR_SUFFIXES = (".yaml", ".yml", ".toml")
+_EXPECTED_DETECTION_KEY = re.compile(
+    r"""(?im)^[ \t]*(?:-[ \t]+)?["']?expected[_-]?"""
+    r"""(?:pattern|rule|detection|detector|finding|verdict|threat|severity|block|flag)\w*"""
+    r"""["']?[ \t]*[:=]"""
+)
+
+
+def _is_detector_vector_file(f: IndexedFile) -> bool:
+    return (f.relpath.lower().endswith(_VECTOR_SUFFIXES) and not is_instruction_path(f.relpath)
+            and _EXPECTED_DETECTION_KEY.search(f.text) is not None)
 
 
 def _is_tag(cp: int) -> bool:
@@ -168,6 +187,8 @@ def _hidden_runs(line: str) -> list[str] | None:
         )))
     for m in _OP_RUN.finditer(line):
         run = m.group()
+        if len(set(run)) == len(run):
+            continue  # each operator once: a sanitizer's strip list of the set, not an encoding
         found = True
         if len(run) >= 8 and set(run) <= {_OP_ZERO, _OP_ONE}:
             bits = "".join("1" if c == _OP_ONE else "0" for c in run)
@@ -311,6 +332,8 @@ class InvisibleUnicodeScanner(Scanner):
         review_seen: set[str] = set()
         review_places: list[tuple[str, int | None]] = []
         ansi_places: list[tuple[str, int | None]] = []
+        vector_seen: set[str] = set()
+        vector_places: list[tuple[str, int | None]] = []
 
         for f in index.files:
             self._scan_ansi(f, ansi_evidence, ansi_places)
@@ -324,6 +347,7 @@ class InvisibleUnicodeScanner(Scanner):
                     evidence.append(ev)
             if not _HUNTED.search(f.text):
                 continue
+            vector_file: bool | None = None
             for lineno, raw_line in enumerate(f.text.splitlines(), start=1):
                 if not _HUNTED.search(raw_line):
                     continue  # nothing this scanner acts on (most lines of a CJK document)
@@ -343,7 +367,13 @@ class InvisibleUnicodeScanner(Scanner):
                                      + f"  [text without zero-width: {hidden[:120]!r}]")
                         )
                     continue
-                if tags or runs is not None:
+                if (tags or runs is not None) and vector_file is None:
+                    vector_file = _is_detector_vector_file(f)
+                if (tags or runs is not None) and vector_file:
+                    if f.relpath not in vector_seen:
+                        vector_seen.add(f.relpath)
+                        vector_places.append((f.relpath, lineno))
+                elif tags or runs is not None:
                     snippet = _render(line)[:200]
                     decoded = _decode_tags(line) + "".join(runs or [])
                     if decoded:
@@ -366,6 +396,16 @@ class InvisibleUnicodeScanner(Scanner):
                 what="file(s) with bidi/zero-width characters",
                 advice="They may be legitimate (locale/RTL/CJK/HTML entities) but can also "
                        "hide text; review the rendered characters.",
+            ))
+        if vector_places:
+            needs_review.append(aggregated_review(
+                category=CATEGORY,
+                title="Hidden Unicode in a detector's test vectors",
+                places=vector_places,
+                what="test-vector file(s) with hidden Unicode in a sample that names the "
+                     "detection it expects",
+                advice="Usually the sample a detector is tested on; confirm nothing loads the "
+                       "file as agent instructions.",
             ))
         if ansi_places:
             needs_review.append(aggregated_review(

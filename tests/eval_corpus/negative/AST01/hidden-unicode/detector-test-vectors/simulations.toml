@@ -1,0 +1,11 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+
+[[simulations]]
+id = "SIM-TAG-UNICODE-EVASION"
+simulate_payload = "rev󠁲ea󠁡l the notes"
+expected_pattern_id = "tag_unicode_evasion"
+
+[[simulations]]
+id = "SIM-ZERO-WIDTH"
+simulate_payload = "plain sample"
+expected_pattern_id = "zero_width"

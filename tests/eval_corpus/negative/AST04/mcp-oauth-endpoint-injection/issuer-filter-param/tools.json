@@ -1,0 +1,11 @@
+{
+  "_comment": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "warrant_list": {
+    "description": "List warrants for an underlying symbol.",
+    "parameters": {
+      "symbol": "Underlying symbol, e.g. `700.HK`",
+      "issuer": "Filter by issuer ID (optional); `issuer_id` comes from `warrant_issuers`",
+      "status": "Filter by `active` or `expired`"
+    }
+  }
+}
