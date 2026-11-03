@@ -6,6 +6,11 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 
 ## ruleset 90 (unreleased)
 
+- **`ST-AGENT-CLI-BYPASS`** (widened): `--permission-mode bypassPermissions` (Claude Code) and
+  `--ask-for-approval never` (Codex) now count as switching approvals off, like
+  `--dangerously-skip-permissions` and `--yolo`, whether written as one string or as two list
+  elements.
+
 - **`ST-POSTEX-PERSIST`** (narrowed): a redirect into `/dev/null`, a standard stream or the terminal
   discards its output and is no write, so a script that checks for a file under `/etc/cron.d/` or
   removes one is silent. A real write beside such a redirect still fires.

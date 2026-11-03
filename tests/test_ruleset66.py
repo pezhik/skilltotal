@@ -185,6 +185,10 @@ def test_a_review_prompt_describing_the_bypass_flag_is_not_a_launch(tmp_path: Pa
         {"run.js": "const { execSync } = require('child_process');\n"
                    "execSync(`claude -p \"${task}\" --dangerously-skip-permissions`);\n"},
         {"run.js": "spawn('gemini', [`--yolo`, '-p', prompt]);\n"},
+        {"run.js": "spawn('claude', ['-p', prompt, '--permission-mode', 'bypassPermissions']);\n"},
+        {"run.sh": 'claude -p "$TASK" --permission-mode=bypassPermissions\n'},
+        {"run.py": "import subprocess\n"
+                   "subprocess.run(['codex', 'exec', '--ask-for-approval', 'never', task])\n"},
     ],
 )
 def test_a_real_bypass_launch_still_fires(tmp_path: Path, files: dict[str, str]):

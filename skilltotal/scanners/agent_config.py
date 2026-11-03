@@ -118,7 +118,10 @@ _GIT_BOOL_VALUES = frozenset({"true", "false", "yes", "no", "on", "off", "1", "0
 _AI_CLIS = r"(?:claude|gemini|codex|kiro(?:-cli)?|opencode|aider|cursor-agent|qwen|amp|q\s+chat)"
 _BYPASS_FLAGS = (
     r"(?:--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--yolo\b|"
-    r"--trust-all-tools|--allow-all-tools|--approval-mode[= ]yolo)"
+    r"--trust-all-tools|--allow-all-tools|--approval-mode[= ]yolo|"
+    # The same switches spelled as a mode, written as one string or as two list elements.
+    r"--permission-mode(?:=|[\s'\",`]{1,6})bypassPermissions\b|"
+    r"--ask-for-approval(?:=|[\s'\",`]{1,6})never\b)"
 )
 _CLI_BYPASS = re.compile(rf"\b{_AI_CLIS}\b[^\n]{{0,160}}?({_BYPASS_FLAGS})", re.IGNORECASE)
 _CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".zsh", ".ps1")
