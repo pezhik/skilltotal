@@ -99,9 +99,11 @@
  ],
  "negative/AST01/github-action-secret-exfil/composite-token-to-github": [],
  "negative/AST01/hidden-unicode/cli-ansi-colors": [],
+ "negative/AST01/hidden-unicode/detector-test-vectors": [],
  "negative/AST01/hidden-unicode/emoji-and-hyphenation": [],
  "negative/AST01/hidden-unicode/emoji-and-ideographic-variants": [],
  "negative/AST01/hidden-unicode/legit-unicode": [],
+ "negative/AST01/hidden-unicode/sanitizer-strip-list": [],
  "negative/AST01/hidden-unicode/ts-korean-strings": [],
  "negative/AST01/lethal-trifecta/caps-without-injection": [
   "ST-FS-PY-READ",
@@ -128,6 +130,11 @@
  "negative/AST01/mcp-static-auth-exec/template-parser-token": [
   "ST-MCP-DETECTED",
   "ST-SHELL-PY"
+ ],
+ "negative/AST01/mcp-static-auth-exec/typeof-token-check": [
+  "ST-MCP-DETECTED",
+  "ST-NET-NODE",
+  "ST-SHELL-NODE"
  ],
  "negative/AST01/password-archive/test-fixture-extract": [],
  "negative/AST01/post-exploitation/cli-own-launchagent": [
@@ -259,6 +266,7 @@
   "ST-FS-NODE-READ"
  ],
  "negative/AST04/mcp-oauth-endpoint-injection/clean-discovery": [],
+ "negative/AST04/mcp-oauth-endpoint-injection/issuer-filter-param": [],
  "negative/AST04/mcp-sampling-injection/python-benign-summarizer": [
   "ST-MCP-DETECTED"
  ],
@@ -534,6 +542,9 @@
  ],
  "positive/AST01/github-action-secret-exfil/composite-token-post": [
   "ST-ACTION-SECRET-EXFIL"
+ ],
+ "positive/AST01/hidden-unicode/agent-task-yaml-tag-chars": [
+  "ST-HIDDEN-UNICODE"
  ],
  "positive/AST01/hidden-unicode/claude-md-zero-width-splice": [
   "ST-CONVERGENCE",
@@ -944,6 +955,9 @@
   "ST-SENS-PATH"
  ],
  "positive/AST04/mcp-oauth-endpoint-injection/authz-command-sub": [
+  "ST-MCP-OAUTH-ENDPOINT-INJECTION"
+ ],
+ "positive/AST04/mcp-oauth-endpoint-injection/issuer-command-sub": [
   "ST-MCP-OAUTH-ENDPOINT-INJECTION"
  ],
  "positive/AST04/mcp-sampling-injection/python-sampling-abuse": [

@@ -2,8 +2,8 @@
   "engine_version": "0.90.0",
   "ruleset_version": 89,
   "python_version": "3.14",
-  "positives": 168,
-  "negatives": 129,
+  "positives": 170,
+  "negatives": 133,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -75,7 +75,7 @@
   "coverage_matrix": {
     "AST01": {
       "node": 32,
-      "manifest/text": 26,
+      "manifest/text": 27,
       "python": 24,
       "shell": 4
     },
@@ -90,7 +90,7 @@
     },
     "AST04": {
       "node": 3,
-      "manifest/text": 24,
+      "manifest/text": 25,
       "python": 8
     },
     "AST05": {
@@ -356,7 +356,7 @@
       "owasp": [
         "AST04"
       ],
-      "malicious_samples": 7,
+      "malicious_samples": 8,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -502,7 +502,7 @@
         "AST01",
         "AST04"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 2,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,

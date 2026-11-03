@@ -65,7 +65,11 @@ class OAuthDiscoveryInjectionScanner(PatternScanner):
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             pattern=re.compile(
                 rf'"(?:{_ENDPOINT_KEY})_endpoint"\s*:\s*"[^"\n]*?(?:{_SHELL_META})'
-                rf'|"(?:jwks_uri|issuer)"\s*:\s*"[^"\n]*?(?:{_SHELL_META})',
+                rf'|"jwks_uri"\s*:\s*"[^"\n]*?(?:{_SHELL_META})'
+                # `issuer` is also an everyday word (a tool parameter that filters by a bond or
+                # warrant issuer, described with `code` in backticks). A discovery issuer is a URL,
+                # so the value must be one, or open with the command itself.
+                rf'|"issuer"\s*:\s*"(?:[a-z][a-z0-9+.-]*://[^"\n]*?)?(?:{_SHELL_META})',
                 re.IGNORECASE,
             ),
         ),

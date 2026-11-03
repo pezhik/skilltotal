@@ -2,8 +2,8 @@
 
 Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (168/168 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/129 benign samples wrongly flagged)
+- **recall: 100.0%** (170/170 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/133 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -80,10 +80,10 @@ Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 26 | 32 | 24 | 4 |
+| AST01 | 27 | 32 | 24 | 4 |
 | AST02 | 20 | 17 | 4 | 1 |
 | AST03 | 0 | 1 | 0 | 0 |
-| AST04 | 24 | 3 | 8 | 0 |
+| AST04 | 25 | 3 | 8 | 0 |
 | AST05 | 0 | 0 | 4 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -134,7 +134,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-AGENT-CONFIG-PERSIST` | AST01, AST04 | 6 | 0 | - | - |
 | `ST-AGENT-CRED-HELPER-EXEC` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-AGENT-DOTENV-EXEC` | AST01, AST04 | 1 | 0 | - | - |
-| `ST-MCP-OAUTH-ENDPOINT-INJECTION` | AST01, AST04 | 1 | 0 | - | - |
+| `ST-MCP-OAUTH-ENDPOINT-INJECTION` | AST01, AST04 | 2 | 0 | - | - |
 | `ST-MCP-SAMPLING-SYSPROMPT` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PROMPT-SPLIT-EXFIL` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PICKLE-REDUCE` | AST01, AST05 | 2 | 0 | - | - |
@@ -168,7 +168,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
 | `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 1 | - | - |
 | `ST-HIDDEN-ANSI` | AST04 | 2 | 0 | - | - |
-| `ST-HIDDEN-UNICODE` | AST04 | 7 | 0 | - | - |
+| `ST-HIDDEN-UNICODE` | AST04 | 8 | 0 | - | - |
 | `ST-HIDDEN-UNICODE-AMBIG` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-ELICIT-SECRET` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-SAMPLING-INJECTION` | AST04 | 1 | 0 | - | - |

@@ -20,6 +20,19 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
+- **`ST-HIDDEN-UNICODE`** (narrowed): a run of invisible math operators that names each operator
+  once is a sanitizer's list of characters to strip, not an encoding. A run that repeats an
+  operator, and every Sneaky Bits binary payload, still fires.
+- **`ST-HIDDEN-UNICODE`** (narrowed): hidden text in a YAML or TOML file whose records name the
+  detection a sample must trigger (`expected_pattern_id`, `expected_detection`, ...) is a
+  detector's test vector, so it is noted for review instead of scored. An agent's task file
+  (`expected_output`), an instruction file such as `SKILL.md` and any JSON manifest or tool listing
+  still fire.
+- **`ST-MCP-OAUTH-ENDPOINT-INJECTION`** (narrowed): an `issuer` value must be a URL, or start with
+  the command itself. A tool parameter named `issuer` whose description quotes `code` in backticks
+  is not a discovery document. Endpoint keys and `jwks_uri` are unchanged.
+- **`ST-MCP-STATIC-AUTH-EXEC`** (narrowed): a JavaScript type name (`typeof data.token ===
+  "string"`) is a shape check, not a hard-coded token.
 
 ## ruleset 89 (engine 0.90.0)
 
