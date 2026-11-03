@@ -210,6 +210,15 @@ def test_names_and_typed_words_are_not_credentials(tmp_path: Path):
     assert "ST-SECRET-EMBEDDED" in _ids(_write(tmp_path / "b", {"app/config.py": real}))
 
 
+def test_a_dated_beta_flag_is_not_a_credential(tmp_path: Path):
+    # A beta-header value named like an API version (a popular MCP server ships one).
+    flag = 'export const HIGHLIGHTS_BETA_TOKEN = "dynamic-highlights-2026-08-28";\n' + _NET_JS
+    assert "ST-SECRET-EMBEDDED" not in _ids(_write(tmp_path / "a", {"src/highlights.ts": flag}))
+
+    real = 'export const API_TOKEN = "q8Zt3vLmWn7Hc5Jx-2026-08-28";\n' + _NET_JS
+    assert "ST-SECRET-EMBEDDED" in _ids(_write(tmp_path / "b", {"src/client.ts": real}))
+
+
 def test_a_pump_fun_mint_is_a_public_address(tmp_path: Path):
     mint = "FeMbDoCtW9zXq7vN2xLp9RtW4mZ8sBhK3cJ6dpump"
     src = f"const token = '{mint}';\n" + _NET_JS

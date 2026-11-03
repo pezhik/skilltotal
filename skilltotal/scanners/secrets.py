@@ -125,6 +125,10 @@ _PLACEHOLDER = re.compile(
 
 _ENV_VAR_NAME = re.compile(r"^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){2,}$")
 _HUMAN_WORDS = re.compile(r"^[a-z]{2,}\d{0,4}(?:[-_.][a-z]{2,}\d{0,4}){2,}$")
+# Words followed by an ISO date name a dated API version or beta flag
+# (`dynamic-highlights-2026-08-28`, sent in a beta header): a person typed it, and a generated
+# credential carries no calendar date.
+_WORDS_AND_DATE = re.compile(r"^[a-z]{2,}(?:[-_][a-z]{2,}){1,5}[-_]20\d\d-[01]\d-[0-3]\d$")
 
 
 # The fixed prefix a provider puts in front of its tokens (`ghp_`, `github_pat_`, `sk-ant-`,
@@ -148,7 +152,7 @@ def _is_non_credential_value(value: str) -> bool:
         return True
     # Words joined by hyphens are typed by a person (`random-char-string-for-dev`,
     # `mcp-agent-password`); a generated credential is not spelled that way.
-    if _HUMAN_WORDS.match(value):
+    if _HUMAN_WORDS.match(value) or _WORDS_AND_DATE.match(value):
         return True
     # Single repeated character (xxxxxxxx, 00000000) or too few distinct chars. Judged on the
     # body behind a provider prefix as well as on the whole: `ghp_` followed by 36 copies of one

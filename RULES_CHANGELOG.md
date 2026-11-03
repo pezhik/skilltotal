@@ -7,10 +7,10 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 ## ruleset 90 (engine 0.91.0)
 
 This ruleset comes from reading by hand every malicious verdict and annotation mismatch of a full
-MCP registry rescan. Sixteen rules are narrowed, because each matched something that only looked
-like the attack, such as a printed hint, a list of characters to strip or an API client's own token.
-Each narrowing keeps a sample of the real attack flagged, and the entries below say what now
-slips. One rule is widened.
+MCP registry rescan, and from the benign sweep of popular packages before release. Seventeen rules
+are narrowed, because each matched something that only looked like the attack, such as a printed
+hint, a list of characters to strip or an API client's own token. Each narrowing keeps a sample of
+the real attack flagged, and the entries below say what now slips. One rule is widened.
 
 - **`ST-AGENT-CLI-BYPASS`** (widened): `--permission-mode bypassPermissions` (Claude Code) and
   `--ask-for-approval never` (Codex) now count as switching approvals off, like
@@ -110,6 +110,9 @@ slips. One rule is widened.
   lines between paragraphs were not seen, so the whole file was one paragraph and a "silently"
   anywhere after the install command made it hidden. A blank line is now found whatever the line
   ends; a concealment word in the command's own sentence or lead-in still fires.
+- **`ST-SECRET-EMBEDDED`** (narrowed): lowercase words followed by an ISO date
+  (`dynamic-highlights-2026-08-28`) name a dated API version or beta flag sent in a header, not a
+  credential. A value with a random-looking part before the date still fires.
 
 ## ruleset 89 (engine 0.90.0)
 

@@ -17,6 +17,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
   mismatches were real and still fire.
 - `ST-AGENT-CLI-BYPASS` also reads `--permission-mode bypassPermissions` and
   `--ask-for-approval never`.
+- `ST-SECRET-EMBEDDED` no longer reports a dated beta flag (lowercase words plus an ISO date) as a
+  credential. The benign sweep of popular packages caught it before release.
 
 ## [0.90.0]
 
