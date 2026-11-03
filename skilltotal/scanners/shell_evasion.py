@@ -321,20 +321,103 @@ _PS_RULE = RuleSpec(
 )
 
 
-def _ps_cradle_spans(f: IndexedFile) -> list[tuple[int, int]]:
+def _ps_cradle_spans(f: IndexedFile) -> list[tuple[int, int, bool]]:
     """Spans in ``f`` of a PowerShell download-and-execute cradle: the same-line / piped forms,
-    plus a two-statement form where Invoke-Expression runs a variable assigned from a download."""
-    spans: list[tuple[int, int]] = []
+    plus a two-statement form where Invoke-Expression runs a variable assigned from a download.
+    The flag is True when the cradle runs a published installer script (``_installer_cradle``)."""
+    spans: list[tuple[int, int, bool]] = []
     for m in _PS_CRADLE.finditer(f.text):
         if m.end() > m.start():
-            spans.append((m.start(), m.end()))
+            # `iex (irm <url>)` ends the match at the download verb: its address follows, up to
+            # the end of the statement.
+            end = _PS_STATEMENT_END.search(f.text, m.end())
+            statement = f.text[m.start() : end.start() if end else len(f.text)]
+            spans.append((m.start(), m.end(), _installer_only(statement)))
     assigned: set[str] | None = None
     for m in _PS_IEX_VAR.finditer(f.text):
         if assigned is None:
             assigned = _download_assigned(f.text)
         if m.group(1).casefold() in assigned:
-            spans.append((m.start(), m.end()))
+            spans.append((m.start(), m.end(), _assigned_installer(f.text, m.group(1))))
     return spans
+
+
+# The PowerShell twin of `curl -LsSf https://host/install.sh | sh`: a script published under an
+# installer's name (install.ps1, setup.ps1, bootstrap.ps1, get-x.ps1) at a literal https address,
+# which a reader can fetch and read (uv, bun, deno, pnpm document theirs this way). The shell,
+# Python and Node.js rules report that as a risky construct (ST-SHELL-PIPE-EXEC*), because honest
+# bootstrap code does it; it is reported here the same way, under ST-SHELL-EVASION, the rule that
+# already carries the risky reading of the one-line cradle. A computed or plain-http address, a raw
+# IP, or a payload with any other name (`/payload`, `Invoke-Mimikatz.ps1`) stays malicious.
+_INSTALLER_URL = re.compile(
+    r"https://(?!\d{1,3}(?:\.\d{1,3}){3}[:/])[A-Za-z0-9.-]+(?::\d+)?/(?:[\w.~%-]+/)*"
+    r"(?:install|setup|bootstrap|get)[\w.-]*\.ps1(?=[\s\"'`)|;]|$)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+_ANY_URL = re.compile(r"\b[a-z][a-z0-9+.-]{1,20}://", re.IGNORECASE)
+_PS_STATEMENT_END = re.compile(r"[;\n]")
+
+
+def _installer_only(statement: str) -> bool:
+    """True if the statement fetches from addresses, and every one is a published installer."""
+    urls = list(_ANY_URL.finditer(statement))
+    return bool(urls) and all(_INSTALLER_URL.match(statement, u.start()) for u in urls)
+
+
+def _assigned_installer(text: str, name: str) -> bool:
+    """True if every line that assigns ``$name`` a download fetches a published installer."""
+    lines = [
+        line for m in re.finditer(rf"\${re.escape(name)}\s*=\s*([^\n]*)", text, re.IGNORECASE)
+        if _PS_DOWNLOAD_WORD.search(line := m.group(1))
+    ]
+    return bool(lines) and all(_installer_only(line) for line in lines)
+
+
+# A double-quoted PowerShell string (a backtick escapes the next character) or a single-quoted one
+# (`''` is a quote inside it).
+_PS_STRING = re.compile(r"\"(?:`.|[^\"`\n])*\"|'(?:''|[^'\n])*'")
+_PS_PRINT = re.compile(
+    r"\b(?:Write-(?:Host|Output|Warning|Information|Verbose)|echo)\b[^;|\n]*$", re.IGNORECASE
+)
+
+
+def _in_printed_parameter(f: IndexedFile, offset: int) -> bool:
+    """True if ``offset`` is in the quoted value of a named argument (`Test-Tool -Hint "..."`) to a
+    function this file defines, whose parameter the file only ever prints.
+
+    An installer that lists missing tools passes each one's install command as text to a helper
+    that writes it on the console. The PowerShell twin of a shell hint variable that is only
+    echoed (``IndexedFile.in_shell_assigned_hint``): the command is shown to a person, not run.
+    A parameter used anywhere else (passed on, run with Invoke-Expression) keeps the match.
+    """
+    line_no = f.line_of_offset(offset)
+    line = f.line_text(line_no)
+    col = offset - (f.text.rfind("\n", 0, offset) + 1)
+    strings = list(_PS_STRING.finditer(line))
+    holder = next((s for s in strings if s.start() < col < s.end()), None)
+    if holder is None:
+        return False
+    prefix = line[: holder.start()]
+    for s in reversed(strings):
+        if s.end() <= holder.start():
+            prefix = prefix[: s.start()] + " " * (s.end() - s.start()) + prefix[s.end():]
+    param = re.search(r"\s-(\w+)\s*:?\s*$", prefix)
+    command = re.match(r"\s*([A-Za-z][\w-]*)", re.split(r"[;|{(=]", prefix)[-1])
+    if param is None or command is None:
+        return False
+    if not re.search(rf"\bfunction\s+{re.escape(command.group(1))}\b", f.text, re.IGNORECASE):
+        return False
+    printed = 0
+    for use in re.finditer(rf"\${re.escape(param.group(1))}\b", f.text, re.IGNORECASE):
+        if re.search(r"\]\s*$", f.text[max(0, use.start() - 40) : use.start()]):
+            continue  # the declaration, `[string]$Hint`
+        start = f.text.rfind("\n", 0, use.start()) + 1
+        if not _PS_PRINT.search(f.text[start : use.start()]):
+            return False
+        printed += 1
+    return printed > 0
 
 
 _PS_ASSIGN = re.compile(r"\$(\w+)\s*=\s*")
@@ -385,22 +468,33 @@ class ShellEvasionScanner(Scanner):
             evidence.append(ev)
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
-        findings = [_finding_from_rule(_RULE, evidence)] if evidence else []
-
         # PowerShell download-and-execute cradle (malicious indicator), including the
-        # two-statement variable form a single regex cannot express.
+        # two-statement variable form a single regex cannot express. A published installer run
+        # this way is the risky reading (ST-SHELL-EVASION); a cradle that is only printed as a
+        # hint runs nothing.
         ps_evidence: list[Evidence] = []
         ps_seen: set[tuple[str, int, int]] = set()
+        hints: list[str] = []
         for f in index.select(suffixes=_PS_SUFFIXES):
-            for s, e in _ps_cradle_spans(f):
+            for s, e, installer in _ps_cradle_spans(f):
                 ev = f.evidence_for_span(s, e)
                 key = (ev.file, ev.line_start, ev.line_end)
                 if key in ps_seen:
                     continue
                 ps_seen.add(key)
+                if _in_printed_parameter(f, s):
+                    if f.relpath not in hints:
+                        hints.append(f.relpath)
+                    continue
+                if installer:
+                    if key not in seen and len(evidence) < MAX_EVIDENCE_SCANNED:
+                        seen.add(key)
+                        evidence.append(ev)
+                    continue
                 ps_evidence.append(ev)
                 if len(ps_evidence) >= MAX_EVIDENCE_SCANNED:
                     break
+        findings = [_finding_from_rule(_RULE, evidence)] if evidence else []
         if ps_evidence:
             findings.append(_finding_from_rule(_PS_RULE, ps_evidence))
         findings.extend(findings_from_rules(index, [_TAMPER_RULE]))
@@ -417,5 +511,16 @@ class ShellEvasionScanner(Scanner):
                     "review the script itself."
                 ),
                 file=encoded_scripts[0],
+            ))
+        if hints:
+            needs_review.append(NeedsReview(
+                category="obfuscation",
+                title="PowerShell download-and-run command shown as a hint",
+                reason=(
+                    "A download-and-run command is passed as text to a function of the same "
+                    "script that only prints it, so a person sees what to run and the script runs "
+                    f"nothing: {', '.join(hints[:5])}. Check the address before running it."
+                ),
+                file=hints[0],
             ))
         return ScanResult(findings=findings, needs_review=needs_review)

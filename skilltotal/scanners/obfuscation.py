@@ -254,6 +254,11 @@ _JS_RUN_FILE_PREFIX = (
     r"(?:node|nodejs|python[\d.]*|pwsh|powershell|sh|bash|zsh|cmd)(?:\.exe)?\b)?"
     r"[\s\"'`,\[+]*(?:-[\w-]+[\s\"'`,+]*)*(?:\$\{)?"
 )
+# A decompression (not a base64/hex decode) whose input is a file read from disk right there.
+_JS_DECOMPRESS = re.compile(
+    r"(?:gunzipSync|gunzip|inflateSync|inflate|brotliDecompressSync|unzipSync)"
+)
+_JS_READ_FILE_ARG = re.compile(r"\s*(?:await\s+)?(?:[\w$]+\.)*readFile(?:Sync)?\s*\(")
 _DECODE_SPAWN_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _DECRYPT_EXEC_SUFFIXES = (".py", ".pyw", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 # Matches looked at per file for one in code; past this a file of comments is not read further.
@@ -460,8 +465,26 @@ class _DecodeFlow:
             for path, (at, origin) in written.items():
                 run = _JS_RUN_FILE_PREFIX + re.escape(path) + r"(?![\w$.])"
                 if launch.start() > at and re.match(run, args):
+                    if self._unpacks_shipped_program(origin, args, path):
+                        continue
                     return origin, (launch.start(), launch.end())
         return None
+
+    def _unpacks_shipped_program(self, origin: tuple[int, int], args: str, path: str) -> bool:
+        """True if the decode decompresses a file the package ships (`brotliDecompressSync(
+        fs.readFileSync(...))`) and the written file is then run as the program itself.
+
+        A launcher unpacking its own compressed native binary hides nothing a binary shipped
+        uncompressed would not, and this rule does not read binaries either way. A blob embedded in
+        the source, a base64 or hex decode, or a decompressed file handed to an interpreter (a
+        script that would otherwise be read in the clear) still counts.
+        """
+        decoder = self.text[origin[0] : origin[1]]
+        if not _JS_DECOMPRESS.match(decoder):
+            return False
+        if not _JS_READ_FILE_ARG.match(self.text, origin[1]):
+            return False
+        return re.match(rf"[\s\"'`,\[+]*{re.escape(path)}(?![\w$.])", args) is not None
 
 
 def _in_template_value(text: str, at: int) -> bool:

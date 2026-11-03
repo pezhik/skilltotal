@@ -20,6 +20,34 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   hardcoded `/tmp/x` still fires, and so does a temp file moved or copied out to another path.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.
+- **`ST-POSTEX-MASQUERADE`** (narrowed): the task name after `schtasks /tn` or
+  `Register-ScheduledTask -TaskName` must be written out. A variable, a function call or a format
+  field whose name begins with "windows" (`"/TN", windows_task_name()`, `/TN {WINDOWS_TASK_NAME}`)
+  is the program's own task name held elsewhere. A literal vendor-like name still fires, in a
+  command line or as an argv element.
+- **`ST-POSTEX-REMOTE-ACCESS`** (narrowed), and with it **`ST-POSTEX-CHAIN`**: a literal key written
+  into `authorized_keys` inside a command sent to another host (an `ssh user@host` or `sshpass`
+  command line, or paramiko's `exec_command`) is an operator provisioning their own servers; it
+  opens nothing on the machine that runs the code. A key planted on the running machine still
+  fires, and so does a reverse tunnel. What now slips: a script that spreads a key to other hosts
+  over ssh, and a planting line within 300 characters of an unrelated `ssh user@host` command.
+- **`ST-PS-DOWNLOAD-EXEC`** (narrowed): two shapes are no longer the malicious indicator.
+  A download-and-run command passed as text to a function of the same script that only prints it
+  (`Test-Tool -Hint "irm ... | iex"`) runs nothing and goes to review. A published installer, a
+  script named `install*`, `setup*`, `bootstrap*` or `get*` `.ps1` fetched from a literal https
+  address (`irm https://host/install.ps1 | iex`), is reported as `ST-SHELL-EVASION`, a risky
+  construct, the way the shell, Python and Node.js rules report `curl https://host/install.sh |
+  sh`. A computed, plain-http or raw-IP address, or a payload with any other name, stays
+  malicious. What now slips to risky: a dropper that names its stage `install.ps1` on an https host.
+- **`ST-OBF-DECODE-SPAWN`** (narrowed): a launcher that decompresses a file the package ships
+  (`brotliDecompressSync(fs.readFileSync(...))`), writes it out and runs it as the program itself is
+  unpacking its own native binary, which hides nothing a binary shipped uncompressed would not. A
+  blob embedded in the source, a base64 or hex decode, or a decompressed file handed to an
+  interpreter still fires.
+- **`ST-SKILL-FETCH-EXEC-HIDDEN`** (fixed): in a file with Windows line ends (`\r\n`) the blank
+  lines between paragraphs were not seen, so the whole file was one paragraph and a "silently"
+  anywhere after the install command made it hidden. A blank line is now found whatever the line
+  ends; a concealment word in the command's own sentence or lead-in still fires.
 
 ## ruleset 89 (engine 0.90.0)
 

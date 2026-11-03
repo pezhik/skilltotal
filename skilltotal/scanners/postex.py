@@ -87,6 +87,11 @@ _OS_NAME = (
     r"(?:Microsoft|Windows|OneDrive|SysMon|svchost|WinDefend|SecurityHealth|Defender|csrss"
     r"|lsass|winlogon|RuntimeBroker)"
 )
+# What stands between a name option (`/tn`, `-TaskName`, `/v`) and a name written out in it: spaces
+# and quotes, or the `", "` between two argv elements. A variable, a function call or a format field
+# (`"/TN", windows_task_name()`, `/TN {WINDOWS_TASK_NAME}`, `-TaskName $WindowsTask`) holds a name
+# the code chooses elsewhere, and an identifier that begins with "windows" is not a task name.
+_NAME_GAP = r"(?:[\s\"'`\\]{1,6}|[\"'`]\s*,\s*[\"'`])"
 
 
 @dataclass(frozen=True)
@@ -105,10 +110,24 @@ class _Signal:
     # Lower-case words one of which every anchor match contains: a file holding none of them is
     # not searched with the anchor's regex at all (most files hold none).
     keywords: tuple[str, ...] = ()
+    # What, within ``_UNLESS_WINDOW`` characters of the anchor, shows the step happens on another
+    # machine than the one running the code.
+    unless_near: re.Pattern[str] | None = None
 
 
 def _c(pattern: str, flags: int = 0) -> re.Pattern[str]:
     return re.compile(pattern, flags)
+
+
+# A command sent to another host: an `ssh` (or `sshpass`) command line with a `user@host` argument,
+# or paramiko's `exec_command`. An authorized_keys write inside it provisions a server the operator
+# already logs into; it opens nothing on the machine that runs the code. `ssh-ed25519 AAAA... me@pc`
+# (a key and its comment) is no ssh command.
+_REMOTE_EXEC = _c(
+    r"\bsshpass\b|\.exec_command\("
+    r"|(?<![\w./-])ssh(?:\.exe)?[\"'`]?(?:\s|,)[^\n]{0,200}?[\w}\])]@[\w${\[(]"
+)
+_UNLESS_WINDOW = 300
 
 
 _SIGNALS: tuple[_Signal, ...] = (
@@ -123,11 +142,12 @@ _SIGNALS: tuple[_Signal, ...] = (
         r"(?:22|3389|5900)(?!\d)"),
         keywords=("-r", "remoteforward")),
     # A literal public key written into authorized_keys: whoever holds the private half logs in.
-    # Adding the user's own key (from an environment variable or a file) has no literal key.
+    # Adding the user's own key (from an environment variable or a file) has no literal key, and a
+    # key written on a remote server over ssh is the operator provisioning their own host.
     _Signal(R_REMOTE_ACCESS, _c(r"\bauthorized_keys2?\b"), near=(_c(_WRITE),), window=600,
             requires=_c(r"(?:ssh-(?:ed25519|rsa|dss)|ecdsa-sha2-nistp(?:256|384|521)"
                         r"|sk-ssh-ed25519@openssh\.com)\s+AAAA[0-9A-Za-z+/]{16,}"),
-            keywords=("authorized_keys",)),
+            keywords=("authorized_keys",), unless_near=_REMOTE_EXEC),
     # Reverse shells: an interactive shell bound to a socket.
     _Signal(R_REMOTE_ACCESS, _c(
         r"\b(?:ba|z|k)?sh\s+-i\b[^\n]{0,120}?/dev/(?:tcp|udp)/"
@@ -247,10 +267,10 @@ _SIGNALS: tuple[_Signal, ...] = (
             window=800,
             keywords=("<key>label</key>",)),
     _Signal(R_MASQUERADE, _c(r"\bschtasks(?:\.exe)?\b", _I),
-            near=(_c(r"/create\b", _I), _c(rf"/tn\W{{1,6}}\\?{_OS_NAME}", _I)),
+            near=(_c(r"/create\b", _I), _c(rf"/tn{_NAME_GAP}\\{{0,2}}{_OS_NAME}", _I)),
             keywords=("schtasks",)),
     _Signal(R_MASQUERADE, _c(r"\bRegister-ScheduledTask\b", _I),
-            near=(_c(rf"-TaskName\W{{1,6}}\\?{_OS_NAME}", _I),), window=300,
+            near=(_c(rf"-TaskName{_NAME_GAP}\\{{0,2}}{_OS_NAME}", _I),), window=300,
             keywords=("register-scheduledtask",)),
     _Signal(R_MASQUERADE, _c(r"\bCurrentVersion(?:\\{1,4}|/)Run(?:Once)?(?![\w])", _I),
             near=(_c(rf"(?:/v|-Name|SetValueEx\(\s*[\w.]+\s*,|\.set\(|putValue\()\W{{0,4}}{_OS_NAME}",
@@ -444,6 +464,10 @@ def _signal_evidence(scan: _FileScan, signal: _Signal) -> list[Evidence]:
         lo = max(0, m.start() - signal.window)
         hi = min(len(f.text), m.end() + signal.window)
         if not all(scan.near(near, lo, hi) for near in signal.near):
+            continue
+        if signal.unless_near is not None and scan.near(
+            signal.unless_near, max(0, m.start() - _UNLESS_WINDOW), m.end() + _UNLESS_WINDOW
+        ):
             continue
         if signal.requires is not None:
             required = scan.required(signal.requires)

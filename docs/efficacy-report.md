@@ -3,7 +3,7 @@
 Engine 0.90.0 · ruleset 89 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (168/168 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/129 benign samples wrongly flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/134 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -94,7 +94,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 
 | rule | class | fired on malicious samples | fired on benign samples | rule samples: fired | rule samples: stayed silent |
 |---|---|---|---|---|---|
-| `ST-FS-NODE-WRITE` | - | 9 | 5 | 2/2 | 1/1 |
+| `ST-FS-NODE-WRITE` | - | 9 | 6 | 2/2 | 1/1 |
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 3 | 0 | - | - |
@@ -115,14 +115,14 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-POSTEX-CHAIN` | AST01 | 7 | 0 | - | - |
 | `ST-POSTEX-EVASION` | AST01 | 3 | 0 | - | - |
 | `ST-POSTEX-MASQUERADE` | AST01 | 3 | 0 | - | - |
-| `ST-POSTEX-PERSIST` | AST01 | 8 | 3 | - | - |
+| `ST-POSTEX-PERSIST` | AST01 | 8 | 5 | - | - |
 | `ST-POSTEX-REMOTE-ACCESS` | AST01 | 7 | 0 | - | - |
 | `ST-PS-DOWNLOAD-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-EXEC` | AST01 | 2 | 0 | - | - |
 | `ST-PTH-IMPORT-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
 | `ST-SECRET-EXFIL` | AST01 | 10 | 0 | - | - |
-| `ST-SHELL-EVASION` | AST01 | 0 | 0 | 2/2 | 1/1 |
+| `ST-SHELL-EVASION` | AST01 | 0 | 1 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-MEMORY-WRITE-HIDDEN` | AST01 | 2 | 0 | - | - |
