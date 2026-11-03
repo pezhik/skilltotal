@@ -828,6 +828,9 @@ def test_lasting_writes_beside_temp_files_still_fire_py(tmp_path: Path, case: st
 QUIET_BODIES_PY = {
     "a link removed in a database": 'db.unlink(name, args[0], "related_to")',
     "a named pipe probed for a running host": r'open(f"\\\\.\\pipe\\runner_{name}", "r+b")',
+    "a named pipe held in a name": (
+        'pipe = f"\\\\\\\\.\\\\pipe\\\\runner_{name}"\n    open(pipe, "r+b")'
+    ),
     "a configured program asked for its version": 'subprocess.run([GODOT, "--version"])',
     "a configured program asked to list": (
         'subprocess.run([PY_BIN, TUI_SCRIPT, "list", "--json"], capture_output=True)'
@@ -858,6 +861,33 @@ def test_calls_that_change_nothing_do_not_contradict_read_only_py(tmp_path: Path
 def test_calls_that_change_things_still_contradict_read_only_py(tmp_path: Path, case: str):
     report = _scan(tmp_path, {"server.py": _py_readonly_tool(LOUD_BODIES_PY[case])})
     assert _finding(report) is not None, case
+
+
+PY_NOT_DESTRUCTIVE_TOOL = PY_HEAD + """
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False))
+def crawl(url: str, out: str) -> str:
+%s
+    return "ok"
+"""
+
+
+def test_removing_a_folder_the_handler_made_is_not_destructive_py(tmp_path: Path):
+    body = """
+    work = BASE / url
+    work.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(work, ignore_errors=True)"""
+    report = _scan(tmp_path, {"server.py": PY_NOT_DESTRUCTIVE_TOOL % body})
+    assert _finding(report) is None
+
+
+def test_removing_a_folder_the_handler_did_not_make_is_destructive_py(tmp_path: Path):
+    body = """
+    work = Path(out)
+    (work / "log").mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(work, ignore_errors=True)"""
+    report = _scan(tmp_path, {"server.py": PY_NOT_DESTRUCTIVE_TOOL % body})
+    assert _finding(report) is not None
 
 
 TS_RENDER_TOOL = TS_HEAD + """

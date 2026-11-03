@@ -24,7 +24,8 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
   `x.unlink(a, b, c)` on an object that is not a path, since pathlib's `unlink` takes no path
   argument. A configured program, which the tool's arguments do not reach, run with written-out
   arguments that only ask it to report (`list`, `--version`, `--list-...`). And, under
-  `destructiveHint: false`, removing a scratch file the handler wrote a moment earlier. A program
+  `destructiveHint: false`, removing a scratch file or folder the handler itself wrote or made
+  earlier in the same call. A program
   the caller picks, a computed argument and a write subcommand still count.
 - **`ST-MCP-ANNOTATION-MISMATCH`** (evidence): the request reported for a mutating method is the one
   that sends it, not the first request in the handler.

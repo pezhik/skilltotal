@@ -849,7 +849,8 @@ def _py_counts(call: ast.Call, kinds: frozenset[str], fn: PyFunction, temp: set[
     """Whether a call's effects, those the hint rules out, survive the exemptions: a file call on
     the temp folder or a named pipe, a configured program asked only to report."""
     if kinds & _FILE_KINDS and not (_py_targets_temp(call, temp) or _py_targets_pipe(call)):
-        return True
+        if kinds & _FILE_KINDS != {_DELETE} or not _py_created_before(fn, call):
+            return True
     if _EXEC in kinds and not _py_reads_configured_program(call, fn):
         return True
     return bool(kinds - _FILE_KINDS - {_EXEC})
@@ -868,11 +869,8 @@ def _py_has_temp_call(node: ast.AST) -> bool:
     return False
 
 
-def _py_targets_pipe(call: ast.Call) -> bool:
-    """Whether a file call opens a Windows named pipe (``open(f"\\\\.\\pipe\\runner_{pid}")``)."""
-    if not call.args:
-        return False
-    path = call.args[0]
+def _py_is_pipe(path: ast.expr) -> bool:
+    """Whether an expression is a Windows named pipe path (``f"\\\\.\\pipe\\runner_{pid}"``)."""
     if isinstance(path, ast.JoinedStr) and path.values:
         path = path.values[0]
     return (
@@ -880,6 +878,41 @@ def _py_targets_pipe(call: ast.Call) -> bool:
         and isinstance(path.value, str)
         and path.value.startswith(_PY_PIPE_PREFIX)
     )
+
+
+def _py_targets_pipe(call: ast.Call) -> bool:
+    return bool(call.args) and _py_is_pipe(call.args[0])
+
+
+_PY_CREATE_METHODS = frozenset({"mkdir", "write_text", "write_bytes", "touch"})
+_PY_CREATE_CALLS = frozenset({"makedirs", "mkdir", "open"})
+
+
+def _py_created_before(fn: PyFunction, call: ast.Call) -> bool:
+    """Whether the path a delete removes is a bare name ``fn`` created earlier on: a folder it
+    made (``out.mkdir()``, ``os.makedirs(out)``) or a file it wrote. Removing its own scratch
+    output destroys nothing the user had."""
+    target = call.args[0] if call.args else (
+        call.func.value if isinstance(call.func, ast.Attribute) else None
+    )
+    if not isinstance(target, ast.Name):
+        return False
+    at = (call.lineno, call.col_offset)
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Call) or (n.lineno, n.col_offset) >= at:
+            continue
+        func = n.func
+        if isinstance(func, ast.Attribute) and func.attr in _PY_CREATE_METHODS:
+            made = func.value
+        elif (func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")) in (
+            _PY_CREATE_CALLS
+        ) and n.args:
+            made = n.args[0]
+        else:
+            continue
+        if isinstance(made, ast.Name) and made.id == target.id:
+            return True
+    return False
 
 
 def _py_reads_configured_program(call: ast.Call, fn: PyFunction) -> bool:
@@ -920,7 +953,9 @@ def _py_temp_names(fn: PyFunction) -> set[str]:
                 ]
     names: set[str] = set()
     for _, target, value in sorted(bindings, key=lambda b: b[0]):
-        if isinstance(target, ast.Name) and (_py_has_temp_call(value) or names & _py_names(value)):
+        if isinstance(target, ast.Name) and (
+            _py_has_temp_call(value) or _py_is_pipe(value) or names & _py_names(value)
+        ):
             names.add(target.id)
     return names
 
