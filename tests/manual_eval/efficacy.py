@@ -31,12 +31,18 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from skilltotal import ENGINE_VERSION, RULESET_VERSION, engine
-from skilltotal.collector import detect_component
-from skilltotal.owasp import OWASP_BY_RULE
+# Measure the engine in this checkout. Run as a script, Python puts this folder first on the path,
+# not the repository, so an installed engine (an editable install of another worktree) was measured
+# instead and the report described the wrong code.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from skilltotal import ENGINE_VERSION, RULESET_VERSION, engine  # noqa: E402
+from skilltotal.collector import detect_component  # noqa: E402
+from skilltotal.owasp import OWASP_BY_RULE  # noqa: E402
 
 CORPUS_ROOT = Path(__file__).resolve().parent.parent / "eval_corpus"
 # The rule ids each recall/precision sample reports, as committed: see expected_findings().

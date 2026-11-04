@@ -236,7 +236,14 @@
  "negative/AST02/decode-spawn/spawn-worker-file": [
   "ST-SHELL-NODE"
  ],
+ "negative/AST02/dep-redirect/literal-registry": [
+  "ST-INSTALL-NPM",
+  "ST-SHELL-NODE"
+ ],
  "negative/AST02/dep-redirect/private-registry-skill": [],
+ "negative/AST02/dns-exfil/prints-hostname": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/git-hook-persistence/husky-local": [
   "ST-SHELL-NODE"
  ],
@@ -244,6 +251,9 @@
  "negative/AST02/install-dropper/npm-normal-build": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE"
+ ],
+ "negative/AST02/js-shell-polyglot-preinstall/shell-script-build": [
+  "ST-INSTALL-NPM"
  ],
  "negative/AST02/mcp-launch-command/help-text-install-hint": [
   "ST-MCP-DETECTED",
@@ -288,6 +298,16 @@
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST02/startup-hook-exec/sitecustomize-setpath": [],
+ "negative/AST02/token-revocation-wiper/launch-agent-helper": [
+  "ST-FS-NODE-WRITE",
+  "ST-INSTALL-NPM",
+  "ST-POSTEX-PERSIST"
+ ],
+ "negative/AST02/typosquat-dropper/dataset-download-untar": [
+  "ST-INSTALL-PY",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
+ ],
  "negative/AST02/typosquat-dropper/normal-name-build": [
   "ST-INSTALL-NPM-PREPARE"
  ],
@@ -833,8 +853,18 @@
   "ST-OBF-DECODE-SPAWN",
   "ST-SHELL-NODE"
  ],
+ "positive/AST02/dep-redirect/install-time-variant": [
+  "ST-CMDI-NODE",
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-MASKED-REGISTRY",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST02/dep-redirect/skill-hidden-index": [
   "ST-SKILL-DEP-REDIRECT"
+ ],
+ "positive/AST02/dns-exfil/install-time-variant": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-DNS-BEACON"
  ],
  "positive/AST02/git-hook-persistence/sandworm-git-persist": [
   "ST-CMDI-NODE",
@@ -887,6 +917,10 @@
   "ST-INSTALL-DROPPER",
   "ST-INSTALL-PY",
   "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST02/js-shell-polyglot-preinstall/install-time-variant": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-SHELL-RUNS-JS"
  ],
  "positive/AST02/mcp-launch-command/codex-config-fetch-run": [
   "ST-AGENT-AUTORUN-REMOTE",
@@ -968,6 +1002,17 @@
  "positive/AST02/startup-hook-exec/sitecustomize-fork-net": [
   "ST-NET-PY",
   "ST-STARTUP-HOOK-EXEC"
+ ],
+ "positive/AST02/token-revocation-wiper/install-time-variant": [
+  "ST-FS-NODE-WRITE",
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-SERVICE-TOKEN-WATCH"
+ ],
+ "positive/AST02/typosquat-dropper/install-time-variant": [
+  "ST-INSTALL-PY",
+  "ST-INSTALL-PY-DOWNLOAD-EXEC",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
  ],
  "positive/AST02/typosquat-dropper/npm-reqests-dropper": [
   "ST-DYN-NODE",

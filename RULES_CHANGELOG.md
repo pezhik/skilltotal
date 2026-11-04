@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 91 (engine 0.92.0)
+
+Install-time payloads that the generic install-hook checks did not name. All are
+`malicious_indicator` and read only install context (package.json lifecycle scripts, files they
+run, `setup.py`).
+
+- **`ST-INSTALL-NPM-MASKED-REGISTRY`** (new): an install-run JS file passes a decoded value to
+  `npm install --registry`. A literal registry address stays silent.
+- **`ST-INSTALL-NPM-DNS-BEACON`** (new): an install script or install-run file resolves a DNS name
+  built from `os.hostname()`.
+- **`ST-INSTALL-NPM-SHELL-RUNS-JS`** (new): a lifecycle script starts `sh`/`bash`/`zsh` on a `.js`
+  file. `sh ./build.sh` stays silent.
+- **`ST-INSTALL-NPM-SERVICE-TOKEN-WATCH`** (new): an install-run file writes a systemd user unit or
+  launch agent and tests token revocation (401, `revoked`, `Bad credentials`). A launch agent with
+  no token check stays silent.
+- **`ST-INSTALL-PY-DOWNLOAD-EXEC`** (new): `setup.py` saves a file with `urlretrieve` and starts
+  that same file. A download that is only unpacked stays silent.
+
 ## ruleset 90 (engine 0.91.0)
 
 This ruleset comes from reading by hand every malicious verdict and annotation mismatch of a full
