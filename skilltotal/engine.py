@@ -48,7 +48,7 @@ from skilltotal.file_index import (
 )
 from skilltotal.loaded_code import BARE_MODULE as _BARE_MODULE
 from skilltotal.loaded_code import LOADING_SUFFIXES as _LOADING_SUFFIXES
-from skilltotal.loaded_code import MAX_LOADED_FILES, follow_skipped_references
+from skilltotal.loaded_code import MAX_LOADED_FILES, follow_skipped_references, install_time_scripts
 from skilltotal.loaded_code import MODULE_SUFFIXES as _MODULE_SUFFIXES
 from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
 from skilltotal.loaded_code import _module_paths as _py_module_paths
@@ -547,7 +547,8 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
     the way Node finds it (``node .`` runs the package's ``main``, ``node install`` runs
     ``install.js``). So are the package's own modules those files load with a literal relative
     ``require``/``import``, transitively: a two-line ``postinstall`` that requires a minified
-    ``lib/x.min.js`` runs that bundle too. Parsing only: nothing is run.
+    ``lib/x.min.js`` runs that bundle too. A script those commands start with ``npm run <name>``
+    is read like them (``loaded_code.install_time_scripts``). Parsing only: nothing is run.
 
     A ``package.json`` that is a link is not read: it can point at any file on the machine.
 
@@ -571,10 +572,8 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
         if not isinstance(scripts, dict):
             continue
         package = manifest.parent.resolve()
-        for script in _NPM_INSTALL_SCRIPTS:
-            command = scripts.get(script)
-            if not isinstance(command, str):
-                continue
+        # A script a lifecycle script starts (`"postinstall": "npm run setup"`) runs at install too.
+        for script, command in install_time_scripts(scripts, _NPM_INSTALL_SCRIPTS):
             words = _install_command_words(package, command)
             if len(words) >= _MAX_INSTALL_WORDS:
                 reached.append(f"{_MAX_INSTALL_WORDS} words of the {script} command")

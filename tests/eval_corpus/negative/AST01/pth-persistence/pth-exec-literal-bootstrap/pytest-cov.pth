@@ -1,0 +1,2 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+import os, sys;exec('if \'COV_CORE_SOURCE\' in os.environ:\n try:\n  from pytest_cov.embed import init\n  init()\n except Exception as exc:\n  sys.stderr.write("fixture: coverage setup failed: {0!r}\\n".format(exc))\n')

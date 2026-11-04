@@ -39,8 +39,16 @@ _HEX_DECODER = (
 # What a sink may run straight from a decoder: Python's decoders, and the JavaScript ones --
 # `atob`, Buffer-decoded base64 or hex (`new Function(Buffer.from(h, "hex").toString())()`), a hex
 # decoder, and a string literal written entirely as escapes, which the parser decodes.
+# Text assembled from character codes: `"".join(chr(c) for c in (105, ...))`,
+# `"".join(map(chr, codes))`, `bytes([105, ...]).decode()`. No decoder name appears, yet run through
+# exec it is the same hidden payload.
+_PY_CODEPOINTS = (
+    r"(?:[\"']{2}\.join\(\s*(?:map\(\s*chr\s*,|\[?\s*chr\s*\()"
+    r"|(?:bytes|bytearray)\(\s*[\[(]\s*\d{1,3}\s*,)"
+)
 _PY_DECODE_CALL = (
     r"(?:\w+\.)?b64decode|bytes\.fromhex|codecs\.decode|(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\("
+    r"|" + _PY_CODEPOINTS
 )
 _JS_DECODE_CALL = (
     r"atob\s*\(|Buffer\.from\s*\([^)]*['\"](?:base64|hex)['\"]|" + _HEX_DECODER
@@ -86,7 +94,8 @@ _PY_DECODED_VARIABLE = re.compile(
     r"bytes\.fromhex\s*\(|(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\("
     r"|codecs\.decode\s*\([^)\n]{0,200}['\"]hex['\"]|(?:\w+\.)?b64decode\s*\("
     r"|[bru]{0,2}['\"](?:\\x[0-9A-Fa-f]{2}){8}"
-    r")"
+    r"|" + _PY_CODEPOINTS
+    + r")"
 )
 # Builtins only: `re.compile(pattern)` is not a sink, so a `.` in front rules a match out (in code).
 _PY_CODE_SINK = re.compile(r"(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w{0,60})\b")
@@ -95,7 +104,9 @@ _FLOW_REACH = 4000
 _JS_SINK_TOKENS = ("eval", "Function", "setTimeout", "setInterval", "runIn", "Script")
 _PY_SINK_TOKENS = ("exec", "eval", "compile")
 _JS_SOURCE_TOKENS = ("Buffer.from", "atob", "hex", "Hex", "HEX", "\\x", "\\u00")
-_PY_SOURCE_TOKENS = ("fromhex", "unhexlify", "a2b_hex", "codecs", "b64decode", "\\x")
+_PY_SOURCE_TOKENS = (
+    "fromhex", "unhexlify", "a2b_hex", "codecs", "b64decode", "\\x", "chr", "bytes(", "bytearray("
+)
 _JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _PY_SUFFIXES = (".py", ".pyw")
 

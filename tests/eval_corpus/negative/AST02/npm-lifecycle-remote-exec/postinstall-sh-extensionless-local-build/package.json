@@ -1,0 +1,10 @@
+{
+  "name": "fixture-native-hash",
+  "version": "0.4.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "sh ./scripts/build"
+  },
+  "license": "MIT"
+}

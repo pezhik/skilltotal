@@ -1,0 +1,10 @@
+{
+  "name": "fixture-fast-image-tools",
+  "version": "2.0.1",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "sh ./scripts/bootstrap"
+  },
+  "license": "MIT"
+}

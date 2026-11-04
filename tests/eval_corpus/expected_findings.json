@@ -185,6 +185,7 @@
  "negative/AST01/prompt-split-exfil/dashboard-sync": [],
  "negative/AST01/prompt-split-exfil/deploy-keeps-secret": [],
  "negative/AST01/pth-persistence/ordinary-path": [],
+ "negative/AST01/pth-persistence/pth-exec-literal-bootstrap": [],
  "negative/AST01/pth-persistence/pth-imports-defining-module": [
   "ST-SHELL-PY"
  ],
@@ -254,10 +255,24 @@
  "negative/AST02/git-hook-persistence/husky-local": [
   "ST-SHELL-NODE"
  ],
+ "negative/AST02/gyp-command-substitution/gyp-action-own-build-tool": [],
  "negative/AST02/gyp-command-substitution/node-addon-include": [],
  "negative/AST02/install-dropper/npm-normal-build": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE"
+ ],
+ "negative/AST02/install-dropper/pep517-in-tree-backend-wraps-setuptools": [
+  "ST-SHELL-PY"
+ ],
+ "negative/AST02/install-dropper/setup-py-chr-table": [
+  "ST-FS-PY-WRITE",
+  "ST-INSTALL-PY"
+ ],
+ "negative/AST02/install-dropper/setup-py-requests-download-data": [
+  "ST-FS-PY-WRITE",
+  "ST-INSTALL-PY",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
  ],
  "negative/AST02/js-shell-polyglot-preinstall/shell-script-build": [
   "ST-INSTALL-NPM"
@@ -283,6 +298,15 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE",
   "ST-NET-NODE"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-fetches-json-manifest": [
+  "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-npm-run-build": [
+  "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-sh-extensionless-local-build": [
+  "ST-INSTALL-NPM"
  ],
  "negative/AST02/npm-worm/install-notice-mentions-publish": [
   "ST-INSTALL-NPM"
@@ -822,6 +846,10 @@
   "ST-OBF-DECODE-EXEC",
   "ST-PTH-EXEC"
  ],
+ "positive/AST01/pth-persistence/getattr-dispatch-pth": [
+  "ST-PTH-EXEC",
+  "ST-SENS-PATH"
+ ],
  "positive/AST01/pth-persistence/network-pth": [
   "ST-PTH-EXEC"
  ],
@@ -952,6 +980,9 @@
   "ST-SENS-PATH",
   "ST-SHELL-NODE"
  ],
+ "positive/AST02/gyp-command-substitution/gyp-action-pipe-shell": [
+  "ST-INSTALL-GYP"
+ ],
  "positive/AST02/gyp-command-substitution/miasma-phantom-gyp": [
   "ST-INSTALL-GYP",
   "ST-SHELL-NODE",
@@ -981,6 +1012,11 @@
   "ST-INSTALL-NPM",
   "ST-OBF-DECODE-EXEC"
  ],
+ "positive/AST02/install-dropper/pep517-in-tree-backend-download-exec": [
+  "ST-INSTALL-PY-DOWNLOAD-EXEC",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
+ ],
  "positive/AST02/install-dropper/python-setup-decode-exec": [
   "ST-DYN-PY",
   "ST-INSTALL-DROPPER",
@@ -992,6 +1028,19 @@
   "ST-INSTALL-DROPPER",
   "ST-INSTALL-PY",
   "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST02/install-dropper/setup-py-chr-join-exec": [
+  "ST-DYN-PY",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-PY",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST02/install-dropper/setup-py-requests-download-exec": [
+  "ST-FS-PY-WRITE",
+  "ST-INSTALL-PY",
+  "ST-INSTALL-PY-DOWNLOAD-EXEC",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
  ],
  "positive/AST02/js-shell-polyglot-preinstall/install-time-variant": [
   "ST-INSTALL-NPM",
@@ -1035,10 +1084,26 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-node-https-get-eval": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-node-runs-nonjs-stage": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-npm-run-chain": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-runs-fetch-script": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC",
   "ST-SHELL-PIPE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-sh-extensionless-stage": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/preinstall-curl-bash": [
   "ST-INSTALL-NPM",
