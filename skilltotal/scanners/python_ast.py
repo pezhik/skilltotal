@@ -1192,16 +1192,14 @@ class _CallVisitor(ast.NodeVisitor):
 
     def _is_gadget(self, value: ast.expr, local: dict[str, ast.expr] | None = None) -> bool:
         """``(callable, args)`` whose callable resolves to a REDUCE_GADGET_CALLS name. A name
-        assigned in the same function (``f = os.system`` / ``t = (os.system, …)``) is followed
-        one step, since aliasing the callable first changes nothing for pickle."""
+        assigned in the same function (``f = os.system`` / ``t = (os.system, …)``) is followed,
+        through a short chain of such names (``a = os.system; b = a``), since aliasing the
+        callable first changes nothing for pickle."""
         local = local or {}
-        if isinstance(value, ast.Name) and value.id in local:
-            value = local[value.id]
+        value = _follow_local(value, local)
         if not (isinstance(value, ast.Tuple) and value.elts):
             return False
-        target = value.elts[0]
-        if isinstance(target, ast.Name) and target.id in local:
-            target = local[target.id]
+        target = _follow_local(value.elts[0], local)
         return _resolve_dotted(target, self.aliases, self.from_imports) in REDUCE_GADGET_CALLS
 
     def _decode_exec_inner_call(self, node: ast.Call) -> ast.Call | None:
@@ -1453,7 +1451,14 @@ def _bound_module(
 def _bound_callable(
     value: ast.expr, view: dict[str, str], from_imports: dict[str, str]
 ) -> str | None:
-    """The dotted callable a ``getattr(<module>, <literal>)`` resolves to, or None."""
+    """The dotted callable a ``getattr(<module>, <literal>)`` resolves to, or the builtin a bare
+    ``exec`` / ``eval`` / ``compile`` (or ``builtins.exec``) names: ``_run = exec`` makes every
+    ``_run(...)`` that call. Otherwise None."""
+    if isinstance(value, (ast.Name, ast.Attribute)):
+        name = _resolve_dotted(value, view, from_imports)
+        if name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC:
+            return name
+        return None
     if not isinstance(value, ast.Call):
         return None
     if _resolve_dotted(value.func, view, from_imports) not in _GETATTR:
@@ -1494,6 +1499,20 @@ def _local_assignments(func: ast.FunctionDef | ast.AsyncFunctionDef) -> dict[str
             if isinstance(target, ast.Name):
                 local[target.id] = sub.value
     return local
+
+
+# How many `b = a` steps a local alias chain is followed: enough for any hand-written hiding,
+# and a cycle (`a = b; b = a`) stops.
+_MAX_ALIAS_HOPS = 8
+
+
+def _follow_local(node: ast.expr, local: dict[str, ast.expr]) -> ast.expr:
+    """``node`` with local Name aliases replaced by what they were assigned, transitively."""
+    for _ in range(_MAX_ALIAS_HOPS):
+        if not (isinstance(node, ast.Name) and node.id in local):
+            break
+        node = local[node.id]
+    return node
 
 
 def _first_arg(node: ast.Call) -> ast.expr | None:

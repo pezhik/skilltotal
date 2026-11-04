@@ -37,6 +37,7 @@ Detection patterns below are string literals; nothing here executes a command.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from urllib.parse import urlsplit
 
@@ -48,6 +49,7 @@ from skilltotal.autorun import (
     AutorunCommand,
     autorun_commands,
 )
+from skilltotal.concat_normalize import bound_strings
 from skilltotal.file_index import (
     _QUOTED_ARG,
     FileIndex,
@@ -124,7 +126,38 @@ _BYPASS_FLAGS = (
     r"--ask-for-approval(?:=|[\s'\",`]{1,6})never\b)"
 )
 _CLI_BYPASS = re.compile(rf"\b{_AI_CLIS}\b[^\n]{{0,160}}?({_BYPASS_FLAGS})", re.IGNORECASE)
+# A mode flag whose value is a name, not a literal: `--permission-mode", mode]` with `mode` bound
+# once to "bypassPermissions" (or to `["bypass", "Permissions"].join("")`) launches the CLI with
+# approvals off exactly like the literal; the value is read from that single binding.
+_CLI_MODE_BY_NAME = re.compile(
+    rf"\b{_AI_CLIS}\b[^\n]{{0,160}}?(--(?:permission-mode|ask-for-approval|approval-mode))"
+    r"(?:=|[\s'\",`]{1,6})(?:\$\{?)?([A-Za-z_$][\w$]{0,60})(?![\w$])",
+    re.IGNORECASE,
+)
+_BYPASS_MODE_VALUES = {
+    "--permission-mode": "bypasspermissions", "--ask-for-approval": "never",
+    "--approval-mode": "yolo",
+}
 _CODE_SUFFIXES = (".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".sh", ".bash", ".zsh", ".ps1")
+
+
+def _bypass_by_name(f: IndexedFile) -> list[tuple[int, int, int]]:
+    """``(start, end, flag offset)`` of each AI CLI launch whose permission/approval mode is a name
+    the file binds once to the approvals-off value. A name inside a string literal is text."""
+    if "-mode" not in f.text and "approval" not in f.text:
+        return []
+    out: list[tuple[int, int, int]] = []
+    bound: dict[str, tuple[str, int]] | None = None
+    for m in _CLI_MODE_BY_NAME.finditer(f.text):
+        at = m.start(2)
+        if f.in_string(at) or f.in_c_string(at):
+            continue
+        if bound is None:
+            bound = bound_strings(f.text, f.suffix)
+        value = bound.get(m.group(2))
+        if value is not None and value[0].lower() == _BYPASS_MODE_VALUES[m.group(1).lower()]:
+            out.append((m.start(), m.end(), m.start(1)))
+    return out
 
 
 def _flag_in_inline_code(f: IndexedFile, m: re.Match[str]) -> bool:
@@ -182,6 +215,16 @@ _WRITE_METHOD_AFTER = re.compile(r"^[^;\n]{0,120}?\.write_(?:text|bytes)\s*\(", 
 # returns the paths in a list (`return [path.join(cwd, '.claude.json'), …]`) has no such
 # assignment head, so it is not matched — closing the injection bypass without re-flagging reads.
 _ASSIGN_HEAD = re.compile(r"^(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=(?!=)")
+# A helper that takes nothing and only returns the path: what follows it, up to the path, is the
+# start of its one return statement. Searched with the path's offset as the end of the text.
+_PATH_HELPER = re.compile(
+    r"(?:\bfunction\s+([A-Za-z_$][\w$]{0,60})\s*\(\s*\)\s*(?::\s*[\w.<>\[\]| ]{1,40})?\s*\{"
+    r"\s*return\s+"
+    r"|\b(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*\(\s*\)\s*(?::\s*[\w.<>\[\]| ]{1,40})?"
+    r"\s*=>\s*(?:\{\s*return\s+)?"
+    r"|\bdef\s+([A-Za-z_]\w{0,60})\s*\(\s*\)\s*(?:->\s*[\w.\[\], ]{1,40})?:\s*return\s+)"
+    r"[^;{}\n]{0,200}$"
+)
 
 
 def _is_write_target(text: str, start: int, end: int) -> bool:
@@ -428,10 +471,26 @@ class _WriteChecker:
         head = text[_statement_start(text, start):start].lstrip()
         m = _ASSIGN_HEAD.match(head) or _PY_SHELL_ASSIGN.match(head)
         if m is None:
-            return False
+            return self._returned_then_written(start)
         name = re.escape(m.group(1))
         use = re.compile(rf"(?<![\w$.])\$?\{{?{name}\}}?(?![\w$])")
         for count, occurrence in enumerate(use.finditer(text, end)):
+            if count >= 50:
+                break
+            if self.direct(occurrence.start(), occurrence.end()):
+                return True
+        return False
+
+    def _returned_then_written(self, start: int) -> bool:
+        """The path is all a small helper returns (`function cursorConfig() { return path.join(
+        os.homedir(), ".cursor", "mcp.json"); }`), and a write targets a call of that helper."""
+        text = self.f.text
+        helper = _PATH_HELPER.search(text, max(0, start - _WINDOW), start)
+        if helper is None:
+            return False
+        name = re.escape(next(g for g in helper.groups() if g))
+        call = re.compile(rf"(?<![\w$.]){name}\s*\(\s*\)")
+        for count, occurrence in enumerate(call.finditer(text)):
             if count >= 50:
                 break
             if self.direct(occurrence.start(), occurrence.end()):
@@ -572,6 +631,81 @@ _NET_CLIENT_PY = re.compile(
     r"|\burllib\.request\.urlopen\s*\(",
     re.IGNORECASE,
 )
+
+
+def _net_client(f: IndexedFile, *, code_only: bool = False) -> Evidence | None:
+    """The first outbound network client of ``f`` (with ``code_only``, one that is not in a
+    comment or a string literal)."""
+    pattern = _NET_CLIENT_PY if f.suffix in (".py", ".pyw") else _NET_CLIENT
+    for m in pattern.finditer(f.text):
+        at = m.start()
+        if code_only and (
+            f.in_comment(at) or f.in_string(at) or f.in_c_comment(at) or f.in_c_string(at)
+        ):
+            continue
+        return f.evidence_for_span(m.start(), m.end())
+    return None
+
+
+# A module of the component imported by relative path: `require("./transport")`,
+# `import x from "../net/socket.js"`, `from .transport import tasks`.
+_JS_LOCAL_IMPORT = re.compile(
+    r"\brequire\s*\(\s*['\"](\.{1,2}/[^'\"\n]{1,200})['\"]\s*\)"
+    r"|\b(?:from|import)\s+['\"](\.{1,2}/[^'\"\n]{1,200})['\"]"
+)
+_PY_LOCAL_IMPORT = re.compile(r"(?m)^[ \t]*from[ \t]+\.([A-Za-z_]\w*)[ \t]+import\b")
+_JS_MODULE_SUFFIXES = ("", ".js", ".mjs", ".cjs", ".ts", ".tsx", "/index.js", "/index.ts")
+_MAX_LOCAL_IMPORTS = 20
+
+
+def _local_imports(f: IndexedFile, by_path: dict[str, IndexedFile]) -> list[IndexedFile]:
+    """The files of the component that ``f`` imports by relative path (bounded)."""
+    folder = posixpath.dirname(f.relpath)
+    found: list[IndexedFile] = []
+    if f.suffix in (".py", ".pyw"):
+        candidates = [[f"{m.group(1)}.py", f"{m.group(1)}/__init__.py"]
+                      for m in _PY_LOCAL_IMPORT.finditer(f.text)]
+    else:
+        candidates = [[f"{m.group(1) or m.group(2)}{s}" for s in _JS_MODULE_SUFFIXES]
+                      for m in _JS_LOCAL_IMPORT.finditer(f.text)]
+    for names in candidates[:_MAX_LOCAL_IMPORTS]:
+        for name in names:
+            target = by_path.get(posixpath.normpath(posixpath.join(folder, name)))
+            if target is not None and target is not f:
+                found.append(target)
+                break
+    return found
+
+
+# --- global git hooks written straight into the user's git config ----------------------------
+# `git config --global core.hooksPath` is _GIT_PERSIST; the same setting appended to
+# ~/.gitconfig (or ~/.config/git/config) by a redirect or a write call does exactly the same and
+# never runs git. A project-local `.gitconfig` is not read by git; only the home one counts.
+_GITCONFIG_FILE = re.compile(r"(?<![\w.-])\.gitconfig\b(?![.\w-])|\.config[/\\]git[/\\]config\b")
+_GITCONFIG_HOOK_SETTING = re.compile(r"\b(?:hooksPath|templateDir)\s*=\s*[^\s=]", re.IGNORECASE)
+_GITCONFIG_SETTING_WINDOW = 600
+
+
+def _gitconfig_hook_writes(f: IndexedFile) -> list[Evidence]:
+    """Writes into the user's global git config that set a hooks path or a template dir."""
+    text = f.text
+    if ".gitconfig" not in text and "git/config" not in text and "git\\config" not in text:
+        return []
+    checker = _WriteChecker(f, shell_file=f.suffix in _SHELL_SUFFIXES)
+    evidence: list[Evidence] = []
+    for m in _GITCONFIG_FILE.finditer(text):
+        start, end = m.span()
+        if not _HOME_MARKER.search(text, _statement_start(text, start), end):
+            continue
+        if not _GITCONFIG_HOOK_SETTING.search(
+            text, max(0, start - _GITCONFIG_SETTING_WINDOW), end + _GITCONFIG_SETTING_WINDOW
+        ):
+            continue
+        if checker.writes(start, end):
+            evidence.append(f.evidence_for_span(start, end))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                break
+    return evidence
 
 
 class AgentConfigScanner(Scanner):
@@ -840,15 +974,26 @@ class AgentConfigScanner(Scanner):
                     f.in_comment(at) or f.in_python_docstring(at) or f.in_shell_comment(at)
                     or f.in_c_comment(at)
                 )
+            for start, end, at in _bypass_by_name(f):
+                file_bypass.append(f.evidence_for_span(start, end))
+                launched = launched or not (f.in_comment(at) or f.in_c_comment(at))
             if file_bypass and len(bypass) + len(relay) < MAX_EVIDENCE_SCANNED:
-                net_client = _NET_CLIENT_PY if f.suffix in (".py", ".pyw") else _NET_CLIENT
-                net = next((ev for _m, ev in f.finditer(net_client)), None) if launched else None
+                net = _net_client(f) if launched else None
+                if net is None and launched:
+                    # The socket may sit in a module this file imports (`require("./transport")`):
+                    # the relay split over two files.
+                    net = next(
+                        (n for g in _local_imports(f, by_path)
+                         if (n := _net_client(g, code_only=True))),
+                        None,
+                    )
                 if net is not None:
-                    # Remote-control shape: approvals-off CLI and an outbound connection, one file.
+                    # Remote-control shape: approvals-off CLI and an outbound connection.
                     relay.extend(file_bypass)
                     relay.append(net)
                 else:
                     bypass.extend(file_bypass)
+            git_persist.extend(_gitconfig_hook_writes(f)[: MAX_EVIDENCE_SCANNED - len(git_persist)])
             for _m, ev in f.finditer(_GIT_PERSIST):
                 line = f.line_text(ev.line_start)
                 # A read (`--get`/`--list`/`--unset`, or value-less `core.hooksPath`) is not

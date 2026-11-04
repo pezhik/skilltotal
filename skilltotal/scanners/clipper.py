@@ -61,7 +61,14 @@ _CLIPBOARD_WRITE = re.compile(
     r"|\bclipboard\.write(?:Text)?"
     r"|\bpyperclip\.copy"
     r"|\bwin32clipboard\.SetClipboard(?:Text|Data)"
-    r"|\.clipboard_append)\s*\((?P<arg>[^\n]{0,200})"
+    r"|\.clipboard_append"
+    # A command line run through a process call that pipes text into a clipboard tool: the
+    # write a clipper makes without a clipboard library. Reading the clipboard (`xclip -o`,
+    # `pbpaste`) pipes nothing in and does not match.
+    r"|\b(?:exec(?:Sync|File|FileSync)?|spawn(?:Sync)?|os\.system|os\.popen"
+    r"|subprocess\.(?:run|call|check_call|check_output|Popen))"
+    r"(?=\s*\([^\n]{0,200}?\|\s*(?:pbcopy|wl-copy|clip(?:\.exe)?|xclip|xsel)\b"
+    r"(?![^\n|;]{0,40}?\s(?:-o|--output|-out)\b)))\s*\((?P<arg>[^\n]{0,200})"
 )
 # `swapped = text.replace(PATTERN, ATTACKER)`: a name holding a replacement, written later.
 _REPLACED_INTO = re.compile(

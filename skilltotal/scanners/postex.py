@@ -27,6 +27,7 @@ import bisect
 import ipaddress
 import re
 from dataclasses import dataclass
+from itertools import islice
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
@@ -41,6 +42,7 @@ from skilltotal.scanners.base import (
     ScanResult,
     _finding_from_rule,
 )
+from skilltotal.text_normalize import original_span
 
 R_REMOTE_ACCESS = "ST-POSTEX-REMOTE-ACCESS"
 R_PERSIST = "ST-POSTEX-PERSIST"
@@ -247,13 +249,19 @@ _SIGNALS: tuple[_Signal, ...] = (
             near=(_c(_WRITE),),
             keywords=("startup",)),
     _Signal(R_PERSIST,
-            _c(r"(?<=[/\"'`\\\s])\.(?:bashrc|bash_profile|bash_login|zshrc|zprofile|zshenv|zlogin"
-               r"|profile)\b|\$PROFILE\b|\bconfig\.fish\b"),
+            _c(r"(?<=[/\"'`\\\s])\.(?:bashrc|bash_profile|bash_login|bash_aliases|zshrc|zprofile"
+               r"|zshenv|zlogin|profile)\b|\$PROFILE\b|\bconfig\.fish\b|/etc/bash\.bashrc\b"),
             near=(_c(_APPEND),), window=250,
             keywords=(
-                "bashrc", "bash_profile", "bash_login", "zshrc", "zprofile", "zshenv", "zlogin",
-                "profile", "config.fish",
+                "bashrc", "bash_profile", "bash_login", "bash_aliases", "zshrc", "zprofile",
+                "zshenv", "zlogin", "profile", "config.fish",
             )),
+    # A new file dropped into a directory every login shell sources: the system-wide profile.d
+    # and fish's conf.d. Creating a file there is the whole step, so any write counts.
+    _Signal(R_PERSIST,
+            _c(r"/etc/profile\.d/|\bfish[\\/]{1,2}conf\.d[\\/]"),
+            near=(_c(_WRITE),), window=250,
+            keywords=("profile.d", "conf.d")),
 
     # --- Masquerading (a persistence artifact named after the OS vendor) -----------------------
     _Signal(R_MASQUERADE,
@@ -450,30 +458,45 @@ class _FileScan:
         return verdict
 
 
+def _anchor_spans(f: IndexedFile, anchor: re.Pattern[str]) -> list[tuple[int, int]]:
+    """Where ``anchor`` matches in the source, and where it matches only once spliced string
+    literals are joined (`"Launch" + "Agents"`, `$hive + "\\" + "Run"`; see concat_normalize),
+    mapped back to the source span of the whole concatenation."""
+    spans = [m.span() for m in islice(anchor.finditer(f.text), _MAX_ANCHORS)]
+    folded = f.concat_folded_or_none()
+    if folded is not None:
+        text, idx = folded
+        seen = {start for start, _ in spans}
+        for m in islice(anchor.finditer(text), _MAX_ANCHORS):
+            start, end = original_span(idx, m.start(), m.end())
+            if start < end and start not in seen:
+                seen.add(start)
+                spans.append((start, end))
+    return spans
+
+
 def _signal_evidence(scan: _FileScan, signal: _Signal) -> list[Evidence]:
     f = scan.f
     evidence: list[Evidence] = []
     required: re.Match[str] | None = None
-    for n, m in enumerate(signal.anchor.finditer(f.text)):
-        if n >= _MAX_ANCHORS:
-            break
-        if _in_comment(f, m.start()) or scan.in_pattern_list(m.start()):
+    for start, end in _anchor_spans(f, signal.anchor):
+        if _in_comment(f, start) or scan.in_pattern_list(start):
             continue
-        if signal.not_after_system and "System" in f.text[max(0, m.start() - 16) : m.start()]:
+        if signal.not_after_system and "System" in f.text[max(0, start - 16) : start]:
             continue
-        lo = max(0, m.start() - signal.window)
-        hi = min(len(f.text), m.end() + signal.window)
+        lo = max(0, start - signal.window)
+        hi = min(len(f.text), end + signal.window)
         if not all(scan.near(near, lo, hi) for near in signal.near):
             continue
         if signal.unless_near is not None and scan.near(
-            signal.unless_near, max(0, m.start() - _UNLESS_WINDOW), m.end() + _UNLESS_WINDOW
+            signal.unless_near, max(0, start - _UNLESS_WINDOW), end + _UNLESS_WINDOW
         ):
             continue
         if signal.requires is not None:
             required = scan.required(signal.requires)
             if required is None:
                 return []
-        evidence.append(f.evidence_for_span(m.start(), m.end()))
+        evidence.append(f.evidence_for_span(start, end))
         if len(evidence) >= MAX_EVIDENCE_SCANNED:
             break
     if evidence and required is not None:
@@ -647,7 +670,8 @@ class PostExploitationScanner(Scanner):
 
         for f in _code_files(index):
             file_scan = _FileScan(f)
-            lower = f.text.lower()
+            folded = f.concat_folded_or_none()
+            lower = f.text.lower() if folded is None else f"{f.text}\n{folded[0]}".lower()
             for signal in _SIGNALS:
                 if signal.keywords and not any(k in lower for k in signal.keywords):
                     continue

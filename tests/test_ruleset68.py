@@ -426,7 +426,11 @@ def test_every_decode_exec_alternative_starts_with_a_literal():
     from skilltotal.scanners.obfuscation import _DECODE_EXEC_ALTERNATIVES
 
     for alternative in _DECODE_EXEC_ALTERNATIVES:
-        assert alternative[0].isalpha() or alternative.startswith("\\("), alternative
+        assert (
+            alternative[0].isalpha()
+            or alternative.startswith(("\\(", "\\["))
+            or alternative[0] in "'\"`"
+        ), alternative
 
 
 # The ruleset 67 decode-and-execute regex, kept as the cost reference for the scanner below.
