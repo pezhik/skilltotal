@@ -19,7 +19,13 @@ from skilltotal.engine import (
     _python_entry_point_files,
     analyze_directory,
 )
-from skilltotal.file_index import MAX_FILE_BYTES, FileIndex, is_doc_path
+from skilltotal.file_index import (
+    MAX_DECLARED_ENTRY_POINT_BYTES,
+    MAX_FILE_BYTES,
+    FileIndex,
+    is_doc_path,
+)
+from skilltotal.loaded_code import loaded_by
 
 _CORPUS = Path(__file__).parent / "eval_corpus"
 _TECHNIQUE = "AST01/entry-point-path-demotion"
@@ -71,6 +77,17 @@ def test_entry_point_padded_past_the_file_cap_is_read(tmp_path: Path) -> None:
     report = _report(root)
     assert report.risk_level.value in ("high", "critical")
     assert "ST-COMBO-EXFIL" in {f.id for f in report.findings}
+
+
+def test_entry_point_past_its_cap_is_named_as_unread(tmp_path: Path) -> None:
+    root = _write(tmp_path, {
+        "package.json": json.dumps({"name": "p", "version": "1.0.0", "main": "boot.js"}),
+        "boot.js": _PAYLOAD + "\n" * (MAX_DECLARED_ENTRY_POINT_BYTES + 1024),
+    })
+    report = _report(root)
+    notes = [n for n in report.needs_review if n.title == "Entry point too large to analyze"]
+    assert notes and notes[0].file == "boot.js"
+    assert not any(n.title == "Files too large to analyze" for n in report.needs_review)
 
 
 def test_large_file_that_is_not_an_entry_point_is_still_not_read(tmp_path: Path) -> None:
@@ -148,6 +165,23 @@ def test_mcp_manifest_filed_as_an_example_launches_no_entry_point(tmp_path: Path
         ),
     })
     assert _launched(tmp_path) == set()
+
+
+def test_code_entry_points_load_is_followed_transitively(tmp_path: Path) -> None:
+    _write(tmp_path, {
+        "index.js": "require('./lib/a');\n",
+        "lib/a.js": "import b from '../examples/b.js';\n",
+        "examples/b.js": "module.exports = 1;\n",
+        "examples/unused.js": "module.exports = 2;\n",
+        "pkg/cli.py": "from pkg import util\nfrom tests import helpers\n",
+        "pkg/__init__.py": "", "pkg/util.py": "import os\n",
+        "tests/__init__.py": "", "tests/helpers.py": "x = 1\n", "tests/test_x.py": "x = 1\n",
+    })
+    index = FileIndex.build(tmp_path)
+    assert loaded_by(index, {"index.js", "pkg/cli.py"}) == {
+        "lib/a.js", "examples/b.js", "pkg/__init__.py", "pkg/util.py",
+        "tests/__init__.py", "tests/helpers.py",  # a package's __init__ runs on import too
+    }
 
 
 def test_docs_code_is_held_only_when_declared_as_the_entry_point(tmp_path: Path) -> None:

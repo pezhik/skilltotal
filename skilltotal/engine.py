@@ -25,6 +25,7 @@ from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import SourceContext, collect, vscode_extension_package
 from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
+    MAX_DECLARED_ENTRY_POINT_BYTES,
     MAX_ENTRY_POINT_BYTES,
     MAX_FILE_BYTES,
     SKIP_BUILD_OUTPUT,
@@ -52,6 +53,7 @@ from skilltotal.loaded_code import MODULE_SUFFIXES as _MODULE_SUFFIXES
 from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
 from skilltotal.loaded_code import _module_paths as _py_module_paths
 from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
+from skilltotal.loaded_code import loaded_by as _loaded_by
 from skilltotal.loaded_code import module_file as _module_file
 from skilltotal.models import (
     COMPILED_WITHOUT_SOURCE,
@@ -176,15 +178,16 @@ def analyze_directory(
     # So is the code the package runs when it is imported or its command is run: a main file padded
     # with one long comment until it looked minified was skipped, and its payload with it.
     bundled = component.type in _BUNDLED_ENTRY_POINT_TYPES
+    entry_cap = MAX_ENTRY_POINT_BYTES if bundled else MAX_DECLARED_ENTRY_POINT_BYTES
     package = vscode_extension_package(Path(root)) if component.type == "vscode_extension" else None
     entry_points = _entry_point_files(Path(root), package) | _python_entry_point_files(Path(root))
 
     def build_index(keep: set[str]) -> FileIndex:
         # Padding an entry point past MAX_FILE_BYTES hid it like padding it into a minified shape:
-        # every declared entry point is read up to the larger cap (red team, 2026-11-04).
+        # every declared entry point is read up to a larger cap (red team, 2026-11-04).
         return FileIndex.build(
             Path(root), exclude=exclude, skip_build_output=not published,
-            always_index=install_scripts, keep_minified=keep, keep_max_bytes=MAX_ENTRY_POINT_BYTES,
+            always_index=install_scripts, keep_minified=keep, keep_max_bytes=entry_cap,
         )
 
     index = build_index(entry_points)
@@ -251,7 +254,19 @@ def analyze_directory(
     if skipped_note is not None:
         needs_review.append(skipped_note)
     # A script npm runs at install that is too large already has a note of its own.
-    large = [p for p in index.large if p not in install_scripts]
+    # So does a declared entry point: it is the code that runs, so it is named apart from the rest.
+    large_entries = [p for p in index.large if p in entry_points and p not in install_scripts]
+    if large_entries:
+        cap = entry_cap // (1024 * 1024)
+        needs_review.append(aggregated_review(
+            category="coverage",
+            title="Entry point too large to analyze",
+            places=[(p, None) for p in large_entries],
+            what=f"declared entry point(s) larger than {cap} MiB were not read",
+            advice="This is the code the component runs, and nothing in it was checked. Read it, "
+                   "or treat the component as unverified.",
+        ))
+    large = [p for p in index.large if p not in install_scripts and p not in entry_points]
     if large:
         needs_review.append(aggregated_review(
             category="coverage",
@@ -336,8 +351,9 @@ def analyze_directory(
     # examples/, is the attack, whatever the folder suggests (red team, 2026-11-04). The content
     # layers (6, 7) still apply to them. The build-output layer holds out install scripts only: it
     # keeps capabilities and already judges entry-point bundles on purpose (see its docstring).
+    # So is what an entry point loads by a relative require/import, transitively.
     install_files = frozenset(install_scripts)
-    held_files = install_files | entry_points
+    held_files = install_files | entry_points | _loaded_by(index, entry_points)
     findings, test_review = _hold_out(held_files, _split_test_evidence, findings, index)
     needs_review.extend(test_review)
     # Skills, subagents and commands: their markdown is read by the agent, not by a person.

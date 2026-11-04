@@ -91,6 +91,7 @@
   "ST-MCP-DETECTED"
  ],
  "negative/AST01/entry-point-path-demotion/npm-examples-demo-not-entry": [],
+ "negative/AST01/entry-point-path-demotion/npm-examples-demo-nothing-loads": [],
  "negative/AST01/entry-point-path-demotion/pyproject-script-tests-not-entry": [],
  "negative/AST01/entry-point-path-demotion/sphinx-docs-conf": [],
  "negative/AST01/env-dump-exfil/api-client-own-config": [
@@ -589,6 +590,12 @@
  "positive/AST01/encrypted-instructions-decoy-key-env-read/decrypt-env-key-follow": [
   "ST-SKILL-ENCRYPTED-INSTRUCTIONS"
  ],
+ "positive/AST01/entry-point-path-demotion/console-script-imports-tests-module": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SENS-PATH-PY"
+ ],
  "positive/AST01/entry-point-path-demotion/mcp-command-under-examples": [
   "ST-COMBO-EXFIL",
   "ST-FS-PY-READ",
@@ -613,6 +620,12 @@
   "ST-SENS-PATH",
   "ST-SHELL-NODE",
   "ST-SHELL-PIPE-EXEC-NODE"
+ ],
+ "positive/AST01/entry-point-path-demotion/npm-main-requires-examples-module": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-NODE-READ",
+  "ST-NET-NODE",
+  "ST-SENS-PATH"
  ],
  "positive/AST01/entry-point-path-demotion/npm-main-under-docs": [
   "ST-COMBO-EXFIL",

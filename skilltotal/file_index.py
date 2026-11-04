@@ -1607,9 +1607,13 @@ def neutralize_hidden(text: str) -> str:
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
 # A VS Code extension runs one bundled entry point, routinely larger than MAX_FILE_BYTES (3-4 MB
 # for `extension.js`), so the engine reads its entry points up to this size (``keep_max_bytes``).
-# So it does for every component's declared entry points: padding one past MAX_FILE_BYTES hid it.
 # Scanning a minified bundle costs roughly 20 s of CPU per MB.
 MAX_ENTRY_POINT_BYTES = 8 * 1024 * 1024  # 8 MiB
+# Every other component's declared entry points are read up to this size: padding one just past
+# MAX_FILE_BYTES hid it (red team, 2026-11-04). Scan time grows about 8-12 s per MiB whatever the
+# padding (comments, minified code, blank lines), so the cap stays near MAX_FILE_BYTES; one larger
+# is reported apart ("Entry point too large to analyze"), as bundles past MAX_ENTRY_POINT_BYTES are.
+MAX_DECLARED_ENTRY_POINT_BYTES = 3 * 1024 * 1024  # 3 MiB
 
 # Compiled code a scanner of source cannot read. Shipped without the source beside it, it is a
 # place a payload can hide in plain sight (a .pyc dropped next to the SKILL.md), so the engine
