@@ -1,0 +1,7 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+[project]
+name = "fixture-sshcfg"
+version = "1.0.0"
+
+[project.scripts]
+sshcfg = "sshcfg.cli:main"

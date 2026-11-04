@@ -8,7 +8,9 @@ expected to import :func:`analyze_directory` (pure, no process I/O) directly; th
 
 from __future__ import annotations
 
+import ast
 import os
+import posixpath
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import replace
@@ -17,7 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__, bounded_json
 from skilltotal.agent_skill import skill_capability_mismatch
-from skilltotal.autorun import autorun_commands
+from skilltotal.autorun import KIND_MCP_SERVER, autorun_commands
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import SourceContext, collect, vscode_extension_package
@@ -40,7 +42,6 @@ from skilltotal.file_index import (
     is_doc_path,
     is_example_path,
     is_regular_file,
-    is_self_test_path,
     is_test_path,
     skill_dirs,
 )
@@ -49,6 +50,7 @@ from skilltotal.loaded_code import LOADING_SUFFIXES as _LOADING_SUFFIXES
 from skilltotal.loaded_code import MAX_LOADED_FILES, follow_skipped_references
 from skilltotal.loaded_code import MODULE_SUFFIXES as _MODULE_SUFFIXES
 from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
+from skilltotal.loaded_code import _module_paths as _py_module_paths
 from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
 from skilltotal.loaded_code import module_file as _module_file
 from skilltotal.models import (
@@ -175,12 +177,23 @@ def analyze_directory(
     # with one long comment until it looked minified was skipped, and its payload with it.
     bundled = component.type in _BUNDLED_ENTRY_POINT_TYPES
     package = vscode_extension_package(Path(root)) if component.type == "vscode_extension" else None
-    entry_points = _entry_point_files(Path(root), package)
-    index = FileIndex.build(
-        Path(root), exclude=exclude, skip_build_output=not published, always_index=install_scripts,
-        keep_minified=entry_points,
-        keep_max_bytes=MAX_ENTRY_POINT_BYTES if bundled else MAX_FILE_BYTES,
-    )
+    entry_points = _entry_point_files(Path(root), package) | _python_entry_point_files(Path(root))
+
+    def build_index(keep: set[str]) -> FileIndex:
+        # Padding an entry point past MAX_FILE_BYTES hid it like padding it into a minified shape:
+        # every declared entry point is read up to the larger cap (red team, 2026-11-04).
+        return FileIndex.build(
+            Path(root), exclude=exclude, skip_build_output=not published,
+            always_index=install_scripts, keep_minified=keep, keep_max_bytes=MAX_ENTRY_POINT_BYTES,
+        )
+
+    index = build_index(entry_points)
+    # The file an MCP manifest launches is an entry point too. It is known only once the manifests
+    # are read; one the walk set aside for its shape or size is read on a second walk (rare).
+    launched = _mcp_launched_files(index) - entry_points
+    if launched & {*index.minified, *index.large}:
+        index = build_index(entry_points | launched)
+    entry_points |= launched
     # An extension's entry point read only because it is one is a bundle: judged like build output.
     bundles = frozenset(
         f.relpath for f in index.files
@@ -317,29 +330,29 @@ def analyze_directory(
     #   6. structured-data prompt evidence - an injection phrase in a data blob is inert
     #   7. Python/shell code-context - a pattern that only appears inside a string literal/comment
     #      is a literal or doc example (e.g. a scanner's own rule definitions), not behavior
-    # The layers that judge a file by its PATH (1-5 and build output) never demote what npm runs at
-    # install time: a dropper that postinstall runs from dist/ or tests/ is the attack, whatever
-    # the folder suggests. The content layers (6, 7) still apply to it.
+    # The layers that judge a file by its PATH (1-5) never demote what npm runs at install time,
+    # nor a declared entry point (package.json main/bin/exports, a Python console script, the file
+    # an MCP manifest launches): a dropper postinstall runs from tests/, or a `main` filed under
+    # examples/, is the attack, whatever the folder suggests (red team, 2026-11-04). The content
+    # layers (6, 7) still apply to them. The build-output layer holds out install scripts only: it
+    # keeps capabilities and already judges entry-point bundles on purpose (see its docstring).
     install_files = frozenset(install_scripts)
-    # A `selftest` name is not enough to clear what package.json names as the code that runs.
-    self_test_entries = frozenset(p for p in entry_points if is_self_test_path(p))
-    findings, test_review = _hold_out(
-        install_files | self_test_entries, _split_test_evidence, findings, index
-    )
+    held_files = install_files | entry_points
+    findings, test_review = _hold_out(held_files, _split_test_evidence, findings, index)
     needs_review.extend(test_review)
     # Skills, subagents and commands: their markdown is read by the agent, not by a person.
     relpaths = [f.relpath for f in index.files]
     findings, doc_review = _hold_out(
-        install_files, _split_doc_evidence, findings,
+        held_files, _split_doc_evidence, findings,
         skill_dirs(relpaths) | agent_prompt_dirs(relpaths),
         autorun_commands(index).frontmatter_lines,
     )
     needs_review.extend(doc_review)
-    findings, corpus_review = _hold_out(install_files, _split_data_corpus_evidence, findings)
+    findings, corpus_review = _hold_out(held_files, _split_data_corpus_evidence, findings)
     needs_review.extend(corpus_review)
-    findings, example_review = _hold_out(install_files, _split_example_evidence, findings)
+    findings, example_review = _hold_out(held_files, _split_example_evidence, findings)
     needs_review.extend(example_review)
-    findings, ci_review = _hold_out(install_files, _split_ci_evidence, findings)
+    findings, ci_review = _hold_out(held_files, _split_ci_evidence, findings)
     needs_review.extend(ci_review)
     findings, structured_data_review = _split_structured_data_evidence(
         findings, _command_lines(index), index
@@ -681,6 +694,180 @@ def _entry_point_files(root: Path, package: Path | None = None) -> set[str]:
         target = _module_file(base, start, spec)
         if target is not None:
             found.add(target.relative_to(base).as_posix())
+    return found
+
+
+# A Python entry point's object reference: `pkg.mod:func`, `pkg.mod:Cls.method` or a bare module,
+# with optional extras (`pkg.mod:main [cli]`).
+# Matched on the stripped value, so each `\s*` is followed by a literal (linear on padded input).
+_PY_ENTRY_VALUE = re.compile(r"([A-Za-z_][\w.]*)(?:\s*:\s*[A-Za-z_][\w.]*)?(?:\s*\[[^\]\n]*\])?")
+# pyproject.toml tables whose values are entry points (header with its quotes removed).
+_PYPROJECT_ENTRY_TABLE = re.compile(
+    r"project\.(?:scripts|gui-scripts|entry-points(?:\..+)?)|tool\.poetry\.(?:scripts|plugins\..+)"
+)
+# The same declared inline in `[project]`: `scripts = { tool = "pkg.cli:main" }`.
+_PYPROJECT_INLINE_ENTRIES = re.compile(r"\s*(?:scripts|gui-scripts|entry-points)\s*=\s*\{")
+_TOML_HEADER_LINE = re.compile(r"\s*\[\[?([^\]\n]+)\]\]?\s*(?:#.*)?")
+_TOML_STRING_VALUE = re.compile(r"""=\s*(["'])([^"'\n]*)\1""")
+# Where a Python package's modules are looked up: the project root and the src/ and lib/ layouts.
+_PY_SOURCE_ROOTS = ("", "src", "lib")
+
+
+def _python_entry_point_files(root: Path) -> set[str]:
+    """The files a Python project declares as what runs: its console and GUI scripts and its other
+    entry points, from ``pyproject.toml`` (``[project.scripts]``, ``[project.gui-scripts]``,
+    ``[project.entry-points.*]``, Poetry's ``scripts``/``plugins``), ``setup.cfg``
+    (``[options.entry_points]``) and ``setup.py`` (the ``entry_points`` of its ``setup()`` call,
+    read with ``ast``: never run). Only files that exist inside the component count.
+
+    A console script is the command the package installs, so like a package.json ``bin`` it is
+    behavior whatever folder its module sits in (red team, 2026-11-04: ``mytool=examples.tool:main``
+    scored zero because examples/ was demoted).
+    """
+    values: list[str] = []
+    for name, reader in (
+        ("pyproject.toml", _pyproject_entry_values),
+        ("setup.cfg", _setup_cfg_entry_values),
+        ("setup.py", _setup_py_entry_values),
+    ):
+        path = root / name
+        if not is_regular_file(path):
+            continue
+        try:
+            if path.stat().st_size > MAX_FILE_BYTES:
+                continue
+            values += reader(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+    found: set[str] = set()
+    for value in values:
+        match = _PY_ENTRY_VALUE.fullmatch(value.strip())
+        if match is None:
+            continue
+        parts = match.group(1).split(".")
+        for prefix in _PY_SOURCE_ROOTS:
+            for rel in _py_module_paths(prefix, parts):
+                if is_regular_file(root / rel):
+                    found.add(rel)
+        if len(found) >= _MAX_ENTRY_POINTS:
+            break
+    return found
+
+
+def _pyproject_entry_values(text: str) -> list[str]:
+    """Entry-point values of a pyproject.toml, by a line scan (no TOML parser on Python 3.10, and
+    tomllib is quadratic on some crafted inputs)."""
+    values: list[str] = []
+    table = ""
+    for line in text.splitlines():
+        header = _TOML_HEADER_LINE.fullmatch(line)
+        if header:
+            unquoted = header.group(1).replace('"', "").replace("'", "")
+            table = ".".join(part.strip() for part in unquoted.split("."))
+            continue
+        if _PYPROJECT_ENTRY_TABLE.fullmatch(table) or (
+            table == "project" and _PYPROJECT_INLINE_ENTRIES.match(line)
+        ):
+            values += [m.group(2) for m in _TOML_STRING_VALUE.finditer(line)]
+    return values
+
+
+def _setup_cfg_entry_values(text: str) -> list[str]:
+    """Entry-point values in ``[options.entry_points]`` (or pbr's ``[entry_points]``)."""
+    values: list[str] = []
+    inside = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            inside = stripped.split("#", 1)[0].strip().lower() in (
+                "[options.entry_points]", "[entry_points]",
+            )
+            continue
+        if inside and "=" in stripped and not stripped.startswith(("#", ";")):
+            values.append(stripped.rsplit("=", 1)[1])
+    return values
+
+
+def _setup_py_entry_values(text: str) -> list[str]:
+    """Entry-point values of the ``entry_points=`` argument of ``setup()``: every string in it (a
+    dict of lists, a list, or ini text), following a name to its module-level assignment."""
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    assigned: dict[str, ast.expr] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    assigned[target.id] = node.value
+    values: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.id if isinstance(func, ast.Name) else (
+            func.attr if isinstance(func, ast.Attribute) else ""
+        )
+        if name != "setup":
+            continue
+        stack = [kw.value for kw in node.keywords if kw.arg == "entry_points"]
+        seen: set[str] = set()
+        while stack:
+            value = stack.pop()
+            for sub in ast.walk(value):
+                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                    values += [
+                        line.rsplit("=", 1)[1] for line in sub.value.splitlines() if "=" in line
+                    ]
+                elif isinstance(sub, ast.Name) and sub.id in assigned and sub.id not in seen:
+                    seen.add(sub.id)
+                    stack.append(assigned[sub.id])
+    return values
+
+
+# `${CLAUDE_PLUGIN_ROOT}/`, `${workspaceFolder}/`, `$PWD/`: the component's own folder in a launch
+# command.
+_LAUNCH_ROOT_VARIABLE = re.compile(r"\$\{?[A-Za-z_][\w:.-]*\}?[/\\]")  # used with .match
+
+
+def _mcp_launched_files(index: FileIndex) -> set[str]:
+    """Files of the component that an MCP manifest's launch command runs: each word of the command
+    and its arguments (``python examples/server.py``, ``node ${CLAUDE_PLUGIN_ROOT}/dist/x.js``,
+    ``python -m pkg.server``) that names a file the walk found, relative to the manifest or to the
+    component root. Matched against the walk's own paths, so nothing outside the component is
+    touched. A manifest that is itself an example, test, document, corpus or CI file is not one.
+    """
+    known = {f.relpath for f in index.files} | set(index.minified) | set(index.large)
+    found: set[str] = set()
+    for command in autorun_commands(index).commands:
+        if command.kind != KIND_MCP_SERVER:
+            continue
+        manifest = command.file.relpath
+        if (is_test_path(manifest) or is_example_path(manifest) or is_data_corpus_path(manifest)
+                or is_ci_path(manifest)
+                or (not manifest.lower().endswith((".md", ".mdx")) and is_doc_path(manifest))):
+            continue
+        folder = posixpath.dirname(manifest)
+        words = [w.strip("\"'") for piece in command.pieces for w in piece.text.split()]
+        for i, word in enumerate(words):
+            variable = _LAUNCH_ROOT_VARIABLE.match(word)
+            word = word[variable.end():] if variable else word
+            word = word.replace("\\", "/")
+            if i and words[i - 1] == "-m":
+                parts = word.split(".")
+                candidates = [
+                    rel for prefix in _PY_SOURCE_ROOTS for rel in _py_module_paths(prefix, parts)
+                ]
+            else:
+                candidates = [word]
+            for candidate in candidates:
+                for start in {folder, ""}:
+                    rel = posixpath.normpath(posixpath.join(start, candidate))
+                    if rel in known:
+                        found.add(rel)
+        if len(found) >= _MAX_ENTRY_POINTS:
+            break
     return found
 
 
@@ -1189,9 +1376,10 @@ def _hold_out(
 ) -> tuple[list[Finding], list[NeedsReview]]:
     """Run the path-based demotion ``split`` on the evidence outside ``held_files`` only.
 
-    Evidence in a held file (one npm runs at install time) is behavior whatever folder it sits in,
-    so it skips ``split`` and goes back into its finding where it was: the first location a report
-    shows, and the hook quotes, does not move because other evidence was demoted.
+    Evidence in a held file (one npm runs at install time, a declared entry point) is behavior
+    whatever folder it sits in, so it skips ``split`` and goes back into its finding where it was:
+    the first location a report shows, and the hook quotes, does not move because other evidence
+    was demoted.
     """
     held: dict[str, list[Evidence]] = {}
     rest: list[Finding] = []

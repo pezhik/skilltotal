@@ -1,0 +1,6 @@
+{
+  "name": "fixture-mytool",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "bin": { "mytool": "test/cli.js" }
+}

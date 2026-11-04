@@ -1607,6 +1607,7 @@ def neutralize_hidden(text: str) -> str:
 MAX_FILE_BYTES = 2 * 1024 * 1024  # 2 MiB
 # A VS Code extension runs one bundled entry point, routinely larger than MAX_FILE_BYTES (3-4 MB
 # for `extension.js`), so the engine reads its entry points up to this size (``keep_max_bytes``).
+# So it does for every component's declared entry points: padding one past MAX_FILE_BYTES hid it.
 # Scanning a minified bundle costs roughly 20 s of CPU per MB.
 MAX_ENTRY_POINT_BYTES = 8 * 1024 * 1024  # 8 MiB
 
