@@ -277,6 +277,40 @@ def follow_skipped_references(index: FileIndex) -> tuple[FileIndex, list[str]]:
     return index.with_files(extra, minified), sorted(unread)
 
 
+def loaded_by(index: FileIndex, entry_points: frozenset[str] | set[str]) -> set[str]:
+    """The read files that ``entry_points`` load, transitively, by a literal relative path: the
+    targets of ``require('./x')`` / ``import './x'`` in JavaScript and TypeScript, and of Python
+    imports of the component's own modules. Bounded by ``MAX_LOADED_FILES``; ``entry_points``
+    themselves are not in the result.
+
+    A ``main`` that runs ``require('./examples/payload')`` runs that file as surely as if it were
+    the main (red team, 2026-11-04), so it is held out of the path demotions with it.
+    """
+    by_path = {f.relpath: f for f in index.files}
+    base = index.root.resolve()
+    py_roots = [""] + [r for r in ("src", "lib") if (base / r).is_dir()]
+    seen = {p for p in entry_points if p in by_path}
+    queue = sorted(seen)
+    found: set[str] = set()
+    while queue and len(found) < MAX_LOADED_FILES:
+        f = by_path[queue.pop()]
+        targets: list[str] = []
+        if f.suffix in _JS_LIKE:
+            suffixes = MODULE_SUFFIXES if f.suffix in LOADING_SUFFIXES else _TS_MODULE_SUFFIXES
+            for m in RELATIVE_MODULE.finditer(f.text):
+                target = module_file(base, f.path.parent, m.group(2), suffixes)
+                if target is not None:
+                    targets.append(target.relative_to(base).as_posix())
+        elif f.suffix in _PY:
+            targets = [posixpath.normpath(rel) for rel in _python_targets(f, py_roots)]
+        for rel in targets:
+            if rel in by_path and rel not in seen:
+                seen.add(rel)
+                found.add(rel)
+                queue.append(rel)
+    return found
+
+
 def _entry_points(base: Path, py_roots: list[str]) -> list[Path | str]:
     """What the package itself starts: ``package.json`` main/module/browser/bin/exports and the
     Python console scripts. Paths (resolved) or relative paths to check."""
