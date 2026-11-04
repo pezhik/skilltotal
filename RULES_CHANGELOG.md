@@ -56,6 +56,12 @@ Persistence and agent settings (`ST-POSTEX-PERSIST`, `ST-GIT-HOOK-PERSIST`, `ST-
   small helper function, and a relay whose network client sits in a module the launcher imports.
 - A clipboard write through `pbcopy`, `xclip`, `xsel`, `wl-copy` or `clip.exe`.
 
+Fewer false alarms (`ST-DYN-PY`, `ST-DYN-NODE`)
+- A method that shares a builtin's name and gets no code to run is not `eval`, `exec` or
+  `compile`: a model's `.eval()`, a Qt dialog's `.exec()`, `.compile(optimizer=...)`.
+- `new Function("")` with an empty body is not flagged. Bundled libraries call it to check
+  whether the runtime allows code generation.
+
 ## ruleset 91 (engine 0.92.0)
 
 Install-time payloads that the generic install-hook checks did not name. All are

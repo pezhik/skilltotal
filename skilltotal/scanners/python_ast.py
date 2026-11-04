@@ -127,6 +127,19 @@ DYNAMIC_CALLS = frozenset({"eval", "exec", "compile"})
 # The same primitives reached through the builtins module (`builtins.exec`, or `b.exec` for a
 # module bound by name): `builtins.exec` IS exec, so it is dynamic execution like the bare name.
 _BUILTINS_DYNAMIC = frozenset(f"builtins.{name}" for name in DYNAMIC_CALLS)
+
+
+def _is_dynamic_builtin_call(name: str, node: ast.Call) -> bool:
+    """``name`` (the resolved callee of ``node``) is eval/exec/compile, given something to run.
+
+    The builtins take their source as an argument, so a call with none is a method that shares the
+    name: a torch module's ``Model(cfg).eval()`` resolves to bare ``eval`` (its base is a call), as
+    do Qt's ``dialog.exec()`` and keras' ``Model(...).compile(optimizer="adam")``. Only
+    ``compile`` takes its source by keyword (``source=``); ``**kwargs`` may carry it.
+    """
+    if name not in DYNAMIC_CALLS and name not in _BUILTINS_DYNAMIC:
+        return False
+    return bool(node.args) or any(k.arg in (None, "source") for k in node.keywords)
 # Dynamic *module import* by name. Extremely common in legitimate code (optional
 # dependencies, plugin loaders) and a much weaker signal than eval/exec, so it is routed to
 # needs_review rather than a high-severity finding.
@@ -1044,7 +1057,7 @@ class _CallVisitor(ast.NodeVisitor):
                 self._add(R_DESERIAL, node)
         elif name in ("yaml.load", "yaml.load_all") and _yaml_load_is_unsafe(node):
             self._add(R_DESERIAL, node)
-        elif name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC:
+        elif _is_dynamic_builtin_call(name, node):
             self._add(R_DYN, node)
             inner = self._decode_exec_inner_call(node)
             if inner is not None:
@@ -1706,7 +1719,7 @@ class _TaintVisitor:
         name = _resolve_dotted(node.func, self.aliases, self.from_imports)
         if name is None:
             return
-        if name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC:
+        if _is_dynamic_builtin_call(name, node):
             if self._is_tainted(_first_arg(node), tainted):
                 self._add(R_TAINT_EXEC, node)
         elif name in UNSAFE_DESERIALIZE_CALLS:

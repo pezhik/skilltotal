@@ -37,9 +37,11 @@ class DynamicCodeScanner(PatternScanner):
             code_context="comments",
             suffixes=NODE_SUFFIXES,
             node_interop=True,
+            # `new Function("")` with an empty body runs nothing: bundled zod uses it to probe
+            # whether the runtime allows code generation (CSP, jitless), so it is left out.
             pattern=alternation(
                 r"\beval\s*\(",
-                r"\bnew\s+Function\s*\(",
+                r"\bnew\s+Function\s*\((?!\s*(?:\"\"|''|``)\s*\))",
                 r"\bvm\.runIn(?:NewContext|ThisContext)\s*\(",
             ),
         ),

@@ -16,6 +16,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
   `RULES_CHANGELOG.md` lists each change and what stays silent.
 - Declared entry points are read up to 3 MiB; a larger one is named in `needs_review`.
 
+### Fixed
+- Two false alarms: a method named `eval`, `exec` or `compile` that gets no code to run (a
+  model's `.eval()`), and an empty `new Function("")` probe.
+
 ## [0.92.0]
 
 ### Added
