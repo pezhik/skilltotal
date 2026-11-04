@@ -21,6 +21,10 @@
  "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
  "negative/AST01/clipboard-swap/address-validator-lib": [],
  "negative/AST01/clipboard-swap/dapp-copy-contract": [],
+ "negative/AST01/clipboard-swap/node-shell-copy-own-address": [
+  "ST-CMDI-NODE",
+  "ST-SHELL-NODE"
+ ],
  "negative/AST01/clipboard-swap/wallet-copy-own-address": [],
  "negative/AST01/credential-exfil/agent-orchestrator-bypass": [
   "ST-AGENT-CLI-BYPASS",
@@ -66,11 +70,18 @@
  "negative/AST01/decode-exec/getattr-decode-no-exec": [
   "ST-FS-PY-WRITE"
  ],
+ "negative/AST01/decode-exec/node-ctor-charcode-helpers": [
+  "ST-FS-NODE-WRITE"
+ ],
  "negative/AST01/decode-exec/node-hex-utility": [
   "ST-DYN-NODE"
  ],
  "negative/AST01/decode-exec/node-string-label": [
   "ST-DYN-NODE"
+ ],
+ "negative/AST01/decode-exec/python-repl-exec-alias": [
+  "ST-DYN-PY",
+  "ST-TAINT-EXEC-PY"
  ],
  "negative/AST01/decrypt-and-execute/node-decrypt-write-file": [
   "ST-FS-NODE-WRITE"
@@ -233,6 +244,9 @@
  "negative/AST02/decode-spawn/encode-test-data-driver": [
   "ST-SHELL-NODE"
  ],
+ "negative/AST02/decode-spawn/execpath-name-runs-worker": [
+  "ST-SHELL-NODE"
+ ],
  "negative/AST02/decode-spawn/launcher-unpacks-own-binary": [
   "ST-FS-NODE-READ",
   "ST-FS-NODE-WRITE",
@@ -348,7 +362,16 @@
   "ST-SHELL-NODE"
  ],
  "negative/AST03/cli-relay/sandbox-terminal-docstring": [],
+ "negative/AST03/cli-relay/split-files-local-config": [
+  "ST-AGENT-CLI-BYPASS",
+  "ST-FS-NODE-READ",
+  "ST-SHELL-NODE"
+ ],
  "negative/AST04/mcp-config-inject/agent-settings-scoped-local-gateway": [],
+ "negative/AST04/mcp-config-inject/helper-path-health-check": [
+  "ST-FS-NODE-READ",
+  "ST-FS-NODE-WRITE"
+ ],
  "negative/AST04/mcp-config-inject/reads-client-config": [
   "ST-FS-NODE-READ"
  ],
@@ -398,6 +421,9 @@
  "negative/AST04/skill-scanner-directed-audit-override-text/reviewer-note-no-verdict": [],
  "negative/AST04/skill-scanner-directed-audit-override-text/security-review-skill": [],
  "negative/AST05/deserialize-exec/safe-loaders": [],
+ "negative/AST05/deserialize-exec/zlib-config-cache": [
+  "ST-FS-PY-READ"
+ ],
  "negative/AST05/pickle-reduce-gadget/copyreg-registered-reducer": [],
  "negative/AST05/pickle-reduce-gadget/custom-pickling": [],
  "positive/AST01/agent-config-persist/claude-sessionstart": [
@@ -436,6 +462,11 @@
  ],
  "positive/AST01/clipboard-swap/node-returned-swap": [
   "ST-CLIPPER"
+ ],
+ "positive/AST01/clipboard-swap/node-shell-clip-tool": [
+  "ST-CLIPPER",
+  "ST-CMDI-NODE",
+  "ST-SHELL-NODE"
  ],
  "positive/AST01/clipboard-swap/python-returned-sub": [
   "ST-CLIPPER"
@@ -543,6 +574,10 @@
   "ST-NET-PY",
   "ST-SENS-PATH-PY"
  ],
+ "positive/AST01/decode-exec/node-buffer-encoding-name": [
+  "ST-DYN-NODE",
+  "ST-OBF-DECODE-EXEC"
+ ],
  "positive/AST01/decode-exec/node-eval-atob": [
   "ST-DYN-NODE",
   "ST-OBF-DECODE-EXEC"
@@ -551,12 +586,29 @@
   "ST-NET-NODE",
   "ST-OBF-DECODE-EXEC"
  ],
+ "positive/AST01/decode-exec/node-fromcharcode": [
+  "ST-DYN-NODE",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/node-function-ctor-chain": [
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/node-global-eval-alias": [
+  "ST-OBF-DECODE-EXEC"
+ ],
  "positive/AST01/decode-exec/node-hex-function": [
   "ST-DYN-NODE",
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-string-sink": [
   "ST-DYN-NODE",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/node-vm-script-inline": [
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/python-alias-sink": [
+  "ST-DYN-PY",
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/python-base": [
@@ -573,6 +625,10 @@
   "ST-OBF-DYNAMIC-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/python-evasion-hex": [
+  "ST-DYN-PY",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/python-zlib-exec": [
   "ST-DYN-PY",
   "ST-OBF-DECODE-EXEC"
  ],
@@ -939,6 +995,10 @@
   "ST-SHELL-NODE",
   "ST-SHELL-PIPE-EXEC-NODE"
  ],
+ "positive/AST02/decode-spawn/execpath-name": [
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST02/decode-spawn/gunzip-detached-worker": [
   "ST-OBF-DECODE-SPAWN",
   "ST-SHELL-NODE"
@@ -1171,6 +1231,16 @@
   "ST-AGENT-CLI-RELAY",
   "ST-SHELL-NODE"
  ],
+ "positive/AST03/cli-relay/split-files": [
+  "ST-AGENT-CLI-RELAY",
+  "ST-SHELL-NODE"
+ ],
+ "positive/AST04/mcp-config-inject/helper-returned-path": [
+  "ST-AGENT-CONFIG-PERSIST",
+  "ST-FS-NODE-READ",
+  "ST-FS-NODE-WRITE",
+  "ST-INSTALL-NPM"
+ ],
  "positive/AST04/mcp-config-inject/sandworm-mcpinject": [
   "ST-AGENT-CONFIG-INJECT",
   "ST-COMBO-EXFIL",
@@ -1312,10 +1382,18 @@
   "ST-OBF-DECODE-EXEC-PY",
   "ST-TAINT-DESERIAL-PY"
  ],
+ "positive/AST05/deserialize-exec/marshal-split-variable": [
+  "ST-DESERIALIZE-PY",
+  "ST-DYN-PY",
+  "ST-OBF-DECODE-EXEC"
+ ],
  "positive/AST05/deserialize-exec/pickle-remote": [
   "ST-DYN-PY",
   "ST-NET-PY",
   "ST-OBF-DECODE-EXEC-PY"
+ ],
+ "positive/AST05/pickle-reduce-gadget/alias-chain-reduce": [
+  "ST-PICKLE-REDUCE"
  ],
  "positive/AST05/pickle-reduce-gadget/getattr-lookup-reduce": [
   "ST-PICKLE-REDUCE"

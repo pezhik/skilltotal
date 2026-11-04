@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import bisect
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import islice
 
+from skilltotal.concat_normalize import assigned_once
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
@@ -26,6 +27,7 @@ from skilltotal.scanners.base import (
     alternation,
     findings_from_rules,
 )
+from skilltotal.text_normalize import original_span
 
 CATEGORY = "obfuscation"
 
@@ -49,10 +51,34 @@ _PY_CODEPOINTS = (
 _PY_DECODE_CALL = (
     r"(?:\w+\.)?b64decode|bytes\.fromhex|codecs\.decode|(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\("
     r"|" + _PY_CODEPOINTS
+    # A compressed blob is as opaque as an encoded one: `exec(zlib.decompress(blob))`.
+    + r"|(?:zlib|gzip|bz2|lzma)\.decompress\s*\("
+)
+# A char-code array (`String.fromCharCode(...codes)`, `.apply(null, codes)`) and the
+# percent-escape pair (`unescape(...)`, `decodeURIComponent(escape(...))`) decode text as surely
+# as atob does. They count only right inside a code sink, like every decoder here: a polyfill
+# that builds a string from char codes runs nothing.
+_JS_CHAR_DECODER = (
+    r"String\.fromCharCode\s*(?:\.\s*(?:apply|call)\s*)?\(|unescape\s*\("
+    r"|decodeURIComponent\s*\(\s*escape\s*\("
 )
 _JS_DECODE_CALL = (
     r"atob\s*\(|Buffer\.from\s*\([^)]*['\"](?:base64|hex)['\"]|" + _HEX_DECODER
-    + r"|['\"`](?:\\x[0-9A-Fa-f]{2}|\\u00[0-9A-Fa-f]{2}){8}"
+    + r"|['\"`](?:\\x[0-9A-Fa-f]{2}|\\u00[0-9A-Fa-f]{2}){8}|" + _JS_CHAR_DECODER
+)
+# Code sinks reached without an `eval(` / `Function(` token (each starts with a literal): a vm
+# script or context run, eval looked up on the global object, and the Function constructor reached
+# through a constructor chain (`(function(){}).constructor`, `[].constructor.constructor`).
+_JS_INDIRECT_SINKS = (
+    r"vm\s*\.\s*(?:Script|runInThisContext|runInNewContext|runInContext|compileFunction)",
+    r"runIn(?:This|New)Context",
+    r"globalThis\s*(?:\.\s*eval|\[\s*['\"`]eval['\"`]\s*\])",
+    r"global\s*(?:\.\s*eval|\[\s*['\"`]eval['\"`]\s*\])",
+    r"window\s*(?:\.\s*eval|\[\s*['\"`]eval['\"`]\s*\])",
+    r"\(\s*(?:(?:async\s*)?function\s*\*?\s*\(\s*\)\s*\{\s*\}|\(\s*\)\s*=>\s*\{\s*\}"
+    r"|\{\s*\}\s*\)\s*\.\s*constructor)\s*\)?\s*\.\s*constructor",
+    r"\[\s*\]\s*\.\s*constructor\s*\.\s*constructor",
+    *(rf"{q}{q}\s*\.\s*constructor\s*\.\s*constructor" for q in ("'", '"', "`")),
 )
 # One alternative per sink, each starting with a literal character. That is what lets the regex
 # engine skip ahead to the few places a match can begin; an alternative opening with a group such
@@ -64,6 +90,7 @@ _DECODE_EXEC_ALTERNATIVES = (
     # Indirect eval to dodge a literal ``eval(`` token: ``(0, eval)(atob(...))``.
     r"\(\s*0\s*,\s*eval\s*\)\s*\(\s*(?:atob|Buffer\.from)\s*\(",
     rf"Function\s*\(\s*(?:{_JS_DECODE_CALL})",
+    *(rf"{sink}\s*\(\s*(?:{_JS_DECODE_CALL})" for sink in _JS_INDIRECT_SINKS),
 )
 _DECODE_EXEC = alternation(*_DECODE_EXEC_ALTERNATIVES)
 
@@ -85,28 +112,56 @@ _JS_DECODED_VARIABLE = re.compile(
 )
 # A code sink and the variable it runs (for the Function constructor, its last argument, the body).
 # Like the regexes above, it starts with a literal; the word boundary in front is checked in code.
-_JS_CODE_SINK = re.compile(
-    r"(?:eval|Function|setTimeout|setInterval|vm\.runIn(?:This|New)Context|vm\.Script)"
+_JS_SINK_HEADS = (
+    r"eval|Function|setTimeout|setInterval|vm\.runIn(?:This|New)Context|vm\.Script|"
+    + "|".join(_JS_INDIRECT_SINKS[2:])
+)
+_JS_SINK_RUNS = (
     r"\s*\(\s*(?:[^()\n]{0,200},\s*)?([A-Za-z_$][\w$]{0,60})(?:\.toString\(\s*\))?\s*[,)]"
 )
+_JS_CODE_SINK = re.compile(rf"(?:{_JS_SINK_HEADS}){_JS_SINK_RUNS}")
 _PY_DECODED_VARIABLE = re.compile(
     r"(?m)^[ \t]*([A-Za-z_]\w{0,60})\s*=\s*(?:"
     r"bytes\.fromhex\s*\(|(?:binascii\.)?(?:unhexlify|a2b_hex)\s*\("
     r"|codecs\.decode\s*\([^)\n]{0,200}['\"]hex['\"]|(?:\w+\.)?b64decode\s*\("
     r"|[bru]{0,2}['\"](?:\\x[0-9A-Fa-f]{2}){8}"
     r"|" + _PY_CODEPOINTS
-    + r")"
+    # Decompressed or deserialized into a name, then run: `code = marshal.loads(blob); exec(code)`
+    # is `exec(marshal.loads(blob))` split over two statements.
+    + r"|(?:zlib|gzip|bz2|lzma)\.decompress\s*\("
+    r"|(?:c?[Pp]ickle|_pickle|dill|marshal|jsonpickle)\.(?:loads?|decode)\s*\("
+    r")"
 )
 # Builtins only: `re.compile(pattern)` is not a sink, so a `.` in front rules a match out (in code).
 _PY_CODE_SINK = re.compile(r"(?:exec|eval|compile)\s*\(\s*([A-Za-z_]\w{0,60})\b")
 _FLOW_REACH = 4000
 # Every sink above contains one of the first tokens, every decoded source one of the second.
-_JS_SINK_TOKENS = ("eval", "Function", "setTimeout", "setInterval", "runIn", "Script")
+_JS_SINK_TOKENS = (
+    "eval", "Function", "setTimeout", "setInterval", "runIn", "Script", "constructor",
+)
 _PY_SINK_TOKENS = ("exec", "eval", "compile")
 _JS_SOURCE_TOKENS = ("Buffer.from", "atob", "hex", "Hex", "HEX", "\\x", "\\u00")
 _PY_SOURCE_TOKENS = (
-    "fromhex", "unhexlify", "a2b_hex", "codecs", "b64decode", "\\x", "chr", "bytes(", "bytearray("
+    "fromhex", "unhexlify", "a2b_hex", "codecs", "b64decode", "\\x", "chr", "bytes(", "bytearray(",
+    "decompress", "loads", "jsonpickle",
 )
+# Names bound once to a code sink, so that a call through the name is that sink: `_run = exec`,
+# `const run = globalThis["eval"]`, `const F = (function(){}).constructor`. JavaScript bindings
+# are read on the concat-folded text, where `globalThis["ev" + "al"]` reads `globalThis["eval"]`.
+_PY_SINK_BINDING = re.compile(
+    r"(?m)^[ \t]*([A-Za-z_]\w{0,60})[ \t]*=[ \t]*(?:builtins\.)?(?:exec|eval|compile)"
+    r"[ \t]*(?:#.*)?$"
+)
+_JS_SINK_HANDLE = "|".join((
+    r"eval", r"Function", r"\(\s*0\s*,\s*eval\s*\)",
+    r"vm\s*\.\s*(?:runInThisContext|runInNewContext|runInContext|compileFunction)",
+    *_JS_INDIRECT_SINKS[2:],
+))
+_JS_SINK_BINDING = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*(?:" + _JS_SINK_HANDLE + r")\s*(?=[;\n\r])"
+)
+# The encodings a Buffer.from decodes with, for a name bound once to one of them.
+_DECODE_ENCODINGS = frozenset({"base64", "base64url", "hex"})
 _JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _PY_SUFFIXES = (".py", ".pyw")
 
@@ -126,7 +181,8 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
     the variable they run once, so the cost stays linear in the file."""
     evidence: list[Evidence] = []
     for f in index.select(suffixes=_JS_SUFFIXES + _PY_SUFFIXES):
-        text = f.text
+        # JavaScript is read with spliced literals joined (`globalThis["ev" + "al"]`).
+        text, idx = _view(f)
         if f.suffix in _PY_SUFFIXES:
             source, sink = _PY_DECODED_VARIABLE, _PY_CODE_SINK
             sinks, sources, before_sink = _PY_SINK_TOKENS, _PY_SOURCE_TOKENS, "_."
@@ -137,8 +193,23 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
         if not (any(t in text for t in sinks) and any(t in text for t in sources)):
             continue
         decoded = [m for m in source.finditer(text) if _starts_a_word(text, m.start(), "_$")]
+        encodings = _encoding_names(f, text) if f.suffix in _JS_SUFFIXES else []
+        if encodings:
+            by_name = re.compile(
+                r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*Buffer\.from\s*\("
+                rf"[^;\n]{{0,200}}?,\s*(?:{_names(encodings)})\s*\)"
+            )
+            decoded += [m for m in by_name.finditer(text) if _starts_a_word(text, m.start(), "_$")]
+            decoded.sort(key=lambda m: m.start())
         if not decoded:
             continue
+        aliases = _sink_aliases(f, text)
+        if aliases and f.suffix in _PY_SUFFIXES:
+            sink = re.compile(
+                rf"(?:exec|eval|compile|{_names(aliases)})\s*\(\s*([A-Za-z_]\w{{0,60}})\b"
+            )
+        elif aliases:
+            sink = re.compile(rf"(?:{_names(aliases)}|{_JS_SINK_HEADS}){_JS_SINK_RUNS}")
         runs: dict[str, list[re.Match[str]]] = {}
         for run in sink.finditer(text):
             if _starts_a_word(text, run.start(), before_sink):
@@ -152,8 +223,109 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
             if k == len(found) or found[k].start() >= m.end() + _FLOW_REACH:
                 continue
             run = found[k]
-            evidence.append(f.evidence_for_span(m.start(), m.end()))
-            evidence.append(f.evidence_for_span(run.start(), run.end()))
+            evidence.append(f.evidence_for_span(*_span(idx, m.start(), m.end())))
+            evidence.append(f.evidence_for_span(*_span(idx, run.start(), run.end())))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                return evidence
+    return evidence
+
+
+def _view(f: IndexedFile) -> tuple[str, Sequence[int] | None]:
+    """The text a JavaScript file is read in, with spliced string literals joined, and the map
+    back to the source (None when it is the source itself)."""
+    if f.suffix in _JS_SUFFIXES:
+        folded = f.concat_folded_or_none()
+        if folded is not None:
+            return folded
+    return f.text, None
+
+
+def _span(idx: Sequence[int] | None, start: int, end: int) -> tuple[int, int]:
+    return (start, end) if idx is None else original_span(idx, start, end)
+
+
+def _names(names: list[str]) -> str:
+    return "|".join(re.escape(n) for n in names)
+
+
+def _sink_aliases(f: IndexedFile, text: str) -> list[str]:
+    """The names ``f`` binds once, and to a code sink: a call through one is that sink."""
+    if f.suffix in _PY_SUFFIXES:
+        if not any(t in text for t in _PY_SINK_TOKENS):
+            return []
+        names = [m.group(1) for m in _PY_SINK_BINDING.finditer(text)]
+    else:
+        if not any(t in text for t in ("eval", "Function", "constructor", "runIn", "compileFunc")):
+            return []
+        names = [
+            m.group(1) for m in _JS_SINK_BINDING.finditer(text)
+            if _starts_a_word(text, m.start(), "_$")
+        ]
+    if not names:
+        return []
+    once = assigned_once(f.text, f.suffix)
+    return [n for n in names if n in once]
+
+
+_JS_INLINE_DECODER_TOKENS = (
+    *_JS_SOURCE_TOKENS, "fromCharCode", "escape",
+)
+_JS_ENCODING_BINDING = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*['\"`](?:base64(?:url)?|hex)['\"`]"
+    r"\s*(?=[;\n\r])"
+)
+
+
+def _encoding_names(f: IndexedFile, text: str) -> list[str]:
+    """The names a JavaScript file binds once to a decoding encoding (`const enc = "base64"`)."""
+    if "Buffer.from" not in text:
+        return []
+    names = [
+        m.group(1) for m in _JS_ENCODING_BINDING.finditer(text)
+        if _starts_a_word(text, m.start(), "_$")
+    ]
+    if not names:
+        return []
+    once = assigned_once(f.text, f.suffix)
+    return [n for n in names if n in once]
+
+
+def _indirect_decode_exec(index: FileIndex) -> list[Evidence]:
+    """Decode-and-execute written without the literal tokens the rule pattern anchors on: through
+    a name bound once to the sink (`_run = exec; _run(b64decode(blob))`), with the encoding in a
+    name (`Buffer.from(blob, enc)`), or with the sink or decoder spliced from string literals
+    (`globalThis["ev" + "al"](atob(blob))`). The decoder must still be right inside the call."""
+    evidence: list[Evidence] = []
+    for f in index.select(suffixes=_JS_SUFFIXES + _PY_SUFFIXES):
+        text, idx = _view(f)
+        py = f.suffix in _PY_SUFFIXES
+        aliases = _sink_aliases(f, text)
+        encodings = [] if py else _encoding_names(f, text)
+        if not aliases and not encodings and (
+            idx is None
+            or not any(t in text for t in _JS_SINK_TOKENS)
+            or not any(t in text for t in _JS_INLINE_DECODER_TOKENS)
+        ):
+            continue
+        if py:
+            decode, heads = _PY_DECODE_CALL, [re.escape(a) for a in aliases]
+        else:
+            decode = _JS_DECODE_CALL
+            if encodings:
+                decode += rf"|Buffer\.from\s*\([^)]*,\s*(?:{_names(encodings)})\s*\)"
+            heads = [
+                r"eval", r"Function", *_JS_INDIRECT_SINKS, *(re.escape(a) for a in aliases)
+            ]
+        pattern = alternation(*(rf"{h}\s*\(\s*(?:{decode})" for h in heads))
+        for m in islice(pattern.finditer(text), _MAX_CODE_TRIES):
+            if not _starts_a_word(text, m.start(), "_$."):
+                continue
+            start, end = _span(idx, m.start(), m.end())
+            if f.in_comment(start) or f.in_string(start) or f.in_c_comment(start) or (
+                f.in_c_string(start)
+            ):
+                continue
+            evidence.append(f.evidence_for_span(start, end))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 return evidence
     return evidence
@@ -230,9 +402,15 @@ _JS_INTERPRETER = (
     r"(?:process\.execPath|process\.argv\[0\]|"
     r"['\"`](?:[\w.:/\\-]*[/\\])?(?:node|nodejs|python[\d.]*|pwsh|powershell)(?:\.exe)?['\"`])"
 )
+# A name bound once to a code interpreter is accepted where decode-and-spawn wants the
+# interpreter (`const bin = process.execPath; spawnSync(bin, ["-e", stage])`).
+_JS_INTERPRETER_BINDING = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*" + _JS_INTERPRETER + r"\s*(?=[;\n\r])"
+)
+_JS_INLINE_CODE_FLAG = r"['\"](?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)['\"]"
 _JS_SPAWN_EVAL = re.compile(
     r"\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*" + _JS_INTERPRETER
-    + r"[^;]{0,200}?['\"](?:-e|--eval|-c|-p|--print|-Command|-EncodedCommand|-enc)['\"]"
+    + r"[^;]{0,200}?" + _JS_INLINE_CODE_FLAG
     # The one-string form: exec(`node -e ${stage}`), execSync("python -c " + stage).
     + r"|\b(?:exec|execSync)\s*\(\s*['\"`](?:[\w.:/\\-]*[/\\])?"
     r"(?:node|nodejs|python[\d.]*|pwsh|powershell)(?:\.exe)?\s+"
@@ -530,6 +708,16 @@ def _decoded_reaches_spawn(f: IndexedFile) -> tuple[tuple[int, int], tuple[int, 
     if not decodes:
         return None
     sinks = list(_matches_in_code(f, _JS_SPAWN_EVAL))
+    interpreters = [m.group(1) for m in _JS_INTERPRETER_BINDING.finditer(f.text)]
+    if interpreters:
+        once = assigned_once(f.text, f.suffix)
+        interpreters = [n for n in interpreters if n in once]
+    if interpreters:
+        through_name = re.compile(
+            r"\b(?:spawn|spawnSync|execFile|execFileSync)\s*\(\s*"
+            rf"(?:{_names(interpreters)})(?![\w$.\[])[^;]{{0,200}}?{_JS_INLINE_CODE_FLAG}"
+        )
+        sinks += _matches_in_code(f, through_name)
     # Most bundles that decode something launch nothing: they stop here, before any flow is built.
     if not sinks and "writeFile" not in f.text:
         return None
@@ -719,7 +907,7 @@ class ObfuscationScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         scored_ids = {"ST-OBF-DECODE-EXEC", "ST-OBF-DYNAMIC-DECODE-EXEC"}
         findings = findings_from_rules(index, [r for r in self.rules if r.id in scored_ids])
-        flow = _decoded_then_executed(index)
+        flow = _decoded_then_executed(index) + _indirect_decode_exec(index)
         if flow:
             rule = self.rules[0]
             direct = next((f for f in findings if f.id == rule.id), None)
