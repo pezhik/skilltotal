@@ -1,0 +1,10 @@
+{
+  "name": "fixture-prebuilt-picker",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node ./scripts/pick.cfg"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,8 @@
+{
+  "name": "fixture-native-crc32",
+  "version": "1.0.3",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "gypfile": true,
+  "license": "MIT"
+}

@@ -1,0 +1,9 @@
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+[build-system]
+requires = ["wheel"]
+build-backend = "_pep517"
+backend-path = ["_build"]
+
+[project]
+name = "fixture-jsonfast"
+version = "0.3.1"

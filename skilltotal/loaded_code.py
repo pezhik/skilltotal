@@ -127,6 +127,48 @@ def bundled_module_file(base: Path, start: Path, spec: str) -> Path | None:
         folder = folder.parent
 
 
+# --- npm scripts a lifecycle script runs ----------------------------------------------------------
+# `npm run setup`, `npm run-script setup`, `"$npm_execpath" run setup`, `pnpm run setup`,
+# `yarn run setup`: a script that starts another script of the same package.json.
+_NPM_RUN = re.compile(
+    r"(?:\b(?:npm|pnpm|yarn)|\$\{?npm_execpath\}?[\"']?)\s{1,4}run(?:-script)?\s{1,4}"
+    r"(?:--?[\w-]{1,30}\s{1,4}){0,3}[\"']?([\w:.@/+-]{1,100})"
+)
+# A chain of scripts is a few hops; this only bounds a crafted package.json.
+_MAX_CHAIN_DEPTH = 4
+_MAX_CHAINED_SCRIPTS = 16
+
+
+def install_time_scripts(scripts: dict, lifecycle: tuple[str, ...]) -> list[tuple[str, str]]:
+    """``(name, command)`` of each ``lifecycle`` script in ``scripts`` (a package.json ``scripts``
+    map), then of each script those start with ``npm run <name>`` (and its ``pre``/``post``
+    scripts, which npm runs around it), transitively up to a small depth.
+
+    npm runs a chained script at install time exactly like the lifecycle script itself, so
+    ``"postinstall": "npm run setup"`` puts whatever ``setup`` holds on every install.
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    frontier = [name for name in lifecycle]
+    for depth in range(_MAX_CHAIN_DEPTH + 1):
+        following: list[str] = []
+        for name in frontier:
+            command = scripts.get(name)
+            if name in seen or not isinstance(command, str):
+                continue
+            seen.add(name)
+            out.append((name, command))
+            if depth == _MAX_CHAIN_DEPTH:
+                continue
+            for m in _NPM_RUN.finditer(command):
+                run = m.group(1)
+                following += [f"pre{run}", run, f"post{run}"]
+        if len(seen) >= len(lifecycle) + _MAX_CHAINED_SCRIPTS:
+            break
+        frontier = following
+    return out[: len(lifecycle) + _MAX_CHAINED_SCRIPTS]
+
+
 # --- Python imports -------------------------------------------------------------------------------
 _PY_FROM = re.compile(
     r"^[ \t]*from[ \t]+(\.*)([\w.]*)[ \t]+import[ \t]+(\([^)]{0,2000}\)|[^\n#;]{1,500})",

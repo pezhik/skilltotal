@@ -10,7 +10,9 @@ readable inline code is intentionally NOT enough: a few legitimate tools do that
 (notably coverage.py's subprocess-measurement bootstrap, ``exec('… process_startup() …')``), so
 keying on the decode/spawn/network tokens keeps this false-positive-free while still catching
 the real droppers. Ordinary ``.pth`` files (paths, namespace/editable-install plumbing) never carry
-any of these tokens.
+any of these tokens. Two shapes that reach the same calls without the tokens count too: a module
+function looked up by a name string and called (``getattr(os, 'sy' 'stem')(...)``), and exec/eval
+of code that is not a string literal written in the line.
 """
 
 from __future__ import annotations
@@ -57,7 +59,9 @@ class PthExecScanner(PatternScanner):
             description=(
                 "A .pth file decodes, deserializes, spawns a process, or reaches the network "
                 "(base64/hex/codecs decode, marshal/pickle, subprocess/os.system, or a network "
-                "client) - a malicious-payload signature. Python executes .pth 'import' lines at "
+                "client), calls a module function looked up by a name string (getattr / vars / "
+                "__getattribute__), or runs exec/eval on code not written out in the line "
+                "- a malicious-payload signature. Python executes .pth 'import' lines at "
                 "every interpreter startup, so this runs automatically and unreviewed (a known "
                 "supply-chain persistence vector)."
             ),
@@ -89,6 +93,18 @@ class PthExecScanner(PatternScanner):
                 r"\bsocket\b",
                 r"\burllib\.request\b",
                 r"\brequests\.",
+                # A function of a module looked up by a name string and called, so no `.system(`
+                # token is written: `getattr(os, 'sy' 'stem')(...)`, `vars(os)['system'](...)`,
+                # `os.__getattribute__('system')(...)`. Path plumbing never dispatches by name.
+                r"\bgetattr\s*\(\s*[\w.]{1,60}\s*,\s*[^()\n]{1,200}\)\s*\(",
+                r"\bgetattr\s*\(\s*(?:os|subprocess|posix|nt|pty|__import__\s*\()",
+                r"\.__getattribute__\s*\(",
+                r"(?:\bvars\s*\(\s*[\w.]{1,60}\s*\)|\.__dict__)\s*\[[^\]\n]{1,200}\]\s*\(",
+                # exec / eval of code that is not written out in the line (a variable, a call, a
+                # concatenation): what runs is not in the .pth. coverage.py's `exec('...')` of a
+                # literal stays out.
+                r"(?<![\w.])(?:exec|eval)\s*\(\s*"
+                r"(?![rRbBuU]{0,2}(?P<q>['\"])(?:\\.|(?!(?P=q))[^\\\n]){0,4000}(?P=q)\s*[,)])",
             ),
             tactic=TACTIC_PERSISTENCE,
         ),

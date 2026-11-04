@@ -1,0 +1,11 @@
+set -e
+# FIXTURE ONLY — synthetic detection test sample, not real malware
+# Builds the native helper from the bundled sources.
+# Without a compiler, install one first, e.g.:
+#   curl -fsSL https://toolchain.example.invalid/install.sh | sh
+cd "$(dirname "$0")/../native"
+if command -v cc >/dev/null 2>&1; then
+  make -s
+else
+  echo "no C compiler found; using the portable JavaScript fallback"
+fi
