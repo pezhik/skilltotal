@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.92.0",
-  "ruleset_version": 91,
+  "engine_version": "0.93.0",
+  "ruleset_version": 92,
   "python_version": "3.14",
-  "positives": 176,
-  "negatives": 150,
+  "positives": 207,
+  "negatives": 170,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -35,6 +35,7 @@
     "dynamic-call-resolution": 1.0,
     "email-exfil": 1.0,
     "encrypted-instructions-decoy-key-env-read": 1.0,
+    "entry-point-path-demotion": 1.0,
     "env-dump-exfil": 1.0,
     "git-hook-persistence": 1.0,
     "github-action-secret-exfil": 1.0,
@@ -76,27 +77,27 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 32,
-      "manifest/text": 27,
-      "python": 25,
+      "node": 43,
+      "manifest/text": 28,
+      "python": 31,
       "shell": 4
     },
     "AST02": {
-      "manifest/text": 20,
-      "node": 21,
-      "python": 5,
+      "manifest/text": 25,
+      "node": 22,
+      "python": 8,
       "shell": 1
     },
     "AST03": {
-      "node": 1
+      "node": 2
     },
     "AST04": {
-      "node": 3,
+      "node": 4,
       "manifest/text": 25,
       "python": 8
     },
     "AST05": {
-      "python": 4
+      "python": 6
     }
   },
   "rule_coverage": {
@@ -160,17 +161,17 @@
         "AST03"
       ],
       "malicious_samples": 0,
-      "benign_samples": 2,
-      "should_fire": 1,
-      "fired": 1,
-      "should_stay_silent": 1,
-      "stayed_silent": 1
+      "benign_samples": 3,
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
     },
     "ST-AGENT-CLI-RELAY": {
       "owasp": [
         "AST03"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 2,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -193,7 +194,7 @@
         "AST01",
         "AST04"
       ],
-      "malicious_samples": 6,
+      "malicious_samples": 7,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -250,7 +251,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 3,
+      "malicious_samples": 4,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -261,7 +262,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 27,
+      "malicious_samples": 36,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -283,7 +284,7 @@
       "owasp": [
         "AST05"
       ],
-      "malicious_samples": 0,
+      "malicious_samples": 1,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -325,8 +326,8 @@
     },
     "ST-FS-NODE-WRITE": {
       "owasp": [],
-      "malicious_samples": 10,
-      "benign_samples": 7,
+      "malicious_samples": 11,
+      "benign_samples": 9,
       "should_fire": 2,
       "fired": 2,
       "should_stay_silent": 1,
@@ -338,10 +339,10 @@
       ],
       "malicious_samples": 1,
       "benign_samples": 0,
-      "should_fire": 0,
-      "fired": 0,
-      "should_stay_silent": 0,
-      "stayed_silent": 0
+      "should_fire": 1,
+      "fired": 1,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
     },
     "ST-HIDDEN-ANSI": {
       "owasp": [
@@ -391,7 +392,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 11,
+      "malicious_samples": 12,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -402,7 +403,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 2,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -413,8 +414,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 25,
-      "benign_samples": 9,
+      "malicious_samples": 30,
+      "benign_samples": 12,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -458,7 +459,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 5,
+      "malicious_samples": 9,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -491,8 +492,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 4,
-      "benign_samples": 1,
+      "malicious_samples": 6,
+      "benign_samples": 3,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -502,7 +503,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 3,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -604,7 +605,7 @@
       "owasp": [
         "AST03"
       ],
-      "malicious_samples": 5,
+      "malicious_samples": 6,
       "benign_samples": 4,
       "should_fire": 3,
       "fired": 3,
@@ -692,7 +693,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 16,
+      "malicious_samples": 25,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -726,7 +727,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 4,
+      "malicious_samples": 5,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -760,7 +761,7 @@
         "AST01",
         "AST05"
       ],
-      "malicious_samples": 2,
+      "malicious_samples": 3,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -817,10 +818,10 @@
       ],
       "malicious_samples": 8,
       "benign_samples": 6,
-      "should_fire": 0,
-      "fired": 0,
-      "should_stay_silent": 0,
-      "stayed_silent": 0
+      "should_fire": 3,
+      "fired": 3,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
     },
     "ST-POSTEX-REMOTE-ACCESS": {
       "owasp": [
@@ -882,7 +883,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 2,
+      "malicious_samples": 3,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -948,7 +949,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 4,
+      "malicious_samples": 6,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -959,7 +960,7 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 0,
+      "malicious_samples": 2,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,

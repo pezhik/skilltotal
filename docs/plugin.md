@@ -369,7 +369,7 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
 [docs/agent-hooks.md](agent-hooks.md#rolling-out-to-a-fleet).
 
 1. **Install the CLI at a pinned version** on each machine, for example
-   `pipx install skilltotal==0.92.0`, with the same version as the plugin.
+   `pipx install skilltotal==0.93.0`, with the same version as the plugin.
 2. **Enable the plugin for everyone** with Claude Code's managed settings file,
    `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
    `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
@@ -405,7 +405,7 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
            "source": "git-subdir",
            "url": "https://github.com/pezhik/skilltotal.git",
            "path": "plugin",
-           "ref": "v0.92.0"
+           "ref": "v0.93.0"
          }
        }
      ]

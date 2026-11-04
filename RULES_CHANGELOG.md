@@ -4,6 +4,59 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 92 (engine 0.93.0)
+
+The rules are public, so we read them as an attacker would and rewrote attacks they caught to
+dodge them: the same behavior, a different spelling or a different place. The rewrites that got
+through are now caught, and each one is a positive sample in the corpus next to a benign
+look-alike. No rule id is added.
+
+Where code is read
+- **Declared entry points are scored wherever they are filed.** A file the manifest says runs is
+  no longer set aside as test, example, documentation, data or CI code because of its folder:
+  npm `main`/`bin`/`exports`, Python console and GUI scripts and entry points (`pyproject.toml`,
+  `setup.cfg`, `setup.py` read without running it), and the file an MCP launch command starts. Code
+  those files load by relative `require`/`import` is held in too. A demo in `examples/` that
+  nothing loads is still set aside.
+- **Declared entry points are read up to 3 MiB** (editor extensions keep 8 MiB). A larger one gets
+  its own `needs_review` note, "Entry point too large to analyze".
+
+Install time (`ST-INSTALL-NPM-REMOTE-EXEC`, `ST-INSTALL-GYP`, `ST-INSTALL-PY-DOWNLOAD-EXEC`, `ST-PTH-EXEC`)
+- Lifecycle scripts are followed through `npm run`, `npm run-script`, `pnpm run`, `yarn run` and
+  `$npm_execpath run`, with `pre`/`post` scripts, four levels deep. A `test` script that nothing
+  installs still stays out.
+- A file an install command starts with `sh`/`bash`/`zsh`/`dash` or `node` is read as that
+  language whatever its suffix.
+- An HTTP response body that reaches `eval`, `Function`, `vm`, `execSync` or a shell in an install
+  command or install-run file is a remote exec. A body written to disk or parsed as JSON is not.
+- `binding.gyp` `action` lists are checked like `<!(...)` substitutions.
+- `setup.py` and an in-tree PEP 517 backend (`backend-path`) are checked for a download through
+  `requests`, `httpx` or `urlopen` that is saved and then started, not only `urlretrieve`.
+- A `.pth` line that reaches `os`/`subprocess` through `getattr`, `vars` or `__getattribute__`, or
+  that runs `exec`/`eval` on anything but one string literal.
+
+Execution and obfuscation (`ST-OBF-DECODE-EXEC`, `ST-OBF-DECODE-SPAWN`, `ST-PICKLE-REDUCE`, `ST-DYN-PY`)
+- Decoders: Python `zlib`/`gzip`/`bz2`/`lzma` decompression, text built from `chr()` code points or
+  `bytes([...])`, and `pickle`/`marshal`/`dill`/`jsonpickle` loads kept in a name that is then run;
+  JavaScript `String.fromCharCode`, `unescape` and `decodeURIComponent(escape(...))` right inside a
+  sink, and `Buffer.from` with an encoding held in a constant.
+- Sinks: a name bound once to `exec`/`eval`/`compile` or to `eval`/`Function`; `vm.Script` and the
+  `vm.runIn*Context` family; `globalThis`/`global`/`window` `eval`; the Function constructor reached
+  through `.constructor` chains; an interpreter path held in a name for decode-and-spawn. Every new
+  sink still needs a recognized decoder feeding it.
+- Alias chains inside a pickle `__reduce__` are followed up to eight hops.
+
+Persistence and agent settings (`ST-POSTEX-PERSIST`, `ST-GIT-HOOK-PERSIST`, `ST-AGENT-CLI-BYPASS`, `ST-AGENT-CLI-RELAY`, `ST-AGENT-CONFIG-INJECT`, `ST-CLIPPER`)
+- String folding now substitutes a name assigned once to a literal and reads PowerShell. The
+  persistence rules use the folded view, so `"Launch" + "Agents"` or a Run key split over a
+  variable is matched.
+- New persistence locations: `.bash_aliases`, `/etc/bash.bashrc`, a file dropped in
+  `/etc/profile.d/` or fish `conf.d/`, and a home `.gitconfig` that sets `core.hooksPath` or
+  `init.templateDir`.
+- An approvals-off value held in a constant or an array join, a client config path returned by a
+  small helper function, and a relay whose network client sits in a module the launcher imports.
+- A clipboard write through `pbcopy`, `xclip`, `xsel`, `wl-copy` or `clip.exe`.
+
 ## ruleset 91 (engine 0.92.0)
 
 Install-time payloads that the generic install-hook checks did not name. All are
