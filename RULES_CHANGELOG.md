@@ -6,18 +6,17 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 
 ## ruleset 92 (engine 0.93.0)
 
-The rules are public, so we read them as an attacker would and rewrote attacks they caught to
-dodge them: the same behavior, a different spelling or a different place. The rewrites that got
-through are now caught, and each one is a positive sample in the corpus next to a benign
-look-alike. No rule id is added.
+The rules are public, so we took attacks they already caught and rewrote them with a different
+spelling or in a different place. The rewrites that got through are now caught. Each one is a
+positive sample in the corpus, next to a benign look-alike. No rule id is added.
 
 Where code is read
 - **Declared entry points are scored wherever they are filed.** A file the manifest says runs is
-  no longer set aside as test, example, documentation, data or CI code because of its folder:
-  npm `main`/`bin`/`exports`, Python console and GUI scripts and entry points (`pyproject.toml`,
-  `setup.cfg`, `setup.py` read without running it), and the file an MCP launch command starts. Code
-  those files load by relative `require`/`import` is held in too. A demo in `examples/` that
-  nothing loads is still set aside.
+  no longer set aside as test, example, documentation, data or CI code because of its folder. This
+  covers npm `main`/`bin`/`exports`, Python console and GUI scripts and entry points
+  (`pyproject.toml`, `setup.cfg`, and `setup.py` read without running it), and the file an MCP
+  launch command starts. Code those files load by relative `require`/`import` is scored too. A demo
+  in `examples/` that nothing loads is still set aside.
 - **Declared entry points are read up to 3 MiB** (editor extensions keep 8 MiB). A larger one gets
   its own `needs_review` note, "Entry point too large to analyze".
 
@@ -30,8 +29,8 @@ Install time (`ST-INSTALL-NPM-REMOTE-EXEC`, `ST-INSTALL-GYP`, `ST-INSTALL-PY-DOW
 - An HTTP response body that reaches `eval`, `Function`, `vm`, `execSync` or a shell in an install
   command or install-run file is a remote exec. A body written to disk or parsed as JSON is not.
 - `binding.gyp` `action` lists are checked like `<!(...)` substitutions.
-- `setup.py` and an in-tree PEP 517 backend (`backend-path`) are checked for a download through
-  `requests`, `httpx` or `urlopen` that is saved and then started, not only `urlretrieve`.
+- `setup.py` and an in-tree PEP 517 backend (`backend-path`) are checked for a download that is
+  saved and then started, through `requests`, `httpx` or `urlopen` as well as `urlretrieve`.
 - A `.pth` line that reaches `os`/`subprocess` through `getattr`, `vars` or `__getattribute__`, or
   that runs `exec`/`eval` on anything but one string literal.
 
@@ -47,9 +46,9 @@ Execution and obfuscation (`ST-OBF-DECODE-EXEC`, `ST-OBF-DECODE-SPAWN`, `ST-PICK
 - Alias chains inside a pickle `__reduce__` are followed up to eight hops.
 
 Persistence and agent settings (`ST-POSTEX-PERSIST`, `ST-GIT-HOOK-PERSIST`, `ST-AGENT-CLI-BYPASS`, `ST-AGENT-CLI-RELAY`, `ST-AGENT-CONFIG-INJECT`, `ST-CLIPPER`)
-- String folding now substitutes a name assigned once to a literal and reads PowerShell. The
-  persistence rules use the folded view, so `"Launch" + "Agents"` or a Run key split over a
-  variable is matched.
+- String folding now substitutes a name assigned once to a literal, and it reads PowerShell. The
+  persistence rules use the folded text, so `"Launch" + "Agents"` or a Run key split over a
+  variable matches.
 - New persistence locations: `.bash_aliases`, `/etc/bash.bashrc`, a file dropped in
   `/etc/profile.d/` or fish `conf.d/`, and a home `.gitconfig` that sets `core.hooksPath` or
   `init.templateDir`.

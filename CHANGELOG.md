@@ -7,13 +7,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ## [0.93.0]
 
 ### Changed
-- Ruleset 92. We read our public rules the way an attacker can and rewrote attacks they caught so
-  that the same behavior was spelled differently or filed elsewhere. The rewrites that got through
-  are now caught: a payload in a declared entry point under `examples/`, `test/` or `docs/`; an
-  install hook that reaches a download through `npm run`; a shell stage without a suffix; a
-  `binding.gyp` action; a `requests` download in `setup.py`; `exec` reached through an alias,
-  `globalThis["eval"]` or a constructor chain; zlib and char-code decoders; persistence paths built
-  from pieces. `RULES_CHANGELOG.md` lists each change and what stays silent.
+- Ruleset 92. The rules are public, so we took attacks they already caught and rewrote them with
+  different spelling or in a different folder. Several rewrites got through and are now caught: a
+  payload in a declared entry point under `examples/`, `test/` or `docs/`; an install hook that
+  reaches a download through `npm run`; a shell stage without a suffix; a `binding.gyp` action; a
+  `requests` download in `setup.py`; `exec` reached through an alias, `globalThis["eval"]` or a
+  constructor chain; zlib and char-code decoders; persistence paths built from pieces.
+  `RULES_CHANGELOG.md` lists each change and what stays silent.
 - Declared entry points are read up to 3 MiB; a larger one is named in `needs_review`.
 
 ## [0.92.0]
