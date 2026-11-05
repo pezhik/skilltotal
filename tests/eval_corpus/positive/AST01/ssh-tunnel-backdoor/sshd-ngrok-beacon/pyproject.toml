@@ -1,0 +1,4 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+[project]
+name = "tunnelkit"
+version = "0.1.0"

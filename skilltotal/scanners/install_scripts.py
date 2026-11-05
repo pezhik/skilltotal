@@ -22,6 +22,7 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     alternation,
 )
+from skilltotal.scanners.fetch_tunnel_launcher import platform_fetch_evidence
 from skilltotal.scanners.obfuscation import _DECODE_EXEC
 from skilltotal.scanners.shell_script import DECODE_EXEC_SH, REMOTE_EXEC
 
@@ -303,6 +304,7 @@ class InstallScriptsScanner(PatternScanner):
                 span = js_runs_fetched_body(f.text)
                 if span is not None and not f.in_c_comment(span[1] - 1):
                     evidence.append(f.evidence_for_span(*span))
+        evidence += platform_fetch_evidence(index)
         if evidence:
             rule = next(r for r in self.rules if r.id == R_NPM_REMOTE_EXEC)
             result.findings.append(_finding_from_rule(rule, evidence))

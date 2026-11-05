@@ -1,0 +1,9 @@
+{
+  "name": "acme-sdk-linux-x64",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "files": ["bin/acme"],
+  "scripts": {"postinstall": "node check.js"}
+}

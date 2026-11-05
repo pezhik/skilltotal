@@ -19,6 +19,7 @@
  "negative/AST01/agent-config-persist/scaffold-build-task": [],
  "negative/AST01/agent-cred-helper-exec/static-key-helper": [],
  "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
+ "negative/AST01/agent-launcher-hijack/local-gateway-default-approvals": [],
  "negative/AST01/clipboard-swap/address-validator-lib": [],
  "negative/AST01/clipboard-swap/dapp-copy-contract": [],
  "negative/AST01/clipboard-swap/node-shell-copy-own-address": [
@@ -211,7 +212,15 @@
  "negative/AST01/skill-writes-agent-memory-files-persistence/memory-file-reference": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/open-memory-notes": [],
+ "negative/AST01/ssh-tunnel-backdoor/ngrok-web-preview": [
+  "ST-SHELL-PY"
+ ],
  "negative/AST01/stdlib-shadow/local-struct-helper": [],
+ "negative/AST01/url-exec-loader/fetch-json-config": [
+  "ST-DYN-PY",
+  "ST-FS-PY-READ",
+  "ST-NET-PY"
+ ],
  "negative/AST01/wallet-key-exfil/local-signer": [
   "ST-SECRET-ENV"
  ],
@@ -327,6 +336,9 @@
  ],
  "negative/AST02/npm-worm/release-tool-publishes": [
   "ST-SHELL-NODE"
+ ],
+ "negative/AST02/platform-binary-dropper/linux-x64-ships-binary": [
+  "ST-INSTALL-NPM"
  ],
  "negative/AST02/plugin-hook-trojan/formatter-plugin-hook": [],
  "negative/AST02/plugin-hook-trojan/guard-hook-pattern": [],
@@ -457,6 +469,13 @@
  "positive/AST01/agent-dotenv-exec/gemini-proxy-command": [
   "ST-AGENT-DOTENV-EXEC"
  ],
+ "positive/AST01/agent-launcher-hijack/yolo-base-url-defender": [
+  "ST-AGENT-LAUNCHER-HIJACK",
+  "ST-FS-NODE-WRITE",
+  "ST-POSTEX-EVASION",
+  "ST-SHELL-EVASION",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST01/clipboard-swap/node-clipboardy": [
   "ST-CLIPPER"
  ],
@@ -531,6 +550,12 @@
   "ST-SENS-PATH-PY"
  ],
  "positive/AST01/credential-exfil/python-evasion-concat-path": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SENS-PATH-PY"
+ ],
+ "positive/AST01/credential-exfil/python-import-thread-dev-creds": [
   "ST-COMBO-EXFIL",
   "ST-FS-PY-READ",
   "ST-NET-PY",
@@ -933,9 +958,19 @@
  "positive/AST01/skill-writes-agent-memory-files-persistence/silent-memory-append": [
   "ST-SKILL-MEMORY-WRITE-HIDDEN"
  ],
+ "positive/AST01/ssh-tunnel-backdoor/sshd-ngrok-beacon": [
+  "ST-NET-PY",
+  "ST-SHELL-PY",
+  "ST-SSH-TUNNEL-BACKDOOR"
+ ],
  "positive/AST01/stdlib-shadow/struct-import-exec": [
   "ST-PY-STDLIB-SHADOW",
   "ST-SHELL-PY"
+ ],
+ "positive/AST01/url-exec-loader/python-urlopen-exec": [
+  "ST-DYN-PY",
+  "ST-NET-PY",
+  "ST-PY-FETCH-EXEC"
  ],
  "positive/AST01/wallet-key-exfil/env-wallet-key": [
   "ST-COMBO-EXFIL",
@@ -1180,6 +1215,13 @@
   "ST-INSTALL-NPM",
   "ST-NET-NODE",
   "ST-NPM-INSTALL-PUBLISH"
+ ],
+ "positive/AST02/platform-binary-dropper/linux-x64-postinstall-fetch": [
+  "ST-FS-NODE-WRITE",
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-NET-NODE",
+  "ST-SHELL-NODE"
  ],
  "positive/AST02/plugin-hook-trojan/hookpry-session-hook": [
   "ST-AGENT-AUTORUN-REMOTE",

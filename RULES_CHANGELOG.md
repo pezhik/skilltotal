@@ -4,6 +4,22 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 93 (engine 0.94.0)
+
+Three new rules and one wider rule, each joining two tells that an honest component does not have together. Each has a
+positive sample in the corpus next to a benign look-alike.
+- `ST-PY-FETCH-EXEC`: a Python function fetches a response (`urlopen`, `requests`, `httpx`) and
+  passes its text to `exec` or `eval`. Parsing it as JSON or running a local file stays silent.
+- `ST-SSH-TUNNEL-BACKDOOR`: one file starts an SSH server (sshd, an SSH server library, a
+  no-password setting) and a public tunnel client (ngrok, localtunnel, serveo, cloudflared). A
+  tunnel for a web preview alone stays silent.
+- `ST-INSTALL-NPM-REMOTE-EXEC` (wider): an npm package named for one platform (`-linux-x64`) whose
+  install hook runs a file that downloads from the network. A platform package that ships its
+  binary stays silent.
+- `ST-AGENT-LAUNCHER-HIJACK`: a launcher file sets a model API base URL to another host and also
+  turns approvals off or adds a Defender exclusion / execution-policy bypass. A gateway on this
+  machine with default approvals stays silent.
+
 ## ruleset 92 (engine 0.93.0)
 
 The rules are public, so we took attacks they already caught and rewrote them with a different

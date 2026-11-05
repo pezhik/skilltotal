@@ -1,0 +1,6 @@
+{
+  "name": "agentcli-fork",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "bin": {"agentcli": "bin/launcher.js"}
+}

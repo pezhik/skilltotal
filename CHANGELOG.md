@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.94.0]
+
+### Added
+- Ruleset 93: `ST-PY-FETCH-EXEC`, `ST-SSH-TUNNEL-BACKDOOR` and `ST-AGENT-LAUNCHER-HIJACK`, and
+  `ST-INSTALL-NPM-REMOTE-EXEC` covers a platform-named package whose install hook downloads. See `RULES_CHANGELOG.md`.
+
 ## [0.93.0]
 
 ### Changed

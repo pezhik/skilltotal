@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.93.0",
-  "ruleset_version": 92,
-  "python_version": "3.14",
-  "positives": 207,
-  "negatives": 170,
+  "engine_version": "0.94.0",
+  "ruleset_version": 93,
+  "python_version": "3.11",
+  "positives": 212,
+  "negatives": 174,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -22,6 +22,7 @@
     "agent-config-persist": 1.0,
     "agent-cred-helper-exec": 1.0,
     "agent-dotenv-exec": 1.0,
+    "agent-launcher-hijack": 1.0,
     "cli-relay": 1.0,
     "clipboard-swap": 1.0,
     "compiled-node-output": 1.0,
@@ -56,6 +57,7 @@
     "npm-worm": 1.0,
     "password-archive": 1.0,
     "pickle-reduce-gadget": 1.0,
+    "platform-binary-dropper": 1.0,
     "plugin-hook-trojan": 1.0,
     "post-exploitation": 1.0,
     "powershell-download-exec": 1.0,
@@ -68,23 +70,25 @@
     "skill-fetch-exec": 1.0,
     "skill-scanner-directed-audit-override-text": 1.0,
     "skill-writes-agent-memory-files-persistence": 1.0,
+    "ssh-tunnel-backdoor": 1.0,
     "startup-hook-exec": 1.0,
     "stdlib-shadow": 1.0,
     "token-revocation-wiper": 1.0,
     "typosquat-dropper": 1.0,
+    "url-exec-loader": 1.0,
     "wallet-key-exfil": 1.0,
     "workflow-history-exfil": 1.0
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 43,
+      "node": 45,
       "manifest/text": 28,
-      "python": 31,
+      "python": 33,
       "shell": 4
     },
     "AST02": {
       "manifest/text": 25,
-      "node": 22,
+      "node": 23,
       "python": 8,
       "shell": 1
     },
@@ -236,6 +240,18 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-AGENT-LAUNCHER-HIJACK": {
+      "owasp": [
+        "AST01",
+        "AST04"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-ARCHIVE-PASSWORD-EXTRACT": {
       "owasp": [
         "AST01"
@@ -262,7 +278,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 36,
+      "malicious_samples": 37,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -326,7 +342,7 @@
     },
     "ST-FS-NODE-WRITE": {
       "owasp": [],
-      "malicious_samples": 11,
+      "malicious_samples": 13,
       "benign_samples": 9,
       "should_fire": 2,
       "fired": 2,
@@ -414,8 +430,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 30,
-      "benign_samples": 12,
+      "malicious_samples": 31,
+      "benign_samples": 13,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -459,7 +475,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 9,
+      "malicious_samples": 10,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -794,7 +810,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 3,
+      "malicious_samples": 4,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -901,6 +917,18 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-PY-FETCH-EXEC": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-PY-STDLIB-SHADOW": {
       "owasp": [
         "AST01"
@@ -927,7 +955,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 0,
+      "malicious_samples": 1,
       "benign_samples": 1,
       "should_fire": 2,
       "fired": 2,
@@ -1052,6 +1080,17 @@
         "AST01"
       ],
       "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-SSH-TUNNEL-BACKDOOR": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,

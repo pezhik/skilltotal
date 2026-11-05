@@ -17,6 +17,7 @@ from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
 from skilltotal.scanners.encrypted_archive import EncryptedArchiveScanner
 from skilltotal.scanners.exposure import ExposureScanner
+from skilltotal.scanners.fetch_tunnel_launcher import FetchTunnelLauncherScanner
 from skilltotal.scanners.filesystem import FilesystemScanner
 from skilltotal.scanners.html_file_exfil import HtmlFileExfilScanner
 from skilltotal.scanners.install_payload import InstallPayloadScanner
@@ -86,6 +87,7 @@ SCANNERS: list[Scanner] = [
     DependencyRedirectScanner(),
     WorkflowExfilScanner(),
     HtmlFileExfilScanner(),
+    FetchTunnelLauncherScanner(),
 ]
 
 
