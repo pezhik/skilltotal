@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.95.0]
+
+### Added
+- Ruleset 94: `ST-POSTEX-STAGER` flags an autostart entry that downloads code and runs it each time
+  it starts. With the persistence step it counts as `ST-POSTEX-CHAIN`. See `RULES_CHANGELOG.md`.
+
 ## [0.94.0]
 
 ### Added

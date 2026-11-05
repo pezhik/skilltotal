@@ -126,7 +126,7 @@ Rules can declare the tactic their finding is a step of (`RuleSpec.tactic`):
 | remote access | `ST-POSTEX-REMOTE-ACCESS` (reverse tunnel to the local SSH/RDP/VNC port, a literal key written into `authorized_keys`, reverse shells, tunnel clients started with an embedded credential, remote login or remote desktop switched on, a new local or admin account) |
 | persistence | `ST-POSTEX-PERSIST` (LaunchAgents/Daemons, cron `@reboot` or a piped crontab, enabled systemd units, startup/logon scheduled tasks, Run keys, the Startup folder, shell-profile appends), `ST-AGENT-CONFIG-PERSIST`, `ST-AGENT-AUTORUN-REMOTE`, `ST-GIT-HOOK-PERSIST`, `ST-PTH-EXEC`, `ST-PTH-IMPORT-EXEC`, `ST-STARTUP-HOOK-EXEC` |
 | defense evasion | `ST-POSTEX-EVASION` (antivirus exclusions, Gatekeeper or quarantine stripping, host-key checks off with a null known-hosts file, cleared history or logs), `ST-SHELL-EVASION`, `ST-POSTEX-MASQUERADE` |
-| command and control | `ST-POSTEX-BEACON` (secret env-var names or a public-IP lookup next to host facts and a network call, or host facts sent to a raw-IP URL), `ST-AGENT-CLI-RELAY` |
+| command and control | `ST-POSTEX-BEACON` (secret env-var names or a public-IP lookup next to host facts and a network call, or host facts sent to a raw-IP URL), `ST-POSTEX-STAGER` (an autostart entry whose command pipes a download into an interpreter, so it fetches its code at every start), `ST-AGENT-CLI-RELAY` |
 
 Each signal alone is a `risky_construct`, because each has an honest use (a provisioning script
 plants a key, a daemon installs a LaunchAgent, a dotfiles installer appends to `.zshrc`), except

@@ -48,6 +48,7 @@ R_REMOTE_ACCESS = "ST-POSTEX-REMOTE-ACCESS"
 R_PERSIST = "ST-POSTEX-PERSIST"
 R_MASQUERADE = "ST-POSTEX-MASQUERADE"
 R_BEACON = "ST-POSTEX-BEACON"
+R_STAGER = "ST-POSTEX-STAGER"
 
 _JS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 _PY = (".py", ".pyw")
@@ -115,6 +116,9 @@ class _Signal:
     # What, within ``_UNLESS_WINDOW`` characters of the anchor, shows the step happens on another
     # machine than the one running the code.
     unless_near: re.Pattern[str] | None = None
+    # The anchor must sit inside a quoted string: text the code writes or registers somewhere,
+    # not a command it runs right away, and not a line it only prints for the user to read.
+    quoted: bool = False
 
 
 def _c(pattern: str, flags: int = 0) -> re.Pattern[str]:
@@ -130,6 +134,33 @@ _REMOTE_EXEC = _c(
     r"|(?<![\w./-])ssh(?:\.exe)?[\"'`]?(?:\s|,)[^\n]{0,200}?[\w}\])]@[\w${\[(]"
 )
 _UNLESS_WINDOW = 300
+
+# Remote code piped straight into an interpreter: curl or wget into a shell, a PowerShell download
+# into Invoke-Expression (either piped in or as its argument). Inside a string that holds a script
+# a command may follow a `\n` or `\t` escape (`'#!/bin/sh\ncurl ...'`).
+_CMD_START = r"(?:(?<![\w-])|(?<=\\[nt]))"
+_FETCH_RUN = _c(
+    rf"{_CMD_START}(?:curl|wget)\b[^\n|;&]{{0,200}}\|\s*(?:sudo\s+)?(?:ba|z|da)?sh\b"
+    rf"|{_CMD_START}(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|;]{{0,200}}?"
+    r"\|\s*(?:iex|Invoke-Expression)\b"
+    r"|\bDownloadString\b[^\n|;]{0,200}?\|\s*(?:iex|Invoke-Expression)\b"
+    rf"|{_CMD_START}(?:iex|Invoke-Expression)\b[\s(]{{0,4}}"
+    r"(?:New-Object\s+(?:System\.)?Net\.WebClient\s*\)?\s*\.\s*DownloadString"
+    r"|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b",
+    _I)
+# Where an autostart entry is registered: the places of the persistence signals above, plus git
+# hooks (a hooksPath setting or a file named after a hook), whose body runs on every checkout or
+# commit.
+_PERSIST_PLACE = _c(
+    r"\bLaunch(?:Agents|Daemons)\b|@reboot\b|\bcrontab\b|/etc/cron|/var/spool/cron"
+    r"|\bschtasks(?:\.exe)?\b|\bRegister-ScheduledTask\b|\bCurrentVersion(?:\\{1,4}|/)Run"
+    r"|\bPrograms[\\/]{1,4}Startup\b|\bshell:startup\b|\bsystemd\b"
+    r"|(?<=[/\"'`\\\s])\.(?:bashrc|bash_profile|bash_login|bash_aliases|zshrc|zprofile|zshenv"
+    r"|zlogin|profile)\b|\$PROFILE\b|\bconfig\.fish\b|/etc/profile\.d/"
+    r"|\bhooksPath\b|\.git[\\/]{1,2}hooks\b"
+    r"|[\\/](?:pre-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout"
+    r"|post-merge|pre-push|post-rewrite|pre-receive|post-receive)\b",
+    _I)
 
 
 _SIGNALS: tuple[_Signal, ...] = (
@@ -291,6 +322,16 @@ _SIGNALS: tuple[_Signal, ...] = (
                r"\.(?:cmd|bat|exe|vbs|lnk|ps1|js)\b", _I),
             near=(_c(_WRITE),),
             keywords=("startup",)),
+
+    # --- Command and control: an autostart entry that fetches its code at every start --------
+    # A download piped into an interpreter, written as the command of an autostart entry: the
+    # `/tr` of a scheduled task, a cron line, a LaunchAgent's ProgramArguments, a git hook's body,
+    # a line appended to a shell profile. Whoever serves the URL decides what runs at each start.
+    # Only a quoted download counts: `curl ... | sh` run once by an installer that then adds
+    # `source ~/.cargo/env` to `.bashrc` registers no download.
+    _Signal(R_STAGER, _FETCH_RUN, near=(_PERSIST_PLACE,), window=400, quoted=True,
+            keywords=("curl", "wget", "iwr", "irm", "invoke-webrequest", "invoke-restmethod",
+                      "downloadstring")),
 )
 
 
@@ -346,6 +387,17 @@ def _in_comment(f: IndexedFile, offset: int) -> bool:
         line = f.line_text(f.line_of_offset(offset)).lstrip().lower()
         return line.startswith(("rem ", "::", "@rem "))
     return False
+
+
+def _in_quoted(f: IndexedFile, offset: int) -> bool:
+    """True if ``offset`` is inside a string literal (Python, JavaScript) or a quoted argument on
+    its line (shell, PowerShell, batch)."""
+    if f.string_span_at(offset) is not None or f.in_shell_quoted(offset):
+        return True
+    if f.suffix not in _BAT:
+        return False
+    line_start = f.text.rfind("\n", 0, offset) + 1
+    return f.text.count('"', line_start, offset) % 2 == 1
 
 
 # A list of command lines written as data: at least this many of its string elements are whole
@@ -483,6 +535,8 @@ def _signal_evidence(scan: _FileScan, signal: _Signal) -> list[Evidence]:
         if _in_comment(f, start) or scan.in_pattern_list(start):
             continue
         if signal.not_after_system and "System" in f.text[max(0, start - 16) : start]:
+            continue
+        if signal.quoted and (not _in_quoted(f, start) or f.in_printed_command(start)):
             continue
         lo = max(0, start - signal.window)
         hi = min(len(f.text), end + signal.window)
@@ -643,6 +697,27 @@ _RULES = [
             "should be documented, opt-in and sent to the publisher's own domain."
         ),
         capability=Capability.NETWORK_EGRESS,
+        threat_class=ThreatClass.RISKY_CONSTRUCT,
+        code_context="comments_and_docstrings",
+        tactic=TACTIC_COMMAND_AND_CONTROL,
+    ),
+    RuleSpec(
+        id=R_STAGER,
+        category="command_and_control",
+        severity=Severity.HIGH,
+        title="Autostart entry downloads code and runs it every time it starts",
+        description=(
+            "The command the code registers to run again on its own (a scheduled task, a Run "
+            "value, a cron line, a LaunchAgent, a git hook, a line in a shell profile) downloads "
+            "a script and pipes it straight into an interpreter: curl or wget into sh, "
+            "Invoke-WebRequest or DownloadString into Invoke-Expression. Whoever controls that "
+            "URL decides what runs on the machine at each start, and can change it at any time."
+        ),
+        recommendation=(
+            "Do not install the component. Remove the autostart entry from machines that ran it "
+            "and find out what the URL served."
+        ),
+        capability=Capability.SHELL_EXECUTION,
         threat_class=ThreatClass.RISKY_CONSTRUCT,
         code_context="comments_and_docstrings",
         tactic=TACTIC_COMMAND_AND_CONTROL,

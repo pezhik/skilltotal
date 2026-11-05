@@ -422,6 +422,7 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     "ST-POSTEX-MASQUERADE": (_T.EXECUTION_AUTHORITY, _T.METADATA_INTEGRITY),
     "ST-POSTEX-BEACON": (_T.NETWORK_EGRESS,),
     "ST-POSTEX-EVASION": (_T.EXECUTION_AUTHORITY,),
+    "ST-POSTEX-STAGER": (_T.EXECUTION_AUTHORITY, _T.NETWORK_EGRESS),
     # Steps of several tactics converge, like independent malicious indicators do.
     "ST-POSTEX-CHAIN": (_T.MALWARE_CONVERGENCE, _T.EXECUTION_AUTHORITY),
 }

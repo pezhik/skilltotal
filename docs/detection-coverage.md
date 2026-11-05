@@ -52,6 +52,7 @@ already covers* and is exercised by the in-repo fixtures under `tests/manual_eva
 | **Tunnel client with an embedded credential** (`cloudflared --token`, `ngrok authtoken`, `code tunnel`) plus a Run key or shell-profile entry | `ST-POSTEX-REMOTE-ACCESS`, `ST-POSTEX-PERSIST` → `ST-POSTEX-CHAIN` | `python-cloudflared-runkey`, `node-code-tunnel-zshrc` |
 | **Security controls switched off** (antivirus exclusions, Gatekeeper or quarantine stripped, history and logs cleared) | `ST-POSTEX-EVASION`, `ST-SHELL-EVASION`; `ST-POSTEX-MASQUERADE` (malicious) for a task named after the OS vendor | `vscode-ps-defender-exclusion-task` |
 | **Host beacon** (host name, user name, secret env-var names or the public IP sent to a server) | `ST-POSTEX-BEACON` | `python-ssh-backdoor`, `vscode-ssh-backdoor-vsix` |
+| **Autostart entry that downloads its code at every start** (`curl \| sh` or `iwr \| iex` as the command of a scheduled task, a Run value, a cron line, a LaunchAgent, a git hook or a shell-profile line) | `ST-POSTEX-STAGER` + the persistence step → `ST-POSTEX-CHAIN` | `bat-schtask-updater-name-fetch`, `shell-gitconfig-hook-fetch`, `python-launchagent-fetch`, `node-crontab-line-fetch` |
 
 The post-exploitation samples live in `tests/eval_corpus/positive/AST01/post-exploitation/`, with
 honest look-alikes (a CLI that installs its own LaunchAgent, a dotfiles installer, a devcontainer

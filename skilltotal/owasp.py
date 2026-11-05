@@ -86,6 +86,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-POSTEX-MASQUERADE": ("AST01",),
     "ST-POSTEX-BEACON": ("AST01",),
     "ST-POSTEX-EVASION": ("AST01",),
+    "ST-POSTEX-STAGER": ("AST01",),
     "ST-POSTEX-CHAIN": ("AST01",),
     # AST02 Supply Chain Compromise — install-time hooks and remote-fetch-and-run.
     "ST-INSTALL-DROPPER": ("AST02",),

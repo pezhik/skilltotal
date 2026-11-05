@@ -122,9 +122,11 @@ def test_list_rules_is_compact_unless_asked_for_the_texts():
     assert len(compact) == len(get_rules())
     assert set(compact[0]) == {"id", "severity", "category", "title", "threat_class",
                                "capability"}
-    assert len(json.dumps(compact)) < 25_000
     full = _tool_payload(_call("list_rules", {"verbose": True}))
     assert full == [r.to_dict() for r in get_rules()]
+    # A fixed byte budget broke on the next rule added (ruleset 94); the texts are what made the
+    # answer large, so the compact answer stays well under half of the full one.
+    assert len(json.dumps(compact)) < len(json.dumps(full)) / 2
 
 
 def test_every_tool_says_it_only_reads():

@@ -1567,7 +1567,7 @@ def _split_unpublished_env_evidence(
 _BUILD_OUTPUT_EXEMPT: frozenset[str] = frozenset({
     "ST-ENV-SHIPPED",
     "ST-POSTEX-REMOTE-ACCESS", "ST-POSTEX-PERSIST", "ST-POSTEX-MASQUERADE", "ST-POSTEX-BEACON",
-    "ST-POSTEX-EVASION",
+    "ST-POSTEX-EVASION", "ST-POSTEX-STAGER",
 })
 # A rule that holds in compiled output only where that output is the package's own code. A tool's
 # hint and its handler are two facts in one registration, and tsc keeps both, so a contradiction in
