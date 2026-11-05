@@ -480,18 +480,23 @@ def test_the_obfuscation_scanner_costs_what_it_did_on_ruleset_67(tmp_path, monke
         replace(r, pattern=old) if r.id == "ST-OBF-DECODE-EXEC" else r for r in reference.rules
     ]
 
-    def best(scanner, flow) -> float:
+    def timed(scanner, flow) -> float:
         monkeypatch.setattr(obfuscation, "_decoded_then_executed", flow)
-        times = []
-        for _ in range(3):
-            start = time.perf_counter()
-            scanner.scan(index)
-            times.append(time.perf_counter() - start)
-        return min(times)
+        start = time.perf_counter()
+        scanner.scan(index)
+        return time.perf_counter() - start
 
     flow = obfuscation._decoded_then_executed
-    took = best(current, flow)
-    baseline = best(reference, lambda index: [])
+    # One untimed run each, then the two take turns, so neither pays alone for cold caches or a
+    # noisy stretch of a shared runner. Timed one after the other, the scanner timed first measured
+    # 1.4 times the reference on its first round and 1.1 to 1.2 after it, and CI runners put it near
+    # the 1.5 bound three times in four days (2026-11-01 to 11-04).
+    timed(current, flow)
+    timed(reference, lambda index: [])
+    took, baseline = float("inf"), float("inf")
+    for _ in range(5):
+        took = min(took, timed(current, flow))
+        baseline = min(baseline, timed(reference, lambda index: []))
     assert took < baseline * 1.5 + 0.05, f"{took:.2f}s against {baseline:.2f}s on ruleset 67"
 
 

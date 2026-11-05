@@ -1274,9 +1274,24 @@ def test_a_slow_registry_does_not_hold_the_hook(cache, fake_supervisor, monkeypa
         time.sleep(30)
 
     monkeypatch.setattr(collector, "resolve_release", hang)
+    # The lookup is timed on its own: the scan after it starts a Python process, which a busy CI
+    # runner has taken seconds to do (2026-11-05: 6.8 s in all on Windows, a 4 s budget).
+    real_lookup = cli._hook_lookup
+    lookup_took = []
+
+    def timed_lookup(*args, **kwargs):
+        begun = time.monotonic()
+        try:
+            return real_lookup(*args, **kwargs)
+        finally:
+            lookup_took.append(time.monotonic() - begun)
+
+    monkeypatch.setattr(cli, "_hook_lookup", timed_lookup)
     started = time.monotonic()
     report = cli._hook_scan_cached("npm:x", 4.0)
-    assert time.monotonic() - started < 4.0
+    took = time.monotonic() - started
+    assert lookup_took and lookup_took[0] < 2.0 + 0.5  # its share: half the budget
+    assert took < 4.0 + hook_scan.GRACE_S  # the hook's own ceiling, far below the 30 s hang
     assert report["verdict"]["headline"] == "fake"
     assert list(_cached(cache)) == ["npm:x"]  # kept under the name, as for a registry that is down
 
