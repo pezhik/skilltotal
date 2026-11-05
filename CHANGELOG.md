@@ -7,8 +7,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ## [0.95.0]
 
 ### Added
-- Ruleset 94: `ST-POSTEX-STAGER` flags an autostart entry that downloads code and runs it each time
-  it starts. With the persistence step it counts as `ST-POSTEX-CHAIN`. See `RULES_CHANGELOG.md`.
+- Ruleset 94: `ST-POSTEX-STAGER` flags an autostart entry that downloads code and runs it each
+  time it starts. Together with the persistence step it makes `ST-POSTEX-CHAIN`. See
+  `RULES_CHANGELOG.md`.
 
 ## [0.94.0]
 

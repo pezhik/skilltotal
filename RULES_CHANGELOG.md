@@ -7,10 +7,10 @@ re-scan to pick up newer findings. See `docs/contributing-rules.md` for the proc
 ## ruleset 94 (engine 0.95.0)
 
 - `ST-POSTEX-STAGER` (new): an autostart entry downloads code and runs it each time it starts.
-  The entry can be a scheduled task, a Run value, a cron line, a LaunchAgent, a git hook or a line
-  in a shell profile, and its command pipes a download into an interpreter (`curl ... | sh`,
-  `iwr ... | iex`). Together with the persistence step this is now `ST-POSTEX-CHAIN`. Until now
-  such an entry scored medium unless its name copied the OS vendor's.
+  The entry can be a scheduled task, a Run value, a cron line, a LaunchAgent, a git hook or a
+  shell-profile line. Its command pipes a download into an interpreter (`curl ... | sh`,
+  `iwr ... | iex`). Together with the persistence step it now makes `ST-POSTEX-CHAIN`. Before,
+  such an entry scored medium unless it was named after the OS vendor.
 - What stays silent: a download that runs once at install, and an upgrade command that is only
   printed for the user.
 
