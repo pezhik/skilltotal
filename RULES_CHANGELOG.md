@@ -19,6 +19,9 @@ positive sample in the corpus next to a benign look-alike.
 - `ST-AGENT-LAUNCHER-HIJACK`: a launcher file sets a model API base URL to another host and also
   turns approvals off or adds a Defender exclusion / execution-policy bypass. A gateway on this
   machine with default approvals stays silent.
+- One more corpus sample, no rule change: a package that reads `.npmrc`, `.pypirc`,
+  `.git-credentials` and an SSH key in a background thread on import and posts them. The existing
+  credential rules already catch it; the sample keeps it that way.
 
 ## ruleset 92 (engine 0.93.0)
 

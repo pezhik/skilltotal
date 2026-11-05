@@ -9,6 +9,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
 ### Added
 - Ruleset 93: `ST-PY-FETCH-EXEC`, `ST-SSH-TUNNEL-BACKDOOR` and `ST-AGENT-LAUNCHER-HIJACK`, and
   `ST-INSTALL-NPM-REMOTE-EXEC` covers a platform-named package whose install hook downloads. See `RULES_CHANGELOG.md`.
+- A corpus sample for credential theft on import in a background thread, which the existing rules
+  already catch.
 
 ## [0.93.0]
 
