@@ -1,6 +1,6 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.95.0 · ruleset 94 · Python 3.14 · offline corpus.
+Engine 0.96.0 · ruleset 95 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (216/216 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/177 benign samples wrongly flagged)

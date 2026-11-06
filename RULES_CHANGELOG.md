@@ -4,6 +4,13 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 95 (engine 0.96.0)
+
+- Test-code detection now covers end-to-end test files such as `docker.e2e.ts` and
+  `app.e2e-spec.ts`. Findings found only in such files move to needs-review, the same as findings
+  in `*.test.*` and `*.spec.*` files. A file named this way that `package.json` declares as
+  `main`, `bin` or `exports` is still read and scored.
+
 ## ruleset 94 (engine 0.95.0)
 
 - `ST-POSTEX-STAGER` (new): an autostart entry downloads code and runs it each time it starts.

@@ -467,8 +467,12 @@ _TEST_SEGMENT_RE = re.compile(r"(?:.*[-_.])?(?:tests?|specs?|e2e)|(?:tests?|spec
 # ships a hardcoded CI `hf_` token). The anchors keep ordinary names (contest.py, testimonials.py,
 # attest.js) out.
 _TEST_FILE_RE = re.compile(
-    r"\.test\.|\.spec\.|^tests?[-_]|_test\.|^conftest\.py$|^tests?\.\w+$|^test(?:ing)?_?utils?\."
+    r"\.test\.|\.spec\.|\.e2e(?:-spec)?\.|^tests?[-_]|_test\.|^conftest\.py$|^tests?\.\w+$"
+    r"|^test(?:ing)?_?utils?\."
 )
+# `\.e2e(-spec)?\.`: the end-to-end test suffix (`docker.e2e.ts`, NestJS `app.e2e-spec.ts`). An MCP
+# server's `src/docker.e2e.ts` ran `execFile('docker', ...)` to probe its own image and read as the
+# server's shell capability. A file the manifest declares as an entry point is still read.
 # `^tests?[-_]` covers the prefix form with either separator (`test-snapshot-budget.sh`,
 # `test_render.py`): a hyphenated test script at the repo root carried a literal "IGNORE
 # PREVIOUS INSTRUCTIONS" fixture and scored as a live directive. The `[-_]` boundary keeps

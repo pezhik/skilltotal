@@ -1,6 +1,6 @@
 {
-  "engine_version": "0.95.0",
-  "ruleset_version": 94,
+  "engine_version": "0.96.0",
+  "ruleset_version": 95,
   "python_version": "3.14",
   "positives": 216,
   "negatives": 177,

@@ -161,7 +161,7 @@ a substitute for:
   The AST parser comes from the Python interpreter that runs the scan, and a file written in
   newer syntax than it understands falls back to regex and is listed for review, so run the scan
   on the newest Python you can.
-- **Test code** (`__tests__/`, `*.test.*`, `tests/`, `conftest.py`, …) is demoted to
+- **Test code** (`__tests__/`, `*.test.*`, `*.e2e.*`, `tests/`, `conftest.py`, …) is demoted to
   `needs_review`: it is not executed by consumers, so it does not affect the score.
 - Ambiguous signals (bare `secrets`/`credentials` words, lone base64 blobs, "before
   answering" phrasing, minified files) go to `needs_review`, never to `findings`.

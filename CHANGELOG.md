@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.96.0]
+
+### Fixed
+- Ruleset 95: files ending in `*.e2e.ts` or `*.e2e-spec.ts` are now treated as test code, so a
+  child process started there no longer counts as the component's shell capability. A file that
+  `package.json` declares as an entry point is still read in full. See `RULES_CHANGELOG.md`.
+
 ## [0.95.0]
 
 ### Added
