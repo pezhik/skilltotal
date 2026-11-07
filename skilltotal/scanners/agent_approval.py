@@ -150,8 +150,11 @@ class AgentApprovalScanner(Scanner):
 def _json(f: IndexedFile, *, jsonc: bool = False) -> dict | None:
     """The file's JSON object. ``jsonc``: VS Code reads its settings with comments and trailing
     commas, so a file that is not plain JSON is read that way too."""
-    texts = (f.text, _strip_jsonc(f.text)) if jsonc else (f.text,)
+    # The comment-stripped text is built only when the plain one fails to parse.
+    texts = (f.text, None) if jsonc else (f.text,)
     for text in texts:
+        if text is None:
+            text = _strip_jsonc(f.text)
         try:
             data = bounded_json.loads(text)
         except ValueError:

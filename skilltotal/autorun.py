@@ -275,7 +275,11 @@ class _Collector:
             return self._parsed[f.relpath]
         data: object | None = None
         cut = False
-        for text in (f.text, _strip_jsonc(f.text)):
+        # The comment-stripped text only when the file is not plain JSON: built up front, the
+        # strip (a character loop) cost 35 s of a 267 s scan of a package of large JSON documents.
+        for text in (f.text, None):
+            if text is None:
+                text = _strip_jsonc(f.text)
             try:
                 data, cut = bounded_json.loads_cut(text)
                 break
