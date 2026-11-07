@@ -497,7 +497,10 @@ def test_the_obfuscation_scanner_costs_what_it_did_on_ruleset_67(tmp_path, monke
     for _ in range(5):
         took = min(took, timed(current, flow))
         baseline = min(baseline, timed(reference, lambda index: []))
-    assert took < baseline * 1.5 + 0.05, f"{took:.2f}s against {baseline:.2f}s on ruleset 67"
+    # Even interleaved, a CI runner measured 1.73 on 2026-11-07 for code that measures 1.3 at rest,
+    # so the bound sits at 2: a scanner that does its work twice measures 2.5 and still fails here,
+    # and the regressions this guards against cost three to five times the reference.
+    assert took < baseline * 2.0 + 0.05, f"{took:.2f}s against {baseline:.2f}s on ruleset 67"
 
 
 # --- Gap 4: a bind to all interfaces through a variable -------------------------------------
