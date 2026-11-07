@@ -126,6 +126,41 @@ def test_an_audit_catches_a_wrong_replay_and_uses_the_fresh_result(tmp_path):
     assert _report(root, ScanCache(tmp_path / "cache")) == plain
 
 
+def test_a_wrong_replay_drops_every_stored_result_of_that_scanner_code(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    for root, text in ((a, _DECODE_EXEC), (b, "x = 1\n")):
+        root.mkdir()
+        (root / "x.py").write_text(text, encoding="utf-8")
+        _report(root, ScanCache(tmp_path / "cache"))
+    store = tmp_path / "cache" / "obfuscation"
+    assert len(list(store.rglob("*.json"))) == 2
+    entry = next(e for e in store.rglob("*.json")
+                 if json.loads(e.read_text(encoding="utf-8"))["result"]["findings"])
+    data = json.loads(entry.read_text(encoding="utf-8"))
+    data["result"]["findings"] = []
+    entry.write_text(json.dumps(data), encoding="utf-8")
+    audited = ScanCache(tmp_path / "cache", audit_every=1)
+    assert _report(a, audited) == _report(a)
+    assert audited.mismatches == ["obfuscation"]
+    # b's entry went too (nothing says which entries of that code are wrong); a's is fresh.
+    assert [p.parent.parent.name for p in store.rglob("*.json")] == ["obfuscation"]
+    assert len(list(store.rglob("*.json"))) == 1
+
+
+def test_a_replay_marks_its_code_folder_in_use(tmp_path):
+    import os
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "x.py").write_text("x = 1\n", encoding="utf-8")
+    _report(root, ScanCache(tmp_path / "cache"))
+    folders = [p for p in (tmp_path / "cache").glob("*/*") if p.is_dir()]
+    for folder in folders:
+        os.utime(folder, (1_000_000_000, 1_000_000_000))
+    _report(root, ScanCache(tmp_path / "cache"))
+    assert folders and all(f.stat().st_mtime > 1_000_000_000 for f in folders)
+
+
 _DISK_CALLS = {"open", "component_files", "walk_files"}
 _DISK_METHODS = {"read_bytes", "read_text", "iterdir", "rglob", "scandir", "listdir"}
 

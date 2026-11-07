@@ -24,6 +24,7 @@ import functools
 import hashlib
 import json
 import os
+import shutil
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -196,6 +197,21 @@ def _decode(data: dict[str, Any]) -> ScanResult:
     )
 
 
+_touched: set[Path] = set()
+
+
+def _touch(folder: Path) -> None:
+    """Mark a code folder as in use (once per process), so a cleanup that drops folders no
+    engine has touched for a while keeps the ones replays still read."""
+    if folder in _touched:
+        return
+    _touched.add(folder)
+    try:
+        os.utime(folder)
+    except OSError:
+        pass
+
+
 @dataclass
 class ScanCache:
     """Stored scanner results under ``directory``; see the module docstring."""
@@ -238,6 +254,9 @@ class ScanCache:
         audit = bool(digest and self.audit_every > 0
                      and int(digest[:8], 16) % self.audit_every == 0)
         stored = [None if e is None else self._load(e) for e in entries]
+        for entry, replay in zip(entries, stored, strict=True):
+            if replay is not None:
+                _touch(entry.parent)
         todo = [i for i, r in enumerate(stored) if r is None or audit]
         fresh = dict(zip(todo, scan(index, [scanners[i] for i in todo]), strict=True))
         results = []
@@ -246,7 +265,9 @@ class ScanCache:
             if i in fresh:
                 self.scanned += 1
                 if replay is not None and _encode(replay) != _encode(fresh[i]):
+                    # Some stored result of this code is wrong, and nothing says which: all go.
                     self.mismatches.append(scanner.name)
+                    shutil.rmtree(entries[i].parent, ignore_errors=True)
                 if entries[i] is not None and (replay is None or audit):
                     self._store(entries[i], fresh[i])
                 results.append(fresh[i])
