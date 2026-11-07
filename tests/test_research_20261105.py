@@ -54,6 +54,35 @@ def test_fetch_json_and_local_exec_stay_clean(tmp_path):
     assert "ST-PY-FETCH-EXEC" not in _ids(root)[0]
 
 
+def test_fetch_exec_spelled_with_look_alike_letters_or_in_parentheses_still_fires(tmp_path):
+    # The scanner skips files that cannot name exec or eval. Python folds fullwidth letters into
+    # `exec` (NFKC), and `(exec)(...)` is a call to the bare name: neither may be skipped.
+    fullwidth = "ｅｘｅｃ"
+    a = _write(tmp_path / "a", {"m.py": (
+        "import requests\n"
+        f"def run(u):\n    {fullwidth}(requests.get(u).text)\n")})
+    b = _write(tmp_path / "b", {"m.py": (
+        "import requests\n"
+        "def run(u):\n    (exec)(requests.get(u).text)\n")})
+    assert "ST-PY-FETCH-EXEC" in _ids(a)[0]
+    assert "ST-PY-FETCH-EXEC" in _ids(b)[0]
+
+
+def test_fetch_without_a_runner_word_stays_clean(tmp_path):
+    root = _write(tmp_path, {"m.py": (
+        "import requests\n"
+        "def run(u, executor):\n"
+        "    executor.evaluate(requests.get(u).text)\n")})
+    assert "ST-PY-FETCH-EXEC" not in _ids(root)[0]
+
+
+def test_ssh_and_tunnel_named_only_in_a_keyword_list_stay_clean(tmp_path):
+    root = _write(tmp_path, {"m.py": (
+        "def rule(**kw):\n    return kw\n"
+        "R = rule(keywords=('/usr/sbin/sshd ', 'ngrok'))\n")})
+    assert "ST-SSH-TUNNEL-BACKDOOR" not in _ids(root)[0]
+
+
 def test_ssh_server_with_tunnel_fires(tmp_path):
     root = _write(tmp_path, {"m.py": (
         "import subprocess\n"

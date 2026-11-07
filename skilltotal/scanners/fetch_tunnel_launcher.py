@@ -94,7 +94,21 @@ def _scope_fetch_exec(scope: ast.AST) -> ast.Call | None:
     return None
 
 
+_RUNNER_WORD = re.compile(r"\b(?:exec|eval)\b")
+
+
+def _could_run_text(text: str) -> bool:
+    """False only when no call to exec or eval can be in the file. A runner is a bare name, so in
+    ASCII source it is spelled out as a whole word; elsewhere Python folds look-alike letters
+    (NFKC) into it, so a file with any non-ASCII text is parsed whatever it spells. Most files hold
+    neither name, and parsing and walking them for this rule cost as much as the whole Python
+    scanner (2026-11-07 profile)."""
+    return not text.isascii() or _RUNNER_WORD.search(text) is not None
+
+
 def _py_fetch_exec(f: IndexedFile) -> Evidence | None:
+    if not _could_run_text(f.text):
+        return None
     try:
         tree = ast.parse(f.text)
     except (SyntaxError, ValueError, RecursionError, MemoryError):
@@ -145,6 +159,11 @@ def _listed_lines(f: IndexedFile) -> set[int]:
 
 def _ssh_tunnel(f: IndexedFile) -> list[Evidence]:
     text = f.text
+    # Both patterns must match outside a comment before the keyword lists matter: parsing every
+    # Python file for them cost more than the patterns themselves.
+    if not all(any(not f.in_comment(m.start()) for m in p.finditer(text))
+               for p in (_SSH_SERVER, _TUNNEL_CLIENT)):
+        return []
     listed = _listed_lines(f)
 
     def first(pattern: re.Pattern[str]) -> re.Match[str] | None:
