@@ -75,6 +75,7 @@ from skilltotal.models import (
 from skilltotal.owasp import owasp_for
 from skilltotal.parallel import run_scanners
 from skilltotal.rules import get_rules, unknown_rule_hint
+from skilltotal.scan_cache import ScanCache
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
 from skilltotal.scanners.mcp import is_mcp_listing
@@ -102,6 +103,7 @@ def analyze(
     inline_ignores: bool = False,
     progress: Callable[[str], None] | None = None,
     suppressed_out: dict[str, str] | None = None,
+    scan_cache: ScanCache | None = None,
 ) -> Report:
     """Resolve ``source`` (path or URL), analyze it, and return a Report."""
     with collect(source) as ctx:
@@ -114,6 +116,7 @@ def analyze(
             inline_ignores=inline_ignores,
             progress=progress,
             suppressed_out=suppressed_out,
+            scan_cache=scan_cache,
         )
         if ctx.note:
             report.needs_review.append(
@@ -154,6 +157,7 @@ def analyze_directory(
     inline_ignores: bool = False,
     progress: Callable[[str], None] | None = None,
     suppressed_out: dict[str, str] | None = None,
+    scan_cache: ScanCache | None = None,
 ) -> Report:
     """Analyze an already-local component directory. Pure: no stdout, no exit.
 
@@ -166,6 +170,8 @@ def analyze_directory(
     that should stop the install.
     ``progress``, if given, is called with a short line at each stage (files read, each scanner),
     so a caller can show that a long scan is moving; the engine itself never prints.
+    ``scan_cache``, if given, replays each scanner whose code and input are unchanged since it
+    last scanned the same files (skilltotal.scan_cache); the report is the same either way.
     """
     if progress is not None:
         progress("Reading files")
@@ -296,7 +302,11 @@ def analyze_directory(
     # Side by side in worker processes when the component is large and the entry point allows it;
     # the results are used in SCANNERS order either way (see skilltotal.parallel).
     regex_only: set[str] = set()
-    for result in run_scanners(index, SCANNERS, checked):
+    results = (
+        scan_cache.run(index, SCANNERS, lambda idx, todo: run_scanners(idx, todo, checked))
+        if scan_cache is not None else run_scanners(index, SCANNERS, checked)
+    )
+    for result in results:
         findings.extend(result.findings)
         needs_review.extend(result.needs_review)
         regex_only.update(result.regex_only_files)

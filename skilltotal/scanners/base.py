@@ -208,6 +208,9 @@ class Scanner(ABC):
 
     name: str = ""
     rules: list[RuleSpec] = []
+    # True for a scanner that reads files from disk instead of from the index alone: its result
+    # is never replayed from a skilltotal.scan_cache.ScanCache.
+    reads_outside_index: bool = False
 
     @abstractmethod
     def scan(self, index: FileIndex) -> ScanResult:  # pragma: no cover - interface

@@ -51,6 +51,9 @@ class EncryptedArchiveScanner(Scanner):
         ),
     ]
 
+    # It opens the archives on disk, which the index does not hold (see skilltotal.scan_cache).
+    reads_outside_index = True
+
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
         # The same link-free walk as the index (build output included, as it always was): an

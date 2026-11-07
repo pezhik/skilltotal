@@ -279,10 +279,55 @@ def test_parallel_run_with_a_cache_and_a_previous_report_gives_the_same_report(t
         capture_output=True, text=True, timeout=300, cwd=str(_CAL.parents[2]),
     )
     assert second.returncode == 0, second.stderr[-2000:]
+    replayed = tmp_path / "replayed"
+    third = subprocess.run(  # nosec B603
+        [sys.executable, str(_CAL), "--dataset", str(csv_path), "--out", str(replayed),
+         "--jobs", "2", "--cache-dir", str(tmp_path / "cache")],
+        capture_output=True, text=True, timeout=300, cwd=str(_CAL.parents[2]),
+    )
+    assert third.returncode == 0, third.stderr[-2000:]
     a = json.loads(plain.with_suffix(".json").read_text(encoding="utf-8"))
     b = json.loads(fast.with_suffix(".json").read_text(encoding="utf-8"))
-    strip = {"seconds", "fetch_seconds", "scan_seconds"}
+    c = json.loads(replayed.with_suffix(".json").read_text(encoding="utf-8"))
+    strip = {"seconds", "fetch_seconds", "scan_seconds", "scanner_replays"}
     rows_a = [{k: v for k, v in r.items() if k not in strip} for r in a["results"]]
     rows_b = [{k: v for k, v in r.items() if k not in strip} for r in b["results"]]
-    assert rows_a == rows_b
+    rows_c = [{k: v for k, v in r.items() if k not in strip} for r in c["results"]]
+    assert rows_a == rows_b == rows_c
     assert b["summary"]["cached"] == 0  # local paths and fixtures have no identity to cache
+    # ...but their scanners replay on the same files.
+    assert b["summary"]["scanner_replays"] == 0
+    assert c["summary"]["scanner_replays"] > 0
+    assert c["summary"]["scanner_cache_mismatches"] == 0
+
+
+def test_a_wrong_scanner_replay_found_by_the_audit_is_scanned_again(tmp_path, monkeypatch):
+    evil, benign = tmp_path / "evil", tmp_path / "benign"
+    _write(evil, "x.py", _DECODE_EXEC)
+    _write(benign, "ok.py", "x = 1\n")
+    csv_path = tmp_path / "ds.csv"
+    csv_path.write_text(
+        "class,ecosystem,source,version,notes,expected_findings\n"
+        f"malicious,local,{evil},,decode-exec,ST-OBF-DECODE-EXEC\n"
+        f"benign-baseline,local,{benign},,clean,\n",
+        encoding="utf-8",
+    )
+    cache = tmp_path / "cache"
+    cold, cold_summary = calibrate.calibrate(csv_path, cache_dir=cache)
+    assert cold[0].findings_ok is True and cold_summary["scanner_replays"] == 0
+    # A stored obfuscation result that lost its finding, as a missed dependency would leave it.
+    stored = cache / calibrate.SCANNER_CACHE / "obfuscation"
+    for entry in stored.rglob("*.json"):
+        data = json.loads(entry.read_text(encoding="utf-8"))
+        data["result"]["findings"] = []
+        entry.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(calibrate, "SCAN_CACHE_AUDIT", 0)
+    trusting, _ = calibrate.calibrate(csv_path, cache_dir=cache)
+    assert trusting[0].findings_ok is False  # unaudited, the wrong replay is believed
+    monkeypatch.setattr(calibrate, "SCAN_CACHE_AUDIT", 1)
+    results, summary = calibrate.calibrate(csv_path, cache_dir=cache)
+    assert results[0].findings_ok is True and results[0].missing_findings == []
+    assert results[0].scanner_cache_mismatches == ["obfuscation"]
+    assert summary["scanner_cache_mismatches"] == 1
+    assert not stored.exists()
+    assert [r.passed for r in results] == [r.passed for r in cold]

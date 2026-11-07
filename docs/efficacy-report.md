@@ -1,6 +1,6 @@
 # SkillTotal detection-efficacy report
 
-Engine 0.97.0 · ruleset 96 · Python 3.11 · offline corpus.
+Engine 0.98.0 · ruleset 96 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (222/222 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/184 benign samples wrongly flagged)
@@ -90,7 +90,7 @@ Engine 0.97.0 · ruleset 96 · Python 3.11 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 30 | 46 | 34 | 5 |
+| AST01 | 30 | 45 | 35 | 5 |
 | AST02 | 25 | 26 | 8 | 3 |
 | AST03 | 0 | 2 | 0 | 0 |
 | AST04 | 25 | 4 | 8 | 0 |

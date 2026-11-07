@@ -99,7 +99,9 @@ Everything under `skilltotal/` is a pure library â€” no `print`, no `sys.exit` â
 Add a scanner by creating `skilltotal/scanners/<name>.py` with either a `PatternScanner`
 (declare `rules`) or a custom `Scanner` subclass, then register it in
 `skilltotal/scanners/__init__.py`. Declaring each rule's `capability` automatically wires it
-into capability extraction and `rules list`.
+into capability extraction and `rules list`. A scanner reads the file index only. One that must
+open files on disk instead (as `encrypted_archive` opens archives) sets
+`reads_outside_index = True`.
 
 ## Reuse as a library
 
@@ -111,6 +113,13 @@ into capability extraction and `rules list`.
   It does read its limits from the environment: the `SKILLTOTAL_MAX_*` sizes and
   `SKILLTOTAL_CLONE_TIMEOUT` when `collector.py` is imported, and `SKILLTOTAL_WORKERS` for
   parallel scans. Set them before importing the engine.
+- A caller that rescans the same components after small engine changes can pass
+  `scan_cache=ScanCache(folder)` (`skilltotal/scan_cache.py`) to `analyze` or
+  `analyze_directory`. A scanner whose code and input files are unchanged then replays its
+  stored result. Its key covers the scanner's own module, every engine module it imports, and
+  the indexed files, never the folder they sit in. A scanner that reads from disk outside the
+  index sets `reads_outside_index` and always scans. The report is the same either way, and
+  the calibration harness uses it under `--cache-dir`.
 
 ## Evidence-context demotion
 

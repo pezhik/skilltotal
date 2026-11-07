@@ -4,6 +4,27 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.98.0]
+
+### Added
+- `analyze` and `analyze_directory` accept an optional keyword argument `scan_cache`, a
+  `skilltotal.scan_cache.ScanCache(folder)`. With it, a scanner replays its stored result instead
+  of scanning again when its own code (its module plus every engine module it imports) and its
+  input files are unchanged. A scanner whose code changed scans again. The report is identical
+  with or without the cache, because the steps after the scanners (demotion, scoring, combined
+  findings) always run.
+- A scanner that reads files from disk outside the file index sets `reads_outside_index = True`
+  and is never replayed.
+- The calibration harness (`tests/manual_eval/calibrate.py --cache-dir`) uses the cache. It fully
+  rescans one row in 20 and compares the result with the replay. On any difference, it drops that
+  scanner's stored results and rescans the affected rows.
+
+### Changed
+- The remote-fetch-and-exec check skips Python files that cannot call `exec` or `eval`. Text that
+  is not pure ASCII is still parsed, since Python folds look-alike letters into names.
+- Two config checks strip JSON comments only when a file fails to parse as plain JSON.
+- Findings are unchanged, and large Python and JSON-heavy packages scan faster.
+
 ## [0.97.0]
 
 ### Added

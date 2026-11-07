@@ -48,6 +48,15 @@ construction. A row whose identity cannot be resolved (a local path, a fixture, 
 lookup that fails) is scanned as before. The pass/fail judgement and the golden-finding check
 are recomputed from the cached facts, so relabelling a row never needs a rescan.
 
+A row the whole-report cache misses is still fetched and indexed, but under ``--cache-dir`` each
+scanner whose code is unchanged replays its result on the same files (``skilltotal.scan_cache``,
+stored in ``DIR/by-scanner``): a release that changes two scanners rescans those two, so a large
+package is not scanned whole again for a rule that never reads most of it. One row in
+``SCAN_CACHE_AUDIT`` (chosen by its files) is scanned in full anyway and compared with the replay;
+a difference is counted in ``scanner_cache_mismatches``, that scanner's stored results are
+deleted, and every row that replayed anything is scanned again in full, so the report is right
+either way.
+
 ``--previous FILE`` (a report JSON from an earlier run) orders the rows longest-first under
 ``--jobs``, from the per-row ``seconds`` that report recorded, so the run does not end with one
 large package scanning while the other workers idle. The report itself stays in row order.
@@ -61,6 +70,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import urllib.request
@@ -84,6 +94,11 @@ from skilltotal.collector import (
     pypi_package_spec,
     run_bounded,
 )
+from skilltotal.scan_cache import ScanCache
+
+# Under --cache-dir, one row in this many is scanned in full as well and compared with the replay.
+SCAN_CACHE_AUDIT = 20
+SCANNER_CACHE = "by-scanner"
 
 # Expected-class -> what counts as a correct outcome.
 BENIGN = "benign-baseline"
@@ -124,6 +139,10 @@ class RowResult:
     fetch_seconds: float | None = None
     scan_seconds: float | None = None
     cached: bool = False  # replayed from --cache-dir, see the module docstring
+    # Scanners replayed from DIR/by-scanner on a scanned row, and those whose audited replay
+    # differed from a fresh scan (see the module docstring).
+    scanner_replays: int | None = None
+    scanner_cache_mismatches: list[str] | None = None
 
 
 def _split_ids(raw: str) -> list[str]:
@@ -175,7 +194,7 @@ def _judge(
     return True  # unknown class: informational only
 
 
-def _analyze_spec(spec: str) -> tuple[engine.Report, float]:
+def _analyze_spec(spec: str, scan_cache: ScanCache | None = None) -> tuple[engine.Report, float]:
     """Run the static engine on a spec, resolving local ``fixture:<name>`` offline.
 
     Returns the report and the seconds the download took: ``engine.analyze`` reports "Reading
@@ -186,7 +205,9 @@ def _analyze_spec(spec: str) -> tuple[engine.Report, float]:
         root = FIXTURE_ROOT / name
         if not root.is_dir():
             raise CollectionError(f"unknown fixture: {name}")
-        return engine.analyze_directory(root, detect_component(root, source=str(root))), 0.0
+        report = engine.analyze_directory(root, detect_component(root, source=str(root)),
+                                          scan_cache=scan_cache)
+        return report, 0.0
     started = time.monotonic()
     fetched: list[float] = []
 
@@ -194,7 +215,7 @@ def _analyze_spec(spec: str) -> tuple[engine.Report, float]:
         if not fetched:
             fetched.append(time.monotonic() - started)
 
-    report = engine.analyze(spec, progress=mark)
+    report = engine.analyze(spec, progress=mark, scan_cache=scan_cache)
     return report, (fetched[0] if fetched else 0.0)
 
 
@@ -279,7 +300,10 @@ def run_row(
     forbid_findings: list[str] | None = None,
     cache_dir: Path | None = None,
     engine_key: str | None = None,
+    replay: bool = True,
 ) -> RowResult:
+    """Scan one row. ``replay=False`` scans it in full even under ``cache_dir`` and stores the
+    fresh report over whatever entry was there."""
     spec = _spec(source, version)
     if not spec:
         return RowResult(cls=cls, source="", status="skipped", detail="no source")
@@ -292,15 +316,17 @@ def run_row(
         if identity:
             digest = hashlib.sha256(identity.encode()).hexdigest()
             entry = cache_dir / engine_key / f"{digest}.json"
-            facts = _load_cached(entry, identity)
+            facts = _load_cached(entry, identity) if replay else None
             if facts is not None:
                 res = _result(cls, spec, facts, expected, expect_findings, forbid_findings)
                 res.cached = True
                 return res
 
+    scan_cache = (ScanCache(cache_dir / SCANNER_CACHE, audit_every=SCAN_CACHE_AUDIT)
+                  if cache_dir is not None and replay else None)
     started = time.monotonic()
     try:
-        report, fetch_seconds = _analyze_spec(spec)
+        report, fetch_seconds = _analyze_spec(spec, scan_cache)
     except CollectionError as exc:
         # Package pulled from the registry / repo unreachable: not a scanner failure.
         return RowResult(cls=cls, source=spec, status="skipped", detail=str(exc))
@@ -313,6 +339,9 @@ def run_row(
     res.seconds = round(seconds, 3)
     res.fetch_seconds = round(fetch_seconds, 3)
     res.scan_seconds = round(seconds - fetch_seconds, 3)
+    if scan_cache is not None:
+        res.scanner_replays = scan_cache.replayed
+        res.scanner_cache_mismatches = sorted(set(scan_cache.mismatches)) or None
     if entry is not None:
         _store_cached(entry, identity, spec, facts, res)
     return res
@@ -489,6 +518,8 @@ def summarize(results: list[RowResult]) -> dict:
         "p90_needs_review": _percentile(noisy, 90),
         "max_needs_review": max(noisy) if noisy else 0,
         "cached": sum(1 for r in ok if r.cached),
+        "scanner_replays": sum(r.scanner_replays or 0 for r in ok),
+        "scanner_cache_mismatches": sum(1 for r in ok if r.scanner_cache_mismatches),
         "scan_seconds": round(sum(r.seconds or 0.0 for r in results), 1),
     }
 
@@ -523,6 +554,8 @@ def to_markdown(results: list[RowResult], summary: dict) -> str:
         f"max {summary['max_needs_review']}",
         f"- replayed from the result cache: {summary.get('cached', 0)} / {summary['scanned']}; "
         f"row time summed {summary.get('scan_seconds', 0.0)} s",
+        f"- scanner results replayed: {summary.get('scanner_replays', 0)}; audited replays that "
+        f"differed from a fresh scan: **{summary.get('scanner_cache_mismatches', 0)}** row(s)",
         "",
         "| class | source | status | verdict | has_mal | risk | nr | pass |",
         "|---|---|---|---|---|---|---|---|",
@@ -603,20 +636,50 @@ def calibrate(
     (one process) or finishes (``jobs`` > 1, see the module docstring)."""
     rows = load_rows(dataset)
     key = engine_key() if cache_dir is not None else None
-    if jobs <= 1:
-        results = []
-        for i, (c, s, v, exp, ef, ff) in enumerate(rows, 1):
-            if progress is not None:
-                print(f"[{i}/{len(rows)}] {s}", file=progress, flush=True)
-            results.append(run_row(c, s, v, exp, ef, ff, cache_dir, key))
-        return results, summarize(results)
-
+    if cache_dir is not None:
+        # The ops job drops cache folders untouched for 60 days; replays alone write nothing.
+        try:
+            (cache_dir / SCANNER_CACHE).mkdir(parents=True, exist_ok=True)
+            os.utime(cache_dir / SCANNER_CACHE)
+        except OSError:
+            pass
     order = list(range(len(rows)))
-    if previous:
+    if previous and jobs > 1:
         order = longest_first([_spec(r[1], r[2]) for r in rows], previous_seconds(previous))
-    out: list[RowResult | None] = [None] * len(rows)
+    ran = _run_rows(rows, order, jobs, progress, cache_dir, key, replay=True)
+    results = [ran[i] for i in range(len(rows))]  # the report stays in row order
+    # An audited replay that differed from a fresh scan means some stored result of that scanner
+    # is wrong: its entries go, and every row that replayed anything is scanned again in full.
+    bad = sorted({name for r in results for name in (r.scanner_cache_mismatches or [])})
+    if bad and cache_dir is not None:
+        for name in bad:
+            shutil.rmtree(cache_dir / SCANNER_CACHE / name, ignore_errors=True)
+        again = [i for i in order if results[i].scanner_replays]
+        if progress is not None:
+            print(f"scanner cache differed for {', '.join(bad)}: rescanning {len(again)} row(s)",
+                  file=progress, flush=True)
+        for i, fresh in _run_rows(rows, again, jobs, progress, cache_dir, key,
+                                  replay=False).items():
+            fresh.scanner_cache_mismatches = results[i].scanner_cache_mismatches
+            results[i] = fresh
+    return results, summarize(results)
+
+
+def _run_rows(
+    rows: list, order: list[int], jobs: int, progress: TextIO | None,
+    cache_dir: Path | None, key: str | None, *, replay: bool,
+) -> dict[int, RowResult]:
+    """``run_row`` for the rows at ``order``, by row index. One process writes
+    ``[i/N] <source>`` as each row starts; ``jobs`` > 1 as each one finishes."""
+    out: dict[int, RowResult] = {}
+    if jobs <= 1:
+        for n, i in enumerate(order, 1):
+            if progress is not None:
+                print(f"[{n}/{len(order)}] {rows[i][1]}", file=progress, flush=True)
+            out[i] = run_row(*rows[i], cache_dir, key, replay)
+        return out
     with ProcessPoolExecutor(max_workers=jobs, initializer=_quiet_worker) as pool:
-        pending = {pool.submit(run_row, *rows[i], cache_dir, key): i for i in order}
+        pending = {pool.submit(run_row, *rows[i], cache_dir, key, replay): i for i in order}
         for done, fut in enumerate(as_completed(pending), 1):
             i = pending[fut]
             try:
@@ -626,9 +689,8 @@ def calibrate(
                     cls=rows[i][0], source=rows[i][1], status="error", detail=repr(exc)
                 )
             if progress is not None:
-                print(f"[{done}/{len(rows)}] {rows[i][1]}", file=progress, flush=True)
-    results = [r for r in out if r is not None]
-    return results, summarize(results)
+                print(f"[{done}/{len(order)}] {rows[i][1]}", file=progress, flush=True)
+    return out
 
 
 def _quiet_worker() -> None:

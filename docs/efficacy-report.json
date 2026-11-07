@@ -1,7 +1,7 @@
 {
-  "engine_version": "0.97.0",
+  "engine_version": "0.98.0",
   "ruleset_version": 96,
-  "python_version": "3.11",
+  "python_version": "3.14",
   "positives": 222,
   "negatives": 184,
   "recall": 1.0,
@@ -84,9 +84,9 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 46,
+      "node": 45,
       "manifest/text": 30,
-      "python": 34,
+      "python": 35,
       "shell": 5
     },
     "AST02": {
