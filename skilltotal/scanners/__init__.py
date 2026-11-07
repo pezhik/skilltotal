@@ -28,6 +28,7 @@ from skilltotal.scanners.mcp_annotations import McpAnnotationScanner
 from skilltotal.scanners.mcp_elicitation import McpElicitationScanner
 from skilltotal.scanners.mcp_pinning import McpPinningScanner
 from skilltotal.scanners.network import NetworkScanner
+from skilltotal.scanners.npm_install_threats import NpmInstallThreatsScanner
 from skilltotal.scanners.npm_supply import NpmSupplyScanner
 from skilltotal.scanners.oauth_auth import OAuthAuthScanner
 from skilltotal.scanners.oauth_discovery import OAuthDiscoveryInjectionScanner
@@ -78,6 +79,7 @@ SCANNERS: list[Scanner] = [
     StdlibShadowScanner(),
     ClipperScanner(),
     NpmSupplyScanner(),
+    NpmInstallThreatsScanner(),
     AgentApprovalScanner(),
     SkillFetchExecScanner(),
     SkillDirectivesScanner(),

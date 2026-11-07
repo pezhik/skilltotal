@@ -39,6 +39,10 @@ from skilltotal.scanners.shell_script import (
 )
 
 R_WORKFLOW_HISTORY_EXFIL = "ST-WORKFLOW-HISTORY-EXFIL"
+R_WORKFLOW_SECRETS_DUMP_EXFIL = "ST-WORKFLOW-SECRETS-DUMP-EXFIL"  # nosec B105 - rule id, not a credential
+
+# `${{ toJSON(secrets) }}`: the whole secrets context in one value, not one named secret.
+_SECRETS_DUMP = re.compile(r"\btoJSON\(\s{0,3}secrets\s{0,3}\)", re.IGNORECASE)
 
 # Credential-key prefixes a harvest greps for. Grouped so distinct providers can be counted: a
 # single prefix is ordinary (a repo's own secret-scan allow-list), several together is a sweep.
@@ -89,13 +93,40 @@ class WorkflowExfilScanner(Scanner):
             capability=None,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
+        RuleSpec(
+            id=R_WORKFLOW_SECRETS_DUMP_EXFIL,
+            category="exfiltration_path",
+            severity=Severity.HIGH,
+            title="GitHub Actions workflow dumps every secret and sends data off GitHub",
+            description=(
+                "A workflow under .github/workflows/ puts the whole secrets context into a value "
+                "(toJSON(secrets)) and a run step sends data to a host that is not GitHub through "
+                "a network client. A named secret passed to a deploy call is routine; the dump of "
+                "every secret next to an off-GitHub upload is how a workflow committed under a "
+                "routine subject (a cache or CI tweak) carries out the repository's secrets."
+            ),
+            recommendation=(
+                "Remove this workflow and treat every secret the repository and its organization "
+                "expose to Actions as compromised - rotate them. Review the Actions run history "
+                "for runs of the workflow."
+            ),
+            capability=None,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
         evidence: list[Evidence] = []
+        dump: list[Evidence] = []
         for f in index.files:
             if not _is_workflow(f):
                 continue
+            secrets = _SECRETS_DUMP.search(f.text)
+            if secrets is not None:
+                offsite = self._offsite_exfil(f)
+                if offsite is not None:
+                    dump.append(f.evidence_for_span(secrets.start(), secrets.end()))
+                    dump.append(offsite)
             if _distinct_prefixes(f.text) < 2:
                 continue
             exfil = self._offsite_exfil(f)
@@ -110,9 +141,12 @@ class WorkflowExfilScanner(Scanner):
             evidence.append(exfil)
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
-        if evidence:
-            return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)])
-        return ScanResult()
+        findings = [
+            _finding_from_rule(rule, found)
+            for rule, found in zip(self.rules, (evidence, dump), strict=True)
+            if found
+        ]
+        return ScanResult(findings=findings)
 
     @staticmethod
     def _offsite_exfil(f: IndexedFile) -> Evidence | None:

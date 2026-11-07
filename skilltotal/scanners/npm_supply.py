@@ -55,6 +55,19 @@ _JS_SPAWN_PUBLISH = re.compile(
 _ATTACHMENTS = re.compile(r"""(?<![\w$])['"]?_attachments['"]?\s*:""")
 _DIST_TAGS = re.compile(r"""['"]dist-tags['"]\s*:""")
 _PUBLISH_DOC_WINDOW = 2000
+# The command spelled out in pieces: `["np", "m pub", "lish"].join("")`, no literal match sees it.
+_JS_JOINED_PARTS = re.compile(
+    r"""\[\s{0,5}((?:(["'])[^"'\n]{0,30}\2\s{0,5},\s{0,5}){1,7}"""
+    r"""(["'])[^"'\n]{0,30}\3)\s{0,5}\]"""
+    r"""\s{0,5}\.\s{0,5}join\(\s{0,5}(?:""|'')\s{0,5}\)"""
+)
+_JS_PART = re.compile(r"""["']([^"'\n]{0,30})["']""")
+# `printf 'np%s' m ...`: a shell line that prints the command from quoted fragments.
+_SHELL_PRINTF = re.compile(r"\bprintf\b[^\n]{1,300}")
+_SHELL_WORD = re.compile(r"""'([^'\n]{0,40})'|"([^"\n]{0,40})"|([\w.-]{1,30})""")
+_SHELL_FORMAT = re.compile(r"%[sb]")
+_PUBLISH_JOINED = re.compile(r"^(?:npm|pnpm|yarn|bun)\s{1,4}publish\b")
+_PUBLISH_PRINTED = re.compile(r"(?:npm|pnpm|yarn|bun)\s{0,3}publish\b")
 # A shell line (or a command after `&&`, `;`, `|`) that publishes.
 # One bounded run of blanks (no newlines: a line start is its own anchor) and a bounded path: two
 # adjacent `\s*` split a long run of spaces every way, and `\s*` from each of 2 MiB of line starts
@@ -219,6 +232,10 @@ def _publishes(f: IndexedFile) -> list[Evidence]:
         for pattern in (_JS_EXEC_PUBLISH, _JS_SPAWN_PUBLISH):
             for m in pattern.finditer(text):
                 found.append(f.evidence_for_span(m.start(), m.end()))
+        for m in _JS_JOINED_PARTS.finditer(text):
+            joined = "".join(_JS_PART.findall(m.group(1)))
+            if _PUBLISH_JOINED.match(joined):
+                found.append(f.evidence_for_span(m.start(), m.end()))
         for m in _ATTACHMENTS.finditer(text):
             window = text[max(0, m.start() - _PUBLISH_DOC_WINDOW):m.end() + _PUBLISH_DOC_WINDOW]
             if _DIST_TAGS.search(window):
@@ -227,4 +244,9 @@ def _publishes(f: IndexedFile) -> list[Evidence]:
     else:
         for m in _SHELL_PUBLISH.finditer(text):
             found.append(f.evidence_for_span(m.start(), m.end()))
+        for m in _SHELL_PRINTF.finditer(text):
+            pieces = _SHELL_FORMAT.sub("", m.group(0)[len("printf"):])
+            joined = "".join(a or b or c for a, b, c in _SHELL_WORD.findall(pieces))
+            if _PUBLISH_PRINTED.search(joined) and not _SHELL_PUBLISH.search(m.group(0)):
+                found.append(f.evidence_for_span(m.start(), m.end()))
     return found

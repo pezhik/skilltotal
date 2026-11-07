@@ -127,6 +127,8 @@
   "ST-SHELL-PY"
  ],
  "negative/AST01/github-action-secret-exfil/composite-token-to-github": [],
+ "negative/AST01/github-action-secret-exfil/named-secret-deploy-call": [],
+ "negative/AST01/github-action-secret-exfil/secrets-dump-no-upload": [],
  "negative/AST01/hidden-unicode/cli-ansi-colors": [],
  "negative/AST01/hidden-unicode/detector-test-vectors": [],
  "negative/AST01/hidden-unicode/emoji-and-hyphenation": [],
@@ -280,6 +282,14 @@
   "ST-SHELL-NODE"
  ],
  "negative/AST02/dep-redirect/private-registry-skill": [],
+ "negative/AST02/dependency-confusion-beacon/local-dev-loopback": [
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE"
+ ],
+ "negative/AST02/dependency-confusion-beacon/telemetry-named-host": [
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE"
+ ],
  "negative/AST02/dns-exfil/prints-hostname": [
   "ST-INSTALL-NPM"
  ],
@@ -320,6 +330,9 @@
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
  ],
+ "negative/AST02/native-addon-dropper-sandbox-gate/ci-skip-prebuilt-binding": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/npm-lifecycle-remote-exec/manual-installer-not-run-at-install": [
   "ST-INSTALL-NPM",
   "ST-SHELL-PIPE-EXEC"
@@ -339,8 +352,15 @@
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-sh-extensionless-local-build": [
   "ST-INSTALL-NPM"
  ],
+ "negative/AST02/npm-postinstall-miner/native-build-script": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/npm-worm/install-notice-mentions-publish": [
   "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-worm/rebuild-command-joined": [
+  "ST-INSTALL-NPM",
+  "ST-SHELL-NODE"
  ],
  "negative/AST02/npm-worm/release-tool-publishes": [
   "ST-SHELL-NODE"
@@ -791,6 +811,9 @@
  "positive/AST01/github-action-secret-exfil/composite-token-post": [
   "ST-ACTION-SECRET-EXFIL"
  ],
+ "positive/AST01/github-action-secret-exfil/workflow-secrets-dump": [
+  "ST-WORKFLOW-SECRETS-DUMP-EXFIL"
+ ],
  "positive/AST01/hidden-unicode/agent-task-yaml-tag-chars": [
   "ST-HIDDEN-UNICODE"
  ],
@@ -1016,7 +1039,9 @@
   "ST-SENS-PATH"
  ],
  "positive/AST01/workflow-history-exfil/security-audit": [
-  "ST-WORKFLOW-HISTORY-EXFIL"
+  "ST-CONVERGENCE",
+  "ST-WORKFLOW-HISTORY-EXFIL",
+  "ST-WORKFLOW-SECRETS-DUMP-EXFIL"
  ],
  "positive/AST02/action-run-exec/composite-block-decode": [
   "ST-OBF-DECODE-EXEC-SH"
@@ -1091,6 +1116,11 @@
  ],
  "positive/AST02/dep-redirect/skill-hidden-index": [
   "ST-SKILL-DEP-REDIRECT"
+ ],
+ "positive/AST02/dependency-confusion-beacon/bare-ip-hostname-beacon": [
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE",
+  "ST-NPM-DEPCONF-BEACON"
  ],
  "positive/AST02/dns-exfil/install-time-variant": [
   "ST-INSTALL-NPM",
@@ -1194,6 +1224,12 @@
   "ST-MCP-SERVER-EXEC",
   "ST-SECRET-EXFIL"
  ],
+ "positive/AST02/native-addon-dropper-sandbox-gate/gated-addon-loader": [
+  "ST-FS-NODE-READ",
+  "ST-INSTALL-NPM",
+  "ST-NPM-SANDBOX-GATED-LOADER",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST02/npm-lifecycle-remote-exec/install-wget-escaped-pipe": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
@@ -1236,11 +1272,30 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
+ "positive/AST02/npm-postinstall-miner/miner-script-persistence": [
+  "ST-INSTALL-MINER",
+  "ST-INSTALL-NPM",
+  "ST-POSTEX-PERSIST",
+  "ST-SHELL-EVASION"
+ ],
+ "positive/AST02/npm-worm/assembled-publish-join": [
+  "ST-FS-NODE-READ",
+  "ST-FS-NODE-WRITE",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-NPM-INSTALL-PUBLISH",
+  "ST-SENS-PATH",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST02/npm-worm/postinstall-publish": [
   "ST-FS-NODE-WRITE",
   "ST-INSTALL-NPM",
   "ST-NPM-INSTALL-PUBLISH",
   "ST-SHELL-NODE"
+ ],
+ "positive/AST02/npm-worm/printf-fragment-publish": [
+  "ST-INSTALL-NPM",
+  "ST-NPM-INSTALL-PUBLISH"
  ],
  "positive/AST02/npm-worm/registry-put": [
   "ST-FS-NODE-READ",

@@ -1,0 +1,11 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+name: deploy
+on: [push]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: notify
+        run: |
+          curl -sS -X POST -H "Authorization: Bearer ${{ secrets.DEPLOY_TOKEN }}" https://api.example.com/deploys

@@ -1,0 +1,1 @@
+{ "name": "fixture-fast-hash", "version": "2.0.0", "description": "FIXTURE ONLY - synthetic detection test sample, not real malware", "scripts": { "postinstall": "node check.js" } }

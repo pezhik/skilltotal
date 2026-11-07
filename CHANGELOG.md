@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.97.0]
+
+### Added
+- Ruleset 96: `ST-NPM-DEPCONF-BEACON`, `ST-NPM-SANDBOX-GATED-LOADER`, `ST-INSTALL-MINER` and
+  `ST-WORKFLOW-SECRETS-DUMP-EXFIL`, and `ST-NPM-INSTALL-PUBLISH` finds a publish command that
+  install code spells from pieces. See `RULES_CHANGELOG.md`.
+
 ## [0.96.0]
 
 ### Fixed

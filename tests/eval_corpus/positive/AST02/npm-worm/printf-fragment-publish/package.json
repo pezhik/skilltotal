@@ -1,0 +1,6 @@
+{
+  "name": "fixture-pad-left",
+  "version": "1.2.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "scripts": { "postinstall": "sh i.sh" }
+}

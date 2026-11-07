@@ -1812,7 +1812,7 @@ def _split_ci_evidence(
 
 # Rules whose evidence in CI config is still scored (see _split_ci_evidence): the CI job is the
 # payload, running on the scanned repo's own CI with its secrets, not the project's trusted build.
-_CI_SCORED_RULES = frozenset({"ST-WORKFLOW-HISTORY-EXFIL"})
+_CI_SCORED_RULES = frozenset({"ST-WORKFLOW-HISTORY-EXFIL", "ST-WORKFLOW-SECRETS-DUMP-EXFIL"})
 
 
 def _split_code_context_evidence(

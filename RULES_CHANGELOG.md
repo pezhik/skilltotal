@@ -4,6 +4,25 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 96 (engine 0.97.0)
+
+Five npm and CI techniques, each joining two tells that an honest component does not have together. Each has a positive
+sample in the corpus next to a benign look-alike.
+- `ST-NPM-DEPCONF-BEACON` (new): code npm runs at install reads the host name and the working
+  directory and sends them through a network client to a literal public IP address (the callback
+  of a dependency-confusion stub). A named host, or a loopback or private address, stays silent.
+- `ST-NPM-SANDBOX-GATED-LOADER` (new): install code reads a tracer or container-cgroup marker,
+  also checks for a CI runner, and then loads a native `.node` addon or starts a detached child.
+  A check for CI alone, before loading a prebuilt binding, stays silent.
+- `ST-INSTALL-MINER` (new): a file npm runs at install carries a miner command line
+  (`--donate-level`, a `stratum+tcp://` URL, a mining-algorithm flag, the xmrig program).
+- `ST-WORKFLOW-SECRETS-DUMP-EXFIL` (new): a workflow puts `toJSON(secrets)` in a value and a run
+  step sends data to a host that is not GitHub. A named secret in a deploy call, or a dump with no
+  upload, stays silent.
+- `ST-NPM-INSTALL-PUBLISH` (wider): the publish command is also found when install code spells it
+  from pieces (`["np", "m pub", "lish"].join("")`, or a shell `printf` of fragments). Joining pieces
+  into another command stays silent.
+
 ## ruleset 95 (engine 0.96.0)
 
 - Test-code detection now covers end-to-end test files such as `docker.e2e.ts` and

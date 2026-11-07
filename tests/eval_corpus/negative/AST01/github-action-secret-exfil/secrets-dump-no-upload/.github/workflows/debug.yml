@@ -1,0 +1,11 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+name: debug
+on: [workflow_dispatch]
+jobs:
+  names:
+    runs-on: ubuntu-latest
+    steps:
+      - name: count secrets
+        env:
+          ALL: ${{ toJSON(secrets) }}
+        run: echo "$ALL" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"
