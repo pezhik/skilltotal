@@ -373,6 +373,50 @@ _METADATA_CREDENTIAL = re.compile(
 )
 # `[ -f /root/.ssh/deploy ] || exit 1` checks that the key exists; it does not read it.
 _EXISTS_TEST_BEFORE = re.compile(r"(?:\[\[?|\btest)\s+-[efsr]\s+[\"']?[^\s\"']*$")
+# A shell script that keeps the path in a variable and only ever asks about the file's metadata:
+# `cred=/vol/home/.codex/auth.json`, then `stat -c %i -- "$cred"` and `find /vol -samefile "$cred"`
+# (a container packer making sure no hard-link alias carries the credential out, 2026-11-08). stat,
+# find's -samefile/-path and an existence test never open the file. Every other mention of the
+# variable keeps the finding: a read (`cat "$cred"`, `curl -F "f=@$cred"`), a copy into another
+# variable, a second assignment, `find ... -exec`, a pipe, `${!name}`, an argument to a function.
+_SHELL_ASSIGN_BEFORE = re.compile(
+    r"^\s*(?:(?:export|local|readonly|declare)\s+)?([A-Za-z_]\w*)=[\"']?[^\s\"';|&()<>`]*$"
+)
+_SHELL_ASSIGN_REST = re.compile(r"^[^\s\"';|&()<>`]*[\"']?\s*(?:#.*)?$")
+_METADATA_USE_BEFORE = (
+    re.compile(r"\bstat(?:\s+-{1,2}[\w=-]+(?:\s+[^\s\"'`;|&$<>()-]\S*)?)*\s+(?:--\s+)?[\"']?$"),
+    re.compile(r"\bfind\b[^;|&]*\s-(?:samefile|path|wholename)\s+[\"']?$"),
+    re.compile(r"(?:\[\[?|\btest)\s+-[efsr]\s+[\"']?$"),
+)
+_RUNS_A_COMMAND = re.compile(r"-exec(?:dir)?\b|-ok(?:dir)?\b|\bxargs\b|(?<!\|)\|(?!\|)")
+
+
+def _variable_only_stated(f, line_start: int, before: str, after: str) -> bool:
+    """True if this line assigns the path to a shell variable that every other line uses only for
+    the file's metadata (see above), at least once."""
+    m = _SHELL_ASSIGN_BEFORE.match(before)
+    if m is None or not _SHELL_ASSIGN_REST.match(after):
+        return False
+    name = m.group(1)
+    assigned_at = line_start + m.start(1)
+    uses = 0
+    for occ in re.finditer(rf"(?<!\w){re.escape(name)}(?!\w)", f.text):
+        at = occ.start()
+        if at == assigned_at:
+            continue
+        braced = f.text[at - 2 : at] == "${" and f.text[occ.end() : occ.end() + 1] == "}"
+        if not (braced or f.text[at - 1 : at] == "$") or f.text[at - 2 : at] == "$$":
+            return False
+        ref = at - 2 if braced else at - 1
+        ls = f.text.rfind("\n", 0, ref) + 1
+        le = f.text.find("\n", ref)
+        line = f.text[ls : le if le != -1 else len(f.text)]
+        if _RUNS_A_COMMAND.search(line):
+            return False
+        if not any(p.search(f.text[ls:ref]) for p in _METADATA_USE_BEFORE):
+            return False
+        uses += 1
+    return uses > 0
 # A whole-line comment in a configuration file (`.npmrc`, `.toml`, `.ini`, `.cfg`, `.conf`).
 _CONFIG_COMMENT_LINE = re.compile(r"^\s*[#;]")
 _CONFIG_SUFFIXES = frozenset(
@@ -464,6 +508,10 @@ def _not_a_read(f, start: int, matched: str, line_text: str) -> bool:
     ):
         return True
     if _POLICY_GLOB_BEFORE.search(before) or _EXISTS_TEST_BEFORE.search(before):
+        return True
+    if f.is_shell_like and _variable_only_stated(
+        f, start - col, before, line_text[col + len(matched):]
+    ):
         return True
     if is_metadata_without_credentials(matched, line_text):
         return True

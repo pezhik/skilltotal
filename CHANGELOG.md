@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.99.0]
+
+### Changed
+- Ruleset 97: `ST-SENS-PATH` moves a match to needs-review when a shell script keeps a credential
+  path in a variable and only runs `stat`, `find -samefile` / `-path`, or an existence test on it.
+  Any other use of the variable keeps the finding.
+
 ## [0.98.0]
 
 ### Added

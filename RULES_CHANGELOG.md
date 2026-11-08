@@ -4,6 +4,15 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 97 (engine 0.99.0)
+
+- `ST-SENS-PATH`: when a shell script stores a credential path in a variable and only checks the
+  file's metadata with `stat`, `find -samefile` or `-path`, or an existence test, the match now goes
+  to needs-review instead of being reported as a finding. The script never opens the file. Any
+  other use of the variable keeps the finding: reading the file, uploading it, copying the value
+  into another variable, assigning the variable again, or handing it to a command through
+  `find -exec` or a pipe.
+
 ## ruleset 96 (engine 0.97.0)
 
 Five npm and CI techniques, each joining two tells that an honest component does not have together. Each has a positive
