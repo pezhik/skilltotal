@@ -4,6 +4,30 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [Unreleased]
+
+### Added
+- `ScanCache` accepts `audit_salt`. Without it, the index digest alone decides which scans the
+  one-in-N audit repeats in full, so the same components are audited on every run and nothing
+  else ever is. The 2026-11-08 calibration sweep audited the same 59 of about 1000 components it
+  audited the night before. Three of its largest were among them, and they replayed nothing. With
+  a salt, each engine audits a different sample at the same rate. `ScanCache` also records the
+  digest of the last index it saw (`last_digest`) and how many scans it audited (`audited`).
+- The calibration harness (`tests/manual_eval/calibrate.py`) salts its audit with its engine
+  digest. Each row reports `identity` (the exact version or commit), `component_version`,
+  `index_digest` and `scanner_audited`, so a row that replayed nothing can be explained from two
+  reports.
+- `calibrate.py --snapshot-dir DIR` scans a stored copy of each registry or git row instead of
+  fetching it, so two runs compare the engine and nothing else. A copy keeps the fetched files
+  (of `.git`, only the folder and its `config`), the identity, and the component and notes the
+  fetch reported, and the report matches a live fetch's. A row with no copy is fetched and
+  stored. `--refresh-snapshots` downloads only the rows whose release or commit changed, and
+  names the identity each one replaced. The summary reports the store's size.
+- `calibrate.py --order changed-first` runs first the rows on which a scanner whose code changed
+  found something before, then the rest from small to large. `--fail-fast` stops at the first
+  row that fails its check. It rescans that row in full first, so a stored result cannot stop
+  the run. The partial report says it stopped early.
+
 ## [0.99.0]
 
 ### Changed

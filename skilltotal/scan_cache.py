@@ -15,6 +15,13 @@ wrong shape is a miss. A scanner that reads files outside the index sets
 ``reads_outside_index`` and is never replayed. ``audit_every=N`` scans one index in N anyway, by
 its digest, and counts every replay that would have differed, so a dependency the digest missed
 shows up as a number instead of a quietly wrong report.
+
+Which indexes the audit picks depends on the digest alone, so without ``audit_salt`` the same
+components are audited on every run, whatever else changed: on 2026-11-08 the calibration
+harness audited the same 59 of about 1000 components again, three of its largest among them, and
+each of them scanned in full with no replay at all. The audit also only ever checked those
+components. A caller that runs again and again passes ``audit_salt`` (the harness passes its
+engine digest), so each new engine audits a different one in N.
 """
 
 from __future__ import annotations
@@ -218,9 +225,21 @@ class ScanCache:
 
     directory: Path
     audit_every: int = 0
+    audit_salt: str = ""
     replayed: int = 0
     scanned: int = 0
     mismatches: list[str] = field(default_factory=list)
+    # The digest of the index ``run`` last saw (None: it had no stable form), and how many runs
+    # the audit picked: for a caller that wants to say why a component replayed nothing.
+    last_digest: str | None = None
+    audited: int = 0
+
+    def _audits(self, digest: str | None) -> bool:
+        if not digest or self.audit_every <= 0:
+            return False
+        pick = (hashlib.sha256(f"{self.audit_salt}\0{digest}".encode()).hexdigest()
+                if self.audit_salt else digest)
+        return int(pick[:8], 16) % self.audit_every == 0
 
     def _entry(self, scanner: Scanner, digest: str) -> Path:
         return Path(self.directory) / scanner.name / code_digest(scanner) / f"{digest}.json"
@@ -251,8 +270,9 @@ class ScanCache:
             else self._entry(s, digest)
             for s in scanners
         ]
-        audit = bool(digest and self.audit_every > 0
-                     and int(digest[:8], 16) % self.audit_every == 0)
+        audit = self._audits(digest)
+        self.last_digest = digest
+        self.audited += audit
         stored = [None if e is None else self._load(e) for e in entries]
         for entry, replay in zip(entries, stored, strict=True):
             if replay is not None:

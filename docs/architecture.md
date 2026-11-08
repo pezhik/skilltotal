@@ -119,7 +119,10 @@ open files on disk instead (as `encrypted_archive` opens archives) sets
   stored result. Its key covers the scanner's own module, every engine module it imports, and
   the indexed files, never the folder they sit in. A scanner that reads from disk outside the
   index sets `reads_outside_index` and always scans. The report is the same either way, and
-  the calibration harness uses it under `--cache-dir`.
+  the calibration harness uses it under `--cache-dir`. `audit_every=N` also scans one index in
+  N in full and compares. Without `audit_salt`, the digest alone decides which indexes are
+  audited, so the same ones are picked on every run. A caller that runs again and again passes
+  a salt; the harness passes its engine digest.
 
 ## Evidence-context demotion
 

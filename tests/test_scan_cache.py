@@ -126,6 +126,35 @@ def test_an_audit_catches_a_wrong_replay_and_uses_the_fresh_result(tmp_path):
     assert _report(root, ScanCache(tmp_path / "cache")) == plain
 
 
+def test_the_audit_pick_moves_with_its_salt_and_says_what_it_did(tmp_path):
+    # Unsalted, the pick is the digest alone: the same components were audited on every run,
+    # the largest among them, and nothing else ever was (calibration sweep, 2026-11-08).
+    digests = [f"{n:08x}" + "0" * 24 for n in range(2000)]
+    plain = ScanCache(tmp_path, audit_every=20)
+    assert [d for d in digests if plain._audits(d)] == [d for d in digests
+                                                        if int(d[:8], 16) % 20 == 0]
+    picks = [{d for d in digests if ScanCache(tmp_path, audit_every=20, audit_salt=s)._audits(d)}
+             for s in ("engine-a", "engine-b")]
+    assert picks[0] != picks[1]
+    for pick in picks:
+        assert 50 <= len(pick) <= 150  # still about one in 20
+    assert picks[0] == {d for d in digests
+                        if ScanCache(tmp_path, audit_every=20, audit_salt="engine-a")._audits(d)}
+    assert not ScanCache(tmp_path, audit_every=0, audit_salt="x")._audits(digests[0])
+    assert not ScanCache(tmp_path, audit_every=20, audit_salt="x")._audits(None)
+
+    root = tmp_path / "pkg"
+    root.mkdir()
+    (root / "x.py").write_text("x = 1\n", encoding="utf-8")
+    cache = ScanCache(tmp_path / "cache", audit_every=1, audit_salt="s")
+    _report(root, cache)
+    assert cache.last_digest == index_digest(FileIndex.build(root)) and cache.audited == 1
+    quiet = ScanCache(tmp_path / "cache")
+    _report(root, quiet)
+    assert quiet.last_digest == cache.last_digest and quiet.audited == 0
+    assert quiet.replayed == _replayable()
+
+
 def test_a_wrong_replay_drops_every_stored_result_of_that_scanner_code(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     for root, text in ((a, _DECODE_EXEC), (b, "x = 1\n")):

@@ -289,7 +289,9 @@ def test_parallel_run_with_a_cache_and_a_previous_report_gives_the_same_report(t
     a = json.loads(plain.with_suffix(".json").read_text(encoding="utf-8"))
     b = json.loads(fast.with_suffix(".json").read_text(encoding="utf-8"))
     c = json.loads(replayed.with_suffix(".json").read_text(encoding="utf-8"))
-    strip = {"seconds", "fetch_seconds", "scan_seconds", "scanner_replays"}
+    # How each run got its result, not what the result is: a run without a cache knows no digest.
+    strip = {"seconds", "fetch_seconds", "scan_seconds", "scanner_replays", "index_digest",
+             "scanner_audited"}
     rows_a = [{k: v for k, v in r.items() if k not in strip} for r in a["results"]]
     rows_b = [{k: v for k, v in r.items() if k not in strip} for r in b["results"]]
     rows_c = [{k: v for k, v in r.items() if k not in strip} for r in c["results"]]
