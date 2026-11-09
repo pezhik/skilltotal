@@ -369,7 +369,7 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
 [docs/agent-hooks.md](agent-hooks.md#rolling-out-to-a-fleet).
 
 1. **Install the CLI at a pinned version** on each machine, for example
-   `pipx install skilltotal==0.99.0`, with the same version as the plugin.
+   `pipx install skilltotal==0.99.1`, with the same version as the plugin.
 2. **Enable the plugin for everyone** with Claude Code's managed settings file,
    `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
    `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
@@ -405,7 +405,7 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
            "source": "git-subdir",
            "url": "https://github.com/pezhik/skilltotal.git",
            "path": "plugin",
-           "ref": "v0.99.0"
+           "ref": "v0.99.1"
          }
        }
      ]
@@ -429,6 +429,11 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
 - **"the skilltotal CLI is not on PATH".** The plugin could not find the CLI. Install it
   (`pipx install skilltotal`), run `pipx ensurepath`, and start Claude Code from a new terminal.
   `skilltotal --version` must work in that terminal.
+- **"the skilltotal CLI failed to run" on Windows.** Smart App Control may refuse to start
+  `skilltotal.exe`, the launcher pip writes. Since 0.99.1 the plugin hooks then run the CLI as
+  `python -m skilltotal`, using the Python next to that launcher or one folder above it. This
+  message now means that Python is missing too. `python -m skilltotal --version` in a terminal
+  shows whether the CLI runs.
 - **"SkillTotal CLI X is older than the plugin Y".** The CLI still checks, but misses what newer
   releases read. Run `pipx upgrade skilltotal` or `pip install -U skilltotal`.
 - **"not checked within SkillTotal's 60-second time limit".** A first check of a large package

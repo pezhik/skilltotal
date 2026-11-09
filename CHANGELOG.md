@@ -4,7 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
-## [Unreleased]
+## [0.99.1]
+
+### Fixed
+- The Claude Code plugin checks installs again on Windows with Smart App Control on. Smart App
+  Control can refuse to start `skilltotal.exe`, the launcher pip writes for the console script.
+  Every command then went unchecked, with a warning. The hooks now run the same CLI as
+  `python -m skilltotal`, using the Python next to that launcher or one folder above it.
 
 ### Added
 - `ScanCache` accepts `audit_salt`. Without it, the index digest alone decides which scans the
