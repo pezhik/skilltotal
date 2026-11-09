@@ -80,7 +80,14 @@ def _export_plugin(dest: Path) -> None:
 
 
 def _engine_version(skilltotal: str, env: dict) -> str:
-    return _run([skilltotal, "--version"], env=env).stdout.decode().split()[-1]
+    try:
+        out = _run([skilltotal, "--version"], env=env).stdout
+    except OSError:
+        # Windows Smart App Control can refuse pip's launcher (WinError 4551, 2026-11-09). The hook
+        # then runs the CLI through the launcher's own Python; the version comes from this checkout
+        # (PYTHONPATH) either way.
+        out = _run([sys.executable, "-m", "skilltotal", "--version"], env=env).stdout
+    return out.decode().split()[-1]
 
 
 def _session(
