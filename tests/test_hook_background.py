@@ -1245,7 +1245,10 @@ def test_a_hook_that_hands_a_check_over_answers_within_its_budget(cache, fake_su
         out = hook_response(_bash("npm install big@1.0.0"), scan=cli._hook_scan_cached,
                             budget_s=1.0)
         took = time.monotonic() - started
-    assert took < 1.0 + 0.5 + 1.5
+    # A wait that ignored the budget would hold out until the lock is released, after this
+    # block: it would hang, not run late. So the slack only has to cover a busy runner, which
+    # measured 3.2 s against the old 3.0 bound on Windows CI (2026-11-01, green on rerun).
+    assert took < 1.0 + 0.5 + 3.0
     assert "npm:big@1.0.0: not checked" in _reason(out)
 
 
@@ -1259,7 +1262,7 @@ def test_a_hook_keeping_a_verdict_answers_within_its_budget(cache, fake_supervis
         report = cli._hook_scan_cached("npm:x@1.0.0", 3.0)
         took = time.monotonic() - started
     assert report["verdict"]["headline"] == "fake"
-    assert took < 3.0 + 0.5 + 1.5
+    assert took < 3.0 + 0.5 + 3.0  # same reasoning as the test above
     assert _cached(cache) == {}
 
 
