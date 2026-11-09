@@ -26,6 +26,25 @@ INSTALL="To fix it, install the skilltotal CLI (pipx install skilltotal or pip i
 UPDATE="update the skilltotal CLI (pipx upgrade skilltotal or pip install -U skilltotal)"
 FIX="To fix it, $UPDATE."
 
+# Runs the CLI. Windows Smart App Control, on by default on new Windows 11 installs, refuses to
+# start the unsigned launcher pip writes for a console script (skilltotal.exe): the shell answers
+# 126 and nothing runs, so every install would go unchecked. The Python that launcher belongs to is
+# signed and runs the same CLI as `python -m skilltotal`; it sits in the launcher's folder (a
+# virtual environment's Scripts) or the one above it (a system install's Scripts).
+st() {
+  skilltotal "$@"
+  st_rc=$?
+  [ "$st_rc" -eq 126 ] || return "$st_rc"
+  st_dir=$(dirname "$(command -v skilltotal)")
+  for st_py in "$st_dir/python.exe" "$st_dir/../python.exe" "$st_dir/python" "$st_dir/../python"; do
+    if [ -f "$st_py" ]; then
+      "$st_py" -m skilltotal "$@"
+      return $?
+    fi
+  done
+  return 126
+}
+
 # Words that send a command to the parser (tests/test_plugin_prefilter.py reads this list). A word
 # with `=` in front must stand alone (after every character but a letter or digit is read as a
 # space); the others count anywhere in the command: installers and runners, interpreters and
@@ -263,7 +282,7 @@ answer_with_version() {
   plugin_version
   if [ -z "$theirs" ] && [ -n "$mine" ] && { [ -n "$answer" ] || [ -z "$plain" ]; }; then
     # A CLI that predates the version line: asked for it separately.
-    first=$(skilltotal --version 2>/dev/null)
+    first=$(st --version 2>/dev/null)
     first=${first%%"$NL"*}
     case $first in
       'skilltotal '*)
@@ -300,7 +319,7 @@ if plain_command; then
   plain=1
   strict || exit 0
 fi
-if answer=$(printf '%s' "$input" | SKILLTOTAL_HOOK_VERSION_LINE=1 skilltotal hook claude-code --protocol "$PROTOCOL" 2>/dev/null); then
+if answer=$(printf '%s' "$input" | (SKILLTOTAL_HOOK_VERSION_LINE=1; export SKILLTOTAL_HOOK_VERSION_LINE; st hook claude-code --protocol "$PROTOCOL") 2>/dev/null); then
   answer_with_version
   exit 0
 fi
@@ -309,7 +328,7 @@ if strict; then
   exit 0
 fi
 # An older CLI fails on --protocol and still answers without it; a broken one fails either way.
-if old=$(printf '%s' "$input" | skilltotal hook claude-code 2>/dev/null); then
+if old=$(printf '%s' "$input" | st hook claude-code 2>/dev/null); then
   older "$old"
 else
   cannot_check "the skilltotal CLI failed to run" "$FIX"

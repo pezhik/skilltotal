@@ -277,6 +277,78 @@ def test_a_broken_cli_warns_the_person_and_proceeds(tmp_path):
     assert "failed to run" in answer["systemMessage"]
 
 
+BLOCKED = """#!/bin/sh
+# What the shell answers when Windows Smart App Control refuses pip's launcher: 126, nothing ran.
+exit 126
+"""
+
+FALLBACK_PYTHON = """#!/bin/sh
+[ "$1" = "-m" ] && [ "$2" = "skilltotal" ] || exit 9
+shift 2
+exec sh "$ST_REAL_CLI" "$@"
+"""
+
+
+@needs_sh
+@pytest.mark.parametrize("where", ["beside", "above"])
+@pytest.mark.parametrize("name", ["python", "python.exe"])
+def test_a_blocked_launcher_runs_the_cli_through_its_own_python(tmp_path, where, name):
+    """2026-11-09: Smart App Control blocked skilltotal.exe after `pip install -U`; the hook could
+    run nothing. The Python the launcher belongs to (its folder in a venv, the one above in a
+    system install) runs the same CLI as `python -m skilltotal`, with the same input."""
+    if name.endswith(".exe") and os.name == "nt":
+        pytest.skip("a script named .exe does not start on Windows; the same lookup is tested as 'python'")
+    home = tmp_path / "py"
+    scripts = home / "Scripts"
+    scripts.mkdir(parents=True)
+    (scripts / "skilltotal").write_text(BLOCKED, encoding="utf-8", newline="\n")
+    (scripts / "skilltotal").chmod(0o755)
+    python = (scripts if where == "beside" else home) / name
+    python.write_text(FALLBACK_PYTHON, encoding="utf-8", newline="\n")
+    python.chmod(0o755)
+    real = tmp_path / "real-cli"
+    real.write_text(STUB, encoding="utf-8", newline="\n")
+    env = {
+        "PATH": os.pathsep.join([str(scripts), str(Path(SH).parent)]),
+        "ST_REAL_CLI": str(real),
+        "ST_STUB_ARGS": str(tmp_path / "args"),
+        "ST_STUB_STDIN": str(tmp_path / "stdin"),
+        "ST_STUB_OUT": '{"answer": "from the cli"}',
+        "ST_STUB_RC": "0",
+        "ST_STUB_VERSION": PLUGIN["version"],
+        "ST_STUB_VERSION_ASKED": str(tmp_path / "version-asked"),
+    }
+    if "SYSTEMROOT" in os.environ:
+        env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo", "hook_event_name": "PreToolUse",
+                        "tool_name": "Bash", "tool_input": {"command": "npm install lodash", "description": "Run it"}})
+    done = subprocess.run([SH, str(WRAPPER)], input=event.encode(), env=env,  # noqa: S603 - our own script
+                          capture_output=True, timeout=60)
+    assert done.returncode == 0
+    assert (tmp_path / "args").read_text(encoding="utf-8") == f"hook claude-code --protocol {HOOK_PROTOCOL}"
+    assert (tmp_path / "stdin").read_bytes().decode() == event
+    assert done.stdout.decode().strip() == '{"answer": "from the cli"}'
+
+
+@needs_sh
+def test_a_blocked_launcher_without_its_python_still_warns(tmp_path):
+    """No Python beside or above the blocked launcher: nothing was checked, and that is said."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "skilltotal").write_text(BLOCKED, encoding="utf-8", newline="\n")
+    (bin_dir / "skilltotal").chmod(0o755)
+    env = {"PATH": os.pathsep.join([str(bin_dir), str(Path(SH).parent)])}
+    if "SYSTEMROOT" in os.environ:
+        env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
+    if shutil.which("python", path=str(tmp_path)) or (tmp_path / "python").exists():
+        pytest.skip("a python above the test folder")
+    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo", "hook_event_name": "PreToolUse",
+                        "tool_name": "Bash", "tool_input": {"command": "npm install lodash", "description": "Run it"}})
+    done = subprocess.run([SH, str(WRAPPER)], input=event.encode(), env=env,  # noqa: S603 - our own script
+                          capture_output=True, timeout=60)
+    assert "failed to run" in _warning(done)["systemMessage"]
+
+
 @needs_sh
 def test_without_the_cli_other_commands_stay_quiet(tmp_path):
     """The warning is for installs; it must not fire on every `ls` the agent runs."""
