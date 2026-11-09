@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from skilltotal import bounded_json
+from skilltotal import bounded_json, known_artifacts
 from skilltotal.autorun import KIND_MCP_SERVER, autorun_commands
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Evidence, Severity, ThreatClass
@@ -49,12 +49,9 @@ R_HTTP_BINARY = "ST-ARTIFACT-HTTP-BINARY"
 R_DIRTY_BUILD = "ST-ARTIFACT-DIRTY-BUILD"
 R_KNOWN_BAD = "ST-ARTIFACT-KNOWN-BAD"
 
-# Images a public report names as trojanized: namespace/name (Docker Hub, no tag) -> source.
-# Exact names only; the threat-intel build adds to this list.
-KNOWN_TROJANIZED_IMAGES: dict[str, str] = {
-    "tomicdd/artex": "BadByte, ARTEX backdoor docker image, 2026-11-04",
-    "congdonglinux/artex": "BadByte, ARTEX backdoor docker image, 2026-11-04",
-}
+# Images a public report names as trojanized (exact Docker Hub namespace/name): data kept in its own
+# module, so adding one changes no code.
+KNOWN_TROJANIZED_IMAGES = known_artifacts.KNOWN_TROJANIZED_IMAGES
 
 # Where an image the component runs is named.
 _COMPOSE_RE = re.compile(r"(?:^|/)(?:docker-)?compose(?:[.-][^/]*)?\.ya?ml$", re.IGNORECASE)
