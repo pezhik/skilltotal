@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.99.1",
-  "ruleset_version": 97,
-  "python_version": "3.14",
-  "positives": 222,
-  "negatives": 184,
+  "engine_version": "0.100.0",
+  "ruleset_version": 98,
+  "python_version": "3.11",
+  "positives": 227,
+  "negatives": 189,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -23,6 +23,7 @@
     "agent-cred-helper-exec": 1.0,
     "agent-dotenv-exec": 1.0,
     "agent-launcher-hijack": 1.0,
+    "builtin-name-lookup": 1.0,
     "cli-relay": 1.0,
     "clipboard-swap": 1.0,
     "compiled-node-output": 1.0,
@@ -46,6 +47,7 @@
     "install-dropper": 1.0,
     "js-shell-polyglot-preinstall": 1.0,
     "lethal-trifecta": 1.0,
+    "main-file-harvest": 1.0,
     "mcp-config-inject": 1.0,
     "mcp-hidden-dotpath-launcher": 1.0,
     "mcp-launch-command": 1.0,
@@ -68,11 +70,14 @@
     "prompt-injection": 1.0,
     "prompt-split-exfil": 1.0,
     "pth-persistence": 1.0,
+    "scriptlet-host": 1.0,
+    "setup-detached-fetch": 1.0,
     "shell-decode-exec": 1.0,
     "skill-dynamic-exec": 1.0,
     "skill-fetch-exec": 1.0,
     "skill-scanner-directed-audit-override-text": 1.0,
     "skill-writes-agent-memory-files-persistence": 1.0,
+    "socket-shell": 1.0,
     "ssh-tunnel-backdoor": 1.0,
     "startup-hook-exec": 1.0,
     "stdlib-shadow": 1.0,
@@ -86,13 +91,13 @@
     "AST01": {
       "node": 45,
       "manifest/text": 30,
-      "python": 35,
+      "python": 38,
       "shell": 5
     },
     "AST02": {
       "manifest/text": 25,
       "node": 26,
-      "python": 8,
+      "python": 10,
       "shell": 3
     },
     "AST03": {
@@ -523,8 +528,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 6,
-      "benign_samples": 3,
+      "malicious_samples": 8,
+      "benign_samples": 5,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -881,8 +886,8 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 7,
-      "benign_samples": 0,
+      "malicious_samples": 8,
+      "benign_samples": 1,
       "should_fire": 0,
       "fired": 0,
       "should_stay_silent": 0,
@@ -966,10 +971,67 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-PY-BUILTIN-NAME-LOOKUP": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-PY-FETCH-EXEC": {
       "owasp": [
         "AST01",
         "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-MAIN-FILE-HARVEST": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-SCRIPTLET-HOST": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-SETUP-DETACHED-FETCH": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-SOCKET-SHELL": {
+      "owasp": [
+        "AST01"
       ],
       "malicious_samples": 1,
       "benign_samples": 0,

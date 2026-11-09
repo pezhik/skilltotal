@@ -36,6 +36,7 @@ from skilltotal.scanners.obfuscation import ObfuscationScanner
 from skilltotal.scanners.postex import PostExploitationScanner
 from skilltotal.scanners.prompt_surface import PromptSurfaceScanner
 from skilltotal.scanners.pth_exec import PthExecScanner
+from skilltotal.scanners.pypi_malware import PyPiMalwareScanner
 from skilltotal.scanners.python_ast import PythonAstScanner
 from skilltotal.scanners.scoped_identity import ScopedIdentityScanner
 from skilltotal.scanners.secret_exfil import SecretExfilScanner
@@ -77,6 +78,7 @@ SCANNERS: list[Scanner] = [
     AgentConfigScanner(),
     ConfigExecScanner(),
     StdlibShadowScanner(),
+    PyPiMalwareScanner(),
     ClipperScanner(),
     NpmSupplyScanner(),
     NpmInstallThreatsScanner(),

@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [0.100.0]
+
+### Added
+- Ruleset 98: five Python package rules (`ST-PY-BUILTIN-NAME-LOOKUP`, `ST-PY-SCRIPTLET-HOST`,
+  `ST-PY-SOCKET-SHELL`, `ST-PY-MAIN-FILE-HARVEST`, `ST-PY-SETUP-DETACHED-FETCH`). See
+  `RULES_CHANGELOG.md`.
+
 ## [0.99.1]
 
 ### Fixed

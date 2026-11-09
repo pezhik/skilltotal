@@ -20,6 +20,7 @@
  "negative/AST01/agent-cred-helper-exec/static-key-helper": [],
  "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
  "negative/AST01/agent-launcher-hijack/local-gateway-default-approvals": [],
+ "negative/AST01/builtin-name-lookup/named-builtin-lookup": [],
  "negative/AST01/clipboard-swap/address-validator-lib": [],
  "negative/AST01/clipboard-swap/dapp-copy-contract": [],
  "negative/AST01/clipboard-swap/node-shell-copy-own-address": [
@@ -140,6 +141,9 @@
   "ST-FS-PY-READ",
   "ST-NET-PY"
  ],
+ "negative/AST01/main-file-harvest/project-report": [
+  "ST-NET-PY"
+ ],
  "negative/AST01/mcp-hidden-dotpath-launcher/json-normal-launcher": [
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
@@ -222,6 +226,10 @@
  "negative/AST01/skill-writes-agent-memory-files-persistence/memory-file-reference": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/open-memory-notes": [],
+ "negative/AST01/socket-shell/plain-socket-client": [
+  "ST-FS-PY-WRITE",
+  "ST-POSTEX-REMOTE-ACCESS"
+ ],
  "negative/AST01/ssh-tunnel-backdoor/ngrok-web-preview": [
   "ST-SHELL-PY"
  ],
@@ -374,6 +382,15 @@
   "ST-SHELL-PIPE-EXEC"
  ],
  "negative/AST02/plugin-hook-trojan/lsp-monitor-plugin": [],
+ "negative/AST02/scriptlet-host/setup-compile-step": [
+  "ST-INSTALL-PY",
+  "ST-SHELL-PY"
+ ],
+ "negative/AST02/setup-detached-fetch/install-build-step": [
+  "ST-INSTALL-PY",
+  "ST-NET-PY",
+  "ST-SHELL-PY"
+ ],
  "negative/AST02/skill-fetch-exec/honest-tool-install": [
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
@@ -503,6 +520,9 @@
   "ST-POSTEX-EVASION",
   "ST-SHELL-EVASION",
   "ST-SHELL-NODE"
+ ],
+ "positive/AST01/builtin-name-lookup/chr-built-exec": [
+  "ST-PY-BUILTIN-NAME-LOOKUP"
  ],
  "positive/AST01/clipboard-swap/node-clipboardy": [
   "ST-CLIPPER"
@@ -851,6 +871,11 @@
   "ST-NET-PY",
   "ST-PROMPT-INJECTION"
  ],
+ "positive/AST01/main-file-harvest/module-run-watcher": [
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-PY-MAIN-FILE-HARVEST"
+ ],
  "positive/AST01/mcp-hidden-dotpath-launcher/json-nested-hidden-script": [
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC",
@@ -1012,6 +1037,11 @@
  ],
  "positive/AST01/skill-writes-agent-memory-files-persistence/silent-memory-append": [
   "ST-SKILL-MEMORY-WRITE-HIDDEN"
+ ],
+ "positive/AST01/socket-shell/import-time-reverse-shell": [
+  "ST-POSTEX-REMOTE-ACCESS",
+  "ST-PY-SOCKET-SHELL",
+  "ST-SHELL-PY"
  ],
  "positive/AST01/ssh-tunnel-backdoor/sshd-ngrok-beacon": [
   "ST-NET-PY",
@@ -1321,6 +1351,16 @@
  ],
  "positive/AST02/plugin-hook-trojan/monitor-fetch-run": [
   "ST-AGENT-AUTORUN-REMOTE"
+ ],
+ "positive/AST02/scriptlet-host/setup-regsvr32": [
+  "ST-INSTALL-PY",
+  "ST-PY-SCRIPTLET-HOST",
+  "ST-SHELL-PY"
+ ],
+ "positive/AST02/setup-detached-fetch/install-override-poller": [
+  "ST-INSTALL-PY",
+  "ST-PY-SETUP-DETACHED-FETCH",
+  "ST-SHELL-PY"
  ],
  "positive/AST02/skill-fetch-exec/hidden-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"

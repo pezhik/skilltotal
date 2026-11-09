@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 98 (engine 0.100.0)
+
+Five Python package techniques, each a conjunction of two tells; each has a positive sample in the
+corpus next to an honest look-alike that stays clean. New scanner `pypi_malware`.
+- `ST-PY-BUILTIN-NAME-LOOKUP` (new): `getattr(builtins, chr(..) + ...)`, a builtin looked up by a
+  name built from character codes. A literal name or a plain variable stays silent.
+- `ST-PY-SCRIPTLET-HOST` (new): Python code starts `regsvr32` with `scrobj.dll` or a remote `/i:`
+  URL, `mshta` on a remote page, or `certutil -urlcache` on a URL.
+- `ST-PY-SOCKET-SHELL` (new): a socket made in the file is connected and its descriptor is
+  duplicated onto stdin/stdout/stderr or given to a subprocess as a standard stream. A client that
+  only sends and receives, or a dup2 of another file, stays silent.
+- `ST-PY-MAIN-FILE-HARVEST` (new): a module entry point walks the home directory or the root,
+  filters on three or more document/key extensions, uploads, and watches for changes or runs a
+  worker. A walk of a given project folder stays silent.
+- `ST-PY-SETUP-DETACHED-FETCH` (new): `setup.py` overrides an install-time command class, starts a
+  detached process and fetches from the network. A build step with no detached process stays silent.
+
 ## ruleset 97 (engine 0.99.0)
 
 - `ST-SENS-PATH`: when a shell script stores a credential path in a variable and only checks the
