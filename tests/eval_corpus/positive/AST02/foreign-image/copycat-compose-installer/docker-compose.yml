@@ -1,0 +1,12 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: fixture
+  lumen:
+    image: quickmirror/lumen:${LUMEN_TAG:-latest}
+    ports:
+      - "8787:8787"
+    depends_on:
+      - db

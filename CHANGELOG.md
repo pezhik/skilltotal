@@ -4,6 +4,23 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.0.0]
+
+The CLI, the report formats, the Python API, the GitHub Action and the MCP tools are now a stable
+contract: what 1.x keeps and how deprecation works is in
+[docs/releasing.md](docs/releasing.md#what-10-keeps-stable).
+
+### Added
+- Ruleset 99: four rules for prebuilt artifacts a component runs but does not build from its files
+  (`ST-ARTIFACT-FOREIGN-IMAGE`, `ST-ARTIFACT-KNOWN-BAD`, `ST-ARTIFACT-HTTP-BINARY`,
+  `ST-ARTIFACT-DIRTY-BUILD`). See `RULES_CHANGELOG.md`.
+- Report schema 1.11: `verdict.unverified_artifacts` lists the prebuilt container images the
+  component runs that its own files do not build. Images are not pulled, so their contents are not
+  checked. When an image carries the project's own name, a low verdict names it.
+
+### Changed
+- The PyPI classifier is now `Development Status :: 5 - Production/Stable`.
+
 ## [0.100.0]
 
 ### Added

@@ -1,0 +1,9 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# The image name is a public indicator from a published report; nothing here pulls it.
+services:
+  artex:
+    image: tomicdd/artex:latest
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./data:/app/data

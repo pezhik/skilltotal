@@ -4,6 +4,26 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 99 (engine 1.0.0)
+
+A repository can be clean while the artifacts it runs are not. Copycat forks of an open-source AI
+console kept the source and changed one compose line to pull an image from another publisher; a
+BadByte report (2026-11-04) names that image as backdoored. One fork also shipped an installer that
+fetched a build of uncommitted code over plain HTTP. New scanner `artifact_provenance`. It reads
+repository files only: nothing is pulled, downloaded or run.
+- `ST-ARTIFACT-FOREIGN-IMAGE` (new, high): a compose file, Kubernetes/Helm manifest, dev container,
+  Dockerfile `FROM` or MCP `docker run` command runs an image with the project's own name from a
+  namespace the project does not claim. The project's namespaces come from the owner in its module
+  path, manifest repository URLs, README clone line or npm scope, or an image its CI or scripts
+  build and push. Silent when the repository names no identity, when the compose service builds the
+  image (`build:`), and for generic names (`server`, `app`, `web`, ...).
+- `ST-ARTIFACT-KNOWN-BAD` (new, critical, malicious indicator): an image that a public report names
+  as trojanized (`tomicdd/artex`, `congdonglinux/artex`).
+- `ST-ARTIFACT-HTTP-BINARY` (new, medium): a script, Dockerfile or Makefile that runs a download
+  command and names an executable, package or archive URL over plain `http://` on a public host.
+- `ST-ARTIFACT-DIRTY-BUILD` (new, medium): a downloaded file or an image tag marked `-dirty`.
+- Calibration: none of the four fires on the 1,023-component reputable corpus.
+
 ## ruleset 98 (engine 0.100.0)
 
 Five Python package techniques, each a conjunction of two tells; each has a positive sample in the

@@ -1,9 +1,9 @@
 {
-  "engine_version": "0.100.0",
-  "ruleset_version": 98,
-  "python_version": "3.11",
-  "positives": 227,
-  "negatives": 189,
+  "engine_version": "1.0.0",
+  "ruleset_version": 99,
+  "python_version": "3.14",
+  "positives": 229,
+  "negatives": 193,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -40,12 +40,14 @@
     "encrypted-instructions-decoy-key-env-read": 1.0,
     "entry-point-path-demotion": 1.0,
     "env-dump-exfil": 1.0,
+    "foreign-image": 1.0,
     "git-hook-persistence": 1.0,
     "github-action-secret-exfil": 1.0,
     "gyp-command-substitution": 1.0,
     "hidden-unicode": 1.0,
     "install-dropper": 1.0,
     "js-shell-polyglot-preinstall": 1.0,
+    "known-trojanized-image": 1.0,
     "lethal-trifecta": 1.0,
     "main-file-harvest": 1.0,
     "mcp-config-inject": 1.0,
@@ -95,10 +97,10 @@
       "shell": 5
     },
     "AST02": {
-      "manifest/text": 25,
+      "manifest/text": 26,
       "node": 26,
-      "python": 10,
-      "shell": 3
+      "shell": 4,
+      "python": 10
     },
     "AST03": {
       "node": 2
@@ -263,6 +265,51 @@
     "ST-ARCHIVE-PASSWORD-EXTRACT": {
       "owasp": [
         "AST01"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-ARTIFACT-DIRTY-BUILD": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-ARTIFACT-FOREIGN-IMAGE": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-ARTIFACT-HTTP-BINARY": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-ARTIFACT-KNOWN-BAD": {
+      "owasp": [
+        "AST01",
+        "AST02"
       ],
       "malicious_samples": 1,
       "benign_samples": 0,
@@ -875,7 +922,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 12,
+      "malicious_samples": 13,
       "benign_samples": 8,
       "should_fire": 3,
       "fired": 3,

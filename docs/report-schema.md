@@ -23,7 +23,7 @@ It is the stable, machine-readable contract for any consumer: CI scripts, dashbo
 that imports the engine and returns `Report.to_dict()`.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
-> schema version **1.10**) is the machine-readable source of truth. Consumers should validate
+> schema version **1.11**) is the machine-readable source of truth. Consumers should validate
 > against it. `tests/test_report_schema.py` guards it: any change to the report shape that is
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
@@ -103,6 +103,7 @@ What the plugin and `guard` act on: malicious indicators block whatever the scor
 | `malicious_indicators` / `risky_constructs` / `exposed_secrets` / `capabilities` | integer | Findings per threat class (`exposed_secrets` counts the `exposure` class, added in 1.6) |
 | `unanalyzed_code` | object | Present only when the component ships source in a language whose behavior is not analyzed yet, e.g. `{"Go": 12}`; a low verdict then says the analysis was partial (added in 1.7) |
 | `unanalyzed_files` | object | Present only when shipped (non-test) code files were not read at all, counted by reason: `too_large` (over the 2 MiB cap, or a too-large script npm runs at install) and `minified` (a bundle; a `.min` copy next to its readable source is not counted), e.g. `{"minified": 2}`. Data files and assets are not counted. A low verdict then says the analysis was partial; the score is unchanged (added in 1.8) |
+| `unverified_artifacts` | array | Present only when the component runs prebuilt container images that its own files do not build (named in compose files, Kubernetes/Helm manifests, dev containers, Dockerfile `FROM`, MCP `docker run` commands), up to 20: `{"kind": "image", "ref": "quickmirror/lumen", "file": "docker-compose.yml"}`. Docker official images (`postgres`, `node`, ...) are left out, as are images a compose service builds (`build:`) and images the repository's own build publishes. The images are not pulled, so their contents are not checked. When one carries the project's own name, a low verdict says so. The score is unchanged (added in 1.11) |
 
 ### `capabilities`
 Object keyed by capability name; each value is a list of **evidence** objects.

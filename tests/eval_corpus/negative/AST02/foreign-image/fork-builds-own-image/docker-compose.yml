@@ -1,0 +1,7 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# A fork keeps the upstream module path and runs the image its own release workflow builds.
+services:
+  lumen:
+    image: ghcr.io/translator-team/lumen:${LUMEN_TAG:-latest}
+    ports:
+      - "127.0.0.1:8787:8787"

@@ -1,0 +1,9 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# `build:` makes the image a local tag of a build from this source, whatever its name.
+services:
+  lumen:
+    build:
+      context: .
+    image: someone-else/lumen:dev
+    ports:
+      - "127.0.0.1:8787:8787"

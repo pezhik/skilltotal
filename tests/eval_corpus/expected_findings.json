@@ -301,6 +301,9 @@
  "negative/AST02/dns-exfil/prints-hostname": [
   "ST-INSTALL-NPM"
  ],
+ "negative/AST02/foreign-image/compose-builds-from-source": [],
+ "negative/AST02/foreign-image/fork-builds-own-image": [],
+ "negative/AST02/foreign-image/own-registry-image": [],
  "negative/AST02/git-hook-persistence/husky-local": [
   "ST-SHELL-NODE"
  ],
@@ -326,6 +329,7 @@
  "negative/AST02/js-shell-polyglot-preinstall/shell-script-build": [
   "ST-INSTALL-NPM"
  ],
+ "negative/AST02/known-trojanized-image/upstream-image": [],
  "negative/AST02/mcp-launch-command/help-text-install-hint": [
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
@@ -1156,6 +1160,12 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-DNS-BEACON"
  ],
+ "positive/AST02/foreign-image/copycat-compose-installer": [
+  "ST-ARTIFACT-DIRTY-BUILD",
+  "ST-ARTIFACT-FOREIGN-IMAGE",
+  "ST-ARTIFACT-HTTP-BINARY",
+  "ST-POSTEX-PERSIST"
+ ],
  "positive/AST02/git-hook-persistence/sandworm-git-persist": [
   "ST-CMDI-NODE",
   "ST-COMBO-EXFIL",
@@ -1232,6 +1242,9 @@
  "positive/AST02/js-shell-polyglot-preinstall/install-time-variant": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-SHELL-RUNS-JS"
+ ],
+ "positive/AST02/known-trojanized-image/artex-compose-swap": [
+  "ST-ARTIFACT-KNOWN-BAD"
  ],
  "positive/AST02/mcp-launch-command/codex-config-fetch-run": [
   "ST-AGENT-AUTORUN-REMOTE",

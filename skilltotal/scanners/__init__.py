@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from skilltotal.scanners.agent_approval import AgentApprovalScanner
 from skilltotal.scanners.agent_config import AgentConfigScanner
+from skilltotal.scanners.artifact_provenance import ArtifactProvenanceScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.clipper import ClipperScanner
 from skilltotal.scanners.config_exec import ConfigExecScanner
@@ -82,6 +83,7 @@ SCANNERS: list[Scanner] = [
     ClipperScanner(),
     NpmSupplyScanner(),
     NpmInstallThreatsScanner(),
+    ArtifactProvenanceScanner(),
     AgentApprovalScanner(),
     SkillFetchExecScanner(),
     SkillDirectivesScanner(),

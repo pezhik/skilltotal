@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.10.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.11.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.10 (1.9 + metadata.baseline_suppressed_malicious); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.11 (1.10 + verdict.unverified_artifacts); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -69,6 +69,21 @@
           "properties": {
             "too_large": { "type": "integer", "minimum": 1 },
             "minified": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "unverified_artifacts": {
+          "type": "array",
+          "description": "Prebuilt container images the component runs (compose files, Kubernetes/Helm manifests, dev containers, Dockerfile FROM, MCP launch commands) that its own files do not build, up to 20. The scan reads files only, so the contents of these images were not checked. Docker official images are left out. When one carries the project's own name, a low-level headline says so (added in 1.11).",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "required": ["kind", "ref", "file"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": { "type": "string", "enum": ["image"] },
+              "ref": { "type": "string" },
+              "file": { "type": "string" }
+            }
           }
         }
       }

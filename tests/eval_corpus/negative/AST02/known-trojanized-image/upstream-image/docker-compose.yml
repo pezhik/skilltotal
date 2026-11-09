@@ -1,0 +1,9 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# The upstream image and a look-alike name from the same publisher: neither is the reported one.
+services:
+  artex:
+    image: autumn27/artex:0.3.15
+    ports:
+      - "127.0.0.1:8787:8787"
+  docs:
+    image: tomicdd/artex-docs:1.0

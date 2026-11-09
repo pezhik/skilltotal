@@ -1,0 +1,7 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# The project's own image, under the owner of its module path (case and dashes differ).
+services:
+  lumen:
+    image: ghcr.io/lumendev/lumen:1.4.2
+    ports:
+      - "127.0.0.1:8787:8787"

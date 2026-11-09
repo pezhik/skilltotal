@@ -1,0 +1,24 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+name: release
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_NAMESPACE: ghcr.io/translator-team/lumen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.IMAGE_NAMESPACE }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}

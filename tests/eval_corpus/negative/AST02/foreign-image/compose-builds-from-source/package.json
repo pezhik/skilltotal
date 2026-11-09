@@ -1,0 +1,6 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "name": "lumen",
+  "version": "1.4.2",
+  "repository": "https://github.com/lumen-dev/lumen"
+}

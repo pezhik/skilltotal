@@ -99,7 +99,10 @@ indicators - review capabilities before installing", ...). A low verdict never s
 code that was not read: it reads `Partially analyzed - ...` when the component ships code in a
 language whose behavior is not analyzed, or code files that were not read
 (`Partially analyzed - 2 code files not read (2 minified)`), and `Not analyzed - nothing in this
-component could be read` when nothing could be read. That wording does not change the score.
+component could be read` when nothing could be read. It also reads `Partially analyzed - runs the
+prebuilt image <name>, whose contents were not checked` when a compose file, manifest, dev
+container, Dockerfile or MCP launch command runs a ready-made image that has the project's own
+name and that nothing in the repository builds. This wording does not change the score.
 
 ## Limitations
 
@@ -120,6 +123,13 @@ component could be read` when nothing could be read. That wording does not chang
 - **Dependencies are not scanned.** A scan covers the component's own files, not what it installs.
 - **Code that is not in the files is not analyzed:** code fetched or generated at run time, and
   binaries or compiled artifacts (counted in `metadata.files_skipped_binary`).
+- **Container images are not pulled or inspected.** The scan lists the prebuilt images the
+  component runs in `verdict.unverified_artifacts` (Docker official images left out). It flags
+  three cases from the files alone: an image with the project's name from a publisher the project
+  never names (`ST-ARTIFACT-FOREIGN-IMAGE`), an image a public report names as trojanized
+  (`ST-ARTIFACT-KNOWN-BAD`), and a `-dirty` tag (`ST-ARTIFACT-DIRTY-BUILD`). What is inside an image
+  is not checked. Binaries that install scripts download are not fetched either. A download over
+  plain `http://` (`ST-ARTIFACT-HTTP-BINARY`) or of a `-dirty` build is flagged.
 - **Languages.** Shell execution, network access, file access and dynamic code are analyzed in
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
   download-and-run, decode-and-run, evasion and post-exploitation idioms. Go, Rust, Java, Ruby, PHP, C/C++, C#, Swift,

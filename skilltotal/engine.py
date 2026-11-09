@@ -77,6 +77,7 @@ from skilltotal.parallel import run_scanners
 from skilltotal.rules import get_rules, unknown_rule_hint
 from skilltotal.scan_cache import ScanCache
 from skilltotal.scanners import SCANNERS
+from skilltotal.scanners.artifact_provenance import prebuilt_artifacts
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
 from skilltotal.scanners.mcp import is_mcp_listing
 from skilltotal.scoring import compute_score, is_own_provider_read, risk_level
@@ -282,6 +283,7 @@ def analyze_directory(
             advice="Nothing in them was checked.",
         ))
     unanalyzed = _unanalyzed_code(index)
+    prebuilt = prebuilt_artifacts(index)
     if unanalyzed:
         needs_review.append(_unanalyzed_note(unanalyzed))
     compiled = _compiled_without_source(index)
@@ -474,7 +476,7 @@ def analyze_directory(
         summary=_summary(level, score, findings, capabilities, needs_review),
         verdict=_verdict(
             findings, level, unanalyzed, nothing_read=not index.files, skipped_code=skipped_code,
-            compiled=len(compiled),
+            compiled=len(compiled), prebuilt=prebuilt,
         ),
         capabilities=capabilities,
         traits=traits,
@@ -1144,6 +1146,7 @@ def _verdict(
     nothing_read: bool = False,
     skipped_code: dict[str, int] | None = None,
     compiled: int = 0,
+    prebuilt: list[dict] | None = None,
 ) -> dict:
     """Plain-language top-line answer, mapped to the two real user fears:
 
@@ -1193,12 +1196,21 @@ def _verdict(
     else:
         vlevel, headline = "low", "No significant risks found"
 
-    if (unanalyzed or skipped_code or compiled) and vlevel == "low":
+    # The project's own image, pulled ready-made rather than built from these files: what runs is
+    # that image, and nothing in it was read.
+    own_images = [a["ref"] for a in prebuilt or [] if a["kind"] == "image" and a["own_name"]]
+    if (unanalyzed or skipped_code or compiled or own_images) and vlevel == "low":
         # Never a reassuring headline over code nothing read: the level and score stay as they
         # are (unread code is not evidence of risk), only the wording stops implying "checked".
         # That covers code in a language no scanner reads for behavior, code files that were
         # not read at all (too large, or a minified bundle), and bytecode shipped without source.
         parts = []
+        if own_images:
+            shown = ", ".join(own_images[:2]) + (" and others" if len(own_images) > 2 else "")
+            parts.append(
+                f"runs the prebuilt image{'s' if len(own_images) != 1 else ''} {shown}, "
+                "whose contents were not checked"
+            )
         if unanalyzed:
             parts.append(
                 f"{_language_list(unanalyzed)} code not checked for shell, network or file access"
@@ -1230,7 +1242,16 @@ def _verdict(
         verdict["unanalyzed_code"] = dict(unanalyzed)
     if skipped_code:
         verdict["unanalyzed_files"] = dict(skipped_code)
+    if prebuilt:
+        verdict["unverified_artifacts"] = [
+            {"kind": a["kind"], "ref": a["ref"], "file": a["file"]}
+            for a in prebuilt[:MAX_UNVERIFIED_ARTIFACTS]
+        ]
     return verdict
+
+
+# Prebuilt images listed in a verdict; a compose file of a large stack can name dozens.
+MAX_UNVERIFIED_ARTIFACTS = 20
 
 
 # Which findings explain a verdict first: what makes it malicious, then what is scored, then the
