@@ -297,7 +297,7 @@ def test_a_blocked_launcher_runs_the_cli_through_its_own_python(tmp_path, where,
     run nothing. The Python the launcher belongs to (its folder in a venv, the one above in a
     system install) runs the same CLI as `python -m skilltotal`, with the same input."""
     if name.endswith(".exe") and os.name == "nt":
-        pytest.skip("a script named .exe does not start on Windows; the same lookup is tested as 'python'")
+        pytest.skip("a script named .exe does not start on Windows; 'python' tests the same lookup")
     home = tmp_path / "py"
     scripts = home / "Scripts"
     scripts.mkdir(parents=True)
@@ -320,12 +320,14 @@ def test_a_blocked_launcher_runs_the_cli_through_its_own_python(tmp_path, where,
     }
     if "SYSTEMROOT" in os.environ:
         env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
-    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo", "hook_event_name": "PreToolUse",
-                        "tool_name": "Bash", "tool_input": {"command": "npm install lodash", "description": "Run it"}})
-    done = subprocess.run([SH, str(WRAPPER)], input=event.encode(), env=env,  # noqa: S603 - our own script
-                          capture_output=True, timeout=60)
+    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo",
+                        "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                        "tool_input": {"command": "npm install lodash", "description": "Run it"}})
+    done = subprocess.run(  # noqa: S603 - fixed argv: the shell and our own script
+        [SH, str(WRAPPER)], input=event.encode(), env=env, capture_output=True, timeout=60)
     assert done.returncode == 0
-    assert (tmp_path / "args").read_text(encoding="utf-8") == f"hook claude-code --protocol {HOOK_PROTOCOL}"
+    assert (tmp_path / "args").read_text(encoding="utf-8") == (
+        f"hook claude-code --protocol {HOOK_PROTOCOL}")
     assert (tmp_path / "stdin").read_bytes().decode() == event
     assert done.stdout.decode().strip() == '{"answer": "from the cli"}'
 
@@ -342,10 +344,11 @@ def test_a_blocked_launcher_without_its_python_still_warns(tmp_path):
         env["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
     if shutil.which("python", path=str(tmp_path)) or (tmp_path / "python").exists():
         pytest.skip("a python above the test folder")
-    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo", "hook_event_name": "PreToolUse",
-                        "tool_name": "Bash", "tool_input": {"command": "npm install lodash", "description": "Run it"}})
-    done = subprocess.run([SH, str(WRAPPER)], input=event.encode(), env=env,  # noqa: S603 - our own script
-                          capture_output=True, timeout=60)
+    event = json.dumps({"session_id": "s", "cwd": "C:\\Projects\\demo",
+                        "hook_event_name": "PreToolUse", "tool_name": "Bash",
+                        "tool_input": {"command": "npm install lodash", "description": "Run it"}})
+    done = subprocess.run(  # noqa: S603 - fixed argv: the shell and our own script
+        [SH, str(WRAPPER)], input=event.encode(), env=env, capture_output=True, timeout=60)
     assert "failed to run" in _warning(done)["systemMessage"]
 
 
