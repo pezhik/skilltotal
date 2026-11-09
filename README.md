@@ -397,6 +397,7 @@ services on top of it; their code is not part of this repository ([docs/open-cor
 | Claude Code plugin reference | [docs/plugin.md](https://github.com/pezhik/skilltotal/blob/main/docs/plugin.md) |
 | Hooks for other agents, the sentinel, fleet rollout | [docs/agent-hooks.md](https://github.com/pezhik/skilltotal/blob/main/docs/agent-hooks.md) |
 | <a id="architecture"></a>Architecture | [docs/architecture.md](https://github.com/pezhik/skilltotal/blob/main/docs/architecture.md) |
+| <a id="versioning"></a>Versioning: what stays stable across 1.x, what can change in a minor release, deprecation | [docs/releasing.md](https://github.com/pezhik/skilltotal/blob/main/docs/releasing.md#what-10-keeps-stable) |
 
 ## Contributing, security and license
 

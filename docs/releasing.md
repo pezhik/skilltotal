@@ -61,6 +61,32 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
   (`skilltotal==X.Y.Z`, `pezhik/skilltotal@vX.Y.Z`) or, for the Action, the release's commit
   SHA.
 
+## What 1.0 keeps stable
+
+From 1.0.0, these change in a backward-incompatible way only in a major release (2.0.0):
+
+- The CLI: command names, flags, and exit codes ([cli.md](cli.md)).
+- The JSON report, within a major `REPORT_SCHEMA_VERSION` ([report.schema.json](report.schema.json)).
+  New optional fields can appear in a minor release, so parse leniently.
+- The SARIF output and the diff, guard and inventory JSON ([report-schema.md](report-schema.md)).
+- The Python API: `analyze`, `analyze_directory`, `Report.to_dict()` and the names in
+  `skilltotal.__all__`.
+- The GitHub Action's inputs and outputs ([ci.md](ci.md)), and the MCP server's tool names and
+  their arguments ([mcp-server.md](mcp-server.md)).
+
+Not covered. These can change in any minor release:
+
+- Detection: which rules exist, what they match, scores and verdicts. A new rule can turn a
+  component that passed into one that fails, so CI should pin an exact version and move to a
+  new one on purpose. Each such release bumps `RULESET_VERSION` and lists the changes in
+  `RULES_CHANGELOG.md`.
+- Human-readable text: rule descriptions, console output, needs-review notes.
+- Modules not exported from `skilltotal`, and the plugin's internal hook scripts.
+
+Anything stable is marked deprecated in `CHANGELOG.md` before it is removed or changed. Where
+possible it also warns when used. It keeps working for at least one minor release and is
+removed only in the next major.
+
 ## Pre-release checklist
 
 - [ ] Tests green, ruff clean, bandit clean
