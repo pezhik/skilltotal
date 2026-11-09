@@ -563,27 +563,49 @@ def test_extractor_reads_each_surface_once(tmp_path):
 
 
 # --- linear time on crafted input
-_BUDGET_S = 3.0
+# Each case is scanned at a quarter of its size and at full size, in the same process, alternating,
+# and compared by best-of-N (repeated only while the ratio is too high). Machine load (a parallel
+# pytest worker, a release gate) slows both measurements alike and cancels out of the ratio.
+# Linear work gives about 4, a quadratic pass about 16 (less where the fixed cost of an engine run
+# dilutes it). An absolute wall-clock budget failed on loaded runners while passing alone.
+_SCALE = 4
+_REPEATS = 4
+_MAX_RATIO = 9.0
+# Below this a run is mostly timer and file-system noise, so the small run is not divided by less.
+_NOISE_FLOOR_S = 0.05
 
 
-@pytest.mark.parametrize("rel, text", [
-    # Sized so a quadratic pass would take minutes, while the per-match cost of the scanners that
-    # were already there stays well inside the budget on a loaded CI runner.
-    (".claude/settings.json", json.dumps(_hook("curl " * 15_000))),
-    (".claude/settings.json", json.dumps(_hook("~/.ssh/id_rsa -i " * 8_000 + "curl"))),
-    ("SKILL.md", "---\nname: x\nhooks:\n  A:\n    - command: a" + " " * 200_000 + "b\n---\n"),
-    ("x.js", "fetch(" * 60_000),
-    # The rest of the engine already spends ~2.5 s on 20,000 such lines; 5,000 isolates this pass.
-    ("y.js", "const a = process.env;\n" * 5_000 + "fetch(a)\n"),
-    (".codex/config.toml", "[mcp_servers.x]\nargs = [" + '"a",' * 50_000 + "\n"),
-    ("z.json", json.dumps(["curl https://x.invalid " + "a " * 100_000 + "~/.ssh/id_rsa"])),
-], ids=["curls", "handed-paths", "yaml-blanks", "open-calls", "env-uses", "toml-array",
-        "json-command"])
-def test_new_passes_stay_linear(tmp_path, rel, text):
-    path = tmp_path / rel
+def _scan_seconds(root: Path, rel: str, text: str) -> float:
+    path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     start = time.perf_counter()
-    _report(tmp_path)
-    took = time.perf_counter() - start
-    assert took < _BUDGET_S, f"{rel} took {took:.1f}s"
+    _report(root)
+    return time.perf_counter() - start
+
+
+@pytest.mark.parametrize("rel, make, size", [
+    # Sized so a quadratic pass would take minutes, while the per-match cost of the scanners that
+    # were already there stays modest.
+    (".claude/settings.json", lambda n: json.dumps(_hook("curl " * n)), 15_000),
+    (".claude/settings.json", lambda n: json.dumps(_hook("~/.ssh/id_rsa -i " * n + "curl")), 8_000),
+    ("SKILL.md", lambda n: "---\nname: x\nhooks:\n  A:\n    - command: a" + " " * n + "b\n---\n",
+     200_000),
+    ("x.js", lambda n: "fetch(" * n, 60_000),
+    # The rest of the engine already spends ~2.5 s on 20,000 such lines; 5,000 isolates this pass.
+    ("y.js", lambda n: "const a = process.env;\n" * n + "fetch(a)\n", 5_000),
+    (".codex/config.toml", lambda n: "[mcp_servers.x]\nargs = [" + '"a",' * n + "\n", 50_000),
+    ("z.json", lambda n: json.dumps(["curl https://x.invalid " + "a " * n + "~/.ssh/id_rsa"]),
+     100_000),
+], ids=["curls", "handed-paths", "yaml-blanks", "open-calls", "env-uses", "toml-array",
+        "json-command"])
+def test_new_passes_stay_linear(tmp_path, rel, make, size):
+    small_text, large_text = make(size // _SCALE), make(size)
+    small = large = float("inf")
+    for i in range(_REPEATS):
+        # A fresh folder per run: the earlier file must not be scanned alongside this one.
+        small = min(small, _scan_seconds(tmp_path / f"s{i}", rel, small_text))
+        large = min(large, _scan_seconds(tmp_path / f"l{i}", rel, large_text))
+        if large < max(small, _NOISE_FLOOR_S) * _MAX_RATIO:
+            return  # a quiet pair is enough; only a noisy one is repeated
+    pytest.fail(f"{rel}: {small:.3f}s at 1/{_SCALE} size, {large:.3f}s at full size")
