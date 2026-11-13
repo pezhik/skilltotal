@@ -50,6 +50,9 @@
  "negative/AST01/credential-exfil/markdown-cited-paths": [
   "ST-NET-PY"
  ],
+ "negative/AST01/credential-exfil/npm-postinstall-token-as-header": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST01/credential-exfil/ordinary-config-network": [
   "ST-FS-PY-READ",
   "ST-NET-PY"
@@ -593,6 +596,20 @@
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/npm-postinstall-staged-tempfile": [
+  "ST-COMBO-EXFIL",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/npm-preinstall-staged-variable": [
+  "ST-COMBO-EXFIL",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
  ],
  "positive/AST01/credential-exfil/python-aws-post": [

@@ -12,6 +12,12 @@ network somewhere. This rule is the narrower, stronger case: a single construct 
   -X POST -d @~/.ssh/id_rsa ...``) is exactly this. A credential handed to its own client is not
   sent anywhere (``ssh -i ~/.ssh/key``, ``--kubeconfig``, a container mount ``-v ~/.aws:...``), and
   a provider's token sent to that provider (``gh auth token`` to ``api.github.com``) is its use.
+* **An npm install-time script** (``preinstall``, ``install``, ``postinstall``, ``prepare``) that
+  does the same, inline or through a shell script it runs.
+* **A shell script one of those runs that collects first and sends later**: a line that writes a
+  credential, the environment or a login token to a file or variable (``cat ~/.aws/credentials >>
+  "$out"``), and a later line in which a network client uploads it (``curl --data-binary
+  @"$out" ...``), the shape of the November 2026 CI and install-time stealers.
 * **Code that passes the whole process environment into a network request**: ``fetch(url, {body:
   JSON.stringify(process.env)})``, ``requests.post(url, json=dict(os.environ))``, directly or
   through a variable. The environment is where a machine keeps its tokens (CI secrets, cloud keys,
@@ -40,6 +46,7 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     aggregated_review,
 )
+from skilltotal.scanners.install_scripts import _NPM_LIFECYCLE_SCRIPTS, npm_install_commands
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
 
 RULE_ID = "ST-SECRET-EXFIL"
@@ -873,9 +880,11 @@ class SecretExfilScanner(Scanner):
             description=(
                 "One command or call reads a credential and sends it over the network. Either a "
                 "command an agent or editor runs on its own (a hook, an MCP server's launch "
-                "command, a status line or credential helper, a plugin monitor) uploads a key or "
-                "credential file, a login token or the environment (`curl -d @~/.ssh/id_rsa`, "
-                "`env | curl --data-binary @-`), or code passes the whole process environment "
+                "command, a status line or credential helper, a plugin monitor) or an npm "
+                "install-time script uploads a key or credential file, a login token or the "
+                "environment (`curl -d @~/.ssh/id_rsa`, `env | curl --data-binary @-`), directly "
+                "or through a shell script that collects it into a file or variable and sends "
+                "that on a later line, or code passes the whole process environment "
                 "(`process.env`, `os.environ`) into an HTTP request. The environment holds the "
                 "machine's tokens and keys, so either way they reach whoever runs the endpoint."
             ),
@@ -900,6 +909,7 @@ class SecretExfilScanner(Scanner):
                 ev = _script_evidence(command, by_path)
             if ev is not None:
                 evidence.append(ev)
+        evidence.extend(_install_evidence(index, by_path))
         partly: list[tuple[str, int | None]] = []
         for f in index.select(suffixes=_JS_SUFFIXES):
             sends, truncated = _js_env_sends(f)
@@ -943,9 +953,18 @@ _SHELL_SUFFIXES = (".sh", ".bash", ".zsh", ".ps1")
 
 def _script_evidence(command: AutorunCommand, by_path: dict[str, IndexedFile]) -> Evidence | None:
     """A shell script the command runs, shipped in the component, that uploads a credential."""
-    near = command.file.relpath.split("/")[:-1]
+    return _run_script_evidence(command.text, command.file.relpath, by_path)
+
+
+def _run_script_evidence(
+    command: str, command_file: str, by_path: dict[str, IndexedFile]
+) -> Evidence | None:
+    """A shell script ``command`` (written in ``command_file``) runs, shipped in the component,
+    that uploads a credential: in one line, or collected into a file or variable first and that
+    sent by a later line."""
+    near = command_file.split("/")[:-1]
     folders = [""] + ["/".join(near[:k]) for k in range(len(near), 0, -1)]
-    for token in _SCRIPT_TOKEN.findall(command.text):
+    for token in _SCRIPT_TOKEN.findall(command):
         cleaned = re.sub(r"^(?:\$\{?\w+\}?[\"']?[/\\])+", "", token)
         cleaned = re.sub(r"^(?:\.[/\\])+", "", cleaned).replace("\\", "/").lstrip("/")
         for folder in folders:
@@ -959,4 +978,104 @@ def _script_evidence(command: AutorunCommand, by_path: dict[str, IndexedFile]) -
                 span = secret_upload(line)
                 if span is not None:
                     return script.evidence_for_lines(line_no, line_no)
+            staged = staged_upload_lines(script.text.splitlines())
+            if staged is not None:
+                read_at, send_at = staged
+                # Both lines when they are close together, else the send alone.
+                first = read_at if send_at - read_at <= _STAGED_SPAN else send_at
+                return script.evidence_for_lines(first, send_at)
     return None
+
+
+# --- a script that collects a credential first and sends it on a later line ------------------
+# The real install-time stealers (the wfx campaign, November 2026) never read and send in one
+# command: `cat ~/.aws/credentials >> "$out"`, then `curl --data-binary @"$out" http://...`.
+# A line that reads a credential (a credential path, the whole environment, a token command) and
+# writes the result to a file (`> F`, `>> F`, `| tee F`) or a variable (`V=$(...)`) marks that
+# file or variable; a later line in which a network client uploads it is the send. A marked name
+# used as a header (`-H "Authorization: Bearer $TOKEN"`) is how a credential is used, not sent,
+# and a provider's token sent to the provider's own hosts is its use too.
+_REDIRECT_TO = re.compile(r"(?:>>?|\btee(?:\s+-a)?)\s*([\"']?)(\$\{?\w+\}?|[\w./~-]+)\1")
+_ASSIGN_FROM = re.compile(r"^\s*(?:export\s+|local\s+|readonly\s+)?([A-Za-z_]\w*)=[\"']?(?:\$\(|`)")
+# Where a network client takes data to upload. `@NAME` is curl's "the contents of this file".
+_UPLOAD_OPTION = (
+    r"(?:-d|--data(?:-binary|-raw|-urlencode|-ascii)?|-F|--form|-T|--upload-file|--post-file|"
+    r"--post-data|--body-file|--body-data|-InFile|-Body)"
+)
+_MAX_STAGED_LINES = 5000
+_STAGED_SPAN = 3
+
+
+def _name_patterns(name: str) -> list[re.Pattern[str]]:
+    """Ways a line can hand the marked file or variable ``name`` to a network client as data."""
+    if name.startswith("$"):
+        bare = re.escape(name.strip("${}"))
+        ref = rf"\$\{{?{bare}\}}?(?![\w])"
+    else:
+        ref = rf"{re.escape(name)}(?![\w./-])"
+    return [
+        re.compile(rf"@[\"']?{ref}"),
+        re.compile(rf"{_UPLOAD_OPTION}(?:\s+|=)[\"']?[^\s\"']*{ref}"),
+        re.compile(rf"<\s*[\"']?{ref}"),
+        re.compile(rf"\bcat\s+[\"']?{ref}[\"']?\s*\|"),
+    ]
+
+
+def staged_upload_lines(lines: list[str]) -> tuple[int, int] | None:
+    """``(read_line, send_line)``, 1-based, of a credential collected into a file or variable on
+    one line and uploaded by a network client on a later one, or None."""
+    marked: dict[str, tuple[int, tuple[str, ...]]] = {}
+    for no, raw in enumerate(lines[:_MAX_STAGED_LINES], start=1):
+        if raw.lstrip().startswith("#"):
+            continue
+        line = _HOME.sub("~", raw)
+        if marked and (_NET_CLIENT.search(line) or _INLINE_NET.search(line)):
+            hosts = _hosts(line)
+            for name, (read_at, own_hosts) in marked.items():
+                if own_hosts and hosts and all(h.endswith(own_hosts) for h in hosts):
+                    continue
+                if any(p.search(line) for p in _name_patterns(name)):
+                    return read_at, no
+        source = _credential_source(line)
+        if source is None:
+            continue
+        at, own_hosts = source
+        names = [m.group(2) for m in _REDIRECT_TO.finditer(line, at)]
+        assign = _ASSIGN_FROM.match(line)
+        if assign and assign.end() <= at:
+            names.append("$" + assign.group(1))
+        for name in names:
+            if name.startswith("/dev/"):
+                continue
+            marked.setdefault(name, (no, own_hosts))
+    return None
+
+
+def _credential_source(line: str) -> tuple[int, tuple[str, ...]] | None:
+    """Offset of what the line reads that holds credentials, and the hosts it may go to, or None."""
+    for m in _STRONG_PATHS.finditer(line):
+        if _METADATA.match(m.group(0)) or _HANDED_TO_CLIENT.search(_stage_before(line, m.start())):
+            continue
+        return m.start(), ()
+    m = _ENV_DUMP.search(line)
+    if m:
+        return m.start(), ()
+    for pattern, own_hosts in _TOKEN_COMMANDS:
+        m = pattern.search(line)
+        if m:
+            return m.start(), own_hosts
+    return None
+
+
+def _install_evidence(index: FileIndex, by_path: dict[str, IndexedFile]) -> list[Evidence]:
+    """npm install-time scripts that upload a credential, inline or through a script they run."""
+    found: list[Evidence] = []
+    for f in index.select(names=("package.json",)):
+        for _name, command, start, end in npm_install_commands(f, _NPM_LIFECYCLE_SCRIPTS):
+            if secret_upload(command) is not None:
+                found.append(f.evidence_for_span(start, end))
+                continue
+            ev = _run_script_evidence(command, f.relpath, by_path)
+            if ev is not None:
+                found.append(ev)
+    return found
