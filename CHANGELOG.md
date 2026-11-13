@@ -4,6 +4,17 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.1.0]
+
+### Changed
+- Ruleset 100: `ST-SECRET-EXFIL` reads npm install-time scripts and finds a credential that a
+  shell script collects into a file or variable and uploads on a later line. See
+  `RULES_CHANGELOG.md`.
+- The trojanized-image list behind `ST-ARTIFACT-KNOWN-BAD` lives in its own data module
+  (`skilltotal/known_artifacts.py`), with a format test for every entry.
+- CI and Action dependencies: setup-python v7.1.0, codeql-action v4.39.1, pypi-publish
+  release/v1, setuptools 84.2.1.
+
 ## [1.0.0]
 
 The CLI, the report formats, the Python API, the GitHub Action and the MCP tools are now a stable

@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.0.0 · ruleset 99 · Python 3.14 · offline corpus.
+Engine 1.1.0 · ruleset 100 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (229/229 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/193 benign samples wrongly flagged)
+- **recall: 100.0%** (231/231 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/194 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -97,7 +97,7 @@ Engine 1.0.0 · ruleset 99 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 30 | 45 | 38 | 5 |
+| AST01 | 30 | 46 | 38 | 6 |
 | AST02 | 26 | 26 | 10 | 4 |
 | AST03 | 0 | 2 | 0 | 0 |
 | AST04 | 25 | 4 | 8 | 0 |
@@ -115,7 +115,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 4 | 0 | - | - |
-| `ST-COMBO-EXFIL` | AST01 | 37 | 0 | 1/1 | 1/1 |
+| `ST-COMBO-EXFIL` | AST01 | 39 | 0 | 1/1 | 1/1 |
 | `ST-CONVERGENCE` | AST01 | 5 | 0 | - | - |
 | `ST-EMAIL-BCC-EXFIL` | AST01 | 1 | 0 | 1/1 | 1/1 |
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
@@ -142,7 +142,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-PY-MAIN-FILE-HARVEST` | AST01 | 1 | 0 | - | - |
 | `ST-PY-SOCKET-SHELL` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
-| `ST-SECRET-EXFIL` | AST01 | 11 | 0 | - | - |
+| `ST-SECRET-EXFIL` | AST01 | 13 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 2 | 1 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |
@@ -175,9 +175,9 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ARTIFACT-FOREIGN-IMAGE` | AST02 | 1 | 0 | - | - |
 | `ST-ARTIFACT-HTTP-BINARY` | AST02 | 1 | 0 | - | - |
 | `ST-GIT-HOOK-PERSIST` | AST02 | 2 | 0 | 1/1 | 2/2 |
-| `ST-INSTALL-DROPPER` | AST02 | 13 | 0 | 1/1 | 1/1 |
+| `ST-INSTALL-DROPPER` | AST02 | 15 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 2 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 36 | 18 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 38 | 19 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-DNS-BEACON` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-MASKED-REGISTRY` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-PREPARE` | AST02 | 0 | 3 | 1/1 | 1/1 |

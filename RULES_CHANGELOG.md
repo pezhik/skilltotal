@@ -4,6 +4,23 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 100 (engine 1.1.0)
+
+Install-time stealers often split the work across lines: one line collects credentials into a
+temporary file and a later line uploads it. The CI secret stealer pushed into thousands of
+repositories with hijacked GitHub accounts in November 2026 did this, in workflows and in npm
+`postinstall` scripts. `ST-SECRET-EXFIL` now matches that shape.
+- `ST-SECRET-EXFIL` (changed): also reads npm install-time scripts (`preinstall`, `install`,
+  `postinstall`, `prepare`), both the inline command and the shell script it runs. In such a
+  script, a line that writes a credential file, the environment or a login token to a file or a
+  variable (`cat ~/.aws/credentials >> "$out"`, `creds="$(cat ~/.npmrc)"`) and a later line that
+  uploads it with a network client (`curl --data-binary @"$out"`, `wget --post-data="$creds"`,
+  `nc host 80 < file`) are reported as one finding. When the two lines are close together, both
+  are shown as evidence. These do not count: a token used as a request header, a provider's token
+  sent to that provider, and a file that never held a credential.
+- A package of that shape is rated malicious.
+- Calibration: the changed rule fires on none of the 1,023 popular packages in the reputable corpus.
+
 ## ruleset 99 (engine 1.0.0)
 
 A repository can be clean while the artifacts it runs are not. Copycat forks of an open-source AI
