@@ -48,8 +48,8 @@ needs to migrate code when `REPORT_SCHEMA_VERSION` (major) advances.
 - Security fixes ship as a patch or minor release as soon as they pass the release gate. They
   are listed under Security in `CHANGELOG.md`.
 - Detection changes (a new or changed rule, or a change in which files the rules read) ship in a
-  minor release that bumps `RULESET_VERSION`, at most about once a week. Before the tag, each
-  change is checked against a set of benign components for new false positives.
+  minor release that bumps `RULESET_VERSION`, as soon as they pass the release gate. Before the
+  tag, each change is checked against a set of benign components for new false positives.
 - Bug fixes ship in a patch release when ready.
 - A breaking change to the report shape or the public API ships only with a major
   `REPORT_SCHEMA_VERSION` bump and is described in `CHANGELOG.md`.
