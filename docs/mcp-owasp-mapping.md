@@ -10,7 +10,7 @@ listed at the end as honest gaps (planned for the hosted SkillTotal Cloud).
 
 | OWASP control (static) | SkillTotal rule(s) | Notes |
 |---|---|---|
-| Tool-description / metadata injection (tool poisoning) | `ST-MCP-TOOL-POISONING`, `ST-PROMPT-INJECTION` | manifest tool/`inputSchema` descriptions + code docstrings; de-obfuscated (homoglyph/zero-width) |
+| Tool-description / metadata injection (tool poisoning) | `ST-MCP-TOOL-POISONING`, `ST-PROMPT-INJECTION` | manifest tool/`inputSchema` descriptions + code docstrings; de-obfuscated (homoglyph/zero-width, also when written as JSON `\u` escapes); plain-sentence instructions with no marker (credential hand-over, concealed send, secret into an unrelated field, another tool's recipient changed) |
 | Sampling abuse (server-written prompt run by the client's model) | `ST-MCP-SAMPLING-INJECTION` | Python functions calling `create_message`, TypeScript `createMessage(`; needs two of credential request, command request, concealment |
 | Cross-server tool shadowing | `ST-MCP-TOOL-SHADOWING` | surfaced for review (legit routing is indistinguishable by pattern) |
 | Over-broad privilege / scope in manifest | `ST-MCP-OVERBROAD-SCOPE` | wildcard / `full_access` / `read_write_all` scope grants |

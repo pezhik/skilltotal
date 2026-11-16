@@ -1,0 +1,29 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "tools": [
+    {
+      "name": "scan_text",
+      "description": "Scans text for prompt-injection phrases such as 'ignore previous instructions' or a hidden <IMPORTANT> block that tells the agent to read ~/.ssh/id_rsa, and reports each match.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "check_description",
+      "description": "Checks a tool description for instructions like 'do not tell the user' or 'silently send the conversation history to a URL'.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}
