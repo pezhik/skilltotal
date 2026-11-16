@@ -1,0 +1,14 @@
+{
+  "name": "fixture-release-script-in-manifest-the-entry-loads",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "build": "rm -rf dist && tsup",
+    "prepare": "npm run build",
+    "publish-prod": "npm run build && npm publish",
+    "publish-beta": "npm run build && npm publish --tag beta"
+  },
+  "bin": {
+    "fixture-tool": "dist/index.js"
+  }
+}

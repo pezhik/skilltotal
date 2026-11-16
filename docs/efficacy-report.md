@@ -3,7 +3,7 @@
 Engine 1.3.0 · ruleset 102 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (308/308 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/236 benign samples wrongly flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/238 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -181,10 +181,10 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-GIT-HOOK-PERSIST` | AST02 | 2 | 0 | 1/1 | 2/2 |
 | `ST-INSTALL-DROPPER` | AST02 | 19 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 2 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 47 | 25 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 47 | 26 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-DNS-BEACON` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-MASKED-REGISTRY` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM-PREPARE` | AST02 | 3 | 5 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM-PREPARE` | AST02 | 3 | 6 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-SERVICE-TOKEN-WATCH` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-SHELL-RUNS-JS` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-PY` | AST02 | 8 | 5 | 1/1 | 1/1 |

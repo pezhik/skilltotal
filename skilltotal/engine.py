@@ -656,7 +656,9 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
                 reached.append(f"{_MAX_INSTALL_WORDS} words of the {script} command")
             for word in words:
                 target = _module_file(base, package, word)
-                if target is not None:
+                # A manifest a command only names (`cp package.json dist/`, `node -p
+                # "require('./package.json').version"`) is data, not a script the command starts.
+                if target is not None and target.name != "package.json":
                     queue.append((target, script, package))
     while queue:
         if len(found) >= _MAX_INSTALL_FILES:
@@ -665,7 +667,9 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
             break
         target, script, package = queue.pop(0)
         relpath = target.relative_to(base).as_posix()
-        if relpath in found:
+        if relpath in found or target.name == "package.json":
+            # A manifest an install-run file loads for its version (`require("../package.json")`)
+            # is data. Its own scripts are judged by their names, not as a script that ran.
             continue
         found[relpath] = script
         suffix = target.suffix.lower()

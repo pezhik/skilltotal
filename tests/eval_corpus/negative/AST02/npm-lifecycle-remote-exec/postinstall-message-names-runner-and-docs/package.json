@@ -1,0 +1,8 @@
+{
+  "name": "fixture-postinstall-message-names-runner-and-docs",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "postinstall": "node -e \"console.log('\\nTool installed. Run: npx fixture-tool setup. Docs: https://example.test/fixture-tool\\n')\""
+  }
+}

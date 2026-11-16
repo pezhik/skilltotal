@@ -38,8 +38,9 @@ All notable changes to the SkillTotal engine. Format loosely follows
   `pnpm.overrides`.
 - Precision: a quoted example introduced by "such as" or "e.g." and a marker that is only named
   are not reported as injection. A zero-width break hint at a camelCase border is not counted as
-  hidden text.
-- Eval corpus: 308 malicious and 236 benign samples (240 and 200 in 1.2.0), recall 308/308 with
+  hidden text. A package.json that an install-run file loads or a command names is not read as a
+  script, and a package runner counts as fetching code only when the address is what it runs.
+- Eval corpus: 308 malicious and 238 benign samples (240 and 200 in 1.2.0), recall 308/308 with
   0 false positives.
 
 ## [1.2.0]

@@ -424,6 +424,9 @@
   "ST-INSTALL-NPM",
   "ST-SHELL-NODE"
  ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-message-names-runner-and-docs": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-npm-run-build": [
   "ST-INSTALL-NPM"
  ],
@@ -442,6 +445,9 @@
  "negative/AST02/npm-worm/rebuild-command-joined": [
   "ST-INSTALL-NPM",
   "ST-SHELL-NODE"
+ ],
+ "negative/AST02/npm-worm/release-script-in-manifest-the-entry-loads": [
+  "ST-INSTALL-NPM-PREPARE"
  ],
  "negative/AST02/npm-worm/release-tool-publishes": [
   "ST-SHELL-NODE"

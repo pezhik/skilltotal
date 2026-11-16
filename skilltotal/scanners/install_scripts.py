@@ -107,7 +107,10 @@ _INSTALL_FETCH_RUN = re.compile(
     r"|\b(?:rev|xxd\s+-r)\b[^\n|]{0,200}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
     r"|\bpython[0-9.]*\s+-c\b[^\n]{0,600}?\b(?:exec|eval)\s*\([^\n]{0,200}?"
     r"\b(?:urlopen|urlretrieve|requests\s*\.\s*get)\b"
-    r"|\b(?:npx|bunx|npm\s+exec|pnpm\s+dlx|yarn\s+dlx)\b[^\n|;&]{0,200}?\bhttps?://",
+    # The address is what the runner is given to run (after its own flags), not an address
+    # that appears later in the line (a printed "run npx tool ... docs: https://...").
+    r"|(?<![\w.-])(?:npx|bunx|npm\s+exec|pnpm\s+dlx|yarn\s+dlx)\s+(?:--?[\w-]+(?:=\S+)?\s+){0,4}"
+    r"(?:--\s+)?[\"']?https?://",
     re.IGNORECASE,
 )
 

@@ -55,6 +55,7 @@ _GIT_SPEC = re.compile(
 _REGISTRY_TARBALL = re.compile(r"^https://registry\.(?:npmjs\.org|yarnpkg\.com)/")
 
 _JS_SUFFIXES = (".js", ".cjs", ".mjs", ".ts", ".cts", ".mts")
+_DATA_SUFFIXES = (".json", ".jsonc", ".json5", ".yml", ".yaml", ".toml", ".lock", ".md", ".txt")
 _PUBLISH_CMD = r"(?:npm|pnpm|yarn|bun)(?:\.cmd)?\s+(?:npm\s+)?publish\b"
 # `execSync("npm publish")`, a bundler's `(0,o.execSync)("npm publish")`, a template literal.
 _JS_EXEC_PUBLISH = re.compile(
@@ -326,6 +327,11 @@ def _install_commands_that_publish(f: IndexedFile, manifest: dict) -> list[Evide
 def _publishes(f: IndexedFile) -> list[Evidence]:
     text = f.text
     found: list[Evidence] = []
+    if f.suffix in _DATA_SUFFIXES:
+        # A manifest or a config an install command only names (`cp package.json dist/`) is not a
+        # script: its own `"release": "npm run build && npm publish"` runs when a maintainer
+        # asks for it. Install commands in package.json are judged by their script name.
+        return found
     if f.suffix in _JS_SUFFIXES:
         for pattern in (_JS_EXEC_PUBLISH, _JS_SPAWN_PUBLISH):
             for m in pattern.finditer(text):

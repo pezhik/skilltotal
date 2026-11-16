@@ -123,6 +123,13 @@ the end.
     text. It is listed as a note.
   - A downloaded file passed to a script as an argument (`./verify.sh data`) is not read as
     started.
+  - A package.json that an install-run file loads (`require("../package.json")`) or that an
+    install command names is data, not a script. `ST-NPM-INSTALL-PUBLISH` does not read a
+    release script in it (`"publish-prod": "npm run build && npm publish"`) as publishing at
+    install time.
+  - `ST-INSTALL-NPM-REMOTE-EXEC` counts `npx`, `bunx`, `npm exec`, `pnpm dlx` and `yarn dlx` as
+    running fetched code only when the web address is what the runner is given to run. An
+    install message that names a command and a documentation address is not reported.
 - Limits:
   - A shell script that is not in a skill's folder, not named by an instruction file and not a
     git hook is not read for credential upload outside install time.
@@ -134,7 +141,7 @@ the end.
     read.
   - `ST-DEP-FOREIGN-SOURCE` reads only `tarball:` addresses in `pnpm-lock.yaml`. The look-alike
     table is a curated set of about 200 characters, not the full Unicode confusables list.
-- Eval corpus: 308 malicious and 236 benign samples (240 and 200 in ruleset 101). All 308
+- Eval corpus: 308 malicious and 238 benign samples (240 and 200 in ruleset 101). All 308
   malicious samples are detected and no benign sample is flagged.
 
 ## ruleset 101 (engine 1.2.0)
