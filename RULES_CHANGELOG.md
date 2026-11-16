@@ -4,6 +4,139 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 102 (engine 1.3.0)
+
+Five new rules, and the existing rules read more of the places where a component hands a command
+to an agent, a shell or a package manager. The changes are grouped by area. Limits are listed at
+the end.
+- Credential exfiltration:
+  - `ST-SECRET-EXFIL` (changed) reads the commands a component gives an agent to run: shell
+    scripts in a skill's folder or named by an instruction file, git hook files with or without a
+    suffix, and shell blocks of instruction files. It also reads command strings passed to a shell
+    from Python or JavaScript (`os.system`, `subprocess` with a shell, `child_process.exec`).
+  - `ST-SECRET-EXFIL` (changed) follows credentials packed with `tar` or `zip` to the later line
+    that uploads the archive, in install scripts too.
+  - `ST-SECRET-EXFIL` (changed) counts `gh gist create` and DNS lookups of encoded data as
+    uploads, and its upload check reads `~/.netrc` as a credential file.
+  - `ST-SECRET-EXFIL` (changed) reports a named provider token (`$GITHUB_TOKEN`, `$NPM_TOKEN`,
+    `$ANTHROPIC_API_KEY`) sent to a host that is written out in the command and is not the
+    token's own service.
+  - `ST-AGENT-CRED-HELPER-EXEC` (changed) follows a credential helper into the script in the
+    repository that it runs.
+- Fetch-and-run and decode-and-run:
+  - `ST-SHELL-PIPE-EXEC` (changed) also matches process substitution (`bash <(curl ...)`),
+    `eval "$(wget ...)"`, `sh -c "$(curl ...)"`, a download piped into an interpreter
+    (`curl ... | python3 -`) and `python -c` that executes what it fetches.
+  - `ST-SHELL-PIPE-EXEC` (changed) reads commands continued over several lines and the recipes of
+    Makefiles, `.mk` files and justfiles.
+  - `ST-SHELL-PIPE-EXEC` (changed) matches a download saved to a file that the same script then
+    starts. It stays silent when a checksum or signature check sits between the two steps.
+  - `ST-OBF-DECODE-EXEC-SH` (changed) reads base32, `xxd -r` and `openssl -d` decoding. It matches
+    decoded text run through process substitution, a here-string, `-c "$(...)"`, or a variable
+    or file that is run later.
+  - `ST-AGENT-AUTORUN-REMOTE` (changed) reads inline Python and JavaScript in a hook or MCP
+    server command that evaluates what it fetches (`urlopen` under an alias, `requests.get`,
+    `httpx.get`, `fetch().then(eval)`).
+  - `ST-AGENT-AUTORUN` (changed) reports a hook command that posts its own input to a web
+    address, as a risky construct.
+  - `ST-SKILL-DYNAMIC-EXEC` (changed) reads the inline and fenced forms of a dynamic-context
+    command. A file under `commands/` counts without frontmatter.
+- MCP tool poisoning:
+  - `ST-MCP-TOOL-POISONING` (changed) reads poisoning written as a plain sentence, with no marker
+    and no stock phrase. It reads MCP listings (tool, parameter and annotation text) and server
+    code (Python docstrings, `server.tool` descriptions, zod `.describe()`, server instructions).
+  - Five shapes are matched inside one sentence: a credential file is read and its contents are
+    passed in the call; data is sent and the sentence keeps it from the user; a secret-named
+    environment variable is placed in a field that is not a credential field; the system prompt
+    or every environment variable is placed in an unrelated field; another tool's recipient is
+    changed to a hard-coded contact.
+  - "don't notify the user about it" and "no need to mention this to the user" count as
+    concealment of the agent's own action.
+  - Hidden text written as JSON escapes is found in the decoded strings of an MCP listing or
+    client configuration: zero-width characters between letters, Unicode tag characters as
+    surrogate pairs, or an injection phrase spelled with escapes. The evidence points at the
+    escape in the file.
+  - A JSON line that tells the reader to read a credential path is reported by `ST-SENS-PATH`
+    and is not labelled a denylist entry.
+- Hidden and look-alike text:
+  - The text fold that runs before the phrase rules removes every invisible format character:
+    direction marks, variation selectors, the combining grapheme joiner, Hangul fillers,
+    invisible operators, deprecated format characters and C0/C1 controls. An invisible character
+    that stands for a space is read as a space.
+  - The fold applies NFKD before a wider look-alike table: Cyrillic, Greek, Armenian, small
+    capitals, enclosed and regional-indicator letters, and stacked marks.
+  - `ST-PROMPT-INJECTION` (changed) reads leetspeak, letters spaced out or doubled, and words
+    split by markup, in instruction files and MCP tool manifests. Only a whole multi-word phrase
+    counts, and the evidence shows the text as written and as read.
+  - `ST-SKILL-FETCH-EXEC` (changed) reads the folded text, so a fetch-and-run command spelled
+    with look-alike or full-width letters is reported, still at medium.
+  - JavaScript `\uXXXX`, `\u{...}` and `\xNN` escapes are written out before the Node.js rules
+    run (`ST-SHELL-NODE`, `ST-SHELL-PIPE-EXEC-NODE`, `ST-DYN-NODE`, `ST-FS-NODE-READ`,
+    `ST-NET-NODE`). The evidence is the line as written.
+  - `ST-HIDDEN-UNICODE` (changed) counts the same invisible set between Latin letters.
+- Agent and server configuration:
+  - `ST-AGENT-ENV-INJECT` (new, high, risky construct): an `env` block in agent settings, an MCP
+    server entry or a plugin's language server entry sets a variable that makes each process load
+    a file or run a command. The variables are `LD_PRELOAD`, `DYLD_INSERT_LIBRARIES`, `BASH_ENV`,
+    `PYTHONSTARTUP`, `GIT_SSH_COMMAND`, `CLAUDE_CODE_SHELL_PREFIX`, and `NODE_OPTIONS` with
+    `--require`, `--import` or `--loader` and a path.
+  - The value of such a variable is checked like any auto-run command, and the file it names is
+    read as an entry point. `curl ... | sh` in `GIT_SSH_COMMAND` is reported by
+    `ST-AGENT-AUTORUN-REMOTE`, and a shell script named by `BASH_ENV` is read by
+    `ST-SECRET-EXFIL`.
+  - Dev container lifecycle commands are read. `initializeCommand` is treated like a folder-open
+    task (`ST-AGENT-AUTORUN-REMOTE` on fetch-and-run), and an in-container hook that downloads
+    and runs code is reported by `ST-AGENT-AUTORUN`.
+  - `ST-DISGUISED-SCRIPT` (new, high, risky construct): an npm install-time script, an
+    instruction file or an auto-run command starts node, python or a shell on a file named as an
+    image, document, font, archive or data file (`node assets/logo.png`,
+    `python3 assets/template.docx`). Every rule then reads that file as the language it is
+    started in.
+  - `ST-AGENT-AUTO-APPROVE` (changed) reads the frontmatter of skills, commands and subagents:
+    `permissionMode: bypassPermissions`, and a wildcard such as `Bash(*)` in `allowed-tools` or
+    `tools`.
+- Dependency sources:
+  - `ST-DEP-FOREIGN-SOURCE` (new, medium, risky construct): a shipped lockfile
+    (`package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`) resolves a
+    package from a host that is not a public registry or mirror, not a git host, and not declared
+    in the component's own `.npmrc` or `.yarnrc`. A private registry looks the same, so the
+    finding names the source and does not judge it.
+  - `ST-DEP-FOREIGN-SOURCE` also reports a shipped `.npmrc`, `.yarnrc`, `.yarnrc.yml`,
+    `pip.conf`, `pip.ini`, `.pypirc` or `uv.toml` that sets a registry over plain http or turns
+    certificate checks off. A redirect over https is a review note, and a scoped registry
+    (`@corp:registry=`) is not reported.
+  - `ST-DEP-REGISTRY-LOOKALIKE` (new, high, malicious indicator): a lockfile entry or a shipped
+    package-manager config names a host that imitates `registry.npmjs.org`,
+    `registry.yarnpkg.com` or `pypi.org`. The host is either the registry's name followed by
+    another domain (`registry.npmjs.org.example.invalid`) or a name one or two characters away.
+  - `ST-NPM-URL-DEP` and `ST-NPM-GIT-DEP` (changed) read `overrides`, `resolutions` and
+    `pnpm.overrides`.
+  - `ST-NPM-BIN-SHADOW` (new, high, risky construct): package.json `bin` installs a program
+    under the name of a tool the package is not, such as git, node, npm, python, sudo, ssh, curl
+    or docker. The runtime and the package manager's own packages are not reported.
+- Precision:
+  - A quoted example introduced by "such as", "like", "e.g." or "for example" and closed in the
+    same sentence is not reported by `ST-PROMPT-INJECTION` or `ST-MCP-TOOL-POISONING`. A marker
+    that is only named ("a hidden `<IMPORTANT>` block") is not reported either, so a security
+    server that describes the phrases it looks for stays clean.
+  - `ST-HIDDEN-UNICODE` does not count a zero-width break hint at a camelCase border as hidden
+    text. It is listed as a note.
+  - A downloaded file passed to a script as an argument (`./verify.sh data`) is not read as
+    started.
+- Limits:
+  - A shell script that is not in a skill's folder, not named by an instruction file and not a
+    git hook is not read for credential upload outside install time.
+  - `ST-MCP-TOOL-POISONING` does not report a secret placed in a field with a credential name
+    (`token`, `api_key`), a path passed without the file's contents, or a description in the
+    third person ("Reads ...").
+  - `ST-AGENT-ENV-INJECT` does not report `NODE_OPTIONS` that preloads a package by name
+    (`--require dotenv/config`), and `env` blocks in Codex TOML and subagent frontmatter are not
+    read.
+  - `ST-DEP-FOREIGN-SOURCE` reads only `tarball:` addresses in `pnpm-lock.yaml`. The look-alike
+    table is a curated set of about 200 characters, not the full Unicode confusables list.
+- Eval corpus: 308 malicious and 236 benign samples (240 and 200 in ruleset 101). All 308
+  malicious samples are detected and no benign sample is flagged.
+
 ## ruleset 101 (engine 1.2.0)
 
 This ruleset follows an audit of npm install-time hooks against what npm actually runs. The audit

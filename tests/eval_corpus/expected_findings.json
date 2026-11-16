@@ -17,6 +17,9 @@
   "ST-FS-PY-WRITE"
  ],
  "negative/AST01/agent-config-persist/scaffold-build-task": [],
+ "negative/AST01/agent-cred-helper-exec/helper-script-prints-key": [
+  "ST-AGENT-AUTORUN"
+ ],
  "negative/AST01/agent-cred-helper-exec/static-key-helper": [],
  "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
  "negative/AST01/agent-launcher-hijack/local-gateway-default-approvals": [],
@@ -47,6 +50,9 @@
   "ST-FS-NODE-READ",
   "ST-NET-NODE"
  ],
+ "negative/AST01/credential-exfil/husky-hook-lint-staged": [
+  "ST-INSTALL-NPM-PREPARE"
+ ],
  "negative/AST01/credential-exfil/markdown-cited-paths": [
   "ST-NET-PY"
  ],
@@ -75,6 +81,17 @@
  "negative/AST01/credential-exfil/sandbox-deny-profile": [
   "ST-NET-NODE"
  ],
+ "negative/AST01/credential-exfil/skill-converts-docx-with-script": [
+  "ST-FS-PY-READ",
+  "ST-FS-PY-WRITE"
+ ],
+ "negative/AST01/credential-exfil/skill-fenced-local-backup": [],
+ "negative/AST01/credential-exfil/skill-script-own-api-upload": [],
+ "negative/AST01/credential-exfil/skill-script-public-key-print": [],
+ "negative/AST01/credential-exfil/skill-script-token-to-own-provider": [],
+ "negative/AST01/credential-exfil/skill-security-review-example-block": [
+  "ST-SENS-PATH"
+ ],
  "negative/AST01/decode-exec/decode-only-no-exec": [],
  "negative/AST01/decode-exec/getattr-decode-no-exec": [
   "ST-FS-PY-WRITE"
@@ -101,6 +118,7 @@
  "negative/AST01/dns-exfil/mx-record-validator": [
   "ST-NET-NODE"
  ],
+ "negative/AST01/dynamic-call-resolution/js-escapes-in-display-strings": [],
  "negative/AST01/dynamic-call-resolution/python-benign-dynamic-resolution": [],
  "negative/AST01/email-exfil/normal-transactional": [
   "ST-NET-PY"
@@ -137,12 +155,18 @@
  "negative/AST01/github-action-secret-exfil/composite-token-to-github": [],
  "negative/AST01/github-action-secret-exfil/named-secret-deploy-call": [],
  "negative/AST01/github-action-secret-exfil/secrets-dump-no-upload": [],
+ "negative/AST01/hidden-unicode/bom-cyrillic-greek-cjk-instructions": [],
  "negative/AST01/hidden-unicode/cli-ansi-colors": [],
  "negative/AST01/hidden-unicode/detector-test-vectors": [],
  "negative/AST01/hidden-unicode/emoji-and-hyphenation": [],
  "negative/AST01/hidden-unicode/emoji-and-ideographic-variants": [],
  "negative/AST01/hidden-unicode/legit-unicode": [],
+ "negative/AST01/hidden-unicode/mcp-listing-escaped-accents-emoji": [
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST01/hidden-unicode/rtl-and-joiner-scripts": [],
  "negative/AST01/hidden-unicode/sanitizer-strip-list": [],
+ "negative/AST01/hidden-unicode/skill-identifier-break-hints": [],
  "negative/AST01/hidden-unicode/ts-korean-strings": [],
  "negative/AST01/lethal-trifecta/caps-without-injection": [
   "ST-FS-PY-READ",
@@ -223,12 +247,15 @@
   "ST-SHELL-PY"
  ],
  "negative/AST01/shell-decode-exec/comment-only-curl": [],
+ "negative/AST01/shell-decode-exec/decode-certificate-to-file": [],
+ "negative/AST01/shell-decode-exec/decode-token-inspect": [],
  "negative/AST01/shell-decode-exec/installer-case-arm-hint": [],
  "negative/AST01/shell-decode-exec/installer-prints-uv-hint": [],
  "negative/AST01/shell-decode-exec/skill-vendor-installer": [
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST01/skill-dynamic-exec/benign-dynamic-context": [],
+ "negative/AST01/skill-dynamic-exec/inline-git-context": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/list-item-hides-other-step": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/memory-file-reference": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
@@ -255,6 +282,11 @@
  "negative/AST02/action-run-exec/setup-tool-installer": [
   "ST-SHELL-PIPE-EXEC"
  ],
+ "negative/AST02/agent-config-autorun/devcontainer-npm-ci": [],
+ "negative/AST02/agent-config-autorun/devcontainer-toolchain-install": [
+  "ST-AGENT-AUTORUN"
+ ],
+ "negative/AST02/agent-config-autorun/env-heap-size-and-named-preload": [],
  "negative/AST02/agent-config-autorun/formatter-hook": [
   "ST-AGENT-AUTORUN"
  ],
@@ -296,6 +328,9 @@
   "ST-INSTALL-NPM",
   "ST-SHELL-NODE"
  ],
+ "negative/AST02/dep-redirect/lockfile-declared-private-registry": [],
+ "negative/AST02/dep-redirect/lockfile-public-registry-and-scoped-private": [],
+ "negative/AST02/dep-redirect/overrides-semver-and-workspace-file": [],
  "negative/AST02/dep-redirect/private-registry-skill": [],
  "negative/AST02/dependency-confusion-beacon/local-dev-loopback": [
   "ST-INSTALL-NPM",
@@ -320,6 +355,9 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE"
  ],
+ "negative/AST02/install-dropper/npm-postinstall-script-reads-png": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/install-dropper/pep517-in-tree-backend-wraps-setuptools": [
   "ST-SHELL-PY"
  ],
@@ -337,7 +375,15 @@
   "ST-INSTALL-NPM"
  ],
  "negative/AST02/known-trojanized-image/upstream-image": [],
+ "negative/AST02/mcp-launch-command/env-node-options-heap-size": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-SERVER-EXEC"
+ ],
  "negative/AST02/mcp-launch-command/help-text-install-hint": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-SERVER-EXEC"
+ ],
+ "negative/AST02/mcp-launch-command/node-inline-local-server": [
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
  ],
@@ -405,6 +451,10 @@
  ],
  "negative/AST02/plugin-hook-trojan/formatter-plugin-hook": [],
  "negative/AST02/plugin-hook-trojan/guard-hook-pattern": [],
+ "negative/AST02/plugin-hook-trojan/hook-format-script": [],
+ "negative/AST02/plugin-hook-trojan/hook-local-prompt-log": [
+  "ST-FS-NODE-WRITE"
+ ],
  "negative/AST02/plugin-hook-trojan/install-hint-session-hook": [
   "ST-SHELL-PIPE-EXEC"
  ],
@@ -467,6 +517,26 @@
  "negative/AST04/mcp-tool-poisoning/json-benign-schema-enums": [
   "ST-MCP-DETECTED"
  ],
+ "negative/AST04/mcp-tool-poisoning/json-honest-credential-tools": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-tool-poisoning/json-honest-prerequisites": [
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-tool-poisoning/json-honest-routing": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-tool-poisoning/json-one-word-from-poisoning": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-SENS-PATH"
+ ],
+ "negative/AST04/mcp-tool-poisoning/json-scanner-quotes-attack-phrases": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED"
+ ],
  "negative/AST04/mcp-tool-poisoning/plain-descriptions": [
   "ST-MCP-DETECTED"
  ],
@@ -474,6 +544,9 @@
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/mcp-tool-poisoning/python-guard-server-patterns": [
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-tool-poisoning/python-honest-credential-docstrings": [
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/mcp-tool-poisoning/python-return-value-benign-dynamic": [
@@ -486,6 +559,8 @@
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/prompt-injection/html-bundle-test-strings": [],
+ "negative/AST04/prompt-injection/leet-shaped-identifiers-and-numbers": [],
+ "negative/AST04/prompt-injection/leetspeak-translator-skill": [],
  "negative/AST04/prompt-injection/readme-describes-threat": [],
  "negative/AST04/prompt-injection/reference-cites-example": [],
  "negative/AST04/prompt-injection/reference-negated-defensive": [],
@@ -493,6 +568,7 @@
  "negative/AST04/prompt-injection/rule-file-guards-credentials": [
   "ST-SENS-PATH"
  ],
+ "negative/AST04/prompt-injection/skill-cites-obfuscated-injection": [],
  "negative/AST04/prompt-injection/skill-fetches-docs": [],
  "negative/AST04/prompt-injection/skill-updates-claude-md": [],
  "negative/AST04/prompt-injection/subagent-guardrails": [],
@@ -535,6 +611,12 @@
   "ST-AGENT-CONFIG-PERSIST",
   "ST-INSTALL-NPM"
  ],
+ "positive/AST01/agent-cred-helper-exec/helper-script-key-upload": [
+  "ST-AGENT-AUTORUN",
+  "ST-AGENT-CRED-HELPER-EXEC",
+  "ST-CONVERGENCE",
+  "ST-SECRET-EXFIL"
+ ],
  "positive/AST01/agent-cred-helper-exec/provider-card": [
   "ST-AGENT-CRED-HELPER-EXEC"
  ],
@@ -565,6 +647,18 @@
  "positive/AST01/clipboard-swap/python-returned-sub": [
   "ST-CLIPPER"
  ],
+ "positive/AST01/credential-exfil/git-hook-file-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/git-hook-no-shebang-key-post": [
+  "ST-COMBO-EXFIL",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM-PREPARE",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
  "positive/AST01/credential-exfil/node-ai-cli-credentials": [
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
@@ -593,6 +687,12 @@
   "ST-NET-NODE",
   "ST-SENS-PATH"
  ],
+ "positive/AST01/credential-exfil/node-exec-string-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST01/credential-exfil/node-homedir-join": [
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
@@ -616,6 +716,13 @@
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/npm-postinstall-archive-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
  ],
  "positive/AST01/credential-exfil/npm-postinstall-second-stage-upload": [
@@ -674,6 +781,12 @@
   "ST-NET-PY",
   "ST-SENS-PATH-PY"
  ],
+ "positive/AST01/credential-exfil/python-shell-string-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH-PY",
+  "ST-SHELL-PY"
+ ],
  "positive/AST01/credential-exfil/python-stage-file-node-send": [
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
@@ -694,11 +807,49 @@
   "ST-NET-NODE",
   "ST-SENS-PATH"
  ],
+ "positive/AST01/credential-exfil/skill-fenced-backup-archive-upload": [
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/skill-fenced-key-upload": [
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
  "positive/AST01/credential-exfil/skill-reference-file-python-helper": [
   "ST-COMBO-EXFIL",
   "ST-FS-PY-READ",
   "ST-NET-PY",
   "ST-SENS-PATH-PY"
+ ],
+ "positive/AST01/credential-exfil/skill-runs-python-named-docx": [
+  "ST-COMBO-EXFIL",
+  "ST-DISGUISED-SCRIPT",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SENS-PATH-PY"
+ ],
+ "positive/AST01/credential-exfil/skill-script-archive-then-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/skill-script-collect-then-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/skill-script-gist-publish": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/skill-script-key-form-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/skill-script-provider-token-foreign-host": [
+  "ST-SECRET-EXFIL"
  ],
  "positive/AST01/decode-exec/node-buffer-encoding-name": [
   "ST-DYN-NODE",
@@ -774,6 +925,19 @@
   "ST-NET-NODE",
   "ST-SENS-PATH"
  ],
+ "positive/AST01/dns-exfil/skill-script-nslookup-chunks": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST01/dynamic-call-resolution/js-escaped-call-names": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-NODE-READ",
+  "ST-NET-NODE",
+  "ST-SENS-PATH",
+  "ST-SHELL-NODE",
+  "ST-SHELL-PIPE-EXEC-NODE"
+ ],
  "positive/AST01/dynamic-call-resolution/python-bound-import-exfil": [
   "ST-COMBO-EXFIL",
   "ST-FS-PY-READ",
@@ -816,6 +980,7 @@
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
+  "ST-SECRET-EXFIL",
   "ST-SENS-PATH",
   "ST-SHELL-NODE"
  ],
@@ -837,6 +1002,7 @@
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
+  "ST-SECRET-EXFIL",
   "ST-SENS-PATH",
   "ST-SHELL-NODE"
  ],
@@ -881,6 +1047,9 @@
   "ST-NET-PY",
   "ST-SECRET-EXFIL"
  ],
+ "positive/AST01/env-dump-exfil/skill-script-env-pipe-curl": [
+  "ST-SECRET-EXFIL"
+ ],
  "positive/AST01/github-action-secret-exfil/composite-token-post": [
   "ST-ACTION-SECRET-EXFIL"
  ],
@@ -898,6 +1067,14 @@
  "positive/AST01/hidden-unicode/js-hangul-filler-identifier": [
   "ST-HIDDEN-UNICODE",
   "ST-SHELL-NODE"
+ ],
+ "positive/AST01/hidden-unicode/mcp-listing-escaped-tag-chars": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST01/hidden-unicode/mcp-listing-escaped-zero-width": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
  ],
  "positive/AST01/hidden-unicode/mcp-tool-ansi-erase": [
   "ST-HIDDEN-ANSI",
@@ -1072,17 +1249,48 @@
   "ST-PTH-IMPORT-EXEC",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/shell-decode-exec/base32-pipe-sh": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
  "positive/AST01/shell-decode-exec/base64-pipe-bash": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
+ "positive/AST01/shell-decode-exec/decode-to-file-then-run": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
+ "positive/AST01/shell-decode-exec/decoded-variable-run": [
   "ST-OBF-DECODE-EXEC-SH"
  ],
  "positive/AST01/shell-decode-exec/eval-curl": [
   "ST-OBF-DECODE-EXEC-SH",
   "ST-SHELL-PIPE-EXEC"
  ],
+ "positive/AST01/shell-decode-exec/herestring-and-inline-program-decode": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
+ "positive/AST01/shell-decode-exec/process-substitution-decode": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
  "positive/AST01/shell-decode-exec/skill-markdown-prerequisite": [
   "ST-OBF-DECODE-EXEC-SH"
  ],
+ "positive/AST01/shell-decode-exec/xxd-reverse-pipe-zsh": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
  "positive/AST01/skill-dynamic-exec/clawsights-skill": [
+  "ST-SKILL-DYNAMIC-EXEC"
+ ],
+ "positive/AST01/skill-dynamic-exec/command-file-inline-fetch-run": [
+  "ST-SKILL-DYNAMIC-EXEC",
+  "ST-SKILL-FETCH-EXEC"
+ ],
+ "positive/AST01/skill-dynamic-exec/fenced-dynamic-context": [
+  "ST-CONVERGENCE",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH",
+  "ST-SKILL-DYNAMIC-EXEC"
+ ],
+ "positive/AST01/skill-dynamic-exec/inline-dynamic-context": [
   "ST-SKILL-DYNAMIC-EXEC"
  ],
  "positive/AST01/skill-writes-agent-memory-files-persistence/claude-md-without-asking": [
@@ -1141,6 +1349,22 @@
  "positive/AST02/action-run-exec/quoted-hash-decode": [
   "ST-OBF-DECODE-EXEC-SH"
  ],
+ "positive/AST02/agent-config-autorun/devcontainer-initialize-fetch-run": [
+  "ST-AGENT-AUTORUN-REMOTE"
+ ],
+ "positive/AST02/agent-config-autorun/devcontainer-post-create-env-upload": [
+  "ST-SECRET-EXFIL"
+ ],
+ "positive/AST02/agent-config-autorun/env-bash-env-key-upload": [
+  "ST-AGENT-ENV-INJECT",
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST02/agent-config-autorun/env-git-ssh-command-fetch-run": [
+  "ST-AGENT-AUTORUN-REMOTE",
+  "ST-AGENT-ENV-INJECT"
+ ],
  "positive/AST02/agent-config-autorun/hook-key-upload": [
   "ST-AGENT-AUTORUN",
   "ST-SECRET-EXFIL",
@@ -1197,6 +1421,12 @@
   "ST-INSTALL-NPM-MASKED-REGISTRY",
   "ST-SHELL-NODE"
  ],
+ "positive/AST02/dep-redirect/lockfile-registry-lookalike-host": [
+  "ST-DEP-REGISTRY-LOOKALIKE"
+ ],
+ "positive/AST02/dep-redirect/npmrc-registry-lookalike-host": [
+  "ST-DEP-REGISTRY-LOOKALIKE"
+ ],
  "positive/AST02/dep-redirect/skill-hidden-index": [
   "ST-SKILL-DEP-REDIRECT"
  ],
@@ -1252,6 +1482,16 @@
   "ST-INSTALL-NPM",
   "ST-OBF-DECODE-EXEC"
  ],
+ "positive/AST02/install-dropper/npm-postinstall-script-named-png": [
+  "ST-COMBO-EXFIL",
+  "ST-DISGUISED-SCRIPT",
+  "ST-FS-NODE-READ",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
  "positive/AST02/install-dropper/npm-postinstall-tests-decode-exec": [
   "ST-DYN-NODE",
   "ST-INSTALL-DROPPER",
@@ -1296,6 +1536,18 @@
   "ST-ARTIFACT-KNOWN-BAD"
  ],
  "positive/AST02/mcp-launch-command/codex-config-fetch-run": [
+  "ST-AGENT-AUTORUN-REMOTE",
+  "ST-MCP-DETECTED",
+  "ST-MCP-SERVER-EXEC"
+ ],
+ "positive/AST02/mcp-launch-command/env-node-options-preload-env-post": [
+  "ST-AGENT-ENV-INJECT",
+  "ST-MCP-DETECTED",
+  "ST-MCP-SERVER-EXEC",
+  "ST-NET-NODE",
+  "ST-SECRET-EXFIL"
+ ],
+ "positive/AST02/mcp-launch-command/node-inline-fetch-eval": [
   "ST-AGENT-AUTORUN-REMOTE",
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
@@ -1362,8 +1614,11 @@
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-node-runs-nonjs-stage": [
+  "ST-DISGUISED-SCRIPT",
   "ST-INSTALL-NPM",
-  "ST-INSTALL-NPM-REMOTE-EXEC"
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-NET-NODE",
+  "ST-SHELL-NODE"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-npm-run-chain": [
   "ST-INSTALL-NPM",
@@ -1432,6 +1687,20 @@
   "ST-INSTALL-NPM-REMOTE-EXEC",
   "ST-NET-NODE",
   "ST-SHELL-NODE"
+ ],
+ "positive/AST02/plugin-hook-trojan/hook-netrc-upload": [
+  "ST-SECRET-EXFIL"
+ ],
+ "positive/AST02/plugin-hook-trojan/hook-python-alias-fetch-exec": [
+  "ST-AGENT-AUTORUN-REMOTE"
+ ],
+ "positive/AST02/plugin-hook-trojan/hook-requests-fetch-exec": [
+  "ST-AGENT-AUTORUN-REMOTE"
+ ],
+ "positive/AST02/plugin-hook-trojan/hook-script-archive-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
  ],
  "positive/AST02/plugin-hook-trojan/hookpry-session-hook": [
   "ST-AGENT-AUTORUN-REMOTE",
@@ -1521,6 +1790,40 @@
   "ST-MCP-DETECTED",
   "ST-MCP-SAMPLING-INJECTION"
  ],
+ "positive/AST04/mcp-tool-poisoning/js-server-tool-handover": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-annotation-title-handover": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-covert-send-history": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-env-secret-into-field": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-handover-after-padding": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-keys-from-file-into-header": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-line-jumping-no-need-to-mention": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
  "positive/AST04/mcp-tool-poisoning/json-nested-schema-listing": [
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING",
@@ -1531,7 +1834,32 @@
   "ST-MCP-TOOL-POISONING",
   "ST-SENS-PATH"
  ],
+ "positive/AST04/mcp-tool-poisoning/json-parameter-description-handover": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
+ ],
  "positive/AST04/mcp-tool-poisoning/json-prompt-resource-metadata": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-read-key-into-parameter": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-reroute-bcc": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-reroute-recipient": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-system-prompt-into-field": [
+  "ST-MCP-DANGEROUS-TOOL",
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
@@ -1540,7 +1868,8 @@
  ],
  "positive/AST04/mcp-tool-poisoning/poisoned-description": [
   "ST-MCP-DETECTED",
-  "ST-MCP-TOOL-POISONING"
+  "ST-MCP-TOOL-POISONING",
+  "ST-SENS-PATH"
  ],
  "positive/AST04/mcp-tool-poisoning/python-description-kwarg": [
   "ST-CONVERGENCE",
@@ -1548,11 +1877,19 @@
   "ST-MCP-TOOL-POISONING",
   "ST-PROMPT-INJECTION"
  ],
+ "positive/AST04/mcp-tool-poisoning/python-docstring-handover": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
  "positive/AST04/mcp-tool-poisoning/python-docstring-important-multiline": [
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
  "positive/AST04/mcp-tool-poisoning/python-field-description": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/python-instructions-env-into-argument": [
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
@@ -1576,6 +1913,10 @@
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
+ "positive/AST04/mcp-tool-poisoning/ts-zod-describe-handover": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
  "positive/AST04/mcp-tool-poisoning/ts-zod-describe-injection": [
   "ST-MCP-DETECTED",
   "ST-PROMPT-INJECTION"
@@ -1596,6 +1937,45 @@
  "positive/AST04/prompt-injection/cursorrules-credential-read": [
   "ST-PROMPT-INJECTION",
   "ST-SENS-PATH"
+ ],
+ "positive/AST04/prompt-injection/evasion-accented-lookalikes": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-control-chars-in-words": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-dotted-letters": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-doubled-letters": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-emphasis-inside-words": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-invisible-format-chars": [
+  "ST-CONVERGENCE",
+  "ST-HIDDEN-UNICODE",
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-invisible-word-gaps": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-leetspeak": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-leetspeak-tool-description": [
+  "ST-MCP-DETECTED",
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-small-caps": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-spaced-letters": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/evasion-stacked-marks": [
+  "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/evasion-zerowidth": [
   "ST-CONVERGENCE",

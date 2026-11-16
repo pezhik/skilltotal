@@ -238,7 +238,7 @@ done, the same command goes through if the package is clean.
 
 ## Git sources, the verdict cache and timing
 
-Packages from GitHub (`github:owner/repo#v1.2.0`, `git+https://github.com/...@ref`) and the
+Packages from GitHub (`github:owner/repo#v4.17.21`, `git+https://github.com/...@ref`) and the
 repositories that `npx skills add` and `gemini extensions install` fetch are scanned at the ref that
 will be installed; checking them needs `git` on `PATH`.
 
@@ -369,7 +369,7 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
 [docs/agent-hooks.md](agent-hooks.md#rolling-out-to-a-fleet).
 
 1. **Install the CLI at a pinned version** on each machine, for example
-   `pipx install skilltotal==1.2.0`, with the same version as the plugin.
+   `pipx install skilltotal==1.3.0`, with the same version as the plugin.
 2. **Enable the plugin for everyone** with Claude Code's managed settings file,
    `managed-settings.json` in `/Library/Application Support/ClaudeCode/` (macOS),
    `/etc/claude-code/` (Linux and WSL) or `C:\Program Files\ClaudeCode\` (Windows). Register the
@@ -405,7 +405,7 @@ Templates for other agents, and `allowManagedHooksOnly`, are in
            "source": "git-subdir",
            "url": "https://github.com/pezhik/skilltotal.git",
            "path": "plugin",
-           "ref": "v1.2.0"
+           "ref": "v1.3.0"
          }
        }
      ]

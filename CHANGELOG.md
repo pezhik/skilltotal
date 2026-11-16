@@ -4,6 +4,44 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.3.0]
+
+### Added
+- Ruleset 102 adds five rules. Each one, and every change listed below, is described in
+  `RULES_CHANGELOG.md`.
+- `ST-AGENT-ENV-INJECT`: an `env` block in agent settings or in an MCP or language server entry
+  that makes each process load a file or run a command (`LD_PRELOAD`, `BASH_ENV`,
+  `NODE_OPTIONS --require`).
+- `ST-DISGUISED-SCRIPT`: a script started under an image, document or data file name
+  (`node assets/logo.png`). The file is read as the language it runs in.
+- `ST-DEP-FOREIGN-SOURCE` and `ST-DEP-REGISTRY-LOOKALIKE`: a shipped lockfile or package-manager
+  config that takes packages from an undeclared host, over plain http or with certificate checks
+  off, or from a host that imitates a public registry.
+- `ST-NPM-BIN-SHADOW`: a package.json `bin` entry named like git, node, npm or sudo.
+
+### Changed
+- Credential exfiltration: `ST-SECRET-EXFIL` reads the commands a component gives an agent to
+  run. These are shell scripts in a skill's folder or named by an instruction file, git hook
+  files, shell blocks of instruction files, and command strings that Python or JavaScript passes
+  to a shell.
+- Fetch-and-run and decode-and-run: `ST-SHELL-PIPE-EXEC` and `ST-OBF-DECODE-EXEC-SH` match more
+  shell forms, among them process substitution, `eval "$(...)"`, Makefile and justfile recipes,
+  and `xxd -r` or `openssl -d` decoding.
+- MCP tool poisoning: `ST-MCP-TOOL-POISONING` reads poisoning written as a plain sentence in MCP
+  listings and server code, and hidden text written as JSON escapes.
+- Hidden and look-alike text: the text fold that runs before the phrase rules removes every
+  invisible format character and uses a wider look-alike table. In instruction files and MCP tool
+  manifests, `ST-PROMPT-INJECTION` reads leetspeak and letters that are spaced out or doubled.
+- Agent and server configuration: dev container lifecycle commands are read as auto-run commands,
+  and `ST-AGENT-AUTO-APPROVE` reads the frontmatter of skills, commands and subagents.
+- Dependency sources: `ST-NPM-URL-DEP` and `ST-NPM-GIT-DEP` read `overrides`, `resolutions` and
+  `pnpm.overrides`.
+- Precision: a quoted example introduced by "such as" or "e.g." and a marker that is only named
+  are not reported as injection. A zero-width break hint at a camelCase border is not counted as
+  hidden text.
+- Eval corpus: 308 malicious and 236 benign samples (240 and 200 in 1.2.0), recall 308/308 with
+  0 false positives.
+
 ## [1.2.0]
 
 ### Changed

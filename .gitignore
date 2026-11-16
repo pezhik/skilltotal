@@ -42,6 +42,8 @@ id_rsa.*
 *.token
 .pypirc
 .npmrc
+# Corpus samples of registry settings (synthetic hosts, no tokens) are fixtures, not credentials.
+!tests/eval_corpus/**/.npmrc
 credentials.json
 secrets.json
 *.secret
