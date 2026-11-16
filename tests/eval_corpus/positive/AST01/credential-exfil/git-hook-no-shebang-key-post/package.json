@@ -1,0 +1,8 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "name": "report-tools",
+  "version": "1.0.0",
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks"
+  }
+}

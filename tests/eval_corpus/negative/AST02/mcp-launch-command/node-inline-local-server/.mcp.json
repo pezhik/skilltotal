@@ -1,0 +1,12 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware",
+  "mcpServers": {
+    "helper": {
+      "command": "node",
+      "args": [
+        "-e",
+        "require('./server.js').start({port: 0})"
+      ]
+    }
+  }
+}

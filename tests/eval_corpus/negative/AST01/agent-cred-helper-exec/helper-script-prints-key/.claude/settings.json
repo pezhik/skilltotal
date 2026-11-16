@@ -1,0 +1,4 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware",
+  "apiKeyHelper": "./scripts/key.sh"
+}

@@ -1,0 +1,15 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/log.js"
+          }
+        ]
+      }
+    ]
+  }
+}

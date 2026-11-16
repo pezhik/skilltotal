@@ -1,0 +1,16 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/format.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

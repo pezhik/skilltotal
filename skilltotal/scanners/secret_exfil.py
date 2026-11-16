@@ -66,7 +66,7 @@ from skilltotal.scanners.install_scripts import (
     install_run_interpreters,
     npm_install_commands,
 )
-from skilltotal.scanners.python_ast import EFFECT_EXEC, _shell_command_text, python_call_effects
+from skilltotal.scanners.python_ast import SHELL_CALLS, _shell_command_text
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
 from skilltotal.scanners.shell_exec import _call_end, _string_literals, exec_call_pattern
 from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
@@ -142,6 +142,9 @@ _COPIED_FROM_REMOTE = re.compile(
     r"[\"']?[^\s\"'|;&]*$"
 )
 _STAGE_END = re.compile(r"[^\s\"'|;&]*[\"']?\s*(?=$|[|;&\n)])")
+_REMOTE_SIDE = re.compile(
+    r"\b(?:scp|rsync|sftp)\b[^|;&\n]{0,300}?\s[\"']?[\w.@-]+:(?!//)[^\s\"']*$"
+)
 # A file that holds a login token, read into a request's own auth header or user option: the
 # token is being used with a service (`curl -H "X-Vault-Token: $(cat ~/.vault-token)" ...`). A
 # private key or a cloud credentials file has no such use.
@@ -229,6 +232,8 @@ def _not_sent(text: str, m: re.Match[str], strict: bool) -> bool:
         return True
     if _COPIED_FROM_REMOTE.search(before) and _STAGE_END.match(text, m.end()):
         return True
+    if _REMOTE_SIDE.search(before):
+        return True  # `scp host:keys/id_rsa .`: a file on the other machine
     if not strict:
         return False
     word_end = _STAGE_END.match(text, m.start())
@@ -1363,31 +1368,55 @@ def _instruction_evidence(index: FileIndex) -> list[Evidence]:
     return found
 
 
+def _may_hold_upload_command(text: str) -> bool:
+    """A whole file's quick test before it is parsed: somewhere it names a command-line network
+    client with, a few lines around it, something a command could send (a credential location,
+    the environment, a login token). A command string is written in one place."""
+    for k, m in enumerate(_SHELL_NET.finditer(text)):
+        if k >= _MAX_CLIENT_SITES:
+            return True  # too many to look around each: read the file
+        lo, hi = max(0, m.start() - _AROUND_CLIENT), m.end() + _AROUND_CLIENT
+        if (
+            _STRONG_PATHS.search(text, lo, hi) or _NETRC.search(text, lo, hi)
+            or _ENV_DUMP.search(text, lo, hi) or _TOKEN_VARIABLE.search(text, lo, hi)
+            or any(p.search(text, lo, hi) for p, _own in _TOKEN_COMMANDS)
+        ):
+            return True
+    return False
+
+
+_AROUND_CLIENT = 600
+_MAX_CLIENT_SITES = 200
+
+
 def _code_command_evidence(index: FileIndex) -> list[Evidence]:
     """Command strings a Python or JavaScript file hands to a shell (``os.system``,
     ``subprocess`` with ``shell=True`` or a ``sh -c`` list, ``child_process.exec``) that upload a
     credential."""
     found: list[Evidence] = []
     for f in index.select(suffixes=(".py", ".pyw")):
-        if not _SHELL_NET.search(f.text):
+        if not _may_hold_upload_command(f.text):
             continue
         try:
             tree = ast.parse(f.text)
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             continue
-        for effect in python_call_effects(f, tree):
-            if EFFECT_EXEC not in effect.effects:
+        imports = _PyImports(tree)
+        for call in ast.walk(tree):
+            if not isinstance(call, ast.Call):
                 continue
-            command = _shell_command_text(effect.name, effect.call)
+            name = imports.dotted(call.func)
+            if name not in SHELL_CALLS:
+                continue
+            command = _shell_command_text(name, call)
             if command and _any_statement_uploads(command):
-                call = effect.call
                 found.append(f.evidence_for_lines(
                     call.lineno, getattr(call, "end_lineno", None) or call.lineno
                 ))
                 if len(found) >= MAX_EVIDENCE_SCANNED:
                     return found
     for f in index.select(suffixes=_JS_SUFFIXES):
-        if not _SHELL_NET.search(f.text):
+        if not _may_hold_upload_command(f.text):
             continue
         text = f.interop_view()
         for m in exec_call_pattern(f).finditer(text):
@@ -1427,6 +1456,10 @@ _UPLOAD_OPTION = (
 )
 _MAX_STAGED_LINES = 5000
 _STAGED_SPAN = 3
+# Files and variables followed per script. A real stealer collects into one or two; every name
+# is tried against every later line that runs a network client, and a script crafted with
+# hundreds of both took minutes.
+_MAX_MARKED = 40
 
 
 def _name_patterns(name: str, encoded: bool = False) -> list[re.Pattern[str]]:
@@ -1467,6 +1500,7 @@ def staged_upload_lines(lines: list[str], *, strict: bool = False) -> tuple[int,
     a variable on one line and uploaded by a network client on a later one, or None. ``strict``
     as in :func:`secret_upload`."""
     marked: dict[str, tuple[int, tuple[str, ...], bool]] = {}
+    patterns: dict[str, list[re.Pattern[str]]] = {}
     for no, raw in enumerate(lines[:_MAX_STAGED_LINES], start=1):
         if raw.lstrip().startswith("#"):
             continue
@@ -1483,7 +1517,9 @@ def staged_upload_lines(lines: list[str], *, strict: bool = False) -> tuple[int,
                     continue
                 if local or (own_hosts and unnamed):
                     continue
-                if any(p.search(line) for p in _name_patterns(name, encoded)):
+                if name not in patterns:
+                    patterns[name] = _name_patterns(name, encoded)
+                if any(p.search(line) for p in patterns[name]):
                     return read_at, no
         source = _credential_source(line, strict)
         if source is None:
@@ -1498,7 +1534,7 @@ def staged_upload_lines(lines: list[str], *, strict: bool = False) -> tuple[int,
         if loop and loop.end() <= at:
             names.append("$" + loop.group(1))
         for name in names:
-            if name.startswith("/dev/") or name == "-":
+            if name.startswith("/dev/") or name == "-" or len(marked) >= _MAX_MARKED:
                 continue
             marked.setdefault(name, (no, own_hosts, bool(_ENCODES.search(line))))
     return None
@@ -1553,7 +1589,7 @@ _GATEWAY_KEYS = frozenset({"OPENAI_API_KEY", "ANTHROPIC_API_KEY"})
 # More places a token is honestly sent from a command: GitHub's container registry, and a GitLab
 # the project hosts itself (the usual way to run GitLab).
 _COMMAND_OWN_HOSTS = {"GITHUB_TOKEN": ("ghcr.io",), "GH_TOKEN": ("ghcr.io",)}
-_SELF_HOSTED = {"GITLAB_TOKEN": "gitlab", "CI_JOB_TOKEN": "gitlab"}
+_GITLAB_NAMES = frozenset({"GITLAB_TOKEN", "CI_JOB_TOKEN"})
 
 
 def _own_host(token: str, host: str) -> bool:
@@ -1563,7 +1599,7 @@ def _own_host(token: str, host: str) -> bool:
     own = _TOKEN_OWN_HOSTS.get(token, ()) + _COMMAND_OWN_HOSTS.get(token, ())
     if any(host == o or host.endswith("." + o) for o in own):
         return True
-    return token in _SELF_HOSTED and _SELF_HOSTED[token] in host
+    return token in _GITLAB_NAMES and "gitlab" in host
 
 
 def _js_token_in_url(f: IndexedFile) -> Evidence | None:

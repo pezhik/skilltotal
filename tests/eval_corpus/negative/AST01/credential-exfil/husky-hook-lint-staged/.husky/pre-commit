@@ -1,0 +1,2 @@
+# FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware
+npx lint-staged

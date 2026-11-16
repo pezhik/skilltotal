@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import string
+from bisect import bisect_left
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Severity, ThreatClass
@@ -115,24 +116,28 @@ _NOT_A_FILE = frozenset({"-", "/dev/null", "/dev/stdout", "/dev/stderr", "nul"})
 _RUN_REACH = 2000
 
 
-def _runs_variable(name: str) -> re.Pattern[str]:
-    """A later command that runs the text held in shell variable ``name``."""
-    ref = rf"[\"']?\$\{{?{re.escape(name)}\}}?(?![\w])"
-    return re.compile(
-        rf"\beval\s+{ref}"
-        rf"|\b{_RUNNER}\s+-[A-Za-z]{{1,4}}\s+{ref}"
-        rf"|\b{_RUNNER}\s*<<<\s*{ref}"
-        rf"|\b(?:echo|printf)\b[^\n|;&]{{0,80}}?{ref}[^\n|;&]{{0,40}}\|\s*(?:sudo\s+)?"
-        r"(?:ba|z|da|k)?sh\b"
-    )
+# A command that runs the text held in a shell variable (the variable's name is the one group
+# that matched): `eval "$v"`, `bash -c "$v"`, `bash <<< "$v"`, `echo "$v" | sh`. One pattern for
+# every variable, so a script with many assignments is read once.
+_VAR = r"[\"']?\$\{?([A-Za-z_]\w{0,60})\}?(?![\w])"
+_RUNS_VARIABLE = re.compile(
+    rf"\beval\s+{_VAR}"
+    rf"|\b{_RUNNER}\s+-[A-Za-z]{{1,4}}\s+{_VAR}"
+    rf"|\b{_RUNNER}\s*<<<\s*{_VAR}"
+    rf"|\b(?:echo|printf)\s+{_VAR}[\"']?\s*\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
+)
+# Files followed from the line that writes them to the line that starts them, per script.
+_MAX_FOLLOWED_FILES = 200
 
 
 def _runs_file(target: str) -> re.Pattern[str]:
     """A later command that starts the file ``target``: through an interpreter (``sh i.sh``,
     ``node x.js``, ``. ./env``) or as a command itself (``/tmp/p``, ``./p``)."""
     name = re.escape(target.removeprefix("./"))
+    # The interpreter is a command word of its own: the `sh` that ends `./verify.sh ca.pem` is
+    # part of a file name, and that command hands the file to a script as data.
     return re.compile(
-        r"(?:\b(?:ba|z|da|k)?sh|\bnode|\bpython[0-9.]*|\bperl|\bruby|\bsource|(?<![\w.])\.)"
+        r"(?:(?<![\w.-])(?:(?:ba|z|da|k)?sh|node|python[0-9.]*|perl|ruby|source)|(?<![\w.])\.)"
         rf"\s+(?:-[\w-]+\s+){{0,3}}[\"']?(?:\./)?{name}(?=$|[\s\"';&|)])"
         rf"|(?:^|[;&|(\n])\s*[\"']?((?:\./)?{name})(?=$|[\s\"';&|)])",
         re.MULTILINE,
@@ -155,17 +160,27 @@ def decode_then_run_spans(text: str) -> list[tuple[int, int]]:
     that variable or starts that file. Decoded data that is only parsed, checked or kept
     (``... | base64 -d | python3 -m json.tool``, ``base64 -d cert.b64 > cert.pem``) is not run."""
     spans: list[tuple[int, int]] = []
-    for m in _DECODE_INTO_VAR.finditer(text):
-        run = _runs_variable(m.group(1)).search(text, m.end(), m.end() + _RUN_REACH)
-        if run is not None:
-            spans.append((m.start(), run.end()))
-    for m in _DECODE_INTO_FILE.finditer(text):
+    decoded = list(_DECODE_INTO_VAR.finditer(text))
+    if decoded:
+        runs: dict[str, tuple[list[int], list[int]]] = {}
+        for run in _RUNS_VARIABLE.finditer(text):
+            starts, ends = runs.setdefault(next(g for g in run.groups() if g), ([], []))
+            starts.append(run.start())
+            ends.append(run.end())
+        for m in decoded:
+            starts, ends = runs.get(m.group(1), ((), ()))
+            k = bisect_left(starts, m.end())
+            if k < len(starts) and starts[k] <= m.end() + _RUN_REACH:
+                spans.append((m.start(1), ends[k]))
+    for k, m in enumerate(_DECODE_INTO_FILE.finditer(text)):
         target = m.group(1)
+        if k >= _MAX_FOLLOWED_FILES:
+            break
         if target in _NOT_A_FILE or target.startswith("$("):
             continue
-        run = _started(text, target, m.end())
-        if run is not None:
-            spans.append((m.start(), run.end()))
+        started = _started(text, target, m.end())
+        if started is not None:
+            spans.append((m.start(), started.end()))
     return spans
 
 

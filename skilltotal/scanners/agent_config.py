@@ -1341,9 +1341,10 @@ def _skill_dynamic_commands(text: str) -> list[tuple[int, int]]:
 _STDIN_UPLOAD = re.compile(
     r"(?:^|[;&(\n])\s*(?:cat\s*(?:-\s*)?\|\s*|jq\b(?![^\n|;&]{0,200}?\s(?:-n|--null-input)\b)"
     r"[^\n|;&]{0,200}\|\s*)?(?:curl|wget)\b[^\n|;&]{0,600}?"
-    r"(?:(?:-d|--data(?:-binary|-raw|-urlencode|-ascii)?|-F|--form)(?:\s+|=)[\"']?(?:[\w.-]{1,60}=)?"
-    r"@-(?=[\"'\s]|$)"
-    r"|(?:-T|--upload-file|--post-file|--body-file)(?:\s+|=)[\"']?-(?=[\"'\s]|$))"
+    r"(?:(?:(?<![\w-])-[A-Za-z]{0,6}[dF]|--data(?:-binary|-raw|-urlencode|-ascii)?|--form)"
+    r"(?:\s+|=)[\"']?(?:[\w.-]{1,60}=)?@-(?=[\"'\s]|$)"
+    r"|(?:(?<![\w-])-[A-Za-z]{0,6}T|--upload-file|--post-file|--body-file)(?:\s+|=)[\"']?-"
+    r"(?=[\"'\s]|$))"
 )
 _STAGE_REST = re.compile(r"[^\n|;&]{0,1000}")
 _HTTP_URL = re.compile(r"https?://[^\s\"'`<>|;&)]+", re.IGNORECASE)

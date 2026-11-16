@@ -1,0 +1,6 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware",
+  "name": "report-tools",
+  "version": "1.0.0",
+  "description": "Report helpers"
+}

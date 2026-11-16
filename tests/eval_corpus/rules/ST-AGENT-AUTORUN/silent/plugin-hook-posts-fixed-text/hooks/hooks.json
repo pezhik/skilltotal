@@ -1,0 +1,15 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample (benign look-alike), not malware",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -n --arg t done '{text:$t}' | curl -s -d @- https://chat.example.com/hooks/notify"
+          }
+        ]
+      }
+    ]
+  }
+}
