@@ -60,19 +60,26 @@ def test_span_maps_back_to_original_across_zero_width():
 
 
 def _reference(text: str) -> tuple[str, list[int]]:
-    """The pre-0.49 per-character implementation, kept to pin the optimized one against."""
+    """A plain per-character implementation of the fold, to pin the optimized one against:
+    invisible characters removed, NFKD, marks dropped, then the look-alike table."""
     import unicodedata
 
-    from skilltotal.text_normalize import _CONFUSABLES, _REMOVABLE
+    from skilltotal.text_normalize import _CONFUSABLES, _ENCLOSED, is_ignorable
 
     out: list[str] = []
     idx: list[int] = []
     for j, ch in enumerate(text):
-        if ord(ch) in _REMOVABLE:
+        if ord(ch) in _ENCLOSED:
+            out.append(_ENCLOSED[ord(ch)])
+            idx.append(j)
             continue
-        for d in unicodedata.normalize("NFKD", _CONFUSABLES.get(ch, ch)):
-            if not unicodedata.combining(d):
-                out.append(d)
+        if is_ignorable(ord(ch)):
+            continue
+        for d in unicodedata.normalize("NFKD", ch):
+            if unicodedata.category(d) in ("Mn", "Me", "Cf") or unicodedata.combining(d):
+                continue
+            for c in _CONFUSABLES.get(d, d):
+                out.append(c)
                 idx.append(j)
     return "".join(out), idx
 
@@ -84,6 +91,7 @@ def test_optimized_map_matches_the_reference_exactly():
         "x ig​no‍re‮ y﻿",  # zero-width, bidi, BOM
         "plain ascii with one é",
         "\U000e0041\U000e0042 tag chars",
+        "ig\u200enore \u03cc\u0585 \u1d00\u029f\u029f \u249c\U0001f1e6 z\u0489a\u0336l\u20ddgo",
         "",
     ]
     for text in samples:

@@ -7,31 +7,25 @@ Profiled on a 24 MB, mostly-CJK repository (2026-09-20): the per-character loops
 from __future__ import annotations
 
 import random
-import unicodedata
 from array import array
 
 from skilltotal import text_normalize
 from skilltotal.scanners import invisible_unicode
-from skilltotal.text_normalize import _CONFUSABLES, _REMOVABLE, normalize_with_map
+from skilltotal.text_normalize import _fold_char, normalize_with_map
+
+_REMOVABLE = (0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD, 0x202A, 0x202E, 0x2066, 0x2069,
+              0x200E, 0x034F, 0x3164, 0xFE0F, 0x2063, 0x0008)
+_PLAIN = frozenset(map(chr, (*range(0x09, 0x0E), *range(0x20, 0x7F))))
 
 
 def _reference_normalize(text: str) -> tuple[str, array[int]]:
-    """The previous, per-character implementation (kept verbatim as the oracle)."""
+    """The per-character implementation (the oracle): every character folded on its own."""
     idx: array[int] = array("I")
-    if text.isascii():
+    if all(ch in _PLAIN for ch in text):
         return text, idx
     out: list[str] = []
     for j, ch in enumerate(text):
-        if ch < "\x80":
-            out.append(ch)
-            idx.append(j)
-            continue
-        if ord(ch) in _REMOVABLE:
-            continue
-        folded = _CONFUSABLES.get(ch, ch)
-        for d in unicodedata.normalize("NFKD", folded):
-            if unicodedata.combining(d):
-                continue
+        for d in ch if ch in _PLAIN else _fold_char(ch):
             out.append(d)
             idx.append(j)
     return "".join(out), idx
@@ -42,7 +36,8 @@ _ALPHABET = (
     + list("ﬁ①Ａｂｃ")                    # NFKD expansions and full-width forms
     + list("éñü")                        # precomposed accents (a mark is dropped)
     + list("аеорсх")                     # Cyrillic confusables
-    + [chr(cp) for cp in sorted(_REMOVABLE)][:8]
+    + [chr(cp) for cp in _REMOVABLE]
+    + [chr(cp) for cp in (0x03CC, 0x0585, 0x1D00, 0x249C, 0x1F1E6, 0x0489)]  # look-alikes
     + list("中文字テスト")                # CJK: untouched, non-ASCII
     + ["\U000E0061", "\U000E007F", "‮", "​", "\U0001F3F4"]
 )

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections.abc import Sequence
 from pathlib import Path
 
 from skilltotal import bounded_json
@@ -31,6 +32,7 @@ from skilltotal.scanners.shell_script import (
     decode_then_run_spans,
     download_then_run_spans,
 )
+from skilltotal.text_normalize import js_unescaped
 
 CATEGORY = "install_time_execution"
 R_NPM_REMOTE_EXEC = "ST-INSTALL-NPM-REMOTE-EXEC"
@@ -244,32 +246,7 @@ _JS_RUNS_COMMAND = re.compile(
     r"(?:[\"'`][\w./-]{0,20}[\"'`]\s{0,10},\s{0,10}\[?\s{0,10}"
     r"(?:[\"'`]-c[\"'`]\s{0,10},\s{0,10})?)?[\"'`][^\"'`\n]{0,300}$"
 )
-_JS_ESCAPE = re.compile(r"\\x([0-9a-fA-F]{2})|\\u([0-9a-fA-F]{4})")
 _JS_COMMAND_REACH = 400
-
-
-def _js_unescaped(text: str, origin: list[int] | None) -> tuple[str, list[int]] | None:
-    """``text`` with its ``\\xHH`` and ``\\uHHHH`` escapes written out, and for each character of
-    the result its offset in the original file (``origin`` maps ``text`` itself when it is already
-    a rewritten view); None when the text has no such escape."""
-    if "\\x" not in text and "\\u" not in text:
-        return None
-    out: list[str] = []
-    offsets: list[int] = []
-    at = 0
-    for m in _JS_ESCAPE.finditer(text):
-        out.append(text[at:m.start()])
-        offsets.extend(range(at, m.start()))
-        out.append(chr(int(m.group(1) or m.group(2), 16)))
-        offsets.append(m.start())
-        at = m.end()
-    if at == 0:
-        return None
-    out.append(text[at:])
-    offsets.extend(range(at, len(text)))
-    if origin is not None:
-        offsets = [origin[o] for o in offsets]
-    return "".join(out), offsets
 
 
 def _js_command_evidence(f: IndexedFile) -> list[Evidence]:
@@ -277,12 +254,12 @@ def _js_command_evidence(f: IndexedFile) -> list[Evidence]:
     runs it or decodes data and runs it. The file is read as written, with split string literals
     joined (``"cu" + "rl"``) and with character escapes written out (``"\\x63url"``): none of
     these changes what the script runs. A string that is only printed or kept is not a command."""
-    views: list[tuple[str, list[int] | None]] = [(f.text, None)]
+    views: list[tuple[str, Sequence[int] | None]] = [(f.text, None)]
     folded = f.concat_folded_or_none()
     if folded is not None:
-        views.append((folded[0], list(folded[1])))
+        views.append((folded[0], folded[1]))
     for text, origin in list(views):
-        plain = _js_unescaped(text, origin)
+        plain = js_unescaped(text, origin)
         if plain is not None:
             views.append(plain)
     found: list[Evidence] = []
