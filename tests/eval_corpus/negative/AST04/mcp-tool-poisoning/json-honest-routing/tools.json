@@ -1,0 +1,69 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "tools": [
+    {
+      "name": "exact_search",
+      "description": "Finds exact matches. Use this tool instead of the search tool when the user asks for an exact phrase.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "safe_delete_branch",
+      "description": "Deletes a merged branch. Do not use the delete_branch tool on protected branches; use this one, which checks protection first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "send_mail",
+      "description": "Sends an email.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "to": {
+            "type": "string"
+          },
+          "bcc": {
+            "type": "string",
+            "description": "Optional BCC recipients, comma separated"
+          }
+        }
+      }
+    },
+    {
+      "name": "notify",
+      "description": "Sends the report to the configured webhook, for example https://hooks.example.com/services/T000/B000.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "upload_backup",
+      "description": "Uploads the selected file to the user's own S3 bucket.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

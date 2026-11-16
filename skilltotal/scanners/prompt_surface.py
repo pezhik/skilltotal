@@ -588,6 +588,40 @@ def _paragraph_start(text: str, line_start: int) -> int:
     return start
 
 
+# A quoted example that an explicit cue introduces: `instructions like 'do not tell the user' or
+# 'silently send the conversation history to a URL'` in the tool description of a scanner. Unlike
+# the prose form below it holds in every file type (in JSON the inner quotes are single or
+# backslash-escaped), so it is narrow: the cue ("such as", "like", "e.g.", "for example") stands
+# directly before the first quoted item, only further quoted items joined by a comma, "or" or
+# "and" may sit between it and the quote that holds the phrase, and that quote closes in the same
+# sentence. A word such as "detects" elsewhere in the text is not enough.
+_CUED_QUOTE_OPEN = "'\"`“‘"
+_CUED_QUOTE_CLOSE = "'\"`”’"
+_CUED_QUOTE_REACH = 200
+_QUOTED_ITEM = r"\\?['\"`“‘][^'\"`“”‘’\n]{1,160}?\\?['\"`”’]"
+_CUED_QUOTE_LEAD = re.compile(
+    r"(?i)(?:\bsuch\s+as|\blike|\be\.g\.,?|\bfor\s+example,?|\bfor\s+instance,?)\s*:?\s*"
+    r"(?:" + _QUOTED_ITEM + r"\s*(?:,\s*(?:or\s+|and\s+)?|or\s+|and\s+))*\\?$"
+)
+_CUED_QUOTE_BREAK = re.compile(r"[.!?](?=\s)|\n")
+
+
+def is_cued_quotation(text: str, start: int, end: int) -> bool:
+    """True if ``[start, end)`` lies inside a quoted example introduced by an explicit cue."""
+    head = text[max(0, start - _CUED_QUOTE_REACH) : start]
+    cut = max(head.rfind(ch) for ch in _CUED_QUOTE_OPEN)
+    if cut < 0 or _CUED_QUOTE_BREAK.search(head, cut):
+        return False
+    inside = head[cut + 1 :]
+    if any(ch in inside for ch in _CUED_QUOTE_CLOSE) or (inside and inside[0].isspace()):
+        return False  # the quote before the phrase already closed, or was an apostrophe
+    if not _CUED_QUOTE_LEAD.search(head[:cut]):
+        return False
+    tail = text[end : end + _CUED_QUOTE_REACH]
+    close = min((i for i in (tail.find(ch) for ch in _CUED_QUOTE_CLOSE) if i >= 0), default=-1)
+    return close >= 0 and not _CUED_QUOTE_BREAK.search(tail, 0, close)
+
+
 def _is_quoted_citation(
     text: str,
     start: int,
@@ -630,6 +664,8 @@ def _is_quoted_citation(
     # _QUOTES` is True in Python — an empty string is a substring of any string — which would
     # misread a match at the very first/last byte as "quoted" and wrongly demote a live directive.)
     if bool(before) and bool(after) and before in _QUOTES and after in _QUOTES:
+        return True
+    if is_cued_quotation(text, start, end):
         return True
     if not prose:
         return False

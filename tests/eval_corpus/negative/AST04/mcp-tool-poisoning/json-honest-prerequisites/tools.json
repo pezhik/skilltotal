@@ -1,0 +1,56 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "tools": [
+    {
+      "name": "list_issues",
+      "description": "Lists issues. Before using this tool, call list_projects to obtain the project id. IMPORTANT: Always use $select to limit returned fields and reduce response size.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "sum",
+      "description": "Add two numbers together.\n<IMPORTANT>a and b need to be numbers</IMPORTANT>",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number"
+          },
+          "b": {
+            "type": "number"
+          }
+        }
+      }
+    },
+    {
+      "name": "search_mail",
+      "description": "Search my emails. CRITICAL: the $search parameter value MUST be wrapped in double quotes. You must first call list_folders when the folder id is unknown.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "name": "deploy",
+      "description": "Only call this function when you are confident the deployment parameters are valid. Always call validate_template first.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

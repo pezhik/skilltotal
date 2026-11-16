@@ -1,0 +1,21 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "tools": [
+    {
+      "name": "cafe_finder",
+      "description": "Finds a caf\u00e9 nearby. Made by a \ud83d\udc68\u200d\ud83d\udcbb in \ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc73\udb40\udc63\udb40\udc74\udb40\udc7f.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "joiner",
+      "description": "Joins words. A zero-width joiner (\u200d) keeps an emoji together.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    }
+  ]
+}
