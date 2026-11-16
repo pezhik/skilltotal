@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import posixpath
 import re
+from pathlib import Path
 
 from skilltotal import bounded_json
 from skilltotal.file_index import FileIndex, IndexedFile
-from skilltotal.loaded_code import install_time_scripts
+from skilltotal.loaded_code import NPM_LIFECYCLE_SCRIPTS, install_time_scripts
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import (
     PatternScanner,
@@ -28,9 +29,10 @@ from skilltotal.scanners.shell_script import DECODE_EXEC_SH, REMOTE_EXEC
 
 CATEGORY = "install_time_execution"
 R_NPM_REMOTE_EXEC = "ST-INSTALL-NPM-REMOTE-EXEC"
-# The scripts npm runs on its own: on every install of the package (preinstall / install /
-# postinstall), and on a git or local install (prepare).
-_NPM_LIFECYCLE_SCRIPTS = ("preinstall", "install", "postinstall", "prepare")
+# The scripts npm runs on its own (loaded_code.NPM_LIFECYCLE_SCRIPTS): on every install of the
+# package (preinstall / install / postinstall), and on a local or git install the prepare family
+# (prepublish, preprepare, prepare, postprepare) and prepack.
+_NPM_LIFECYCLE_SCRIPTS = NPM_LIFECYCLE_SCRIPTS
 
 
 # JavaScript that collects a response body into a variable: `res.on("data", c => body += c)`,
@@ -89,13 +91,146 @@ def js_runs_fetched_body(text: str) -> tuple[int, int] | None:
     return None
 
 
+# More ways an install command runs code that is not in the package, next to the shared shell
+# forms (REMOTE_EXEC, DECODE_EXEC_SH): text decoded inside a command substitution that a shell
+# runs, text reversed or un-hexed into a shell, Python that executes a response body, and a
+# package runner pointed at a web address.
+_INSTALL_FETCH_RUN = re.compile(
+    r"\b(?:ba|z|da|k)?sh\s+-c\s+[\"']?(?:\$\(|`)[^)`\n]{0,600}\bbase64\s+(?:-d|-D|--decode)\b"
+    r"|\b(?:rev|xxd\s+-r)\b[^\n|]{0,200}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
+    r"|\bpython[0-9.]*\s+-c\b[^\n]{0,600}?\b(?:exec|eval)\s*\([^\n]{0,200}?"
+    r"\b(?:urlopen|urlretrieve|requests\s*\.\s*get)\b"
+    r"|\b(?:npx|bunx|npm\s+exec|pnpm\s+dlx|yarn\s+dlx)\b[^\n|;&]{0,200}?\bhttps?://",
+    re.IGNORECASE,
+)
+
+# `curl -o /tmp/p URL && /tmp/p`, `wget URL; sh i.sh`: a download saved to a file that a later
+# part of the same script starts. The saved name is read from the option that sets it, or is the
+# last part of the address when the tool keeps the remote name.
+_FETCH_COMMAND = re.compile(r"\b(curl|wget)\b([^\n;&|]{0,800})", re.IGNORECASE)
+_CURL_OUTPUT = re.compile(r"(?<!\S)(?:-[A-Za-z]*o|--output)[=\s]\s*[\"']?([^\s\"';&|]{1,200})")
+_CURL_REMOTE_NAME = re.compile(r"(?<!\S)(?:-[A-Za-z]*O\b|--remote-name\b)")
+_WGET_OUTPUT = re.compile(
+    r"(?<!\S)(?:-[A-Za-z]*O|--output-document)[=\s]?\s*[\"']?([^\s\"';&|]{1,200})"
+)
+_REDIRECT_OUTPUT = re.compile(r"(?<![0-9&])>\s*[\"']?([^\s\"';&|>]{1,200})")
+_URL_LAST_PART = re.compile(r"https?://[^\s\"'?#]{1,400}/([\w.+-]{1,120})(?=$|[\s\"'?#])")
+_NOT_A_FILE = frozenset({"-", "/dev/null", "/dev/stdout", "nul"})
+_RUN_REACH = 2000
+# A prebuilt binary taken from a project's GitHub release into the package's own folder and then
+# started is how native-tool wrappers install; the same download saved to a temp folder is not.
+_RELEASE_ASSET_URL = re.compile(
+    r"https://(?:github\.com/[\w.-]+/[\w.-]+/releases/download/"
+    r"|api\.github\.com/repos/[\w.-]+/[\w.-]+/releases/assets/)",
+    re.IGNORECASE,
+)
+_TEMP_TARGET = re.compile(r"^(?:/tmp/|/var/tmp/|/dev/shm/|~|/|\$|\.\./)|(?:^|/)\.[^./]")
+
+
+def _saved_download(tool: str, arguments: str) -> str | None:
+    """The file a ``curl``/``wget`` command saves its download to, or None when it prints it."""
+    if tool.lower() == "curl":
+        named = _CURL_OUTPUT.search(arguments) or _REDIRECT_OUTPUT.search(arguments)
+        if named is None and not _CURL_REMOTE_NAME.search(arguments):
+            return None
+    else:
+        named = _WGET_OUTPUT.search(arguments) or _REDIRECT_OUTPUT.search(arguments)
+    if named is not None:
+        target = named.group(1)
+        return None if target in _NOT_A_FILE else target
+    last = _URL_LAST_PART.search(arguments)
+    return last.group(1) if last else None
+
+
+def download_then_run_spans(text: str) -> list[tuple[int, int]]:
+    """Spans from a download saved to a file to the later command that starts that file: through
+    an interpreter (``sh i.sh``, ``node x.js``, ``. ./env``) or as a command itself (``/tmp/p``,
+    ``./p``). A download that is only unpacked, moved or checked is not run, and a GitHub release
+    asset saved inside the package is left to the install-hook capability finding."""
+    spans: list[tuple[int, int]] = []
+    for fetch in _FETCH_COMMAND.finditer(text):
+        target = _saved_download(fetch.group(1), fetch.group(2))
+        if target is None:
+            continue
+        if _RELEASE_ASSET_URL.search(fetch.group(2)) and not _TEMP_TARGET.search(target):
+            continue
+        name = re.escape(target.removeprefix("./"))
+        run = re.compile(
+            r"(?:\b(?:ba|z|da|k)?sh|\bnode|\bpython[0-9.]*|\bperl|\bruby|\bsource|(?<![\w.])\.)"
+            rf"\s+(?:-[\w-]+\s+){{0,3}}[\"']?(?:\./)?{name}(?=$|[\s\"';&|)])"
+            rf"|(?:^|[;&|(\n])\s*[\"']?((?:\./)?{name})(?=$|[\s\"';&|)])",
+            re.MULTILINE,
+        )
+        for started in run.finditer(text, fetch.end(), fetch.end() + _RUN_REACH):
+            as_command = started.group(1)
+            if as_command is not None and "/" not in as_command:
+                continue  # a bare word is looked up on PATH, not in the folder it was saved to
+            spans.append((fetch.start(), started.end()))
+            break
+    return spans
+
+
+# `c=curl; s=sh; $c -s URL | $s`: the tools named through variables set in the same script.
+_SHELL_TOOL_ASSIGNMENT = re.compile(
+    r"(?:^|[;&\n]|\bexport)\s*([A-Za-z_]\w{0,40})=[\"']?(?:[\w./-]{0,60}/)?"
+    r"(curl|wget|sh|bash|zsh|dash|ksh)[\"']?(?=\s*(?:[;&\n]|$))",
+    re.MULTILINE,
+)
+
+
+def indirect_remote_exec_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of a download piped into a shell where the downloader, the shell or both are named
+    through a variable the script sets to that tool (``c=curl; $c URL | sh``)."""
+    fetchers: list[str] = []
+    shells: list[str] = []
+    for m in _SHELL_TOOL_ASSIGNMENT.finditer(text):
+        (fetchers if m.group(2) in ("curl", "wget") else shells).append(re.escape(m.group(1)))
+    if not fetchers and not shells:
+        return []
+    fetch = r"(?:\b(?:curl|wget)\b" + (
+        rf"|\$\{{?(?:{'|'.join(fetchers)})\}}?(?![\w])" if fetchers else "") + ")"
+    shell = r"(?:(?:sudo\s+)?(?:ba|z|da|k)?sh\b" + (
+        rf"|\$\{{?(?:{'|'.join(shells)})\}}?(?![\w])" if shells else "") + ")"
+    piped = re.compile(rf"{fetch}[^\n|]{{0,1000}}\|\s*{shell}")
+    return [
+        (m.start(), m.end()) for m in piped.finditer(text)
+        if "$" in m.group(0)[:1] or re.search(r"\|\s*\$", m.group(0))
+    ]
+
+
+def _shell_fetch_run_spans(f: IndexedFile) -> list[tuple[int, int]]:
+    """Spans of shell text in ``f`` that download code and run it or decode data and run it. A
+    comment, a printed hint or a hint kept in a variable that is only printed is not run."""
+    spans = [
+        (m.start(), m.end())
+        for pattern in (REMOTE_EXEC, DECODE_EXEC_SH, _INSTALL_FETCH_RUN)
+        for m in pattern.finditer(f.text)
+    ]
+    spans += download_then_run_spans(f.text) + indirect_remote_exec_spans(f.text)
+    return sorted(
+        (start, end) for start, end in set(spans)
+        if not (f.in_shell_comment(start) or f.in_printed_command(start)
+                or f.in_shell_assigned_hint(start) or _after_hash(f.text, start))
+    )
+
+
+def _command_as_file(command: str) -> IndexedFile:
+    """An install command as a one-off shell file, so that the same reading of comments and of
+    printed text applies to it as to a script on disk."""
+    return IndexedFile(
+        path=Path("install-command.sh"), relpath="install-command.sh", text=command,
+        _line_starts=FileIndex._compute_line_starts(command),
+    )
+
+
 def runs_fetched_or_decoded_code(command: str) -> bool:
     """True if a command downloads code and runs it, or decodes data and runs it: the shell forms
-    (`curl … | sh`, `sh -c "$(curl …)"`, `… base64 -d | sh`) and inline JavaScript or Python
-    (`node -e "eval(Buffer.from(…, 'base64').toString())"`, or a `node -e` whose `https.get`
-    response body reaches `eval`)."""
+    (`curl … | sh`, `sh -c "$(curl …)"`, `… base64 -d | sh`, a download saved and then started)
+    and inline JavaScript or Python (`node -e "eval(Buffer.from(…, 'base64').toString())"`, or a
+    `node -e` whose `https.get` response body reaches `eval`). A command that only prints such a
+    line for the person to run (`echo "Then run: curl … | sh"`) does not run it."""
     return bool(
-        REMOTE_EXEC.search(command) or DECODE_EXEC_SH.search(command)
+        _shell_fetch_run_spans(_command_as_file(command))
         or _DECODE_EXEC.search(command) or js_runs_fetched_body(command)
     )
 
@@ -158,6 +293,75 @@ def install_run_interpreters(index: FileIndex) -> tuple[set[str], set[str]]:
     return shell, node
 
 
+# A shell command a JavaScript install script runs: the string is an argument of a
+# `child_process` call (`execSync("…")`, `cp["exec"]("…")`, `spawn("sh", ["-c", "…"])`).
+_JS_RUNS_COMMAND = re.compile(
+    r"(?:exec|execSync|execFile|execFileSync|spawn|spawnSync)[\"'`]?\s{0,10}\]?\s{0,10}\(\s{0,40}"
+    r"(?:[\"'`][\w./-]{0,20}[\"'`]\s{0,10},\s{0,10}\[?\s{0,10}"
+    r"(?:[\"'`]-c[\"'`]\s{0,10},\s{0,10})?)?[\"'`][^\"'`\n]{0,300}$"
+)
+_JS_ESCAPE = re.compile(r"\\x([0-9a-fA-F]{2})|\\u([0-9a-fA-F]{4})")
+_JS_COMMAND_REACH = 400
+
+
+def _js_unescaped(text: str, origin: list[int] | None) -> tuple[str, list[int]] | None:
+    """``text`` with its ``\\xHH`` and ``\\uHHHH`` escapes written out, and for each character of
+    the result its offset in the original file (``origin`` maps ``text`` itself when it is already
+    a rewritten view); None when the text has no such escape."""
+    if "\\x" not in text and "\\u" not in text:
+        return None
+    out: list[str] = []
+    offsets: list[int] = []
+    at = 0
+    for m in _JS_ESCAPE.finditer(text):
+        out.append(text[at:m.start()])
+        offsets.extend(range(at, m.start()))
+        out.append(chr(int(m.group(1) or m.group(2), 16)))
+        offsets.append(m.start())
+        at = m.end()
+    if at == 0:
+        return None
+    out.append(text[at:])
+    offsets.extend(range(at, len(text)))
+    if origin is not None:
+        offsets = [origin[o] for o in offsets]
+    return "".join(out), offsets
+
+
+def _js_command_evidence(f: IndexedFile) -> list[Evidence]:
+    """Evidence for each shell command a JavaScript install script runs that downloads code and
+    runs it or decodes data and runs it. The file is read as written, with split string literals
+    joined (``"cu" + "rl"``) and with character escapes written out (``"\\x63url"``): none of
+    these changes what the script runs. A string that is only printed or kept is not a command."""
+    views: list[tuple[str, list[int] | None]] = [(f.text, None)]
+    folded = f.concat_folded_or_none()
+    if folded is not None:
+        views.append((folded[0], list(folded[1])))
+    for text, origin in list(views):
+        plain = _js_unescaped(text, origin)
+        if plain is not None:
+            views.append(plain)
+    found: list[Evidence] = []
+    lines: set[int] = set()
+    for text, origin in views:
+        spans = [
+            (m.start(), m.end())
+            for pattern in (REMOTE_EXEC, DECODE_EXEC_SH, _INSTALL_FETCH_RUN)
+            for m in pattern.finditer(text)
+        ] + download_then_run_spans(text)
+        for start, end in sorted(set(spans)):
+            if not _JS_RUNS_COMMAND.search(text, max(0, start - _JS_COMMAND_REACH), start):
+                continue
+            first, last = (start, end) if origin is None else (origin[start], origin[end - 1] + 1)
+            if f.in_c_comment(first):
+                continue
+            ev = f.evidence_for_span(first, last)
+            if ev.line_start not in lines:
+                lines.add(ev.line_start)
+                found.append(ev)
+    return found
+
+
 class InstallScriptsScanner(PatternScanner):
     name = "install_scripts"
     rules = [
@@ -183,11 +387,13 @@ class InstallScriptsScanner(PatternScanner):
             id="ST-INSTALL-NPM-PREPARE",
             category=CATEGORY,
             severity=Severity.MEDIUM,
-            title="npm prepare hook",
+            title="npm prepare-time hook",
             description=(
-                "package.json declares a 'prepare' script. It runs on local/git installs "
-                "and before publish (typically a build step), but not for consumers "
-                "installing the published package from the registry."
+                "package.json declares a script of the prepare family (prepublish, preprepare, "
+                "prepare, postprepare) or prepack. npm runs these on a local install (`npm "
+                "install` or `npm ci` in the package's folder), when the package is installed "
+                "from a git address, and before publish (typically a build step), but not for "
+                "consumers installing the published package from the registry."
             ),
             recommendation=(
                 "Usually a legitimate build step; confirm it only builds and does not fetch "
@@ -195,7 +401,7 @@ class InstallScriptsScanner(PatternScanner):
             ),
             capability=Capability.INSTALL_TIME_EXECUTION,
             names=("package.json",),
-            pattern=re.compile(r'"prepare"\s*:'),
+            pattern=re.compile(r'"(?:prepublish|preprepare|prepare|postprepare|prepack)"\s*:'),
         ),
         RuleSpec(
             id=R_NPM_REMOTE_EXEC,
@@ -204,12 +410,15 @@ class InstallScriptsScanner(PatternScanner):
             title="npm install script downloads or decodes code and runs it",
             description=(
                 "A package.json lifecycle script that npm runs on its own (preinstall / install / "
-                "postinstall, or prepare on a git or local install), a script one of them starts "
-                "with `npm run`, or a file one of them runs "
-                "(`\"postinstall\": \"bash install.sh\"`, `node ./scripts/update.data`), "
-                "downloads code and pipes it into a shell, runs "
-                "a downloaded response body (`eval`, `execSync`), or decodes data and executes "
-                "it, for example `curl -fsSL https://... | bash` or "
+                "postinstall, or the prepare family and prepack on a git or local install), a "
+                "script one of them starts with `npm run`, or a file one of them runs or reaches "
+                "through another file "
+                "(`\"postinstall\": \"bash install.sh\"`, `node ./scripts/update.data`, "
+                "`setup.js` that starts `payload.sh`), "
+                "downloads code and pipes it into a shell, saves a download and then starts it, "
+                "runs a downloaded response body (`eval`, `execSync`), or decodes data and "
+                "executes it, for example `curl -fsSL https://... | bash`, "
+                "`curl -o /tmp/p https://... && /tmp/p` or "
                 "`node -e \"eval(Buffer.from(..., 'base64')...)\"`. "
                 "What runs is whatever the host serves, or the decoded text, on every install; "
                 "neither is in the package for review."
@@ -304,6 +513,7 @@ class InstallScriptsScanner(PatternScanner):
                 span = js_runs_fetched_body(f.text)
                 if span is not None and not f.in_c_comment(span[1] - 1):
                     evidence.append(f.evidence_for_span(*span))
+                evidence += _js_command_evidence(f)
         evidence += platform_fetch_evidence(index)
         if evidence:
             rule = next(r for r in self.rules if r.id == R_NPM_REMOTE_EXEC)
@@ -350,15 +560,7 @@ def _remote_exec_lines(f: IndexedFile) -> list[Evidence]:
     data and runs it. A comment, a printed hint or a hint kept in a variable that is only printed
     is not run, so it does not count. A file the install starts with a shell is read as one even
     without a shell suffix or first line; its ``#`` lines are comments all the same."""
-    found: list[Evidence] = []
-    for pattern in (REMOTE_EXEC, DECODE_EXEC_SH):
-        for match in pattern.finditer(f.text):
-            at = match.start()
-            if (f.in_shell_comment(at) or f.in_printed_command(at)
-                    or f.in_shell_assigned_hint(at) or _after_hash(f.text, at)):
-                continue
-            found.append(f.evidence_for_span(match.start(), match.end()))
-    return found
+    return [f.evidence_for_span(start, end) for start, end in _shell_fetch_run_spans(f)]
 
 
 def _after_hash(text: str, at: int) -> bool:

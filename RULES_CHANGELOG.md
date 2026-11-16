@@ -4,6 +4,50 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 101 (engine 1.2.0)
+
+This ruleset follows an audit of npm install-time hooks against what npm actually runs. The audit
+scanned 98 small packages, each built around one attack shape or one honest install script. This
+ruleset reads more of the hooks npm runs, follows the files an install script starts and matches
+more download-and-run commands. Two limits are listed at the end.
+- Hooks: npm also runs `prepublish`, `preprepare` and `postprepare` on a local install
+  (`npm install` or `npm ci` in the package's folder) and on an install from a git address, and
+  `prepack` when that git checkout is packed. Their commands, and the files they run, are now
+  read like those of `preinstall`, `install`, `postinstall` and `prepare`.
+  `ST-INSTALL-NPM-PREPARE` (changed) reports the whole family, still at medium. `postpack` and the
+  publish scripts run only for whoever packs or publishes and are not install-time.
+- `ST-INSTALL-NPM-REMOTE-EXEC` (changed) also matches, in a hook's command or in a shell script
+  the install runs:
+  - a download saved to a file that the same script then starts (`curl -o /tmp/p https://... &&
+    /tmp/p`, `wget https://.../i.sh; sh i.sh`); a download that is only unpacked is not matched;
+  - the downloader or the shell named through a variable (`c=curl; $c https://... | sh`);
+  - a command decoded inside a substitution that a shell runs (`sh -c "$(echo ... | base64
+    -d)"`), or reversed or un-hexed into a shell (`... | rev | sh`);
+  - `python -c` that executes a response body, and a package runner given a web address
+    (`npx https://.../pkg.tgz`).
+- `ST-INSTALL-NPM-REMOTE-EXEC` (changed) reads the shell commands a JavaScript install script
+  runs (`execSync("curl ... | sh")`, `spawn("sh", ["-c", "..."])`), also when the command is
+  split across string literals (`"cu" + "rl ..."`) or written in character escapes
+  (`"\x63url ..."`). A string that is only printed or stored is not read as a command.
+- Chains: a file an install script starts is followed and read as part of the install: a shell
+  script that starts or sources another, a JavaScript file that starts a shell script
+  (`postinstall` -> `setup.js` -> `payload.sh`), and a file with no suffix whose first line names
+  a shell. `ST-SECRET-EXFIL` (changed) checks every shell script reached this way for a
+  credential that is uploaded.
+- `ST-SECRET-EXFIL` (changed): a JavaScript install script that writes a named login token
+  (`NPM_TOKEN`, `GITHUB_TOKEN` and similar) into the address of a host that is not the token's
+  own service (`"https://host/t?n=" + process.env.NPM_TOKEN`). A token sent to its own service,
+  or used as a header, is not matched.
+- Packages shipped inside a component: the install scripts of a `file:` dependency and of a
+  bundled dependency are read wherever they are filed, `vendor/` and `node_modules/` included.
+  npm runs them when the component is installed.
+- Fewer false positives: a hook that only prints a command for the person to run
+  (`echo "Then run: curl ... | sh"`) is no longer reported.
+- Limits: an install script that reads a credential file and leaks it through DNS lookups is rated
+  high (`ST-COMBO-EXFIL`, `ST-INSTALL-DROPPER`), not malicious. The install scripts of a
+  dependency fetched from a registry, a git address or a URL are not in the component, so they
+  are not read; `ST-NPM-GIT-DEP` and `ST-NPM-URL-DEP` name such a dependency.
+
 ## ruleset 100 (engine 1.1.0)
 
 Install-time stealers often split the work across lines: one line collects credentials into a

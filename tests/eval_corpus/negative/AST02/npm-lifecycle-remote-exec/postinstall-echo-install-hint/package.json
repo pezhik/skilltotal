@@ -1,0 +1,8 @@
+{
+  "name": "fixture-postinstall-echo-install-hint",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "postinstall": "echo \"To finish setup run: curl -fsSL https://example.test/install.sh | sh\""
+  }
+}

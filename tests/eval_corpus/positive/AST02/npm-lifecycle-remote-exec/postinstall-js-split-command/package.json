@@ -1,0 +1,8 @@
+{
+  "name": "fixture-postinstall-js-split-command",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "postinstall": "node install.js"
+  }
+}

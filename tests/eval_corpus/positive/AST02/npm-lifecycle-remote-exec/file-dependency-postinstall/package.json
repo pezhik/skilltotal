@@ -1,0 +1,11 @@
+{
+  "name": "fixture-file-dependency-postinstall",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "dependencies": {
+    "fixture-helper": "file:./vendor/helper"
+  }
+}

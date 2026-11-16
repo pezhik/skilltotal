@@ -12,8 +12,11 @@ network somewhere. This rule is the narrower, stronger case: a single construct 
   -X POST -d @~/.ssh/id_rsa ...``) is exactly this. A credential handed to its own client is not
   sent anywhere (``ssh -i ~/.ssh/key``, ``--kubeconfig``, a container mount ``-v ~/.aws:...``), and
   a provider's token sent to that provider (``gh auth token`` to ``api.github.com``) is its use.
-* **An npm install-time script** (``preinstall``, ``install``, ``postinstall``, ``prepare``) that
-  does the same, inline or through a shell script it runs.
+* **An npm install-time script** (``preinstall``, ``install``, ``postinstall``, the prepare family
+  and ``prepack``: ``loaded_code.NPM_LIFECYCLE_SCRIPTS``) that does the same, inline or through a
+  shell script it runs or reaches through another file (``postinstall`` -> ``setup.js`` ->
+  ``payload.sh``), and a JavaScript install script that writes a named login token into the
+  address of a host that is not the token's own service.
 * **A shell script one of those runs that collects first and sends later**: a line that writes a
   credential, the environment or a login token to a file or variable (``cat ~/.aws/credentials >>
   "$out"``), and a later line in which a network client uploads it (``curl --data-binary
@@ -46,7 +49,11 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     aggregated_review,
 )
-from skilltotal.scanners.install_scripts import _NPM_LIFECYCLE_SCRIPTS, npm_install_commands
+from skilltotal.scanners.install_scripts import (
+    _NPM_LIFECYCLE_SCRIPTS,
+    install_run_interpreters,
+    npm_install_commands,
+)
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
 
 RULE_ID = "ST-SECRET-EXFIL"
@@ -971,19 +978,28 @@ def _run_script_evidence(
             script = by_path.get(f"{folder}/{cleaned}" if folder else cleaned)
             if script is None or script.suffix not in _SHELL_SUFFIXES:
                 continue
-            for line_no in range(1, len(script.text.splitlines()) + 1):
-                line = script.line_text(line_no)
-                if line.lstrip().startswith("#"):
-                    continue
-                span = secret_upload(line)
-                if span is not None:
-                    return script.evidence_for_lines(line_no, line_no)
-            staged = staged_upload_lines(script.text.splitlines())
-            if staged is not None:
-                read_at, send_at = staged
-                # Both lines when they are close together, else the send alone.
-                first = read_at if send_at - read_at <= _STAGED_SPAN else send_at
-                return script.evidence_for_lines(first, send_at)
+            ev = _shell_script_upload(script)
+            if ev is not None:
+                return ev
+    return None
+
+
+def _shell_script_upload(script: IndexedFile) -> Evidence | None:
+    """The line of a shell script that uploads a credential, or the lines that collect one into a
+    file or variable and send it later; None when the script does neither."""
+    for line_no in range(1, len(script.text.splitlines()) + 1):
+        line = script.line_text(line_no)
+        if line.lstrip().startswith("#"):
+            continue
+        span = secret_upload(line)
+        if span is not None:
+            return script.evidence_for_lines(line_no, line_no)
+    staged = staged_upload_lines(script.text.splitlines())
+    if staged is not None:
+        read_at, send_at = staged
+        # Both lines when they are close together, else the send alone.
+        first = read_at if send_at - read_at <= _STAGED_SPAN else send_at
+        return script.evidence_for_lines(first, send_at)
     return None
 
 
@@ -1067,6 +1083,47 @@ def _credential_source(line: str) -> tuple[int, tuple[str, ...]] | None:
     return None
 
 
+# A login token an install script has no reason to put into a web address: it is used as a header
+# (`Authorization: Bearer …`) with the service that issued it. Written into the address itself
+# (`"https://host/t?n=" + process.env.NPM_TOKEN`, `` `https://host/${process.env.GH_TOKEN}` ``) it
+# reaches whoever runs the host and stays in that host's logs.
+_JS_TOKEN_IN_URL = re.compile(
+    r"https?://([^/\s\"'`?#$]{1,200})[^\"'`\n]{0,300}"
+    r"(?:[\"'`]\s{0,10}\+\s{0,10}(?:encodeURIComponent\s*\(\s{0,10})?|\$\{\s{0,10}(?:encodeURIComponent\s*\(\s{0,10})?)"
+    r"process\.env\.(NPM_TOKEN|NODE_AUTH_TOKEN|NPM_AUTH_TOKEN|GITHUB_TOKEN|GH_TOKEN|GITLAB_TOKEN|"
+    r"CI_JOB_TOKEN|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY)\b"
+)
+# The service a token belongs to: sent there it is used, not taken.
+_TOKEN_OWN_HOSTS = {
+    "NPM_TOKEN": ("npmjs.org", "npmjs.com"),
+    "NODE_AUTH_TOKEN": ("npmjs.org", "npmjs.com", "github.com"),
+    "NPM_AUTH_TOKEN": ("npmjs.org", "npmjs.com"),
+    "GITHUB_TOKEN": ("github.com", "githubusercontent.com"),
+    "GH_TOKEN": ("github.com", "githubusercontent.com"),
+    "GITLAB_TOKEN": ("gitlab.com",),
+    "CI_JOB_TOKEN": ("gitlab.com",),
+    "AWS_SECRET_ACCESS_KEY": ("amazonaws.com",),
+    "AWS_SESSION_TOKEN": ("amazonaws.com",),
+    "OPENAI_API_KEY": ("openai.com",),
+    "ANTHROPIC_API_KEY": ("anthropic.com",),
+}
+
+
+def _js_token_in_url(f: IndexedFile) -> Evidence | None:
+    """The first place a JavaScript install script writes a named login token into the address of
+    a host that is not the token's own service."""
+    for m in _JS_TOKEN_IN_URL.finditer(f.text):
+        host = m.group(1).lower().rsplit("@", 1)[-1].split(":", 1)[0]
+        if any(host == own or host.endswith("." + own) for own in _TOKEN_OWN_HOSTS[m.group(2)]):
+            continue
+        # A host name is compared here; nothing binds to it (the reason for the nosec below).
+        local = host in ("localhost", "0.0.0.0", "[") or host.startswith("127.")  # nosec B104
+        if local or f.in_c_comment(m.start()):
+            continue
+        return f.evidence_for_span(m.start(), m.end())
+    return None
+
+
 def _install_evidence(index: FileIndex, by_path: dict[str, IndexedFile]) -> list[Evidence]:
     """npm install-time scripts that upload a credential, inline or through a script they run."""
     found: list[Evidence] = []
@@ -1078,4 +1135,24 @@ def _install_evidence(index: FileIndex, by_path: dict[str, IndexedFile]) -> list
             ev = _run_script_evidence(command, f.relpath, by_path)
             if ev is not None:
                 found.append(ev)
+    # A shell script the install reaches through another file (`postinstall` -> `setup.js` ->
+    # `payload.sh`, a script that starts a second one, a suffix-less file with a shell first line)
+    # runs at install like the one the command names.
+    shell_run, _node_run = install_run_interpreters(index)
+    seen = {(ev.file, ev.line_start) for ev in found}
+    for script in index.files:
+        if script.relpath not in index.install_scripts:
+            continue
+        if script.suffix in _JS_SUFFIXES or script.relpath in _node_run:
+            ev = _js_token_in_url(script)
+            if ev is not None:
+                found.append(ev)
+            continue
+        if not (script.suffix in _SHELL_SUFFIXES or script.relpath in shell_run
+                or (script.suffix == "" and script.is_shell_like)):
+            continue
+        ev = _shell_script_upload(script)
+        if ev is not None and (ev.file, ev.line_start) not in seen:
+            seen.add((ev.file, ev.line_start))
+            found.append(ev)
     return found

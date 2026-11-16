@@ -53,6 +53,10 @@
  "negative/AST01/credential-exfil/npm-postinstall-token-as-header": [
   "ST-INSTALL-NPM"
  ],
+ "negative/AST01/credential-exfil/npm-postinstall-token-to-own-registry": [
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE"
+ ],
  "negative/AST01/credential-exfil/ordinary-config-network": [
   "ST-FS-PY-READ",
   "ST-NET-PY"
@@ -352,20 +356,36 @@
   "ST-INSTALL-NPM",
   "ST-SHELL-PIPE-EXEC"
  ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-download-unpack-only": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-downloads-pinned-binary": [
   "ST-FS-NODE-WRITE",
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE",
   "ST-NET-NODE"
  ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-echo-install-hint": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-fetches-json-manifest": [
   "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-js-prints-install-hint": [
+  "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-js-runs-local-build-script": [
+  "ST-INSTALL-NPM",
+  "ST-SHELL-NODE"
  ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-npm-run-build": [
   "ST-INSTALL-NPM"
  ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-sh-extensionless-local-build": [
   "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/prepack-build": [
+  "ST-INSTALL-NPM-PREPARE"
  ],
  "negative/AST02/npm-postinstall-miner/native-build-script": [
   "ST-INSTALL-NPM"
@@ -598,12 +618,24 @@
   "ST-NET-NODE",
   "ST-SENS-PATH"
  ],
+ "positive/AST01/credential-exfil/npm-postinstall-second-stage-upload": [
+  "ST-COMBO-EXFIL",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
  "positive/AST01/credential-exfil/npm-postinstall-staged-tempfile": [
   "ST-COMBO-EXFIL",
   "ST-INSTALL-DROPPER",
   "ST-INSTALL-NPM",
   "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
+ ],
+ "positive/AST01/credential-exfil/npm-postinstall-token-in-url": [
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE",
+  "ST-SECRET-EXFIL"
  ],
  "positive/AST01/credential-exfil/npm-preinstall-staged-variable": [
   "ST-COMBO-EXFIL",
@@ -1290,6 +1322,10 @@
   "ST-NPM-SANDBOX-GATED-LOADER",
   "ST-SHELL-NODE"
  ],
+ "positive/AST02/npm-lifecycle-remote-exec/file-dependency-postinstall": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
  "positive/AST02/npm-lifecycle-remote-exec/install-wget-escaped-pipe": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
@@ -1302,6 +1338,20 @@
   "ST-INSTALL-NPM-REMOTE-EXEC",
   "ST-NET-NODE",
   "ST-SENS-PATH"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-download-then-run": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-js-split-command": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-js-starts-shell-payload": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-SHELL-NODE",
+  "ST-SHELL-PIPE-EXEC"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-node-base64-eval": [
   "ST-INSTALL-NPM",
@@ -1328,8 +1378,21 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-tools-named-by-variables": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
  "positive/AST02/npm-lifecycle-remote-exec/preinstall-curl-bash": [
   "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/prepack-runs-fetch-script": [
+  "ST-INSTALL-NPM-PREPARE",
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-SHELL-PIPE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/preprepare-curl-sh": [
+  "ST-INSTALL-NPM-PREPARE",
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
  "positive/AST02/npm-postinstall-miner/miner-script-persistence": [

@@ -128,6 +128,15 @@ def bundled_module_file(base: Path, start: Path, spec: str) -> Path | None:
 
 
 # --- npm scripts a lifecycle script runs ----------------------------------------------------------
+# The scripts npm runs on its own. On every install of the package, from the registry too:
+# preinstall, install, postinstall. On a local install (`npm install` or `npm ci` in the package's
+# folder) and when the package is installed from a git address: prepublish, preprepare, prepare,
+# postprepare; prepack runs when that git checkout is packed. postpack and the publish scripts run
+# only for whoever packs or publishes, so they are not install-time.
+NPM_REGISTRY_INSTALL_SCRIPTS = ("preinstall", "install", "postinstall")
+NPM_PREPARE_SCRIPTS = ("prepublish", "preprepare", "prepare", "postprepare", "prepack")
+NPM_LIFECYCLE_SCRIPTS = NPM_REGISTRY_INSTALL_SCRIPTS + NPM_PREPARE_SCRIPTS
+
 # `npm run setup`, `npm run-script setup`, `"$npm_execpath" run setup`, `pnpm run setup`,
 # `yarn run setup`: a script that starts another script of the same package.json.
 _NPM_RUN = re.compile(

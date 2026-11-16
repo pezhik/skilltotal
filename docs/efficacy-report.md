@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.1.0 · ruleset 100 · Python 3.14 · offline corpus.
+Engine 1.2.0 · ruleset 101 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (231/231 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/194 benign samples wrongly flagged)
+- **recall: 100.0%** (240/240 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/200 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -97,8 +97,8 @@ Engine 1.1.0 · ruleset 100 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 30 | 46 | 38 | 6 |
-| AST02 | 26 | 26 | 10 | 4 |
+| AST01 | 30 | 47 | 38 | 7 |
+| AST02 | 30 | 27 | 10 | 6 |
 | AST03 | 0 | 2 | 0 | 0 |
 | AST04 | 25 | 4 | 8 | 0 |
 | AST05 | 0 | 0 | 6 | 0 |
@@ -115,7 +115,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-CLIPPER` | AST01 | 4 | 0 | - | - |
-| `ST-COMBO-EXFIL` | AST01 | 39 | 0 | 1/1 | 1/1 |
+| `ST-COMBO-EXFIL` | AST01 | 40 | 0 | 1/1 | 1/1 |
 | `ST-CONVERGENCE` | AST01 | 5 | 0 | - | - |
 | `ST-EMAIL-BCC-EXFIL` | AST01 | 1 | 0 | 1/1 | 1/1 |
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
@@ -142,7 +142,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-PY-MAIN-FILE-HARVEST` | AST01 | 1 | 0 | - | - |
 | `ST-PY-SOCKET-SHELL` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
-| `ST-SECRET-EXFIL` | AST01 | 13 | 0 | - | - |
+| `ST-SECRET-EXFIL` | AST01 | 15 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 2 | 1 | 2/2 | 1/1 |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |
@@ -152,7 +152,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-WORKFLOW-SECRETS-DUMP-EXFIL` | AST01 | 2 | 0 | - | - |
 | `ST-ARTIFACT-KNOWN-BAD` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-MINER` | AST01, AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 10 | 0 | - | - |
+| `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 17 | 0 | - | - |
 | `ST-NPM-SANDBOX-GATED-LOADER` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-OBF-DECODE-SPAWN` | AST01, AST02 | 5 | 0 | - | - |
 | `ST-PY-FETCH-EXEC` | AST01, AST02 | 1 | 0 | - | - |
@@ -175,12 +175,12 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-ARTIFACT-FOREIGN-IMAGE` | AST02 | 1 | 0 | - | - |
 | `ST-ARTIFACT-HTTP-BINARY` | AST02 | 1 | 0 | - | - |
 | `ST-GIT-HOOK-PERSIST` | AST02 | 2 | 0 | 1/1 | 2/2 |
-| `ST-INSTALL-DROPPER` | AST02 | 15 | 0 | 1/1 | 1/1 |
+| `ST-INSTALL-DROPPER` | AST02 | 16 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 2 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 38 | 19 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 45 | 24 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-DNS-BEACON` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-MASKED-REGISTRY` | AST02 | 1 | 0 | - | - |
-| `ST-INSTALL-NPM-PREPARE` | AST02 | 0 | 3 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM-PREPARE` | AST02 | 2 | 4 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-SERVICE-TOKEN-WATCH` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-SHELL-RUNS-JS` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-PY` | AST02 | 8 | 5 | 1/1 | 1/1 |
@@ -189,7 +189,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | - | - |
 | `ST-NPM-INSTALL-PUBLISH` | AST02 | 4 | 0 | - | - |
 | `ST-NPM-URL-DEP` | AST02 | 0 | 0 | - | - |
-| `ST-SHELL-PIPE-EXEC` | AST02 | 3 | 4 | 1/1 | 1/1 |
+| `ST-SHELL-PIPE-EXEC` | AST02 | 5 | 4 | 1/1 | 1/1 |
 | `ST-SHELL-PIPE-EXEC-NODE` | AST02 | 7 | 0 | - | - |
 | `ST-SHELL-PIPE-EXEC-PY` | AST02 | 2 | 0 | - | - |
 | `ST-SKILL-FETCH-EXEC` | AST02 | 0 | 3 | - | - |

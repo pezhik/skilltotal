@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.2.0]
+
+### Changed
+- Ruleset 101: npm install-time hooks. `prepublish`, `preprepare`, `postprepare` and `prepack` are
+  read like the install hooks, a file an install script starts is followed (`postinstall` ->
+  `setup.js` -> `payload.sh`), more download-and-run and obfuscated commands are matched, and the
+  install scripts of a dependency shipped inside the component are read. A hook that only prints
+  a command for the person to run is no longer reported. See `RULES_CHANGELOG.md`.
+
 ## [1.1.0]
 
 ### Changed
