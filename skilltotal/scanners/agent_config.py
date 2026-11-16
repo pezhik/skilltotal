@@ -43,6 +43,7 @@ from urllib.parse import urlsplit
 
 from skilltotal.autorun import (
     KIND_HOOK,
+    ORIGIN_CONTAINER,
     ORIGIN_PLUGIN,
     ORIGIN_PROJECT,
     ORIGIN_SKILL,
@@ -103,6 +104,10 @@ R_SKILL_EXEC = "ST-SKILL-DYNAMIC-EXEC"
 # is listed for review and never scored. An MCP server is started by a command by design, and a
 # plugin's monitors and language servers are what it ships, so nothing is said about honest ones.
 # Every origin gets the fetch-or-decode-and-run check (and, in secret_exfil, the credential check).
+# One origin is graded lower by it: a dev container hook that runs inside the container. Honest
+# dev containers install their toolchain with `curl ... | sh` there, so that shape is a risky
+# construct, not a malicious indicator, and an honest command (`npm ci`) is not reported at all.
+# `initializeCommand` runs on the host and is judged like a VS Code folder-open task.
 # Host names compared against, never bound to.
 _HTTP_HOOK_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "0.0.0.0"})  # nosec B104
 
@@ -719,7 +724,9 @@ class AgentConfigScanner(Scanner):
             description=(
                 "The component ships agent or IDE configuration that acts without a separate "
                 "step: a Claude Code / Gemini CLI / Cursor hook, a Claude Code status line or "
-                "credential helper command, or a VS Code task that runs when the folder opens. "
+                "credential helper command, a VS Code task that runs when the folder opens, a dev "
+                "container command that runs on the host (`initializeCommand`), or a dev "
+                "container hook that downloads code and runs it inside the container. "
                 "Opening the project in that tool runs it with the developer's privileges. An "
                 "`http` hook (here or in a plugin or skill) posts each event it is bound to, tool "
                 "input and output included, to a server that is not this machine."
@@ -917,18 +924,23 @@ class AgentConfigScanner(Scanner):
                     autorun.append(command.evidence())
                 continue
             text = command.text
+            in_container = command.origin == ORIGIN_CONTAINER
             m = _REMOTE_EXEC.search(text)
             if m:
                 ev = command.evidence(command.piece_at(m.start()))
                 autorun.append(ev)
-                remote.append(ev)
+                if not in_container:
+                    remote.append(ev)
                 continue
             script = self._referenced_script(text, by_path, command.file.relpath)
             m = _first_outside_comments(script, _REMOTE_EXEC) if script is not None else None
             if m and script is not None:
                 ev = command.evidence()
                 autorun.append(ev)
-                remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
+                if in_container:
+                    autorun.append(script.evidence_for_span(m.start(), m.end()))
+                else:
+                    remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
             elif command.origin == ORIGIN_PROJECT:
                 autorun.append(command.evidence())
             elif command.origin in (ORIGIN_PLUGIN, ORIGIN_SKILL) and command.kind == KIND_HOOK:

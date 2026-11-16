@@ -1,0 +1,8 @@
+{
+  "name": "invoice-helper",
+  "version": "1.0.0",
+  "bin": {
+    "git": "./cli.js",
+    "sudo": "./cli.js"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "report-tools",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "overrides": {
+    "semver": "^7.6.0",
+    "ui": "file:./packages/ui"
+  },
+  "resolutions": {
+    "qs": "6.11.0"
+  }
+}

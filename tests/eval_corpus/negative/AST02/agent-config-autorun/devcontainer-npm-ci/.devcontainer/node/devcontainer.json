@@ -1,0 +1,12 @@
+{
+  "name": "dev",
+  "image": "node:20",
+  "postCreateCommand": "npm ci",
+  "postStartCommand": {
+    "watch": [
+      "npm",
+      "run",
+      "watch"
+    ]
+  }
+}

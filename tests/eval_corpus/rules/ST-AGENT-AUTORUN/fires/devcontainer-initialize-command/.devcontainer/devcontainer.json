@@ -1,0 +1,5 @@
+{
+  "name": "dev",
+  "image": "node:20",
+  "initializeCommand": "docker network create dev-net || true"
+}

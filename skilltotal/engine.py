@@ -51,6 +51,7 @@ from skilltotal.loaded_code import LOADING_SUFFIXES as _LOADING_SUFFIXES
 from skilltotal.loaded_code import (
     MAX_LOADED_FILES,
     NPM_LIFECYCLE_SCRIPTS,
+    _inside_by_name,
     follow_skipped_references,
     install_time_scripts,
 )
@@ -84,6 +85,11 @@ from skilltotal.scan_cache import ScanCache
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.artifact_provenance import prebuilt_artifacts
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
+from skilltotal.scanners.disguised_script import (
+    DISGUISE_SUFFIXES,
+    SOURCE_INSTALL,
+    disguised_runs,
+)
 from skilltotal.scanners.mcp import is_mcp_listing
 from skilltotal.scoring import compute_score, is_own_provider_read, risk_level
 from skilltotal.traits import build_trait_profile
@@ -205,7 +211,8 @@ def analyze_directory(
     index = build_index(entry_points)
     # The file an MCP manifest launches is an entry point too. It is known only once the manifests
     # are read; one the walk set aside for its shape or size is read on a second walk (rare).
-    launched = _mcp_launched_files(index) - entry_points
+    # So is a file an `env` block makes every process load (`NODE_OPTIONS=--require ./x.js`).
+    launched = (_mcp_launched_files(index) | _env_loaded_files(index)) - entry_points
     if launched & {*index.minified, *index.large}:
         index = build_index(entry_points | launched)
     entry_points |= launched
@@ -216,7 +223,20 @@ def analyze_directory(
     ) if bundled else frozenset()
     # Code the component loads by a literal path from a folder the walk passed over (its own
     # `lib/env/`, `src/vendor/`, ...) is read too: it runs whatever folder it is filed under.
-    index, unloaded = follow_skipped_references(index)
+    index, unloaded = follow_skipped_references(index, _env_loaded_paths(index))
+    # A file started under a name that hides it (`node assets/logo.png`, `python3 x.docx`) is read
+    # as the language it is started in, and is an entry point like any file a command starts.
+    disguised = disguised_runs(index, _component_file_check(Path(root)))
+    languages = {run.target: run.language for run in disguised if run.read}
+    languages.update(_env_loaded_languages(index))
+    if languages:
+        index = index.reading_as(languages)
+        # A command written in a fixture (a test, an example, a corpus sample) starts nothing
+        # for whoever installs the component, so what it names stays with that folder's rules.
+        entry_points |= {
+            run.target for run in disguised
+            if run.read and not _is_fixture_file(run.evidence.file)
+        }
 
     findings: list[Finding] = []
     needs_review: list[NeedsReview] = []
@@ -262,6 +282,23 @@ def analyze_directory(
         ))
     if unloaded:
         needs_review.append(_unloaded_note(unloaded))
+    # A file a command starts under a name that hides it, which is not text the scan reads: it
+    # is started all the same. One an install command starts already has the install note above.
+    unread_started = sorted({
+        run.target for run in disguised
+        if not run.read and not (run.source == SOURCE_INSTALL and run.target in install_scripts)
+    })
+    if unread_started:
+        needs_review.append(aggregated_review(
+            category="coverage",
+            title="Started file not analyzed",
+            places=[(p, None) for p in unread_started],
+            what="file(s) named like an image, a document or data are started with an "
+                 "interpreter by an instruction file or an auto-run command, and could not be "
+                 "read as text",
+            advice="They are run as code, and nothing in them was checked. Read them, or treat "
+                   "the component as unverified.",
+        ))
     skipped_note = _skipped_folders_note(index)
     if skipped_note is not None:
         needs_review.append(skipped_note)
@@ -996,6 +1033,75 @@ def _mcp_launched_files(index: FileIndex) -> set[str]:
         if len(found) >= _MAX_ENTRY_POINTS:
             break
     return found
+
+
+def _is_fixture_file(relpath: str) -> bool:
+    """Whether a configuration, manifest or instruction file is a fixture of the component (a
+    test, an example, a document, a corpus sample, CI) and not something it ships to be used: a
+    command written there runs for nobody who installs the component. An instruction file is
+    markdown by nature, so only its folder can make it a document."""
+    return (
+        is_test_path(relpath) or is_example_path(relpath) or is_data_corpus_path(relpath)
+        or is_ci_path(relpath)
+        or (not relpath.lower().endswith((".md", ".mdx")) and is_doc_path(relpath))
+    )
+
+
+def _env_loaded_paths(index: FileIndex) -> list[str]:
+    """Relative paths that an `env` block of shipped agent or server configuration may load code
+    from (``autorun.EnvInjection.paths``), whether or not the walk read them."""
+    return [
+        path for inj in autorun_commands(index).env_injections
+        if not _is_fixture_file(inj.file.relpath) for path in inj.paths
+    ]
+
+
+def _env_loaded_files(index: FileIndex) -> set[str]:
+    """The files of the component an `env` block makes every process load
+    (``NODE_OPTIONS=--require ./tools/shim.js``, ``BASH_ENV=./.claude/env.sh``): the first path of
+    each entry that names a file the walk found. They run as surely as a declared entry point."""
+    known = {f.relpath for f in index.files} | set(index.minified) | set(index.large)
+    found: set[str] = set()
+    for injection in autorun_commands(index).env_injections:
+        if _is_fixture_file(injection.file.relpath):
+            continue
+        loaded = next((path for path in injection.paths if path in known), None)
+        if loaded is not None and len(found) < _MAX_ENTRY_POINTS:
+            found.add(loaded)
+    return found
+
+
+def _env_loaded_languages(index: FileIndex) -> dict[str, str]:
+    """``{relative path: language suffix}`` for each file an `env` block loads as a script while
+    its name says it is an image, a document or data (``BASH_ENV=./assets/banner.png``)."""
+    known = {f.relpath for f in index.files}
+    out: dict[str, str] = {}
+    for injection in autorun_commands(index).env_injections:
+        loaded = next((path for path in injection.paths if path in known), None)
+        if (loaded is not None and injection.language
+                and posixpath.splitext(loaded)[1].lower() in DISGUISE_SUFFIXES):
+            out[loaded] = injection.language
+    return out
+
+
+# How many paths a scan looks up on disk for files started under a hiding name.
+_MAX_STARTED_LOOKUPS = 64
+
+
+def _component_file_check(root: Path) -> Callable[[str], bool]:
+    """A test for "this relative path is a regular file inside the component", by name first so
+    that nothing outside it is touched; at most ``_MAX_STARTED_LOOKUPS`` paths are looked up."""
+    base = root.resolve()
+    looked_up: dict[str, bool] = {}
+
+    def exists(rel: str) -> bool:
+        if rel not in looked_up:
+            if len(looked_up) >= _MAX_STARTED_LOOKUPS or not _inside_by_name(base, base, rel):
+                return False
+            looked_up[rel] = is_regular_file(base / rel)
+        return looked_up[rel]
+
+    return exists
 
 
 def _package_manifests(root: Path) -> list[Path]:

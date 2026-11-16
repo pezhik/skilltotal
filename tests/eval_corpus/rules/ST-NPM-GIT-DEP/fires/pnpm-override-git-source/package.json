@@ -1,0 +1,12 @@
+{
+  "name": "report-tools",
+  "version": "1.0.0",
+  "dependencies": {
+    "ms": "^2.1.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "ms": "git+https://git.example.invalid/ms.git"
+    }
+  }
+}

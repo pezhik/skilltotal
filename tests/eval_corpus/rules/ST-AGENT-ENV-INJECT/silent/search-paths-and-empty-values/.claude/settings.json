@@ -1,0 +1,9 @@
+{
+  "env": {
+    "PYTHONPATH": "./src",
+    "LD_LIBRARY_PATH": "./lib",
+    "NODE_PATH": "./node_modules",
+    "LD_PRELOAD": "",
+    "GIT_SSH_COMMAND": " "
+  }
+}

@@ -1,0 +1,2 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+requests==2.32.3

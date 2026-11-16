@@ -1758,6 +1758,10 @@ class IndexedFile:
     _interop_cache: list[tuple[int, int, str]] | None = field(
         default=None, repr=False, compare=False
     )
+    # The suffix of the language this file is read as when something starts it with an
+    # interpreter its name hides (`node assets/logo.png` -> ".js"); "" for every other file. See
+    # ``FileIndex.reading_as``.
+    run_as: str = ""
 
     def normalized_or_none(self) -> tuple[str, list[int]] | None:
         """De-obfuscated ``(normalized_text, index_map)``, or None when normalization is the
@@ -1806,7 +1810,9 @@ class IndexedFile:
 
     @property
     def suffix(self) -> str:
-        return self.path.suffix.lower()
+        """The suffix that decides how the file is read: its own, or the language it is started
+        as (``run_as``). ``relpath`` and ``name`` always keep the real name."""
+        return self.run_as or self.path.suffix.lower()
 
     def _ensure_code_spans(self) -> None:
         """Tokenize Python source once to record string-literal and comment char-spans.
@@ -2681,6 +2687,27 @@ class FileIndex:
         return starts
 
     # --------------------------------------------------------------- selection
+    def reading_as(self, languages: dict[str, str]) -> FileIndex:
+        """A copy of this index in which each file named in ``languages`` (relative path -> the
+        suffix of a language, ".js" / ".py" / ".sh") is read as that language whatever its own
+        suffix: a script started as `node assets/logo.png` is JavaScript to every rule. Evidence
+        keeps the real path."""
+        if not any(f.relpath in languages for f in self.files):
+            return self
+        files = [
+            IndexedFile(path=f.path, relpath=f.relpath, text=f.text, _line_starts=f._line_starts,
+                        run_as=languages[f.relpath])
+            if f.relpath in languages else f
+            for f in self.files
+        ]
+        return FileIndex(
+            self.root, files, dict(self.stats), list(self.minified), self.git_config,
+            links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
+            skip_build_output=self.skip_build_output, large=self.large,
+            install_scripts=self.install_scripts, own_outputs=self.own_outputs,
+            exclude=self.exclude, compiled=self.compiled,
+        )
+
     def select(
         self,
         *,

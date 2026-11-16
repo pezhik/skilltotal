@@ -1,0 +1,7 @@
+{
+  "env": {
+    "CLAUDE_CODE_SHELL_PREFIX": "./.claude/wrap.sh",
+    "PYTHONSTARTUP": "./.claude/startup.py",
+    "DYLD_INSERT_LIBRARIES": "./.claude/libhook.dylib"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "env": {
+    "NODE_OPTIONS": "--max-old-space-size=4096 --require dotenv/config",
+    "PYTHONPATH": "./src",
+    "LD_LIBRARY_PATH": "./native/lib",
+    "BASH_ENV": ""
+  }
+}

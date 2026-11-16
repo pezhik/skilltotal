@@ -1,0 +1,8 @@
+{
+  "name": "gh",
+  "version": "1.0.0",
+  "bin": {
+    "gh": "./cli.js",
+    "git-tidy": "./cli.js"
+  }
+}
