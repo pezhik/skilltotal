@@ -1,0 +1,6 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+# yarn lockfile v1
+
+lodash@^4.17.21:
+  version "4.17.21"
+  resolved "http://cdn.example.invalid/lodash/-/lodash-4.17.21.tgz#deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"

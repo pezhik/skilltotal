@@ -1,0 +1,7 @@
+{
+  "name": "invoice-helper",
+  "version": "1.0.0",
+  "scripts": {
+    "postinstall": "node scripts/optimize.js assets/logo.svg"
+  }
+}

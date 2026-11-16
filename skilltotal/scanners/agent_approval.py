@@ -14,6 +14,12 @@ A project's own agent settings apply when the project is opened in that agent: C
   and every prompt, with the code the agent reads into it. A gateway on this machine, or the
   vendor's own API, is not one.
 
+* A skill, a slash command or a subagent can ask for the same in its own frontmatter:
+  ``permissionMode: bypassPermissions`` on a subagent, or an ``allowed-tools`` / ``tools`` entry
+  that pre-approves every shell command with an explicit wildcard (``Bash(*)``). A narrower
+  entry (``Bash(git status:*)``), another mode (``plan``) and a bare ``Bash`` in the tool list
+  (which names the tool the skill uses; many honest skills do) are not reported.
+
 An honest team can commit either, so both are risky constructs, not verdicts. Detection is
 parsing only.
 """
@@ -26,7 +32,7 @@ import re
 from urllib.parse import urlsplit
 
 from skilltotal import bounded_json
-from skilltotal.autorun import _strip_jsonc
+from skilltotal.autorun import _strip_jsonc, frontmatter_values
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
@@ -42,6 +48,12 @@ _VSCODE_SETTINGS = re.compile(r"(?:^|/)\.vscode/settings\.json$")
 
 # Claude Code allow rules that let any shell command run unasked.
 _ANY_BASH = frozenset({"Bash", "Bash(*)", "Bash(*:*)", "Bash(:*)"})
+# The same written with an explicit wildcard in the frontmatter of a skill, command or subagent.
+_FRONTMATTER_ANY_BASH = re.compile(r"\bBash\(\s*(?:\*\s*:\s*\*|:\s*\*|\*)\s*\)")
+_FRONTMATTER_TOOL_KEYS = frozenset({"allowed-tools", "allowed_tools", "tools"})
+_FRONTMATTER_FILE = re.compile(
+    r"(?:^|/)SKILL\.md$|(?:^|/)(?:agents|commands)/(?:[^/]+/)*[^/]+\.md$", re.IGNORECASE
+)
 _VSCODE_AUTO_APPROVE = ("chat.tools.autoApprove", "chat.tools.global.autoApprove")
 # The variables that point an agent's model client at an API address.
 _BASE_URL_NAME = re.compile(
@@ -87,9 +99,11 @@ class AgentApprovalScanner(Scanner):
             description=(
                 "The component ships agent settings that let the agent act without asking: "
                 "every shell command allowed, permission prompts bypassed, every project MCP "
-                "server enabled, or tool calls auto-approved. Opened in that agent, the project "
-                "runs whatever the agent is told, including by text it reads, without the user "
-                "seeing it first."
+                "server enabled, or tool calls auto-approved; or a skill, command or subagent "
+                "whose frontmatter bypasses permission prompts (`permissionMode: "
+                "bypassPermissions`) or pre-approves every shell command (`Bash(*)`). Opened in "
+                "that agent, the project runs whatever the agent is told, including by text it "
+                "reads, without the user seeing it first."
             ),
             recommendation=(
                 "Remove these settings from the component, or allow only the specific commands "
@@ -141,6 +155,8 @@ class AgentApprovalScanner(Scanner):
                 redirect.extend(_codex_redirects(f))
             elif _GEMINI_ENV.search(path):
                 redirect.extend(_dotenv_redirects(f))
+            elif _FRONTMATTER_FILE.search(path) and f.text.startswith("---"):
+                approve.extend(_frontmatter_approvals(f))
         findings = [_finding_from_rule(rule, evidence)
                     for rule, evidence in zip(self.rules, (approve, redirect), strict=True)
                     if evidence]
@@ -186,6 +202,17 @@ def _claude_approvals(f: IndexedFile, data: dict) -> list[Evidence]:
                     found += _at(f, re.escape(json.dumps(rule)))
     if data.get("enableAllProjectMcpServers") is True:
         found += _at(f, _key_value("enableAllProjectMcpServers", True))
+    return found
+
+
+def _frontmatter_approvals(f: IndexedFile) -> list[Evidence]:
+    """Frontmatter of a skill, command or subagent that turns approvals off for itself."""
+    found: list[Evidence] = []
+    for key, value, start, end in frontmatter_values(f.text):
+        if key == "permissionMode" and value == "bypassPermissions":
+            found.append(f.evidence_for_span(start, end))
+        elif key in _FRONTMATTER_TOOL_KEYS and _FRONTMATTER_ANY_BASH.search(value):
+            found.append(f.evidence_for_span(start, end))
     return found
 
 

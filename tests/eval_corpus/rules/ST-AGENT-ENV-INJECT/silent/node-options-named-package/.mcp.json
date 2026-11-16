@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@example/files-mcp@1.4.2"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--require dotenv/config --import tsx"
+      }
+    }
+  }
+}

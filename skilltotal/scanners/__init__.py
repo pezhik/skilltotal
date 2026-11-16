@@ -14,9 +14,12 @@ from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.clipper import ClipperScanner
 from skilltotal.scanners.config_exec import ConfigExecScanner
 from skilltotal.scanners.dependency_redirect import DependencyRedirectScanner
+from skilltotal.scanners.dependency_source import DependencySourceScanner
+from skilltotal.scanners.disguised_script import DisguisedScriptScanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
 from skilltotal.scanners.encrypted_archive import EncryptedArchiveScanner
+from skilltotal.scanners.env_inject import EnvInjectScanner
 from skilltotal.scanners.exposure import ExposureScanner
 from skilltotal.scanners.fetch_tunnel_launcher import FetchTunnelLauncherScanner
 from skilltotal.scanners.filesystem import FilesystemScanner
@@ -94,6 +97,9 @@ SCANNERS: list[Scanner] = [
     WorkflowExfilScanner(),
     HtmlFileExfilScanner(),
     FetchTunnelLauncherScanner(),
+    EnvInjectScanner(),
+    DependencySourceScanner(),
+    DisguisedScriptScanner(),
 ]
 
 

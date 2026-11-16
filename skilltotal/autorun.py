@@ -15,7 +15,12 @@ without a separate step from the user:
   folder opens;
 * a Claude Code plugin: its hooks, background monitors and language servers, inline in
   ``plugin.json``, in a marketplace entry or in their default files;
-* hooks in the frontmatter of a skill or a subagent.
+* hooks in the frontmatter of a skill or a subagent;
+* a dev container's lifecycle commands (``devcontainer.json``): ``initializeCommand`` runs on the
+  host when the folder is opened in a container, the others inside the container;
+* an ``env`` block of Claude Code settings or of an MCP or language server whose variable makes
+  every process started with it load a file or run a command first (``NODE_OPTIONS=--require``,
+  ``LD_PRELOAD``, ``BASH_ENV``, ``GIT_SSH_COMMAND``, ...).
 
 This module only reads them: one list of :class:`AutorunCommand` per index (cached), which the
 scanners judge (``agent_config`` for fetch-and-run and honest auto-run configuration,
@@ -40,6 +45,9 @@ ORIGIN_PROJECT = "project"  # project settings, editor tasks: runs when the fold
 ORIGIN_PLUGIN = "plugin"  # a plugin's own hooks, monitors and language servers
 ORIGIN_MCP = "mcp"  # an MCP server launch command, in any client's configuration
 ORIGIN_SKILL = "skill"  # hooks in the frontmatter of a skill or a subagent
+# A dev container hook that runs inside the container: honest ones install toolchains there.
+ORIGIN_CONTAINER = "container"
+ORIGIN_ENV = "env"  # the value of a code-injecting environment variable (see EnvInjection)
 
 KIND_HOOK = "hook"
 KIND_HTTP_HOOK = "http_hook"
@@ -50,6 +58,8 @@ KIND_MCP_SERVER = "mcp_server"
 KIND_HEADERS_HELPER = "headers_helper"
 KIND_MONITOR = "monitor"
 KIND_LSP_SERVER = "lsp_server"
+KIND_CONTAINER_HOOK = "container_hook"
+KIND_ENV = "env"
 
 # Agent hook files whose commands run when a session starts or a tool runs, with no further step.
 _PROJECT_HOOK_FILES = (
@@ -71,6 +81,13 @@ _PLUGIN_MONITORS = "monitors/monitors.json"
 _PLUGIN_LSP = ".lsp.json"
 _VSCODE_TASKS = ".vscode/tasks.json"
 _VSCODE_SETTINGS = ".vscode/settings.json"
+# Dev container lifecycle commands. `initializeCommand` runs on the host machine; the rest run
+# inside the container once it exists.
+_DEVCONTAINER_HOST_KEYS = ("initializeCommand",)
+_DEVCONTAINER_CONTAINER_KEYS = (
+    "onCreateCommand", "updateContentCommand", "postCreateCommand", "postStartCommand",
+    "postAttachCommand",
+)
 # The file names the MCP scanner reads as manifests (scanners/mcp.py MANIFEST_NAMES).
 _MCP_MANIFEST_NAMES = frozenset(
     {"mcp.json", ".mcp.json", "mcp.config.json", "server.json", "manifest.json"}
@@ -134,9 +151,31 @@ class AutorunCommand:
 
 
 @dataclass(frozen=True, eq=False)
+class EnvInjection:
+    """An ``env`` entry of shipped agent or server configuration whose variable makes each process
+    started with it load a file or run a command before its own code."""
+
+    name: str  # the variable, upper case
+    origin: str  # ORIGIN_PROJECT for agent settings, else the origin of the server it belongs to
+    file: IndexedFile
+    value: Piece
+    # The language the loaded file is read as (".js", ".sh", ".py"); "" when the variable holds a
+    # command or loads native code.
+    language: str = ""
+    # Relative paths inside the component the value may name (the first that exists is loaded).
+    paths: tuple[str, ...] = ()
+
+    def evidence(self) -> Evidence:
+        return self.file.evidence_for_span(
+            self.value.start, max(self.value.start + 1, self.value.end)
+        )
+
+
+@dataclass(frozen=True, eq=False)
 class AutorunScan:
     commands: tuple[AutorunCommand, ...] = ()
     reviews: tuple[NeedsReview, ...] = ()
+    env_injections: tuple[EnvInjection, ...] = ()
     # Markdown files (skills, subagents) whose frontmatter declares hooks or MCP servers, mapped to
     # the last line of that frontmatter: those lines are configuration the tool runs, not
     # documentation, whatever the file's name says (its body is still prose).
@@ -171,8 +210,69 @@ def _scan(index: FileIndex) -> AutorunScan:
     return AutorunScan(
         commands=tuple(out.commands),
         reviews=tuple(out.reviews),
+        env_injections=tuple(out.env_injections),
         frontmatter_lines=dict(out.frontmatter_lines),
     )
+
+
+# ------------------------------------------------------------- code-injecting environment
+# Variables whose value is a file the dynamic loader maps into every process (native code).
+_ENV_NATIVE_PRELOAD = frozenset({"LD_PRELOAD", "DYLD_INSERT_LIBRARIES"})
+# Variables whose value is a script an interpreter runs before anything else, and its language.
+_ENV_STARTUP_FILE = {"BASH_ENV": ".sh", "PYTHONSTARTUP": ".py"}
+# Variables whose value is a command line another program runs (git for every ssh remote, Claude
+# Code in front of every shell command).
+_ENV_COMMAND = frozenset({"GIT_SSH_COMMAND", "CLAUDE_CODE_SHELL_PREFIX"})
+# `NODE_OPTIONS` flags that load a module into every Node.js process before its own code.
+_NODE_PRELOAD = re.compile(
+    r"(?<![\w-])(?:--require|-r|--import|--loader|--experimental-loader)(?:=|[ \t]+)"
+    r"[\"']?([^\s\"']{1,400})"
+)
+# A module given as a path (not a package name such as `dotenv/config` or `tsx`, which loads an
+# installed dependency and is what honest tooling sets).
+_PATH_SHAPED = re.compile(r"^(?:\.{1,2}[/\\]|[/\\~$]|[A-Za-z]:[/\\]|file:)|\.(?:[cm]?js|ts|node)$")
+_ENV_ROOT_VARIABLE = re.compile(r"^(?:\$\{?[A-Za-z_][\w:.-]*\}?[/\\])+")
+_MAX_ENV_INJECTIONS = 200
+
+
+def _env_injection(name: str, value: str) -> tuple[str, tuple[str, ...]] | None:
+    """``(language, path words)`` when ``name=value`` injects code into the processes started with
+    it, else None. An empty value, a ``NODE_OPTIONS`` without a preload flag (heap size, warnings)
+    and a preload of an installed package by name are not injections."""
+    name = name.upper()
+    value = value.strip()
+    if not value:
+        return None
+    if name in _ENV_NATIVE_PRELOAD:
+        return "", tuple(w for w in re.split(r"[\s:;]+", value) if w)
+    if name in _ENV_STARTUP_FILE:
+        return _ENV_STARTUP_FILE[name], (value.strip("\"'"),)
+    if name in _ENV_COMMAND:
+        return "", ()
+    if name == "NODE_OPTIONS":
+        words = tuple(
+            m.group(1) for m in _NODE_PRELOAD.finditer(value) if _PATH_SHAPED.search(m.group(1))
+        )
+        return (".js", words) if words else None
+    return None
+
+
+def _component_paths(words: tuple[str, ...], near: str) -> tuple[str, ...]:
+    """Relative paths inside the component that ``words`` may name: from the component root and
+    from each folder above ``near`` (the file that holds them). A word that leaves the component,
+    or is absolute, names nothing here."""
+    parts = near.replace("\\", "/").split("/")[:-1]
+    folders = [""] + ["/".join(parts[:k]) for k in range(len(parts), 0, -1)]
+    out: list[str] = []
+    for word in words:
+        word = _ENV_ROOT_VARIABLE.sub("", word.removeprefix("file:")).replace("\\", "/")
+        if not word or word.startswith(("/", "~")) or ":" in word or "\x00" in word:
+            continue
+        for folder in folders:
+            rel = normpath(f"{folder}/{word}" if folder else word)
+            if rel != "." and not rel.startswith("../") and rel != ".." and rel not in out:
+                out.append(rel)
+    return tuple(out)
 
 
 class _Anchors:
@@ -207,6 +307,7 @@ class _Collector:
         self.commands: list[AutorunCommand] = []
         self.reviews: list[NeedsReview] = []
         self.frontmatter_lines: dict[str, int] = {}
+        self.env_injections: list[EnvInjection] = []
         self._parsed: dict[str, object] = {}
 
     # -- JSON ---------------------------------------------------------------------------------
@@ -220,6 +321,7 @@ class _Collector:
             hook_file or plugin_file
             or lower.endswith((_VSCODE_TASKS, _VSCODE_SETTINGS))
             or name in ("mcp.json", "manifest.json")
+            or _is_devcontainer(lower, name)
             or '"mcpServers"' in text
             # A key written with escapes (`"mcp\u0053ervers"`) is the same name to a JSON
             # reader, so a file with any escape is parsed and its decoded keys decide.
@@ -235,6 +337,9 @@ class _Collector:
             self._hooks(f, anchors, data.get("hooks"), ORIGIN_PROJECT)
             if lower.endswith(_CLAUDE_SETTINGS):
                 self._settings_commands(f, anchors, data, ORIGIN_PROJECT)
+                self._env(f, anchors, data.get("env"), ORIGIN_PROJECT)
+        if _is_devcontainer(lower, name) and isinstance(data, dict):
+            self._devcontainer(f, anchors, data)
         if lower.endswith(_VSCODE_TASKS) and isinstance(data, dict):
             self._folder_open_tasks(f, anchors, data)
         if isinstance(data, dict):
@@ -354,6 +459,44 @@ class _Collector:
             elif isinstance(node, list):
                 stack.append(iter(node))
 
+    def _env(self, f: IndexedFile, anchors: _Anchors, env: object, origin: str) -> None:
+        """The entries of an ``env`` map that inject code (``_env_injection``). Each is recorded,
+        and its value is also a command of its own (``KIND_ENV``): a command line it holds, or
+        the path of the script it loads, gets the checks every auto-run command gets."""
+        if not isinstance(env, dict):
+            return
+        for name, value in env.items():
+            if len(self.env_injections) >= _MAX_ENV_INJECTIONS:
+                return
+            if not isinstance(name, str) or not isinstance(value, str):
+                continue
+            injected = _env_injection(name, value)
+            if injected is None:
+                continue
+            language, words = injected
+            piece = anchors.piece(value, name)
+            self.env_injections.append(EnvInjection(
+                name=name.upper(), origin=origin, file=f, value=piece, language=language,
+                paths=_component_paths(words, f.relpath),
+            ))
+            self.commands.append(AutorunCommand(
+                kind=KIND_ENV, origin=ORIGIN_ENV, file=f, pieces=(piece,), container="env",
+            ))
+
+    def _devcontainer(self, f: IndexedFile, anchors: _Anchors, data: dict) -> None:
+        """A dev container's lifecycle commands: a string (run by a shell), a list (a program and
+        its arguments) or a map of named commands of either form, which run side by side."""
+        keys = [(k, KIND_TASK, ORIGIN_PROJECT) for k in _DEVCONTAINER_HOST_KEYS]
+        keys += [(k, KIND_CONTAINER_HOOK, ORIGIN_CONTAINER) for k in _DEVCONTAINER_CONTAINER_KEYS]
+        for key, kind, origin in keys:
+            value = data.get(key)
+            for command in (value.values() if isinstance(value, dict) else (value,)):
+                if isinstance(command, str):
+                    self._entry(kind, origin, f, anchors, command, key=key, container=key)
+                elif isinstance(command, list) and command:
+                    self._entry(kind, origin, f, anchors, command[0], command[1:], key=key,
+                                container=key)
+
     def _settings_commands(
         self, f: IndexedFile, anchors: _Anchors, data: dict, origin: str
     ) -> None:
@@ -380,6 +523,7 @@ class _Collector:
     ) -> None:
         self._entry(KIND_MCP_SERVER, origin, f, anchors, server.get("command"), server.get("args"),
                     server.get("env"), container=container)
+        self._env(f, anchors, server.get("env"), origin)
         helper = server.get("headersHelper")
         if isinstance(helper, str):
             self._entry(KIND_HEADERS_HELPER, origin, f, anchors, helper, key="headersHelper",
@@ -397,6 +541,7 @@ class _Collector:
             if isinstance(server, dict):
                 self._entry(KIND_LSP_SERVER, ORIGIN_PLUGIN, f, anchors, server.get("command"),
                             server.get("args"), server.get("env"), container="lspServers")
+                self._env(f, anchors, server.get("env"), ORIGIN_PLUGIN)
 
     def _monitors(self, f: IndexedFile, anchors: _Anchors, monitors: list) -> None:
         for monitor in monitors:
@@ -525,6 +670,14 @@ class _Collector:
         if found:
             last = block[-1]
             self.frontmatter_lines[f.relpath] = f.line_of_offset(last.start + len(last.text)) + 1
+
+
+def _is_devcontainer(lower: str, name: str) -> bool:
+    """``.devcontainer.json``, ``.devcontainer/devcontainer.json`` or
+    ``.devcontainer/<name>/devcontainer.json`` (``lower`` is the lower-cased relative path)."""
+    if name == ".devcontainer.json":
+        return True
+    return name == "devcontainer.json" and ".devcontainer" in lower.split("/")[-3:-1]
 
 
 def _as_list(value: object) -> list:
@@ -800,6 +953,33 @@ def _frontmatter_lines(text: str) -> tuple[list[_Line], bool]:
         lines.append(_Line(text[pos:stop].rstrip("\r"), pos))  # a CRLF file reads the same
         pos = stop + 1
     return lines, pos < end.start()
+
+
+def frontmatter_values(text: str) -> list[tuple[str, str, int, int]]:
+    """``(key, value, start, end)`` for each top-level key of a markdown file's leading YAML
+    frontmatter: a scalar written on the key's line, and each item of a block list under it
+    (``allowed-tools:`` followed by ``- Bash(*)`` lines). Offsets are into ``text``. Nested maps
+    are passed over; a flow value (``[a, b]``, ``a, b``) is returned whole."""
+    lines, _cut = _frontmatter_lines(text)
+    out: list[tuple[str, str, int, int]] = []
+    key = ""
+    for line in lines:
+        stripped = line.text.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line.indent == 0 and not stripped.startswith("-"):
+            m = _YAML_KEY.match(line.text)
+            key = m.group(2) if m else ""
+            raw = (m.group(3) or "") if m else ""
+            if m and raw.strip() and not _BLOCK_SCALAR.match(raw.strip()):
+                value, start, end = _yaml_scalar(raw, line.start + m.start(3))
+                out.append((key, value, start, end))
+        elif key and stripped.startswith("-"):
+            at = line.text.index("-") + 1
+            value, start, end = _yaml_scalar(line.text[at:], line.start + at)
+            if value:
+                out.append((key, value, start, end))
+    return out
 
 
 def _yaml_scalar(raw: str, offset: int) -> tuple[str, int, int]:

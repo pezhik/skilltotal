@@ -217,6 +217,7 @@ UNANALYZED_TITLES = frozenset({
     "Unparseable potential MCP manifest",
     "Deeply nested JSON partly analyzed",
     UNANALYZED_LOADED_CODE,
+    "Started file not analyzed",
     "MCP server bundle not analyzed",
     "Frontmatter partly analyzed",
     "Environment sends partly analyzed",

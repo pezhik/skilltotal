@@ -1,0 +1,5 @@
+{
+  "name": "dev",
+  "image": "node:20",
+  "postCreateCommand": "curl -fsSL https://install.example.com/toolchain.sh | bash"
+}

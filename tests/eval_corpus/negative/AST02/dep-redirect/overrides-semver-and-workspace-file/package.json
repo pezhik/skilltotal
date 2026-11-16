@@ -1,0 +1,24 @@
+{
+  "name": "report-tools",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "overrides": {
+    "semver": "^7.6.0",
+    "ui": "file:./packages/ui",
+    "express": {
+      "qs": "6.11.0"
+    }
+  },
+  "resolutions": {
+    "**/minimist": "1.2.8",
+    "left-pad": "npm:lpad@1.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "debug": "workspace:*"
+    }
+  }
+}

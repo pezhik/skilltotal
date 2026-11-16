@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@example/files-mcp@1.4.2"
+      ],
+      "env": {
+        "NODE_OPTIONS": "--max-old-space-size=2048 --enable-source-maps",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
