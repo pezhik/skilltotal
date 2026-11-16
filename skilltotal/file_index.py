@@ -26,7 +26,13 @@ from skilltotal import bounded_json
 from skilltotal.concat_normalize import fold_string_concats
 from skilltotal.models import Evidence
 from skilltotal.node_interop import call_sites, fold
-from skilltotal.text_normalize import normalize_with_map
+from skilltotal.text_normalize import (
+    HAS_IGNORABLE,
+    JS_ASCII_ESCAPE,
+    js_unescaped,
+    loose_fold,
+    normalize_with_map,
+)
 
 
 def _matches_any(relpath: str, patterns: tuple[str, ...]) -> bool:
@@ -881,6 +887,10 @@ _C_FAMILY_SUFFIXES: frozenset[str] = frozenset(
 
 # JavaScript-family suffixes, where `/` can also open a regular-expression literal.
 _JS_FAMILY_SUFFIXES: frozenset[str] = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"})
+# Size caps of the per-file loose view (instruction files are small) and of the unescaped view of
+# a JavaScript file (an offset map of 4 bytes per character is kept for the scan).
+_LOOSE_VIEW_MAX = 512 * 1024
+_JS_UNESCAPED_MAX = 4 * 1024 * 1024
 # After one of these, a `/` starts a regex literal rather than a division.
 _JS_REGEX_PRECEDERS = frozenset("(,=:[!&|?{};+-*%<>~^")
 _JS_REGEX_KEYWORDS = frozenset(
@@ -1754,6 +1764,16 @@ class IndexedFile:
     _fold_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
         default=None, repr=False, compare=False
     )
+    # The gap, loose and JavaScript-unescaped views, with the same 1-tuple wrapper.
+    _gap_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _loose_cache: tuple[tuple[str, Sequence[int], list[tuple[int, int]]] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
+    _js_plain_cache: tuple[tuple[str, Sequence[int]] | None] | None = field(
+        default=None, repr=False, compare=False
+    )
     # Lazily-computed compiled module calls; see ``interop_sites``.
     _interop_cache: list[tuple[int, int, str]] | None = field(
         default=None, repr=False, compare=False
@@ -1771,6 +1791,52 @@ class IndexedFile:
             norm, idx = normalize_with_map(self.text)
             self._norm_cache = ((norm, idx),) if norm and norm != self.text else (None,)
         return self._norm_cache[0]
+
+    def gap_normalized_or_none(self) -> tuple[str, Sequence[int]] | None:
+        """The gap view (``normalize_with_map(text, gaps=True)``): invisible or blank-drawn
+        characters standing where a space would be are read as one. None when it adds nothing to
+        ``normalized_or_none`` (no fold at all, or no such gap). Cached."""
+        if self._gap_cache is None:
+            strict = self.normalized_or_none()
+            view = None
+            if strict is not None and HAS_IGNORABLE.search(self.text):
+                norm, idx = normalize_with_map(self.text, gaps=True)
+                if norm != strict[0]:
+                    view = (norm, idx)
+            self._gap_cache = (view,)
+        return self._gap_cache[0]
+
+    def folded_views(self) -> list[tuple[str, Sequence[int]]]:
+        """The de-obfuscated views of this file that differ from its text (strict, then gap);
+        empty for ordinary text."""
+        return [v for v in (self.normalized_or_none(), self.gap_normalized_or_none())
+                if v is not None]
+
+    def loose_or_none(self) -> tuple[str, Sequence[int], list[tuple[int, int]]] | None:
+        """The loose view (leetspeak, spaced-out and doubled letters, markup inside a word; see
+        :func:`skilltotal.text_normalize.loose_fold`) over the de-obfuscated text, or None when
+        it changes nothing or the file is larger than ``_LOOSE_VIEW_MAX``. Cached. Meant for
+        instruction surfaces only: it can form words honest text does not hold."""
+        if self._loose_cache is None:
+            view = None
+            if len(self.text) <= _LOOSE_VIEW_MAX:
+                strict = self.normalized_or_none()
+                view = loose_fold(*strict) if strict is not None else loose_fold(self.text)
+            self._loose_cache = (view,)
+        return self._loose_cache[0]
+
+    def js_unescaped_or_none(self) -> tuple[str, Sequence[int]] | None:
+        """JavaScript/TypeScript source with its character escapes written out (a ``u0065``
+        escape in ``exec`` becomes the letter) and the offset map back to the file, or None for
+        another language, a file with no escape that spells a printable ASCII character, or one
+        larger than ``_JS_UNESCAPED_MAX``. Cached: every Node.js rule reads it."""
+        if self._js_plain_cache is None:
+            view = None
+            if (self.suffix in _JS_FAMILY_SUFFIXES and len(self.text) <= _JS_UNESCAPED_MAX
+                    and JS_ASCII_ESCAPE.search(self.text)):
+                view = js_unescaped(self.text)
+            self._js_plain_cache = (view,)
+        return self._js_plain_cache[0]
 
     def interop_sites(self) -> list[tuple[int, int, str]]:
         """The compiled Node.js module calls in this file (see :mod:`skilltotal.node_interop`)."""

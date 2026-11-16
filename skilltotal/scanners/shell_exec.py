@@ -21,6 +21,7 @@ matched explicitly; the member-call exclusion above would otherwise have dropped
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
@@ -33,6 +34,7 @@ from skilltotal.scanners.base import (
     alternation,
 )
 from skilltotal.scanners.shell_script import REMOTE_EXEC
+from skilltotal.text_normalize import original_span
 
 NODE_SUFFIXES = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 
@@ -82,12 +84,14 @@ def _aliases(text: str) -> list[str]:
     return sorted({name for m in _ALIASES.finditer(text) for name in m.groups() if name})
 
 
-def _call_prefixes(f: IndexedFile) -> list[str]:
-    """Where an exec/spawn call counts in this file (regex prefixes before the call name)."""
+def _call_prefixes(f: IndexedFile, text: str | None = None) -> list[str]:
+    """Where an exec/spawn call counts in this file (regex prefixes before the call name).
+    ``text`` is the view of the file to read the imports from (default: the file as written)."""
+    text = f.text if text is None else text
     prefixes = [r"child_process\."]
-    if _IMPORTS_CP.search(f.text):
+    if _IMPORTS_CP.search(text):
         prefixes.append(_BARE)
-        aliases = _aliases(f.text)
+        aliases = _aliases(text)
         if aliases:
             prefixes.append(_BARE + "(?:" + "|".join(re.escape(a) for a in aliases) + r")\.")
     return prefixes
@@ -186,22 +190,35 @@ class ShellExecScanner(Scanner):
         seen_shell: set[tuple[str, int, int]] = set()
         seen_cmdi: set[tuple[str, int, int]] = set()
         for f in index.select(suffixes=NODE_SUFFIXES):
-            prefixes = "|".join(f"(?:{p})" for p in _call_prefixes(f))
-            calls = re.compile(rf"(?:{prefixes}){_CALLS}\s*\(", re.MULTILINE)
-            injections = re.compile(
-                "|".join(rf"(?:(?:{prefixes})exec(?:Sync)?\s*\({t})" for t in _INJECTION_TAILS),
-                re.MULTILINE,
-            )
-            text = f.interop_view()
-            _collect(f, text, (_ANYWHERE, calls), shell, seen_shell)
-            _collect(f, text, (injections,), cmdi, seen_cmdi)
-            if len(pipe) < MAX_EVIDENCE_SCANNED and ("curl" in f.text or "wget" in f.text):
-                pipe_calls = re.compile(rf"(?:{prefixes}){_PIPE_CALLS}\s*\(", re.MULTILINE)
-                for m in pipe_calls.finditer(text):
-                    end = _call_end(text, m.end())
-                    command = " ".join(_string_literals(text, m.end(), end))
-                    if REMOTE_EXEC.search(command):
-                        pipe.append(f.evidence_for_span(m.start(), end))
+            # The compiled-call view, then the source with its character escapes written out (an
+            # escaped letter in `exec` or in the "child_process" module name): JavaScript
+            # resolves them before it runs anything.
+            views: list[tuple[str, Sequence[int] | None]] = [(f.interop_view(), None)]
+            plain = f.js_unescaped_or_none()
+            if plain is not None:
+                views.append(plain)
+            pipe_lines: set[int] = set()
+            for text, origin in views:
+                prefixes = "|".join(f"(?:{p})" for p in _call_prefixes(f, text))
+                calls = re.compile(rf"(?:{prefixes}){_CALLS}\s*\(", re.MULTILINE)
+                injections = re.compile(
+                    "|".join(rf"(?:(?:{prefixes})exec(?:Sync)?\s*\({t})"
+                             for t in _INJECTION_TAILS),
+                    re.MULTILINE,
+                )
+                _collect(f, text, (_ANYWHERE, calls), shell, seen_shell, origin)
+                _collect(f, text, (injections,), cmdi, seen_cmdi, origin)
+                if len(pipe) < MAX_EVIDENCE_SCANNED and ("curl" in text or "wget" in text):
+                    pipe_calls = re.compile(rf"(?:{prefixes}){_PIPE_CALLS}\s*\(", re.MULTILINE)
+                    for m in pipe_calls.finditer(text):
+                        end = _call_end(text, m.end())
+                        command = " ".join(_string_literals(text, m.end(), end))
+                        if not REMOTE_EXEC.search(command):
+                            continue
+                        ev = f.evidence_for_span(*_span(origin, m.start(), end))
+                        if origin is None or ev.line_start not in pipe_lines:
+                            pipe.append(ev)
+                        pipe_lines.add(ev.line_start)
         findings = []
         if shell:
             findings.append(_finding_from_rule(SHELL_RULE, shell))
@@ -254,19 +271,26 @@ def _string_literals(text: str, start: int, end: int) -> list[str]:
     return out
 
 
+def _span(origin: Sequence[int] | None, start: int, end: int) -> tuple[int, int]:
+    """A span of a view as a span of the file."""
+    return (start, end) if origin is None else original_span(origin, start, end)
+
+
 def _collect(
     f: IndexedFile,
     text: str,
     patterns: tuple[re.Pattern[str], ...],
     out: list[Evidence],
     seen: set[tuple[str, int, int]],
+    origin: Sequence[int] | None = None,
 ) -> None:
     """Add this file's matches in line order, the order a single alternation used to yield.
-    ``text`` is the file's compiled-call view."""
+    ``text`` is the file's compiled-call view, or a rewritten view with ``origin`` mapping each
+    of its characters to the file."""
     found: list[Evidence] = []
     for pattern in patterns:
         for m in pattern.finditer(text):
-            ev = f.evidence_for_span(m.start(), m.end())
+            ev = f.evidence_for_span(*_span(origin, m.start(), m.end()))
             key = (ev.file, ev.line_start, ev.line_end)
             if key not in seen:
                 seen.add(key)

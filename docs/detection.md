@@ -176,11 +176,23 @@ a substitute for:
 - Ambiguous signals (bare `secrets`/`credentials` words, lone base64 blobs, "before
   answering" phrasing, minified files) go to `needs_review`, never to `findings`.
 - **Hidden Unicode** (ASCII-smuggling tag characters, variation selectors and invisible math
-  operators used as bytes, zero-width characters threaded through words, Hangul filler
-  identifiers) is detected; where it encodes text, that text is decoded into the evidence.
-  Trojan-Source bidi overrides and lone zero-width characters go to `needs_review`. Attackers
+  operators used as bytes, zero-width and other invisible format characters threaded through
+  words, Hangul filler identifiers) is detected; where it encodes text, that text is decoded into
+  the evidence. Trojan-Source bidi overrides, lone zero-width characters and zero-width line-break
+  hints inside a long identifier go to `needs_review`. Attackers
   use hidden text to smuggle instructions past human review. See `tests/manual_eval/` for
   calibration against real-world attacks.
+- **Obfuscated text is folded before the phrase rules run** (`skilltotal.text_normalize`):
+  invisible characters are removed (or read as a space where they stand for one), compatibility
+  forms and accents are folded, and look-alike letters (Cyrillic, Greek, Armenian, small
+  capitals, enclosed and regional-indicator letters) are mapped to ASCII. The injection-phrase
+  rules, the MCP tool-poisoning phrases and the fetch-and-run instruction rule read the folded
+  text; evidence points at the original span. In files an agent takes instructions from, the
+  injection-phrase rule also reads leetspeak (`1gn0r3`), letters spaced out or doubled
+  (`i.g.n.o.r.e`, `iiggnnoorree`) and words split by markup, and counts a match only for a whole
+  multi-word phrase. In JavaScript and TypeScript, `\uXXXX`, `\u{...}` and `\xNN` escapes are
+  written out before the Node.js rules run, so a call or module name with an escaped letter
+  reads as `cp.exec(...)` or `require("child_process")`.
 - Shell execution covers `subprocess`/`os.system`, `asyncio.create_subprocess_*`, Node
   `child_process`, and common process-spawning libraries (Python `sh`/`plumbum`/`pexpect`/
   `invoke`/`fabric`; Node `zx`/`execa`/`cross-spawn`/`shelljs`/`tinyexec`/`node-pty`).

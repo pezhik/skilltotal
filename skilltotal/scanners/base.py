@@ -42,13 +42,12 @@ def deobfuscated_spans(
     and builds evidence via ``file.evidence_for_span``.
     """
     for f in index.select():
-        folded = f.normalized_or_none()  # cached; None = identity (incl. pure-ASCII fast path)
-        if folded is None:
-            continue
-        norm, idx = folded
-        for m in pattern.finditer(norm):
-            start, end = original_span(idx, m.start(), m.end())
-            yield f, start, end
+        # Cached; empty = identity (incl. the plain-ASCII fast path). The strict view first, then
+        # the gap view, where invisible characters that stand for a space are read as one.
+        for norm, idx in f.folded_views():
+            for m in pattern.finditer(norm):
+                start, end = original_span(idx, m.start(), m.end())
+                yield f, start, end
 
 
 def concat_folded_spans(
@@ -254,6 +253,17 @@ def _rule_matches(index: FileIndex, rule: RuleSpec) -> Iterator[Evidence]:
     else:
         for _f, _m, ev in index.search(pattern, suffixes=rule.suffixes, names=rule.names):
             yield ev
+    # JavaScript resolves character escapes in identifiers and strings before it runs anything,
+    # so the same pattern is read over the source with those escapes written out.
+    for f in index.select(suffixes=rule.suffixes, names=rule.names):
+        plain = f.js_unescaped_or_none()
+        if plain is None:
+            continue
+        text, origin = plain
+        for m in pattern.finditer(text):
+            start, end = original_span(origin, m.start(), m.end())
+            if start < end:
+                yield f.evidence_for_span(start, end)
 
 
 def _collect_evidence(index: FileIndex, rule: RuleSpec) -> list[Evidence]:

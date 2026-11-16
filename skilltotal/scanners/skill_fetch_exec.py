@@ -19,10 +19,12 @@ docs/) and tests are not instructions to an agent and are not read here.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
+from skilltotal.text_normalize import original_span
 
 R_FETCH_EXEC = "ST-SKILL-FETCH-EXEC"
 R_FETCH_EXEC_HIDDEN = "ST-SKILL-FETCH-EXEC-HIDDEN"
@@ -124,20 +126,31 @@ class SkillFetchExecScanner(Scanner):
 
 
 def _instruction_file(f: IndexedFile, plain: list[Evidence], hidden: list[Evidence]) -> None:
-    text = f.text
     found_plain: list[Evidence] = []
-    for m in _FETCH_EXEC.finditer(text):
-        evidence = f.evidence_for_span(m.start(), m.end())
-        url = _FIRST_URL.search(m.group(0))
-        if (
-            (url and _BARE_IP.match(url.group(0)))
-            or _in_hidden_markup(text, m.start())
-            or _CONCEALED.search(_instruction_text(text, m))
-        ):
-            hidden.append(evidence)
-        else:
-            found_plain.append(evidence)
+    lines: set[int] = set()
+    # The file as written, then its de-obfuscated views: a model reads a command spelled with
+    # look-alike or full-width letters, or with invisible characters between them, as the command.
+    # (A shell would not run such a spelling, so shell and package scripts are not read this way.)
+    views: list[tuple[str, Sequence[int] | None]] = [(f.text, None), *f.folded_views()]
+    for text, origin in views:
+        for m in _FETCH_EXEC.finditer(text):
+            start, end = (m.span() if origin is None
+                          else original_span(origin, m.start(), m.end()))
+            evidence = f.evidence_for_span(start, end)
+            if origin is not None and (start >= end or evidence.line_start in lines):
+                continue
+            lines.add(evidence.line_start)
+            url = _FIRST_URL.search(m.group(0))
+            if (
+                (url and _BARE_IP.match(url.group(0)))
+                or _in_hidden_markup(text, m.start())
+                or _CONCEALED.search(_instruction_text(text, m))
+            ):
+                hidden.append(evidence)
+            else:
+                found_plain.append(evidence)
     if found_plain:
+        text = f.text
         preapproved = _SHELL_PREAPPROVED.search(_frontmatter(text))
         if preapproved:
             found_plain.insert(0, f.evidence_for_span(preapproved.start(), preapproved.end()))

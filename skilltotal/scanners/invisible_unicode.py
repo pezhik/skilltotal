@@ -27,6 +27,11 @@ invisible code points. We split these by how unambiguous the malice is:
   RTL-language locale/`.po` files, CJK text, HTML-entity tables (e.g. webpack's
   ``&zwsp;``→U+200B map), emoji ZWJ sequences. On their own they are ambiguous, so they are
   routed to ``needs_review`` (surfaced, never scored) rather than raising a malware verdict.
+* **Words split by invisible characters**: six or more places on one line where a zero-width or
+  other invisible format character (direction marks, variation selectors, the combining grapheme
+  joiner, deprecated format characters ...) sits between two Latin letters. The set comes from
+  the phrase fold (``text_normalize.IGNORABLE_RANGES``). A zero-width space where a small letter
+  meets a capital is a line-break hint for a long identifier and is not counted.
 * **ANSI escape sequences** in text an agent reads (an instruction file such as ``SKILL.md``, an
   MCP tool description or server ``instructions``): concealment, cursor movement and line or
   screen erasure hide text from a person reading it in a terminal -> ``ST-HIDDEN-ANSI``. Other
@@ -51,6 +56,7 @@ from skilltotal.scanners.base import (
     aggregated_review,
 )
 from skilltotal.scanners.mcp import exposes_mcp_surface
+from skilltotal.text_normalize import BLANK_DRAWN, ignorable_class, is_ignorable
 
 CATEGORY = "hidden_unicode"
 
@@ -70,11 +76,21 @@ _EMOJI_TAG_SEQ = re.compile(
 )
 
 
-# Zero-width characters threaded between the letters of ASCII words ("r<ZWSP>e<ZWSP>a<ZWSP>d").
+# Invisible characters threaded between the letters of ASCII words ("r<ZWSP>e<ZWSP>a<ZWSP>d").
 # Emoji ZWJ sequences, CJK text and RTL scripts never put them between Latin letters, and a word
 # broken this way reads to a person as nothing at all. TrapDoor (2026) hid CLAUDE.md and
-# .cursorrules directives like this. Soft hyphen is excluded: it is real hyphenation.
-_SPLICE = re.compile("[A-Za-z][\u200b\u200c\u200d\u2060\ufeff]+(?=[A-Za-z])")
+# .cursorrules directives like this. The set is the one the phrase fold removes
+# (text_normalize.IGNORABLE_RANGES), so a character it sees through is also one reported here,
+# without: the soft hyphen (real hyphenation), the invisible math operators (written between the
+# letters of a formula; a run of them is handled below), characters drawn as a blank (the word
+# looks split to a person too), the bidi embedding and isolate controls and the C1 controls
+# (wrapped around Latin terms in RTL text; left behind by a wrong decoding), and the tag block
+# and supplementary variation selectors, which have their own checks.
+_SPLICE_CLASS = ignorable_class(exclude=(
+    (0x0000, 0x00AD), (0x2061, 0x2064), (0x202A, 0x202E), (0x2066, 0x2069), (0xFFFC, 0xFFFC),
+    (0xE0000, 0xE0FFF), *((cp, cp) for cp in BLANK_DRAWN),
+))
+_SPLICE = re.compile(f"[A-Za-z][{_SPLICE_CLASS}]+(?=[A-Za-z])")
 _SPLICES_PER_LINE = 6
 
 
@@ -89,9 +105,6 @@ _OP_ZERO, _OP_ONE = "\u2062", "\u2064"
 # Hangul fillers: letters that render as blank space and are legal in a JavaScript identifier.
 _HANGUL_FILLER = re.compile("[\u115f\u1160\u3164\uffa0]")
 _JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
-_INVISIBLE_EXTRA = (
-    {0x2061, 0x2062, 0x2063, 0x2064, 0x115F, 0x1160, 0x3164, 0xFFA0} | set(range(0xFE00, 0xFE10))
-)
 
 
 # Every code point the per-line pass acts on, as one character class: a file or a line without
@@ -99,7 +112,7 @@ _INVISIBLE_EXTRA = (
 # per-character Python loops below. Built from the same sets, so the two can't drift apart.
 _HUNTED = re.compile(
     "[\U000E0000-\U000E007F\U000E0100-\U000E01EF\ufe00-\ufe0f\u2061-\u2064"
-    + "".join(chr(cp) for cp in sorted(_REVIEW)) + "]"
+    + "".join(chr(cp) for cp in sorted(_REVIEW)) + _SPLICE_CLASS + "]"
 )
 
 
@@ -139,7 +152,20 @@ def _is_review(cp: int) -> bool:
 
 
 def _is_invisible(cp: int) -> bool:
-    return _is_tag(cp) or _is_review(cp) or cp in _INVISIBLE_EXTRA or 0xE0100 <= cp <= 0xE01EF
+    return cp > 0x7F and is_ignorable(cp)
+
+
+def _splice_count(line: str) -> int:
+    """Invisible characters between two Latin letters on ``line``, break hints left out.
+
+    One that sits where a small letter meets a capital (``Abstract<ZWSP>Document<ZWSP>Factory``)
+    is a line-break hint for a long identifier in a narrow table: the word reads the same with
+    or without it, and nothing is hidden. A split word breaks in the middle.
+    """
+    return sum(
+        1 for m in _SPLICE.finditer(line)
+        if not (line[m.start()].islower() and line[m.end()].isupper())
+    )
 
 
 def _decode_tags(line: str) -> str:
@@ -275,8 +301,9 @@ class InvisibleUnicodeScanner(Scanner):
             title="Hidden / invisible Unicode (ASCII smuggling)",
             description=(
                 "Invisible characters that encode or hide text were detected: Unicode tag "
-                "characters (U+E0000+), zero-width characters threaded between the letters of "
-                "words, runs of variation selectors or invisible math operators (each carries "
+                "characters (U+E0000+), zero-width or other invisible format characters threaded "
+                "between the letters of words, runs of variation selectors or invisible math "
+                "operators (each carries "
                 "bits of a hidden payload), or Hangul filler letters used as invisible "
                 "JavaScript identifiers. All of them hide text or code from a person while a "
                 "model or interpreter still reads it, and none has a legitimate use in that "
@@ -357,14 +384,14 @@ class InvisibleUnicodeScanner(Scanner):
                         if "\U0001F3F4" in raw_line else raw_line)
                 tags = [c for c in line if _is_tag(ord(c))]
                 runs = _hidden_runs(line)
-                splices = len(_SPLICE.findall(line))
+                splices = _splice_count(line)
                 if splices >= _SPLICES_PER_LINE and not tags and runs is None:
                     if len(evidence) < MAX_EVIDENCE_SCANNED:
-                        hidden = "".join(c for c in line if not _is_review(ord(c)))
+                        hidden = "".join(c for c in line if not _is_invisible(ord(c)))
                         evidence.append(
                             Evidence(file=f.relpath, line_start=lineno, line_end=lineno,
                                      snippet=_render(line)[:200]
-                                     + f"  [text without zero-width: {hidden[:120]!r}]")
+                                     + f"  [text without them: {hidden[:120]!r}]")
                         )
                     continue
                 if (tags or runs is not None) and vector_file is None:
@@ -383,7 +410,8 @@ class InvisibleUnicodeScanner(Scanner):
                             Evidence(file=f.relpath, line_start=lineno, line_end=lineno,
                                      snippet=snippet)
                         )
-                elif any(_is_review(ord(c)) for c in line) and f.relpath not in review_seen:
+                elif ((splices or any(_is_review(ord(c)) for c in line))
+                      and f.relpath not in review_seen):
                     review_seen.add(f.relpath)
                     review_places.append((f.relpath, lineno))
 

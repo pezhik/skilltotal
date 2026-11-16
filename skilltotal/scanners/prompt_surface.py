@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import bisect
 import re
+from dataclasses import replace
 
-from skilltotal.file_index import FileIndex, IndexedFile
+from skilltotal.file_index import FileIndex, IndexedFile, is_instruction_path
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
@@ -23,7 +24,7 @@ from skilltotal.scanners.base import (
     deobfuscated_spans,
 )
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
-from skilltotal.text_normalize import original_span
+from skilltotal.text_normalize import loose_pattern, original_span
 
 CATEGORY = "prompt_surface"
 
@@ -551,6 +552,24 @@ def _is_prose(f: IndexedFile) -> bool:
 
 _CUE_PARAGRAPH_LINES = 6
 
+# The loose view (see skilltotal.text_normalize.loose_fold): the same phrases with `i`/`l` read as
+# one letter, and with the blanks optional for text whose letters were spaced out.
+_STRONG_LOOSE = loose_pattern(_STRONG)
+_STRONG_SPACELESS = loose_pattern(_STRONG, spaceless=True)
+_BLANK = re.compile(r"\s")
+# A spaced-out run shorter than this cannot hold a phrase.
+_JOINED_MIN = 15
+_LOOSE_PLAIN_MAX = 512 * 1024
+_TOOL_MANIFEST = re.compile(r'"(?:inputSchema|input_schema|mcpServers)"')
+
+
+def _is_loose_surface(f: IndexedFile) -> bool:
+    """A file an agent takes instructions from: an instruction file (SKILL.md, CLAUDE.md, rule
+    files) or a JSON manifest that describes MCP tools. Only these are read in the loose view."""
+    if is_instruction_path(f.relpath):
+        return True
+    return f.suffix == ".json" and _TOOL_MANIFEST.search(f.text) is not None
+
 
 def _paragraph_start(text: str, line_start: int) -> int:
     """Start of the paragraph holding the line at ``line_start``, at most a few lines back.
@@ -774,15 +793,47 @@ class PromptSurfaceScanner(Scanner):
             else:
                 add(ev)
 
+        matched: dict[str, list[tuple[int, int]]] = {}  # per file: spans the passes below matched
+
         # Raw pass: the patterns as written.
         for f, m, ev in index.search(inj_rule.pattern):  # type: ignore[arg-type]
+            matched.setdefault(f.relpath, []).append(m.span())
             classify(f, m.start(), m.end(), ev)
         # De-obfuscation pass: the same patterns after folding homoglyphs / full-width /
-        # diacritics / zero-width splicing, mapped back to the original span. Catches
+        # diacritics / invisible-character splicing, mapped back to the original span. Catches
         # injection hidden behind look-alike characters; de-duped against the raw pass.
         for f, start, end in deobfuscated_spans(index, _STRONG):
             if start < end:
+                matched.setdefault(f.relpath, []).append((start, end))
                 classify(f, start, end, f.evidence_for_span(start, end))
+        # Loose pass, instruction surfaces only: leetspeak, letters spaced out or doubled, markup
+        # inside a word. It counts only where a whole multi-word phrase appears that neither pass
+        # above matched; the evidence shows the text as written and how it reads.
+        for f in index.files:
+            if not _is_loose_surface(f):
+                continue
+            view = f.loose_or_none()
+            if view is None:
+                # Nothing to fold: the text is still read once with `i`/`l` as one letter (a
+                # small L written for a capital I changes no character class).
+                if len(f.text) > _LOOSE_PLAIN_MAX:
+                    continue
+                strict = f.normalized_or_none()
+                view = (*strict, []) if strict is not None else (f.text, None, [])
+            text, idx, joined = view
+            taken = matched.setdefault(f.relpath, [])
+            hits = [m for m in _STRONG_LOOSE.finditer(text) if _BLANK.search(m.group())]
+            for s, e in joined:
+                if e - s >= _JOINED_MIN:
+                    hits.extend(_STRONG_SPACELESS.finditer(text, s, e))
+            for m in hits:
+                start, end = m.span() if idx is None else original_span(idx, m.start(), m.end())
+                if start >= end or any(s < end and start < e for s, e in taken):
+                    continue
+                taken.append((start, end))
+                ev = f.evidence_for_span(start, end)
+                classify(f, start, end, replace(
+                    ev, snippet=ev.snippet[:200] + f"  [read as: {m.group()[:120]!r}]"))
         # Credentials sent off the machine and kept from the user (_covert_credential_sends), in
         # prose and agent-instruction files, as written and de-obfuscated.
         for f in index.files:
@@ -790,9 +841,7 @@ class PromptSurfaceScanner(Scanner):
                 continue
             for start, end in _covert_credential_sends(f.text):
                 classify(f, start, end, f.evidence_for_span(start, end))
-            folded = f.normalized_or_none()
-            if folded is not None:
-                norm, idx = folded
+            for norm, idx in f.folded_views():
                 for nstart, nend in _covert_credential_sends(norm):
                     start, end = original_span(idx, nstart, nend)
                     if start < end:
@@ -809,9 +858,7 @@ class PromptSurfaceScanner(Scanner):
             if not _is_prose(f):
                 continue
             spans = list(_split_objective_exfil(f.text))
-            folded = f.normalized_or_none()
-            if folded is not None:
-                norm, idx = folded
+            for norm, idx in f.folded_views():
                 for nstart, nend in _split_objective_exfil(norm):
                     ostart, oend = original_span(idx, nstart, nend)
                     if ostart < oend:
