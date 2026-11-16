@@ -2270,6 +2270,8 @@ class IndexedFile:
         if self.suffix in (".sh", ".bash", ".zsh", ".mk", ".ps1", ".psm1") or name in (
             "makefile",
             "gnumakefile",
+            "justfile",
+            ".justfile",
         ):
             return True
         # A suffix-less script with a shell shebang (`cli/rustok`, `#!/bin/sh`): its `#` lines are

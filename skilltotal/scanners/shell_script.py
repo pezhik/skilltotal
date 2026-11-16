@@ -37,20 +37,40 @@ _TO_SHELL = r"\|\s*(?:sudo\s+)?\b(?:bash|zsh|sh)\b"
 # line rescanned the rest of the line from every one of them (quadratic).
 _FETCH = r"(?:curl|wget)\b"
 _GAP = r"[^\n]{0,1000}?"
-REMOTE_EXEC = re.compile(
-    rf"{_FETCH}{_GAP}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b"
-    rf"|{_FETCH}[^\n|]{{0,1000}}\|\s*(?:sudo\s+)?(?:python[0-9.]*|node|perl|ruby)(?:\s+-)?\s*"
-    r"(?=$|[;&|)\n\"'])"
-    rf"|base64\s+(?:-d|-D|--decode)\b{_GAP}\|\s*(?:ba|z)?sh\b"
+# The shell forms of fetch-and-run: a download piped into a shell or into an interpreter reading
+# its program from stdin, run through `sh -c "$(...)"` or `eval "$(...)"`, or handed to a shell as
+# a process substitution. In a shell file these are ST-SHELL-PIPE-EXEC.
+# The piped forms share one walk from the download to its first `|` (two alternatives that each
+# start at `curl` walked a crafted line twice): right after it a shell, or an interpreter with no
+# program of its own, or a shell further down the pipeline.
+_FETCH_EXEC_SH = (
+    rf"{_FETCH}[^\n|]{{0,1000}}\|(?:\s*(?:sudo\s+)?(?:(?:ba|z|da|k)?sh\b"
+    r"|(?:python[0-9.]*|node|perl|ruby)(?:\s+-)?\s*(?=$|[;&|)\n\"']))"
+    rf"|{_GAP}\|\s*(?:sudo\s+)?(?:ba|z|da|k)?sh\b)"
     rf"|\b(?:ba|z|da|k)?sh\s+-c\s+[\"']?\$\(\s*{_FETCH}"
     rf"|\beval\s+[\"']?\$\(\s*{_FETCH}"
     rf"|(?:\bsource|(?<![\w.])\.|\b(?:ba|z|da|k)?sh)\s+<\(\s*{_FETCH}"
+)
+# Inline code handed to an interpreter (`python3 -c "..."`, `node -e "..."`) that runs what it
+# downloads: Python `exec(...)` / `eval(...)` around a fetch, whatever the module is imported as
+# (`import urllib.request as u;exec(u.urlopen(...).read())`, `exec(requests.get(...).text)`), and
+# JavaScript that evaluates a response (`eval(await fetch(...))`, `fetch(u).then(r=>r.text())
+# .then(eval)`). Bounded gaps, as everywhere in this pattern.
+_FETCH_EXEC_INLINE = (
+    r"\beval\s*\(\s*(?:await\s+)?(?:\(\s*)?(?:await\s+)?fetch\s*\("
+    r"|\bfetch\s*\([^\n]{0,400}?\.then\s*\(\s*(?:eval\s*\)"
+    r"|\(?\s*[\w$]{1,40}\s*\)?\s*=>\s*(?:eval|(?:new\s+)?Function)\s*\()"
+    r"|\b(?:exec|eval)\s*\([^\n]{0,200}?(?:\burlopen|\burlretrieve|\brequests\s*\.\s*get"
+    r"|\bhttpx\s*\.\s*get)\s*\("
+)
+REMOTE_EXEC = re.compile(
+    rf"{_FETCH_EXEC_SH}"
+    rf"|base64\s+(?:-d|-D|--decode)\b{_GAP}\|\s*(?:ba|z)?sh\b"
     rf"|\b(?:iex|Invoke-Expression)\b{_GAP}\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|"
     r"DownloadString)\b"
     r"|\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n|]{0,1000}\|\s*(?:iex|Invoke-Expression)\b"
     rf"|\bpowershell(?:\.exe)?\b{_GAP}\s-(?:e|enc|encodedcommand)\s"
-    r"|\beval\s*\(\s*(?:await\s+)?(?:\(\s*)?(?:await\s+)?fetch\s*\("
-    r"|\bexec\s*\(\s*(?:urllib\.request\.)?urlopen\s*\(",
+    rf"|{_FETCH_EXEC_INLINE}",
     re.IGNORECASE,
 )
 
@@ -58,10 +78,149 @@ REMOTE_EXEC = re.compile(
 # Bounded gaps: an unbounded `[^\n]*` rescanned the rest of a crafted line from every `eval` or
 # `base64 -d` on it (quadratic). `base64(?<!\wbase64)` is `\bbase64` written so that the gap is
 # followed by a literal, which the regex engine skips ahead to instead of trying every position.
+# The decoders a dropper uses: base64, base32, `xxd -r` (hex back to bytes) and `openssl ... -d`.
+_DECODER = (
+    r"(?:base(?:64|32)\s+(?:-d|-D|--decode)\b|xxd\s+-r\b"
+    r"|openssl\s+(?:enc|base64)\b[^\n|;&]{0,200}?\s-d\b)"
+)
+# What runs text: a shell, or an interpreter given the text as its program.
+_RUNNER = r"(?:(?:ba|z|da|k)?sh|python[0-9.]*|node|perl|ruby)"
 DECODE_EXEC_SH = alternation(
     rf"base64\s+(?:-d|-D|--decode)\b[^\n]{{0,1000}}{_TO_SHELL}",
     r"\beval\b[^\n]{0,1000}base64(?<!\wbase64)\s+(?:-d|-D|--decode)\b",
+    # The other decoders piped into a shell, in the same pipeline.
+    rf"(?:base32\s+(?:-d|-D|--decode)\b|xxd\s+-r\b|openssl\s+(?:enc|base64)\b[^\n|;&]{{0,200}}?"
+    rf"\s-d\b)[^\n;&]{{0,1000}}{_TO_SHELL}",
+    r"\beval\b[^\n]{0,1000}base32(?<!\wbase32)\s+(?:-d|-D|--decode)\b",
+    r"\beval\b[^\n]{0,1000}xxd(?<!\wxxd)\s+-r\b",
+    # Decoded text handed to a shell or an interpreter as its program without a pipe: a process
+    # substitution (`bash <(... | base64 -d)`, `source <(base64 -d <<< ...)`), a here-string
+    # (`bash <<< "$(... | base64 -d)"`) or a command substitution (`python3 -c "$(... | base64
+    # -d)"`). The decode must sit inside the substitution, so the gap stops at its end.
+    rf"(?:\bsource|(?<![\w./-])\.|\b{_RUNNER})\s+(?:-[A-Za-z]{{1,4}}\s+)?"
+    rf"(?:<\(|<<<\s*[\"']?\$\(|[\"']?(?:\$\(|`))[^\n)`]{{0,600}}?{_DECODER}",
 )
+
+# `decoded=$(... | base64 -d)` and, later, `bash -c "$decoded"` / `eval "$decoded"` / `echo
+# "$decoded" | sh`; or the decoded text written to a file that a later command starts (`... |
+# base64 -d > /tmp/p.sh; sh /tmp/p.sh`). The same decode-and-run with one step in between.
+_DECODE_INTO_VAR = re.compile(
+    r"(?:^|[;&\n])[ \t]*(?:export[ \t]+|local[ \t]+|readonly[ \t]+)?([A-Za-z_]\w{0,60})="
+    rf"[\"']?(?:\$\(|`)[^\n)`]{{0,600}}?{_DECODER}"
+)
+_DECODE_INTO_FILE = re.compile(
+    rf"{_DECODER}[^\n|;&>]{{0,200}}(?<![0-9&])>\s*[\"']?([^\s\"';&|>]{{1,200}})"
+)
+_NOT_A_FILE = frozenset({"-", "/dev/null", "/dev/stdout", "/dev/stderr", "nul"})
+_RUN_REACH = 2000
+
+
+def _runs_variable(name: str) -> re.Pattern[str]:
+    """A later command that runs the text held in shell variable ``name``."""
+    ref = rf"[\"']?\$\{{?{re.escape(name)}\}}?(?![\w])"
+    return re.compile(
+        rf"\beval\s+{ref}"
+        rf"|\b{_RUNNER}\s+-[A-Za-z]{{1,4}}\s+{ref}"
+        rf"|\b{_RUNNER}\s*<<<\s*{ref}"
+        rf"|\b(?:echo|printf)\b[^\n|;&]{{0,80}}?{ref}[^\n|;&]{{0,40}}\|\s*(?:sudo\s+)?"
+        r"(?:ba|z|da|k)?sh\b"
+    )
+
+
+def _runs_file(target: str) -> re.Pattern[str]:
+    """A later command that starts the file ``target``: through an interpreter (``sh i.sh``,
+    ``node x.js``, ``. ./env``) or as a command itself (``/tmp/p``, ``./p``)."""
+    name = re.escape(target.removeprefix("./"))
+    return re.compile(
+        r"(?:\b(?:ba|z|da|k)?sh|\bnode|\bpython[0-9.]*|\bperl|\bruby|\bsource|(?<![\w.])\.)"
+        rf"\s+(?:-[\w-]+\s+){{0,3}}[\"']?(?:\./)?{name}(?=$|[\s\"';&|)])"
+        rf"|(?:^|[;&|(\n])\s*[\"']?((?:\./)?{name})(?=$|[\s\"';&|)])",
+        re.MULTILINE,
+    )
+
+
+def _started(text: str, target: str, after: int) -> re.Match[str] | None:
+    """The first command after offset ``after`` (within reach) that starts the file ``target``.
+    A bare word is looked up on PATH, not in the folder the file was saved to, so it is not it."""
+    for started in _runs_file(target).finditer(text, after, after + _RUN_REACH):
+        as_command = started.group(1)
+        if as_command is not None and "/" not in as_command:
+            continue
+        return started
+    return None
+
+
+def decode_then_run_spans(text: str) -> list[tuple[int, int]]:
+    """Spans from data decoded into a shell variable or a file to the later command that runs
+    that variable or starts that file. Decoded data that is only parsed, checked or kept
+    (``... | base64 -d | python3 -m json.tool``, ``base64 -d cert.b64 > cert.pem``) is not run."""
+    spans: list[tuple[int, int]] = []
+    for m in _DECODE_INTO_VAR.finditer(text):
+        run = _runs_variable(m.group(1)).search(text, m.end(), m.end() + _RUN_REACH)
+        if run is not None:
+            spans.append((m.start(), run.end()))
+    for m in _DECODE_INTO_FILE.finditer(text):
+        target = m.group(1)
+        if target in _NOT_A_FILE or target.startswith("$("):
+            continue
+        run = _started(text, target, m.end())
+        if run is not None:
+            spans.append((m.start(), run.end()))
+    return spans
+
+
+# `curl -o /tmp/p URL && /tmp/p`, `wget URL; sh i.sh`: a download saved to a file that a later
+# part of the same script starts. The saved name is read from the option that sets it, or is the
+# last part of the address when the tool keeps the remote name.
+_FETCH_COMMAND = re.compile(r"\b(curl|wget)\b([^\n;&|]{0,800})", re.IGNORECASE)
+_CURL_OUTPUT = re.compile(r"(?<!\S)(?:-[A-Za-z]*o|--output)[=\s]\s*[\"']?([^\s\"';&|]{1,200})")
+_CURL_REMOTE_NAME = re.compile(r"(?<!\S)(?:-[A-Za-z]*O\b|--remote-name\b)")
+_WGET_OUTPUT = re.compile(
+    r"(?<!\S)(?:-[A-Za-z]*O|--output-document)[=\s]?\s*[\"']?([^\s\"';&|]{1,200})"
+)
+_REDIRECT_OUTPUT = re.compile(r"(?<![0-9&])>\s*[\"']?([^\s\"';&|>]{1,200})")
+_URL_LAST_PART = re.compile(r"https?://[^\s\"'?#]{1,400}/([\w.+-]{1,120})(?=$|[\s\"'?#])")
+# A prebuilt binary taken from a project's GitHub release into the package's own folder and then
+# started is how native-tool wrappers install; the same download saved to a temp folder is not.
+_RELEASE_ASSET_URL = re.compile(
+    r"https://(?:github\.com/[\w.-]+/[\w.-]+/releases/download/"
+    r"|api\.github\.com/repos/[\w.-]+/[\w.-]+/releases/assets/)",
+    re.IGNORECASE,
+)
+_TEMP_TARGET = re.compile(r"^(?:/tmp/|/var/tmp/|/dev/shm/|~|/|\$|\.\./)|(?:^|/)\.[^./]")
+
+
+def _saved_download(tool: str, arguments: str) -> str | None:
+    """The file a ``curl``/``wget`` command saves its download to, or None when it prints it."""
+    if tool.lower() == "curl":
+        named = _CURL_OUTPUT.search(arguments) or _REDIRECT_OUTPUT.search(arguments)
+        if named is None and not _CURL_REMOTE_NAME.search(arguments):
+            return None
+    else:
+        named = _WGET_OUTPUT.search(arguments) or _REDIRECT_OUTPUT.search(arguments)
+    if named is not None:
+        target = named.group(1)
+        return None if target in _NOT_A_FILE else target
+    last = _URL_LAST_PART.search(arguments)
+    return last.group(1) if last else None
+
+
+def download_then_run_spans(text: str) -> list[tuple[int, int]]:
+    """Spans from a download saved to a file to the later command that starts that file: through
+    an interpreter (``sh i.sh``, ``node x.js``, ``. ./env``) or as a command itself (``/tmp/p``,
+    ``./p``). A download that is only unpacked, moved or checked is not run, and a GitHub release
+    asset saved inside the package is left to the install-hook capability finding."""
+    spans: list[tuple[int, int]] = []
+    for fetch in _FETCH_COMMAND.finditer(text):
+        target = _saved_download(fetch.group(1), fetch.group(2))
+        if target is None:
+            continue
+        if _RELEASE_ASSET_URL.search(fetch.group(2)) and not _TEMP_TARGET.search(target):
+            continue
+        started = _started(text, target, fetch.end())
+        if started is not None:
+            spans.append((fetch.start(), started.end()))
+    return spans
 
 R_DECODE_EXEC_SH = "ST-OBF-DECODE-EXEC-SH"
 R_PIPE_EXEC = "ST-SHELL-PIPE-EXEC"
@@ -465,9 +624,12 @@ class ShellScriptScanner(Scanner):
             severity=Severity.HIGH,
             title="Shell decode-and-execute (obfuscated execution)",
             description=(
-                "A shell command decodes data and immediately executes it "
-                "(e.g. `... base64 -d | bash` or `eval \"$(... base64 -d)\"`). Decoding then "
-                "executing hides behaviour from review and is a common dropper idiom."
+                "A shell command decodes data and executes it "
+                "(e.g. `... base64 -d | bash`, `eval \"$(... base64 -d)\"`, `bash <(... | "
+                "base64 -d)`, the same with `base32 -d`, `xxd -r` or `openssl ... -d`, or the "
+                "decoded text kept in a variable or written to a file that a later command "
+                "runs). Decoding then executing hides behaviour from review and is a common "
+                "dropper idiom."
             ),
             recommendation=(
                 "Decode the payload manually and inspect what it runs before trusting this "
@@ -487,9 +649,13 @@ class ShellScriptScanner(Scanner):
             severity=Severity.HIGH,
             title="Remote pipe-to-shell execution",
             description=(
-                "A remotely fetched payload is piped straight into a shell "
-                "(e.g. `curl ... | bash`). The component runs code downloaded at runtime, which "
-                "is unreviewable and a common second-stage delivery vector."
+                "A shell script or a Makefile / justfile recipe downloads a payload and runs "
+                "it: piped straight into a shell or an interpreter (`curl ... | bash`, `curl "
+                "... | python3 -`), run from a substitution (`bash <(curl ...)`, `eval "
+                "\"$(wget ...)\"`, `sh -c \"$(curl ...)\"`), evaluated by inline code (`python3 "
+                "-c \"exec(urlopen(...).read())\"`), or saved to a file that a later command "
+                "starts (`curl -sLO https://.../x; bash x`). The component runs code downloaded "
+                "at runtime, which is unreviewable and a common second-stage delivery vector."
             ),
             recommendation=(
                 "Download to a file, inspect it, and run a pinned/verified copy instead of "
@@ -501,10 +667,13 @@ class ShellScriptScanner(Scanner):
             # A `# Usage: curl … | bash` line documents the install command; it is a comment, not
             # a runnable pipe-to-shell. Demote matches inside shell comments (engine code-context).
             code_context="comments",
-            # Bounded gap, as in REMOTE_EXEC: unbounded, it rescanned the rest of a crafted line
-            # from every `curl` on it (quadratic).
+            # The fetch-and-run forms REMOTE_EXEC reads in hooks, npm scripts and Python / Node
+            # shell strings (bounded gaps: unbounded, the first one rescanned the rest of a
+            # crafted line from every `curl` on it, quadratic).
             pattern=alternation(
-                rf"(?:curl|wget)\b[^\n]{{0,1000}}{_TO_SHELL}",
+                _FETCH_EXEC_SH,
+                _FETCH_EXEC_INLINE,
+                flags=re.IGNORECASE,
             ),
         ),
         RuleSpec(
@@ -602,14 +771,15 @@ class ShellScriptScanner(Scanner):
                 if is_action_secret:
                     continue  # this rule is scoped to composite-action run steps only
                 regions = self._regions(f)
-                for m, ev in f.finditer(rule.pattern):
-                    region = next((r for r in regions if r[0] <= m.start() < r[1]), None)
+                for start, end in self._spans(f, rule):
+                    region = next((r for r in regions if r[0] <= start < r[1]), None)
                     if region is None:
                         continue
                     if rule.id == R_PASSWORD_ARCHIVE and not _DOWNLOAD.search(
                         f.text, region[0], region[1]
                     ):
                         continue
+                    ev = f.evidence_for_span(start, end)
                     key = (ev.file, ev.line_start, ev.line_end)
                     if key in seen:
                         continue
@@ -620,6 +790,38 @@ class ShellScriptScanner(Scanner):
             if evidence:
                 findings.append(_finding_from_rule(rule, evidence))
         return ScanResult(findings=findings)
+
+    @staticmethod
+    def _spans(f, rule: RuleSpec) -> list[tuple[int, int]]:
+        """Where ``rule`` matches in ``f``, in file order. A script (not markdown) is also read
+        with its backslash-newline continuations joined, as the shell reads it, and for the two
+        steps of a decode-and-run or a download-and-run that sit on different lines."""
+        spans = [(m.start(), m.end()) for m in rule.pattern.finditer(f.text) if m.end() > m.start()]
+        if f.suffix in _MARKDOWN:
+            return spans
+        views: list[tuple[str, list[int] | None]] = [(f.text, None)]
+        joined = _continuations_joined(f.text)
+        if joined is not None:
+            views.append(joined)
+            text, origin = joined
+            spans += [
+                (origin[m.start()], origin[m.end() - 1] + 1)
+                for m in rule.pattern.finditer(text) if m.end() > m.start()
+            ]
+        two_step = _TWO_STEP.get(rule.id)
+        if two_step is not None:
+            for text, origin in views:
+                for start, end in two_step(text):
+                    if origin is not None:
+                        start, end = origin[start], origin[end - 1] + 1
+                    if f.in_shell_comment(end - 1):  # the step that runs it is commented out
+                        continue
+                    # Download, check the file against a checksum or a signature, then run it:
+                    # what this rule's own recommendation asks for.
+                    if rule.id == R_PIPE_EXEC and _VERIFIES.search(f.text, start, end):
+                        continue
+                    spans.append((start, end))
+        return sorted(set(spans))
 
     @staticmethod
     def _regions(f) -> list[tuple[int, int]]:
@@ -641,7 +843,47 @@ class ShellScriptScanner(Scanner):
 
     @staticmethod
     def _is_shell(f) -> bool:
-        if f.suffix in SHELL_SUFFIXES:
+        if f.suffix in SHELL_SUFFIXES or f.suffix == ".mk":
+            return True
+        # A Makefile or justfile recipe is a shell command (`\t@curl ... | sh`), run by whoever
+        # is told to `make setup`.
+        if f.relpath.rsplit("/", 1)[-1].lower() in _RECIPE_FILES:
             return True
         first = f.text[:200].splitlines()[0] if f.text else ""
         return bool(_SHEBANG_RE.match(first))
+
+
+_RECIPE_FILES = frozenset({"makefile", "gnumakefile", "justfile", ".justfile"})
+_VERIFIES = re.compile(
+    r"\b(?:sha(?:1|224|256|384|512)sum|shasum|md5sum|b2sum|cksum)\b|\bgpgv?\b[^\n]{0,80}--verify\b"
+    r"|\b(?:cosign|minisign|signify|openssl\s+dgst)\b",
+    re.IGNORECASE,
+)
+# The two-step forms of a rule: the first step on one line, the step that runs it on a later one.
+_TWO_STEP = {
+    R_DECODE_EXEC_SH: decode_then_run_spans,
+    R_PIPE_EXEC: download_then_run_spans,
+}
+
+
+def _continuations_joined(text: str) -> tuple[str, list[int]] | None:
+    """``text`` with each backslash-newline (and the indent after it) read as one space, the way
+    the shell joins a command written over several lines, and for each character of the result
+    its offset in ``text``; None when the text has no continuation."""
+    if "\\\n" not in text and "\\\r\n" not in text:
+        return None
+    out: list[str] = []
+    origin: list[int] = []
+    at = 0
+    for m in _CONTINUATION.finditer(text):
+        out.append(text[at:m.start()])
+        origin.extend(range(at, m.start()))
+        out.append(" ")
+        origin.append(m.start())
+        at = m.end()
+    out.append(text[at:])
+    origin.extend(range(at, len(text)))
+    return "".join(out), origin
+
+
+_CONTINUATION = re.compile(r"\\\r?\n[ \t]*")

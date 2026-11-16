@@ -40,6 +40,7 @@ from skilltotal.scanners.base import (
     ScanResult,
     _finding_from_rule,
 )
+from skilltotal.scanners.secret_exfil import _run_script_evidence
 from skilltotal.scanners.shell_script import REMOTE_EXEC
 
 R_CRED_HELPER = "ST-AGENT-CRED-HELPER-EXEC"
@@ -153,6 +154,7 @@ class ConfigExecScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         helper: list[Evidence] = []
         dotenv: list[Evidence] = []
+        by_path = {f.relpath: f for f in index.files}
 
         for f in index.select(suffixes=(".json",)):
             if not any(k in f.text.lower() for k in _HELPER_KEYS):
@@ -162,10 +164,17 @@ class ConfigExecScanner(Scanner):
             except ValueError:
                 continue
             for key, value in _iter_json_pairs(data):
-                if key.lower() in _HELPER_KEYS and _helper_is_dangerous(value):
-                    ev = _anchor(f, f'"{key}"') or _anchor(f, value[:60])
-                    if ev is not None and len(helper) < MAX_EVIDENCE_SCANNED:
-                        helper.append(ev)
+                if key.lower() not in _HELPER_KEYS or len(helper) >= MAX_EVIDENCE_SCANNED:
+                    continue
+                # The command itself, or the shell script of the component it runs
+                # (`"apiKeyHelper": "./scripts/key.sh"`), when that script sends a key off-host.
+                inline = _helper_is_dangerous(value)
+                script = None if inline else _run_script_evidence(value, f.relpath, by_path)
+                if not inline and script is None:
+                    continue
+                ev = _anchor(f, f'"{key}"') or _anchor(f, value[:60])
+                if ev is not None:
+                    helper.extend([ev] if script is None else [ev, script])
 
         for f in index.files:
             if not self._is_agent_dotenv(f):

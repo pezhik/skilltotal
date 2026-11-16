@@ -582,7 +582,18 @@ _HOOKSPATH_SET = re.compile(r"core\.hooksPath\b[ \t]+[\"']?[^\s|&;)>\"']", re.I)
 # in backticks). It runs when the skill loads, before the model reads the skill, so `allowed-tools`
 # refusals do not help. A benign skill uses this for `!`git status``; a malicious one hides a
 # credential grab or a fetch-and-run in it. Only the dangerous bodies are flagged.
-_SKILL_DYNAMIC_CMD = re.compile(r"(?m)^[ \t>]*!\s*(\S[^\n]*)")
+# Three ways to write it: at the start of a line (bare or in backticks), inline after text
+# (``Current state: !`cmd` ``, the form the documentation shows), and as a code block whose
+# opening fence is followed by `!`.
+_SKILL_DYNAMIC_CMD = re.compile(
+    r"(?m)^[ \t>]*!\s*(\S[^\n]*)"
+    r"|(?<![\w`\\])!`([^`\n]{1,2000})`"
+)
+_SKILL_DYNAMIC_FENCE = re.compile(
+    r"(?ms)^[ \t]{0,3}(`{3,}|~{3,})![ \t]*\n(.{0,20000}?)^[ \t]{0,3}\1"
+)
+# A slash-command file runs its `!` commands the same way, with or without frontmatter.
+_COMMAND_FILE = re.compile(r"(?:^|/)commands/(?:[^/]+/)*[^/]+\.mdx?$", re.IGNORECASE)
 # A credential source piped/joined to a network sink (exfil), or a fetch-and-run. `gh auth token`,
 # an SSH/AWS/keychain read, or a kube/npm credential, reaching curl/wget/nc or an http(s) URL.
 _SKILL_CRED_SOURCE = re.compile(
@@ -721,8 +732,10 @@ class AgentConfigScanner(Scanner):
                 "step: a Claude Code / Gemini CLI / Cursor hook, a Claude Code status line or "
                 "credential helper command, or a VS Code task that runs when the folder opens. "
                 "Opening the project in that tool runs it with the developer's privileges. An "
-                "`http` hook (here or in a plugin or skill) posts each event it is bound to, tool "
-                "input and output included, to a server that is not this machine."
+                "`http` hook (here or in a plugin or skill), or a hook command that hands its own "
+                "input to a network client (`curl --data-binary @- https://...`), posts each "
+                "event it is bound to, the user's prompt and tool input and output included, to "
+                "a server that is not this machine."
             ),
             recommendation=(
                 "Read the command and anything it runs, or the URL a hook posts to, before "
@@ -929,7 +942,9 @@ class AgentConfigScanner(Scanner):
                 ev = command.evidence()
                 autorun.append(ev)
                 remote.extend([ev, script.evidence_for_span(m.start(), m.end())])
-            elif command.origin == ORIGIN_PROJECT:
+            elif command.origin == ORIGIN_PROJECT or (
+                command.kind == KIND_HOOK and _uploads_stdin(text)
+            ):
                 autorun.append(command.evidence())
             elif command.origin in (ORIGIN_PLUGIN, ORIGIN_SKILL) and command.kind == KIND_HOOK:
                 honest.setdefault((command.file.relpath, command.origin), []).append(command)
@@ -1060,13 +1075,15 @@ class AgentConfigScanner(Scanner):
         for f in index.files:
             if not self._is_skill_file(f):
                 continue
-            for m in _SKILL_DYNAMIC_CMD.finditer(f.text):
-                body = m.group(1).strip().strip("`").strip()
+            if "!" not in f.text:
+                continue
+            for start, end in _skill_dynamic_commands(f.text):
+                body = f.text[start:end].strip().strip("`").strip()
                 dangerous = _REMOTE_EXEC.search(body) or (
                     _SKILL_CRED_SOURCE.search(body) and _SKILL_NET_SINK.search(body)
                 )
                 if dangerous:
-                    skill_exec.append(f.evidence_for_span(m.start(1), m.end(1)))
+                    skill_exec.append(f.evidence_for_span(start, end))
                     if len(skill_exec) >= MAX_EVIDENCE_SCANNED:
                         break
 
@@ -1240,6 +1257,8 @@ class AgentConfigScanner(Scanner):
             return True
         if not name.endswith((".md", ".mdx")):
             return False
+        if _COMMAND_FILE.search(f.relpath.replace("\\", "/")):
+            return True
         head = f.text[:600]
         return bool(re.search(r"(?mi)^\s*allowed-tools\s*:", head))
 
@@ -1295,6 +1314,48 @@ class AgentConfigScanner(Scanner):
                 if candidate in by_path:
                     return by_path[candidate]
         return None
+
+
+def _skill_dynamic_commands(text: str) -> list[tuple[int, int]]:
+    """Spans of the `!` dynamic-context commands of a skill or command file, in file order: the
+    rest of a line that starts with `!`, an inline ``!`cmd` ``, and each line of a code block
+    opened with a fence followed by `!`."""
+    spans: list[tuple[int, int]] = []
+    for m in _SKILL_DYNAMIC_CMD.finditer(text):
+        group = 1 if m.group(1) is not None else 2
+        spans.append((m.start(group), m.end(group)))
+    for m in _SKILL_DYNAMIC_FENCE.finditer(text):
+        at = m.start(2)
+        for line in m.group(2).split("\n"):
+            if line.strip() and not line.lstrip().startswith("#"):
+                spans.append((at, at + len(line)))
+            at += len(line) + 1
+    return sorted(set(spans))
+
+
+# A hook command that hands its own input to a network client: `curl --data-binary @- URL`,
+# `curl -T - URL`, `cat | curl -d @- URL`, `jq -c . | curl -d @- URL`. A hook's input is the event
+# it is bound to (the prompt the user typed, a tool's input and output), so this is an `http`
+# hook written as a command. A client fed by another program (`git log | curl -d @- ...`) sends
+# that program's output instead and is not matched; `jq -n` builds its own text.
+_STDIN_UPLOAD = re.compile(
+    r"(?:^|[;&(\n])\s*(?:cat\s*(?:-\s*)?\|\s*|jq\b(?![^\n|;&]{0,200}?\s(?:-n|--null-input)\b)"
+    r"[^\n|;&]{0,200}\|\s*)?(?:curl|wget)\b[^\n|;&]{0,600}?"
+    r"(?:(?:-d|--data(?:-binary|-raw|-urlencode|-ascii)?|-F|--form)(?:\s+|=)[\"']?(?:[\w.-]{1,60}=)?"
+    r"@-(?=[\"'\s]|$)"
+    r"|(?:-T|--upload-file|--post-file|--body-file)(?:\s+|=)[\"']?-(?=[\"'\s]|$))"
+)
+_STAGE_REST = re.compile(r"[^\n|;&]{0,1000}")
+_HTTP_URL = re.compile(r"https?://[^\s\"'`<>|;&)]+", re.IGNORECASE)
+
+
+def _uploads_stdin(command: str) -> bool:
+    """True if a hook command sends its input to a host that is not this machine."""
+    for m in _STDIN_UPLOAD.finditer(command):
+        stage = command[m.start():_STAGE_REST.match(command, m.end()).end()]
+        if any(_is_remote_url(url) for url in _HTTP_URL.findall(stage)):
+            return True
+    return False
 
 
 # Matches looked at per script; past this a script of comments is not read further.

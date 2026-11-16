@@ -25,7 +25,12 @@ from skilltotal.scanners.base import (
 )
 from skilltotal.scanners.fetch_tunnel_launcher import platform_fetch_evidence
 from skilltotal.scanners.obfuscation import _DECODE_EXEC
-from skilltotal.scanners.shell_script import DECODE_EXEC_SH, REMOTE_EXEC
+from skilltotal.scanners.shell_script import (
+    DECODE_EXEC_SH,
+    REMOTE_EXEC,
+    decode_then_run_spans,
+    download_then_run_spans,
+)
 
 CATEGORY = "install_time_execution"
 R_NPM_REMOTE_EXEC = "ST-INSTALL-NPM-REMOTE-EXEC"
@@ -104,71 +109,9 @@ _INSTALL_FETCH_RUN = re.compile(
     re.IGNORECASE,
 )
 
-# `curl -o /tmp/p URL && /tmp/p`, `wget URL; sh i.sh`: a download saved to a file that a later
-# part of the same script starts. The saved name is read from the option that sets it, or is the
-# last part of the address when the tool keeps the remote name.
-_FETCH_COMMAND = re.compile(r"\b(curl|wget)\b([^\n;&|]{0,800})", re.IGNORECASE)
-_CURL_OUTPUT = re.compile(r"(?<!\S)(?:-[A-Za-z]*o|--output)[=\s]\s*[\"']?([^\s\"';&|]{1,200})")
-_CURL_REMOTE_NAME = re.compile(r"(?<!\S)(?:-[A-Za-z]*O\b|--remote-name\b)")
-_WGET_OUTPUT = re.compile(
-    r"(?<!\S)(?:-[A-Za-z]*O|--output-document)[=\s]?\s*[\"']?([^\s\"';&|]{1,200})"
-)
-_REDIRECT_OUTPUT = re.compile(r"(?<![0-9&])>\s*[\"']?([^\s\"';&|>]{1,200})")
-_URL_LAST_PART = re.compile(r"https?://[^\s\"'?#]{1,400}/([\w.+-]{1,120})(?=$|[\s\"'?#])")
-_NOT_A_FILE = frozenset({"-", "/dev/null", "/dev/stdout", "nul"})
-_RUN_REACH = 2000
-# A prebuilt binary taken from a project's GitHub release into the package's own folder and then
-# started is how native-tool wrappers install; the same download saved to a temp folder is not.
-_RELEASE_ASSET_URL = re.compile(
-    r"https://(?:github\.com/[\w.-]+/[\w.-]+/releases/download/"
-    r"|api\.github\.com/repos/[\w.-]+/[\w.-]+/releases/assets/)",
-    re.IGNORECASE,
-)
-_TEMP_TARGET = re.compile(r"^(?:/tmp/|/var/tmp/|/dev/shm/|~|/|\$|\.\./)|(?:^|/)\.[^./]")
-
-
-def _saved_download(tool: str, arguments: str) -> str | None:
-    """The file a ``curl``/``wget`` command saves its download to, or None when it prints it."""
-    if tool.lower() == "curl":
-        named = _CURL_OUTPUT.search(arguments) or _REDIRECT_OUTPUT.search(arguments)
-        if named is None and not _CURL_REMOTE_NAME.search(arguments):
-            return None
-    else:
-        named = _WGET_OUTPUT.search(arguments) or _REDIRECT_OUTPUT.search(arguments)
-    if named is not None:
-        target = named.group(1)
-        return None if target in _NOT_A_FILE else target
-    last = _URL_LAST_PART.search(arguments)
-    return last.group(1) if last else None
-
-
-def download_then_run_spans(text: str) -> list[tuple[int, int]]:
-    """Spans from a download saved to a file to the later command that starts that file: through
-    an interpreter (``sh i.sh``, ``node x.js``, ``. ./env``) or as a command itself (``/tmp/p``,
-    ``./p``). A download that is only unpacked, moved or checked is not run, and a GitHub release
-    asset saved inside the package is left to the install-hook capability finding."""
-    spans: list[tuple[int, int]] = []
-    for fetch in _FETCH_COMMAND.finditer(text):
-        target = _saved_download(fetch.group(1), fetch.group(2))
-        if target is None:
-            continue
-        if _RELEASE_ASSET_URL.search(fetch.group(2)) and not _TEMP_TARGET.search(target):
-            continue
-        name = re.escape(target.removeprefix("./"))
-        run = re.compile(
-            r"(?:\b(?:ba|z|da|k)?sh|\bnode|\bpython[0-9.]*|\bperl|\bruby|\bsource|(?<![\w.])\.)"
-            rf"\s+(?:-[\w-]+\s+){{0,3}}[\"']?(?:\./)?{name}(?=$|[\s\"';&|)])"
-            rf"|(?:^|[;&|(\n])\s*[\"']?((?:\./)?{name})(?=$|[\s\"';&|)])",
-            re.MULTILINE,
-        )
-        for started in run.finditer(text, fetch.end(), fetch.end() + _RUN_REACH):
-            as_command = started.group(1)
-            if as_command is not None and "/" not in as_command:
-                continue  # a bare word is looked up on PATH, not in the folder it was saved to
-            spans.append((fetch.start(), started.end()))
-            break
-    return spans
-
+# A download saved to a file that a later part of the same script starts (`curl -o /tmp/p URL &&
+# /tmp/p`), and data decoded into a variable or a file that a later command runs, are read by
+# shell_script.download_then_run_spans / decode_then_run_spans, shared with the shell-file rules.
 
 # `c=curl; s=sh; $c -s URL | $s`: the tools named through variables set in the same script.
 _SHELL_TOOL_ASSIGNMENT = re.compile(
@@ -207,6 +150,7 @@ def _shell_fetch_run_spans(f: IndexedFile) -> list[tuple[int, int]]:
         for m in pattern.finditer(f.text)
     ]
     spans += download_then_run_spans(f.text) + indirect_remote_exec_spans(f.text)
+    spans += decode_then_run_spans(f.text)
     return sorted(
         (start, end) for start, end in set(spans)
         if not (f.in_shell_comment(start) or f.in_printed_command(start)
