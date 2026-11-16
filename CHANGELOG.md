@@ -40,7 +40,8 @@ All notable changes to the SkillTotal engine. Format loosely follows
   are not reported as injection. A zero-width break hint at a camelCase border is not counted as
   hidden text. A package.json that an install-run file loads or a command names is not read as a
   script, and a package runner counts as fetching code only when the address is what it runs.
-- Eval corpus: 308 malicious and 238 benign samples (240 and 200 in 1.2.0), recall 308/308 with
+  A download-and-run example inside a usage text that a script only prints is not reported.
+- Eval corpus: 308 malicious and 239 benign samples (240 and 200 in 1.2.0), recall 308/308 with
   0 false positives.
 
 ## [1.2.0]

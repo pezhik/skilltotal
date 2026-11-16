@@ -226,6 +226,7 @@ def download_then_run_spans(text: str) -> list[tuple[int, int]]:
     ``./p``). A download that is only unpacked, moved or checked is not run, and a GitHub release
     asset saved inside the package is left to the install-hook capability finding."""
     spans: list[tuple[int, int]] = []
+    printed: list[tuple[int, int]] | None = None
     for fetch in _FETCH_COMMAND.finditer(text):
         target = _saved_download(fetch.group(1), fetch.group(2))
         if target is None:
@@ -233,8 +234,39 @@ def download_then_run_spans(text: str) -> list[tuple[int, int]]:
         if _RELEASE_ASSET_URL.search(fetch.group(2)) and not _TEMP_TARGET.search(target):
             continue
         started = _started(text, target, fetch.end())
-        if started is not None:
-            spans.append((fetch.start(), started.end()))
+        if started is None:
+            continue
+        if printed is None:
+            printed = _printed_heredoc_spans(text)
+        if any(start <= fetch.start() < end for start, end in printed):
+            continue
+        spans.append((fetch.start(), started.end()))
+    return spans
+
+
+# `cat <<EOF` with nothing after it but an optional `>&2`: the body is shown to the reader (a
+# usage text), not run. A here-document piped on, written to a file or fed to a shell is not this.
+_PRINTED_HEREDOC = re.compile(
+    r"^[ \t]*cat[ \t]*(?:1?>&2[ \t]*)?<<-?[ \t]*([\"']?)(\w{1,40})\1[ \t]*(?:1?>&2[ \t]*)?\r?$",
+    re.MULTILINE,
+)
+_MAX_PRINTED_HEREDOCS = 200
+
+
+def _printed_heredoc_spans(text: str) -> list[tuple[int, int]]:
+    """Bodies of here-documents that are only printed (``cat <<EOF ... EOF``)."""
+    spans: list[tuple[int, int]] = []
+    at = 0
+    for _ in range(_MAX_PRINTED_HEREDOCS):
+        opened = _PRINTED_HEREDOC.search(text, at)
+        if opened is None:
+            break
+        closing = re.compile(rf"^[ \t]*{re.escape(opened.group(2))}[ \t]*\r?$", re.MULTILINE)
+        closed = closing.search(text, opened.end())
+        if closed is None:
+            break
+        spans.append((opened.end(), closed.start()))
+        at = closed.end()
     return spans
 
 R_DECODE_EXEC_SH = "ST-OBF-DECODE-EXEC-SH"

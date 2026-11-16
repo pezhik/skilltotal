@@ -123,6 +123,9 @@ the end.
     text. It is listed as a note.
   - A downloaded file passed to a script as an argument (`./verify.sh data`) is not read as
     started.
+  - A download-and-run pair inside a here-document that a script only prints (`cat <<EOF`
+    usage text) is not read as run. A here-document piped on, written to a file or fed to a
+    shell is still read.
   - A package.json that an install-run file loads (`require("../package.json")`) or that an
     install command names is data, not a script. `ST-NPM-INSTALL-PUBLISH` does not read a
     release script in it (`"publish-prod": "npm run build && npm publish"`) as publishing at
@@ -141,7 +144,7 @@ the end.
     read.
   - `ST-DEP-FOREIGN-SOURCE` reads only `tarball:` addresses in `pnpm-lock.yaml`. The look-alike
     table is a curated set of about 200 characters, not the full Unicode confusables list.
-- Eval corpus: 308 malicious and 238 benign samples (240 and 200 in ruleset 101). All 308
+- Eval corpus: 308 malicious and 239 benign samples (240 and 200 in ruleset 101). All 308
   malicious samples are detected and no benign sample is flagged.
 
 ## ruleset 101 (engine 1.2.0)

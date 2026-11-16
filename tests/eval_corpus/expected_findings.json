@@ -474,6 +474,7 @@
   "ST-NET-PY",
   "ST-SHELL-PY"
  ],
+ "negative/AST02/setup-detached-fetch/usage-text-shows-download-and-run": [],
  "negative/AST02/skill-fetch-exec/honest-tool-install": [
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
