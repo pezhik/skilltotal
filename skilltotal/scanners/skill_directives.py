@@ -59,7 +59,8 @@ _QUOTE = r"[`'\"*]*"
 _MEMORY_WRITE = re.compile(
     _WRITE_VERB + r"[^\n]{0,200}?\b(?:to|into|inside|in)\s+"
     r"(?:(?:the|your|its|each|every|global|local|project(?:['’]s)?|user(?:['’]s)?)\s+)*"
-    + _QUOTE + _MEMORY_FILE
+    # The file may be named with its folder: "to `~/.claude/CLAUDE.md`".
+    + _QUOTE + r"(?:[~.]?[\w.-]{0,40}/){0,6}" + _MEMORY_FILE
     + r"|" + _MEMORY_FILE + _QUOTE + r"(?:\s+file)?\s*(?:,|:|\band\b|\bthen\b)\s*(?:then\s+)?"
     + _WRITE_VERB,
     re.IGNORECASE,

@@ -99,10 +99,11 @@ class SkillFetchExecScanner(Scanner):
             description=(
                 "An instruction file the agent follows tells it to download a script and run it "
                 "while keeping that from the user: the instruction says to do it silently, "
-                "without asking or without mentioning it, or the command sits where the rendered "
-                "file does not show it (an HTML comment, a hidden element), or it is fetched from "
-                "a bare IP address. An honest setup step is shown to the user and comes from a "
-                "named host."
+                "without asking or without mentioning it, or the command sits where a reader does "
+                "not see it (an HTML comment, an element styled invisible, behind a wall of blank "
+                "lines), or its name is written with look-alike or invisible characters, or it is "
+                "fetched from a bare IP address. An honest setup step is shown to the user, "
+                "written in plain letters, and comes from a named host."
             ),
             recommendation=(
                 "Do not install or follow this component. If an agent already followed it, treat "
@@ -143,6 +144,7 @@ def _instruction_file(f: IndexedFile, plain: list[Evidence], hidden: list[Eviden
             url = _FIRST_URL.search(m.group(0))
             if (
                 (url and _BARE_IP.match(url.group(0)))
+                or (origin is not None and _disguised_command(f.text, origin, m))
                 or _in_hidden_markup(text, m.start())
                 or _CONCEALED.search(_instruction_text(text, m))
             ):
@@ -157,26 +159,77 @@ def _instruction_file(f: IndexedFile, plain: list[Evidence], hidden: list[Eviden
         plain.extend(found_plain)
 
 
+_COMMAND_WORD = re.compile(r"[A-Za-z][\w-]*")
+
+
+def _disguised_command(original: str, origin: Sequence[int], m: re.Match[str]) -> bool:
+    """True if the downloader or the interpreter of a command found only in a de-obfuscated view
+    is written with other characters than its ASCII name: look-alike or full-width letters, or
+    invisible characters inside the word. Blanks written as no-break spaces (a command pasted
+    from a web page) and non-ASCII text around the command are not that."""
+    command = m.group(0)
+    words = [_COMMAND_WORD.match(command)]
+    pipe = command.rfind("|")
+    if pipe >= 0:
+        words.append(_COMMAND_WORD.search(command, pipe))
+    for word in words:
+        if word is None:
+            continue
+        start, end = original_span(origin, m.start() + word.start(), m.start() + word.end())
+        if not original[start:end].isascii():
+            return True
+    return False
+
+
 # Where one statement of an instruction ends: a sentence end, or a new list item or heading.
 _SENTENCE_END = re.compile(r"[.!?](?=\s)|\n(?=[ \t]*(?:[-*+]|\d+[.)])[ \t])|\n(?=[ \t]*#)")
 # An element a renderer does not show: `style="display:none"`, `visibility:hidden`, `hidden`.
+# Also the styles that draw the text where nobody can read it: no size, fully transparent, the
+# colour of a white page with no background set, pushed off the screen, a box of no size that
+# clips its content, and the old `<font color="white">`.
 _HIDDEN_ELEMENT = re.compile(
     r"<([A-Za-z][\w-]{0,30})\b[^<>]{0,500}?(?:display\s*:\s*none|visibility\s*:\s*hidden"
-    r"|\shidden(?=[\s=>/]))[^<>]{0,500}>",
+    r"|\shidden(?=[\s=>/])"
+    r"|font-size\s*:\s*(?:0(?:\.0+)?(?:px|pt|em|rem|%)?|1px)(?![\w.])"
+    r"|opacity\s*:\s*0(?:\.0+)?(?![\w.])"
+    r"|(?<![\w-])color\s*:\s*transparent\b"
+    r"|(?:left|top|text-indent|margin-left)\s*:\s*-\d{3,}"
+    r"|(?:height|width)\s*:\s*0(?:px)?\s*;[^<>]{0,200}?overflow\s*:\s*hidden"
+    r"|overflow\s*:\s*hidden\s*;[^<>]{0,200}?(?:height|width)\s*:\s*0(?:px)?(?![\w.])"
+    r"|(?<![\w-])color\s*(?::|=)\s*[\"']?(?:white|#fff(?:fff)?)\b(?![^<>]{0,300}background)"
+    r"|(?<![\w-])color\s*:\s*(white|#fff(?:fff)?)\s*;\s*background(?:-color)?\s*:\s*\2\b)"
+    r"[^<>]{0,500}>",
     re.IGNORECASE,
 )
 _HIDDEN_REACH = 4000
+# Text pushed out of sight by padding: this many blank lines above it, or this many blanks before
+# it on its own line. A person who opens the file sees an empty page and stops reading.
+_PAD_BLANK_LINES = 40
+_PAD_BLANKS = re.compile(r"[ \t]{200,}")
 
 
 def _in_hidden_markup(text: str, pos: int) -> bool:
-    """True if ``pos`` is inside an HTML comment, or inside an element styled not to render: the
-    agent reads the raw file, while a person viewing the rendered skill sees nothing there."""
+    """True if ``pos`` is inside an HTML comment, inside an element styled not to render, or
+    behind a wall of blank lines or blanks: the agent reads the raw file, while a person viewing
+    the skill sees nothing there."""
     opened = text.rfind("<!--", 0, pos)
     if opened >= 0 and text.find("-->", opened + 4, pos) < 0:
         return True
     lo = max(0, pos - _HIDDEN_REACH)
     for tag in reversed(list(_HIDDEN_ELEMENT.finditer(text, lo, pos))):
         if not re.search(rf"</{re.escape(tag.group(1))}\s*>", text[tag.end():pos], re.IGNORECASE):
+            return True
+    return _behind_padding(text, lo, pos)
+
+
+def _behind_padding(text: str, lo: int, pos: int) -> bool:
+    lines = text[lo:pos].split("\n")
+    if _PAD_BLANKS.search(lines[-1]):
+        return True
+    blank = 0
+    for line in lines[:-1]:
+        blank = 0 if line.strip() else blank + 1
+        if blank >= _PAD_BLANK_LINES:
             return True
     return False
 
