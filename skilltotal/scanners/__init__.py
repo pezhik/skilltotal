@@ -15,6 +15,7 @@ from skilltotal.scanners.clipper import ClipperScanner
 from skilltotal.scanners.config_exec import ConfigExecScanner
 from skilltotal.scanners.dependency_redirect import DependencyRedirectScanner
 from skilltotal.scanners.dependency_source import DependencySourceScanner
+from skilltotal.scanners.dependency_typosquat import DependencyTyposquatScanner
 from skilltotal.scanners.disguised_script import DisguisedScriptScanner
 from skilltotal.scanners.dynamic_code import DynamicCodeScanner
 from skilltotal.scanners.email_exfil import EmailExfilScanner
@@ -99,6 +100,7 @@ SCANNERS: list[Scanner] = [
     FetchTunnelLauncherScanner(),
     EnvInjectScanner(),
     DependencySourceScanner(),
+    DependencyTyposquatScanner(),
     DisguisedScriptScanner(),
 ]
 

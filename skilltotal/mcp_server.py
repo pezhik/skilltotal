@@ -651,6 +651,7 @@ def summarize_diff(old: dict[str, Any], new: dict[str, Any],
         "capabilities_added": diff.get("capabilities_added") or [],
         "capabilities_removed": diff.get("capabilities_removed") or [],
         "ruleset_mismatch": bool(diff.get("ruleset_mismatch")),
+        "mcp_tools_changed": diff.get("mcp_tools_changed") or [],
         "summary": diff.get("summary", ""),
         # What the new version's scan could not read and the old one could: a finding gone with
         # it may only have gone out of view.

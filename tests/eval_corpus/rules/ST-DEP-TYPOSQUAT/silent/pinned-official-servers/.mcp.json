@@ -1,0 +1,25 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "mcpServers": {
+    "files": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem@2025.8.21",
+        "/srv/data"
+      ]
+    },
+    "fetch": {
+      "command": "uvx",
+      "args": [
+        "mcp-server-fetch==2025.4.7"
+      ]
+    },
+    "api": {
+      "command": "uvx",
+      "args": [
+        "some-mcp-server==1.4.2"
+      ]
+    }
+  }
+}

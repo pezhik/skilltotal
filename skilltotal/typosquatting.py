@@ -21,6 +21,7 @@ import re
 
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Component, Evidence, Finding, Severity, ThreatClass
+from skilltotal.text_normalize import normalize_with_map
 
 TYPOSQUAT_FINDING_ID = "ST-TYPOSQUAT"
 
@@ -124,6 +125,140 @@ def _levenshtein(a: str, b: str, max_d: int) -> int | None:
             return None
         prev = cur
     return prev[lb] if prev[lb] <= max_d else None
+
+
+# --- A name the component depends on or launches -------------------------------------------------
+# The component's own name is judged by edit distance, against the look-alikes of the 10,000
+# most-downloaded packages. A DEPENDENCY can be any of millions of names, and honest packages sit
+# one edit from a popular one (`graphiql`, `pedantic`, `reactn`, `expresso`, `ptest`). So a
+# dependency is flagged only for the ways a name is mistyped or disguised, never for a plain
+# substitution, a letter added or dropped at either end, or a new letter in the middle:
+#   swapped letters      axois, loadsh, reqeusts
+#   doubled or undoubled fetchh, expres, pilow
+#   a dropped inner letter of a long name   mongose, colorma
+#   digits or letter pairs that read as letters   requ3sts, l0dash, rnongoose, nurnpy
+#   look-alike or invisible characters     a Cyrillic letter, a zero-width space
+#   separators           crossenv for cross-env
+# Popular names that are dependency or launch targets but not in the lists above (adding them
+# there would change the own-name check, whose exemptions were derived for those lists).
+_DEPENDENCY_ONLY_NPM = ("electron", "mcp-remote", "supergateway", "puppeteer", "playwright")
+_DEPENDENCY_ONLY_PYPI = (
+    "python-dotenv", "fastmcp", "mcp-server-fetch", "mcp-server-git", "mcp-server-time",
+    "mcp-server-sqlite",
+)
+# npm scopes that are imitated (`@modelcontextprotocoI/...`). A name INSIDE a real scope cannot be
+# squatted, so only the scope is compared.
+_KNOWN_SCOPES = ("modelcontextprotocol", "anthropic-ai", "aws-sdk", "google-cloud")
+_TARGETS = {
+    "npm": frozenset(p for p in (*_POPULAR_NPM, *_DEPENDENCY_ONLY_NPM) if len(p) >= 5),
+    "pypi": frozenset(
+        p for p in (*_POPULAR_PYPI, *(_canon_pypi(x) for x in _DEPENDENCY_ONLY_PYPI))
+        if len(p) >= 5
+    ),
+}
+_NOT_A_SQUAT = {
+    "npm": _POPULAR_NPM | _KNOWN_LEGIT_NPM | frozenset(_DEPENDENCY_ONLY_NPM),
+    "pypi": _POPULAR_PYPI | _KNOWN_LEGIT_PYPI
+    | frozenset(_canon_pypi(x) for x in _DEPENDENCY_ONLY_PYPI),
+}
+_DIGIT_LETTERS = str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t"})
+_SEPARATORS = re.compile(r"[-_.]")
+_MAX_DEPENDENCY_NAME = 80
+
+
+def _one_edit_typo(name: str, target: str) -> str | None:
+    """How ``name`` mistypes ``target`` in one keystroke, or None (see the list above)."""
+    ln, lt = len(name), len(target)
+    if ln == lt:
+        diff = [i for i in range(ln) if name[i] != target[i]]
+        if (len(diff) == 2 and diff[1] == diff[0] + 1
+                and name[diff[0]] == target[diff[1]] and name[diff[1]] == target[diff[0]]):
+            return "two letters swapped"
+        return None
+    longer, shorter = (name, target) if ln > lt else (target, name)
+    if len(longer) != len(shorter) + 1:
+        return None
+    i = 0
+    while i < len(shorter) and longer[i] == shorter[i]:
+        i += 1
+    if longer[i + 1:] != shorter[i:]:
+        return None
+    doubled = (i > 0 and longer[i] == longer[i - 1]) or (
+        i + 1 < len(longer) and longer[i] == longer[i + 1]
+    )
+    if ln > lt:
+        return "a letter doubled" if doubled else None
+    if doubled and lt >= 6:
+        return "a doubled letter written once"
+    if lt >= 7 and 0 < i < lt - 1:
+        return "a letter left out"
+    return None
+
+
+def _disguised_as(name: str, targets: frozenset[str]) -> tuple[str, str] | None:
+    """A popular name that ``name`` reads as once its digits, letter pairs or look-alike
+    characters are read the way the eye reads them."""
+    if not name.isascii():
+        plain = normalize_with_map(name)[0].lower()
+        if plain != name and plain in targets:
+            return plain, "look-alike or invisible characters"
+        name = plain
+    variants = {name.translate(_DIGIT_LETTERS), name.replace("1", "i").translate(_DIGIT_LETTERS)}
+    for v in tuple(variants):
+        variants.add(v.replace("rn", "m"))
+        variants.add(v.replace("vv", "w"))
+    variants.discard(name)
+    for v in sorted(variants):
+        if v in targets:
+            return v, "digits or letter pairs that read as its letters"
+    return None
+
+
+def name_lookalike(raw: str, ecosystem: str) -> tuple[str, str] | None:
+    """``(popular name, how)`` when a dependency or launched package is written like a popular
+    package and is not one; ``ecosystem`` is ``"npm"`` or ``"pypi"``. See the block comment for
+    what counts. A scoped npm name is compared by its scope only."""
+    raw = raw.strip()
+    if not raw or len(raw) > _MAX_DEPENDENCY_NAME:
+        return None
+    if ecosystem == "npm" and raw.startswith("@"):
+        scope = raw[1:].split("/", 1)[0]
+        # `I` for `l` only shows before the name is lower-cased.
+        candidates = {scope.lower(), scope.replace("I", "l").lower()}
+        if candidates & set(_KNOWN_SCOPES):
+            return (None if scope.lower() in _KNOWN_SCOPES
+                    else ("@" + scope.replace("I", "l").lower(), "a capital I for a small l"))
+        for known in _KNOWN_SCOPES:
+            for candidate in candidates:
+                how = _one_edit_typo(candidate, known)
+                if how:
+                    return "@" + known, how
+        found = _disguised_as(scope.lower(), frozenset(_KNOWN_SCOPES))
+        return ("@" + found[0], found[1]) if found else None
+    canon = _canon_pypi if ecosystem == "pypi" else _canon_npm
+    name = canon(raw)
+    targets, known = _TARGETS[ecosystem], _NOT_A_SQUAT[ecosystem]
+    if len(name) < 5 or name in known:
+        return None
+    found = _disguised_as(name, targets)
+    if found:
+        return found
+    if not name.isascii():
+        return None
+    for target in sorted(targets):
+        if abs(len(target) - len(name)) > 1:
+            continue
+        how = _one_edit_typo(name, target)
+        if how:
+            return target, how
+    bare = _SEPARATORS.sub("", name)
+    british = name.replace("colour", "color")
+    for target in sorted(targets):
+        if bare == _SEPARATORS.sub("", target):
+            return target, "the same letters with other separators"
+        if british != name and british == target:
+            return target, "another spelling of the same word"
+    return None
 
 
 def package_name_typosquatting(component: Component, index: FileIndex) -> Finding | None:

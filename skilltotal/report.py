@@ -255,6 +255,21 @@ def render_diff_text(diff: DiffReport) -> str:
                          f"{one_line(str(note.get('reason', '')))}")
         lines.append("")
 
+    if diff.mcp_tools_changed:
+        # What a tool tells the model changed. Shown whether or not the new text matches a rule.
+        lines.append(f"MCP tool definitions changed ({len(diff.mcp_tools_changed)}):")
+        marks = {"added": "+", "removed": "-", "changed": "~"}
+        for tool in diff.mcp_tools_changed:
+            what = str(tool.get("change", ""))
+            if what == "changed":
+                what = " and ".join(str(p) for p in tool.get("changed") or []) + " changed"
+            lines.append(
+                f"{_INDENT}{marks.get(str(tool.get('change')), '~')} "
+                f"{one_line(str(tool.get('name', '')))} ({one_line(what)}) "
+                f"in {one_line(str(tool.get('file', '')))}"
+            )
+        lines.append("")
+
     return _terminal_safe("\n".join(lines).rstrip() + "\n")
 
 

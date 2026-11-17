@@ -62,26 +62,43 @@ class McpPinningScanner(Scanner):
         )])
 
 
-def _unpinned(words: list[str]) -> bool:
+def _program(words: list[str]) -> tuple[str, list[str]]:
     program = words[0].replace("\\", "/").rsplit("/", 1)[-1].lower()
-    program = re.sub(r"\.(?:cmd|exe|ps1)$", "", program)
-    args = words[1:]
+    return re.sub(r"\.(?:cmd|exe|ps1)$", "", program), words[1:]
+
+
+def launched_packages(words: list[str]) -> tuple[str, list[str]]:
+    """``(ecosystem, specs)`` for the registry packages a launch command fetches and runs:
+    ``("npm", ["pkg@1.2.3"])`` for npx / bunx / pnpx / ``pnpm dlx`` / ``yarn dlx``, ``("pypi",
+    [...])`` for uvx / ``uv tool run`` / ``pipx run``; ``("", [])`` for anything else. A path, URL
+    or repository is not a registry package and is left out."""
+    if not words:
+        return "", []
+    program, args = _program(words)
     if program in ("npx", "bunx", "pnpx"):
-        return _npm_unpinned(args)
+        return "npm", _npm_packages(args)
     if program in ("pnpm", "yarn") and args[:1] == ["dlx"]:
-        return _npm_unpinned(args[1:])
+        return "npm", _npm_packages(args[1:])
+    spec = None
     if program == "uvx":
-        return _py_unpinned(args)
-    if program == "uv" and args[:2] == ["tool", "run"]:
-        return _py_unpinned(args[2:])
-    if program == "pipx" and args[:1] == ["run"]:
-        return _py_unpinned(args[1:])
+        spec = _py_package(args)
+    elif program == "uv" and args[:2] == ["tool", "run"]:
+        spec = _py_package(args[2:])
+    elif program == "pipx" and args[:1] == ["run"]:
+        spec = _py_package(args[1:])
+    return ("pypi", [spec]) if spec else ("", [])
+
+
+def _unpinned(words: list[str]) -> bool:
+    program, args = _program(words)
     if program in ("docker", "podman") and args[:1] == ["run"]:
         return _image_unpinned(args[1:])
-    return False
+    ecosystem, specs = launched_packages(words)
+    exact = _NPM_EXACT if ecosystem == "npm" else _PY_EXACT
+    return any(not exact.match(spec) for spec in specs)
 
 
-def _npm_unpinned(args: list[str]) -> bool:
+def _npm_packages(args: list[str]) -> list[str]:
     packages: list[str] = []
     i = 0
     while i < len(args):
@@ -97,7 +114,7 @@ def _npm_unpinned(args: list[str]) -> bool:
         else:
             packages = packages or [arg]
             break
-    return any(_registry_spec(p) and not _NPM_EXACT.match(p) for p in packages)
+    return [p for p in packages if _registry_spec(p)]
 
 
 def _registry_spec(spec: str) -> bool:
@@ -106,7 +123,7 @@ def _registry_spec(spec: str) -> bool:
                                                "github:", "$"))
 
 
-def _py_unpinned(args: list[str]) -> bool:
+def _py_package(args: list[str]) -> str | None:
     spec = None
     i = 0
     while i < len(args):
@@ -122,7 +139,7 @@ def _py_unpinned(args: list[str]) -> bool:
             continue
         spec = arg
         break
-    return bool(spec) and _registry_spec(spec) and not _PY_EXACT.match(spec)
+    return spec if spec and _registry_spec(spec) else None
 
 
 def _image_unpinned(args: list[str]) -> bool:

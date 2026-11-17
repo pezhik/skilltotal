@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from skilltotal.baseline import evidence_fingerprint
+from skilltotal.mcp_tools import tool_changes
 from skilltotal.models import UNANALYZED_TITLES, Severity
 
 _SEVERITY_ORDER = ("critical", "high", "medium", "low")
@@ -47,6 +48,10 @@ class DiffReport:
     # and that the old report did not have. A finding that disappears along with one of these
     # may have left the scan's view, not the component.
     coverage_gaps_added: list[dict[str, Any]] = field(default_factory=list)
+    # MCP tools added, removed or changed (description / schema) between the two versions, from
+    # each report's `metadata.mcp_tools`. A fact about the files, not a finding: a description
+    # that changed is shown even when its new text matches no rule.
+    mcp_tools_changed: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -62,6 +67,7 @@ class DiffReport:
             "capabilities_removed": self.capabilities_removed,
             "ruleset_mismatch": self.ruleset_mismatch,
             "coverage_gaps_added": self.coverage_gaps_added,
+            "mcp_tools_changed": self.mcp_tools_changed,
             "summary": self.summary,
         }
 
@@ -103,6 +109,7 @@ def diff_reports(old: dict[str, Any], new: dict[str, Any]) -> DiffReport:
             != new.get("metadata", {}).get("ruleset_version")
         ),
         coverage_gaps_added=_coverage_gaps_added(old, new),
+        mcp_tools_changed=_mcp_tools_changed(old, new),
     )
     diff.summary = _summary(diff, old, new)
     return diff
@@ -173,6 +180,16 @@ def _coverage_gaps_added(old: dict[str, Any], new: dict[str, Any]) -> list[dict[
     return [n for n in gaps(new) if (n.get("title"), n.get("file"), n.get("reason")) not in seen]
 
 
+def _mcp_tools_changed(old: dict[str, Any], new: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tool definitions that differ. Compared only when both reports recorded their tools: a
+    report saved by an engine that did not would make every tool of the other side look new."""
+    old_tools = (old.get("metadata") or {}).get("mcp_tools")
+    new_tools = (new.get("metadata") or {}).get("mcp_tools")
+    if not isinstance(old_tools, list) or not isinstance(new_tools, list):
+        return []
+    return tool_changes(old_tools, new_tools)
+
+
 def _side_summary(report: dict[str, Any]) -> dict[str, Any]:
     component = report.get("component", {})
     metadata = report.get("metadata", {})
@@ -212,4 +229,6 @@ def _summary(diff: DiffReport, old: dict[str, Any], new: dict[str, Any]) -> str:
     parts.append(f"{len(diff.changed_findings)} changed")
     if diff.coverage_gaps_added:
         parts.append(f"{len(diff.coverage_gaps_added)} new coverage gap(s)")
+    if diff.mcp_tools_changed:
+        parts.append(f"{len(diff.mcp_tools_changed)} MCP tool definition(s) changed")
     return ": ".join([parts[0], ", ".join(parts[1:])])
