@@ -89,6 +89,8 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     # Post-exploitation tactics: access, persistence, masquerading and beacons are what a
     # malicious component does once it runs.
     "ST-POSTEX-REMOTE-ACCESS": ("AST01",),
+    "ST-POSTEX-REVERSE-SHELL": ("AST01",),
+    "ST-SHELL-HIDDEN-COMMAND": ("AST01",),
     "ST-POSTEX-PERSIST": ("AST01",),
     "ST-POSTEX-MASQUERADE": ("AST01",),
     "ST-POSTEX-BEACON": ("AST01",),

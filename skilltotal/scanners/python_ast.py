@@ -117,6 +117,9 @@ SHELL_CALLS = (
     )
     | _PROCESS_CALLS
 )
+# A second name given to one of these (`run = subprocess.check_output; run(cmd, shell=True)`) is
+# the same call.
+_ALIASED_SHELL_CALLS = SHELL_CALLS
 # Third-party libraries whose whole purpose is running OS processes; importing one is a
 # shell-execution signal even without a direct subprocess call. `git` is GitPython: every
 # `repo.git.<command>(...)` runs the git binary, with arguments the caller supplies (the official
@@ -330,8 +333,9 @@ class PythonAstScanner(Scanner):
             severity=Severity.HIGH,
             title="Remote pipe-to-shell execution (Python)",
             description=(
-                "A Python shell call (os.system / os.popen, subprocess with shell=True, or an "
-                "argv list that runs `sh -c`) is given a command that downloads code and pipes it "
+                "A Python shell call (os.system / os.popen, subprocess with shell=True, an "
+                "argv list that runs `sh -c`, or the inline program of an argv list that runs "
+                "`python -c` / `node -e`) is given a command that downloads code and pipes it "
                 "into a shell or interpreter, e.g. `os.system(\"curl ... | bash\")`. The component "
                 "runs whatever the host serves at that moment, which no review of the component "
                 "can see."
@@ -1115,7 +1119,7 @@ class _CallVisitor(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._functions[node.name] = node
         self._check_reduce_gadget(node)
-        saved = self._enter_scope(node.body)
+        saved = self._enter_scope(node.body, node.args)
         self._deferred += 1
         try:
             self.generic_visit(node)
@@ -1126,7 +1130,7 @@ class _CallVisitor(ast.NodeVisitor):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         self._functions[node.name] = node
         self._check_reduce_gadget(node)
-        saved = self._enter_scope(node.body)
+        saved = self._enter_scope(node.body, node.args)
         self._deferred += 1
         try:
             self.generic_visit(node)
@@ -1156,11 +1160,24 @@ class _CallVisitor(ast.NodeVisitor):
             self.visit(stmt)
 
     # -- names bound to a module / dangerous callable (resolved within one scope) ----------
-    def _enter_scope(self, body: list[ast.stmt]) -> tuple[dict[str, str], dict[str, str]]:
+    def _enter_scope(
+        self, body: list[ast.stmt], params: ast.arguments | None = None
+    ) -> tuple[dict[str, str], dict[str, str]]:
         """Merge this scope's value bindings over the current view and return the previous view,
-        so a name bound to a lookup result inside one function does not leak into another."""
+        so a name bound to a lookup result inside one function does not leak into another. A
+        parameter hides a module-level name bound to a callable (`run = subprocess.run` at the
+        top, `def retry(run): run()` below): inside the function the name is the argument."""
         saved = (self.aliases, self.from_imports)
-        self.aliases, self.from_imports = _with_bindings(body, self.aliases, self.from_imports)
+        outer = self.from_imports
+        if params is not None:
+            hidden = [
+                a.arg
+                for a in (*params.posonlyargs, *params.args, *params.kwonlyargs)
+                if a.arg in outer and a.arg not in self._module_from
+            ]
+            if hidden:
+                outer = {k: v for k, v in outer.items() if k not in hidden}
+        self.aliases, self.from_imports = _with_bindings(body, self.aliases, outer)
         return saved
 
     def _restore_scope(self, saved: tuple[dict[str, str], dict[str, str]]) -> None:
@@ -1348,7 +1365,47 @@ def _resolve_dotted(
         return f"{base}.{func.attr}"
     if isinstance(func, ast.Call):
         return _resolve_lookup_call(func, aliases, from_imports, depth + 1)
+    if isinstance(func, ast.Subscript):
+        return _resolve_namespace_lookup(func, aliases, from_imports, depth + 1)
     return None
+
+
+def _resolve_namespace_lookup(
+    node: ast.Subscript, aliases: dict[str, str], from_imports: dict[str, str], depth: int = 0
+) -> str | None:
+    """``os.__dict__["popen"]`` -> ``os.popen``; ``vars(builtins)["exec"]`` and
+    ``__builtins__.__dict__["ex" + "ec"]`` -> ``builtins.exec``.
+
+    Only a constant key looked up in the namespace of a module (imported, or the builtins), so
+    ``self.__dict__[name]`` and ``vars(obj)["x"]`` stay unresolved."""
+    key = _const_str(node.slice)
+    owner = node.value
+    if key is None:
+        return None
+    if isinstance(owner, ast.Attribute) and owner.attr == "__dict__":
+        module = owner.value
+    elif (
+        isinstance(owner, ast.Call)
+        and isinstance(owner.func, ast.Name)
+        and owner.func.id == "vars"
+        and len(owner.args) == 1
+    ):
+        module = owner.args[0]
+    else:
+        return None
+    if isinstance(module, ast.Name) and module.id == "__builtins__":
+        return f"builtins.{key}"
+    is_module = isinstance(module, ast.Call) or (
+        isinstance(module, (ast.Name, ast.Attribute))
+        and _root_name(module) in aliases.keys() | from_imports.keys()
+    )
+    base = _resolve_dotted(module, aliases, from_imports, depth) if is_module else None
+    if not base:
+        return None
+    parts = base.split(".")
+    if parts[0] in aliases:
+        parts[0] = aliases[parts[0]]
+    return ".".join([*parts, key])
 
 
 def _resolve_lookup_call(
@@ -1368,6 +1425,8 @@ def _resolve_lookup_call(
     owner = call.args[0]
     if attr is None:
         return None
+    if isinstance(owner, ast.Name) and owner.id == "__builtins__":
+        return f"builtins.{attr}"
     is_module = isinstance(owner, ast.Call) or (
         isinstance(owner, (ast.Name, ast.Attribute))
         and _root_name(owner) in aliases.keys() | from_imports.keys()
@@ -1404,7 +1463,25 @@ def _const_str(node: ast.expr) -> str | None:
                 return None
             parts.append(part)
         return "".join(parts)
+    # `"".join(["e", "x", "e", "c"])`: a name spelled as a list of pieces.
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], (ast.List, ast.Tuple))
+        and len(node.args[0].elts) <= _MAX_JOINED_PIECES
+    ):
+        pieces = [_const_str(e) for e in node.args[0].elts]
+        if all(p is not None for p in pieces):
+            return node.func.value.value.join(pieces)  # type: ignore[arg-type]
     return None
+
+
+_MAX_JOINED_PIECES = 64
 
 
 def _with_bindings(
@@ -1440,11 +1517,25 @@ def _value_bindings(
                 module_binds[name] = module
     view = {**aliases, **module_binds} if module_binds else aliases
     call_binds: dict[str, str] = {}
-    for name, values in assigns.items():
-        if len(values) == 1 and name not in module_binds:
-            dotted = _bound_callable(values[0], view, from_imports)
+    candidates = {
+        name: values[0]
+        for name, values in assigns.items()
+        if len(values) == 1 and name not in module_binds
+        and isinstance(values[0], (ast.Name, ast.Attribute, ast.Call, ast.Subscript))
+    }
+    # A second name for a bound one (`run = sp.check_output; r = run`) resolves on a later pass.
+    for _ in range(_MAX_ALIAS_HOPS):
+        seen = {**from_imports, **call_binds} if call_binds else from_imports
+        added = False
+        for name, value in candidates.items():
+            if name in call_binds:
+                continue
+            dotted = _bound_callable(value, view, seen)
             if dotted is not None:
                 call_binds[name] = dotted
+                added = True
+        if not added:
+            break
     return module_binds, call_binds
 
 
@@ -1464,14 +1555,17 @@ def _bound_module(
 def _bound_callable(
     value: ast.expr, view: dict[str, str], from_imports: dict[str, str]
 ) -> str | None:
-    """The dotted callable a ``getattr(<module>, <literal>)`` resolves to, or the builtin a bare
-    ``exec`` / ``eval`` / ``compile`` (or ``builtins.exec``) names: ``_run = exec`` makes every
-    ``_run(...)`` that call. Otherwise None."""
+    """The dotted callable a ``getattr(<module>, <literal>)`` or ``<module>.__dict__[<literal>]``
+    resolves to, the builtin a bare ``exec`` / ``eval`` / ``compile`` (or ``builtins.exec``)
+    names, or the process call an attribute names: ``_run = exec`` makes every ``_run(...)`` that
+    call, ``run = subprocess.check_output`` makes ``run(...)`` a process call. Otherwise None."""
     if isinstance(value, (ast.Name, ast.Attribute)):
         name = _resolve_dotted(value, view, from_imports)
-        if name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC:
+        if name in DYNAMIC_CALLS or name in _BUILTINS_DYNAMIC or name in _ALIASED_SHELL_CALLS:
             return name
         return None
+    if isinstance(value, ast.Subscript):
+        return _resolve_namespace_lookup(value, view, from_imports)
     if not isinstance(value, ast.Call):
         return None
     if _resolve_dotted(value.func, view, from_imports) not in _GETATTR:
@@ -1907,7 +2001,19 @@ def _shell_command_text(name: str, node: ast.Call) -> str | None:
         flag = _literal_text(arg.elts[1]) or ""
         if program.rsplit("/", 1)[-1] in _SHELL_PROGRAMS and flag.startswith("-") and "c" in flag:
             return _literal_text(arg.elts[2])
+        # `["python", "-c", "import os; os.system('curl ... | sh')"]`: the command sits one
+        # interpreter further in, inside the inline program.
+        first = arg.elts[0]
+        if flag in _INLINE_CODE_FLAGS and (
+            _INLINE_INTERPRETER.fullmatch(program.rsplit("/", 1)[-1])
+            or (isinstance(first, ast.Attribute) and first.attr == "executable")
+        ):
+            return _literal_text(arg.elts[2])
     return None
+
+
+_INLINE_CODE_FLAGS = frozenset({"-c", "-e", "--eval"})
+_INLINE_INTERPRETER = re.compile(r"(?:python[0-9.]*|pythonw|node|nodejs|perl|ruby)(?:\.exe)?")
 
 
 def _literal_text(expr: ast.expr) -> str | None:
