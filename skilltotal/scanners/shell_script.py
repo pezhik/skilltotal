@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import string
 from bisect import bisect_left
+from itertools import islice
 
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Severity, ThreatClass
@@ -94,6 +95,8 @@ DECODE_EXEC_SH = alternation(
     rf"\s-d\b)[^\n;&]{{0,1000}}{_TO_SHELL}",
     r"\beval\b[^\n]{0,1000}base32(?<!\wbase32)\s+(?:-d|-D|--decode)\b",
     r"\beval\b[^\n]{0,1000}xxd(?<!\wxxd)\s+-r\b",
+    # A string written backwards and turned round on its way into a shell: `echo '...' | rev | sh`.
+    rf"\|\s*rev\s*{_TO_SHELL}",
     # Decoded text handed to a shell or an interpreter as its program without a pipe: a process
     # substitution (`bash <(... | base64 -d)`, `source <(base64 -d <<< ...)`), a here-string
     # (`bash <<< "$(... | base64 -d)"`) or a command substitution (`python3 -c "$(... | base64
@@ -271,6 +274,68 @@ def _printed_heredoc_spans(text: str) -> list[tuple[int, int]]:
 
 R_DECODE_EXEC_SH = "ST-OBF-DECODE-EXEC-SH"
 R_PIPE_EXEC = "ST-SHELL-PIPE-EXEC"
+R_HIDDEN_COMMAND = "ST-SHELL-HIDDEN-COMMAND"
+
+# A command word spelled so that it is not in the script's text. Each form below stands where the
+# shell reads a command name (the start of a line, after `|`, `;`, `&`, `(`, `$(`, `then`, `do`,
+# `sudo`), which is what separates it from the honest uses of the same syntax in an argument:
+# `printf $'\x1b[0m'`, `cp file{,.bak}`, `IFS=$'\n'`, `"$a${IFS}$b"`.
+_CMD_POS = r"(?:^|[|;&(`]|\bthen\b|\bdo\b|\bsudo\b)[ \t]*"
+# Programs a setup script fetches with, runs text with or opens a connection with.
+_HIDDEN_WORDS = (
+    "curl", "wget", "bash", "sh", "zsh", "dash", "ksh", "nc", "ncat", "netcat", "socat",
+    "python", "python3", "perl", "ruby", "node", "eval", "base64", "openssl", "ssh", "scp",
+    "pwsh", "powershell", "chmod",
+)
+_HIDDEN_COMMAND = re.compile(
+    # `$'\x63\x75\x72\x6c'`: a whole word of hex or octal escapes.
+    rf"{_CMD_POS}\$'(?:\\x[0-9A-Fa-f]{{2}}|\\[0-7]{{3}}){{2,40}}'"
+    # `{{curl,-fsSL,URL}}`: brace expansion producing the command line (a `{{ cmd; }}` group has
+    # spaces and no comma right after the word).
+    rf"|{_CMD_POS}\{{(?:{'|'.join(_HIDDEN_WORDS)}|cat|rm),[^\s{{}}|;&]{{1,400}}\}}"
+    # `cat${{IFS}}/etc/passwd`: the field separator variable standing in for the space.
+    rf"|{_CMD_POS}[A-Za-z][\w.-]{{1,20}}\$(?:\{{IFS\}}|IFS\b)(?:\$9)?[^\s|;&]",
+    re.MULTILINE,
+)
+# `a=cu; b=rl` ... `$a$b -fsSL URL`: a command word that is nothing but two or more variables,
+# each assigned a short literal fragment in the same script, which together spell one of the
+# programs above. `$BIN_DIR$TOOL` spells a path, not one of them.
+_FRAGMENT_ASSIGN = re.compile(
+    r"(?:^|[;&])[ \t]*(?:export[ \t]+|local[ \t]+|readonly[ \t]+)?([A-Za-z_]\w{0,30})="
+    r"([\"']?)([A-Za-z0-9]{1,10})\2(?=[ \t]*(?:$|[;&#]))",
+    re.MULTILINE,
+)
+_SPLIT_WORD = re.compile(
+    rf"{_CMD_POS}((?:[\"']?\$\{{?[A-Za-z_]\w{{0,30}}\}}?[\"']?){{2,6}})(?=[ \t|;&)]|$)",
+    re.MULTILINE,
+)
+_SPLIT_NAME = re.compile(r"\$\{?([A-Za-z_]\w{0,30})")
+_MAX_SPLIT_WORDS = 2000
+
+
+def split_command_spans(text: str) -> list[tuple[int, int]]:
+    """Spans of command words made only of variables whose literal fragments spell a program a
+    script fetches or runs text with (`$a$b` for `a=cu; b=rl`)."""
+    if "$" not in text:
+        return []
+    words = list(islice(_SPLIT_WORD.finditer(text), _MAX_SPLIT_WORDS))
+    if not words:
+        return []
+    fragments: dict[str, str | None] = {}
+    for m in islice(_FRAGMENT_ASSIGN.finditer(text), _MAX_SPLIT_WORDS):
+        name, value = m.group(1), m.group(3)
+        # A name given two different fragments is not one word any more.
+        fragments[name] = value if fragments.get(name, value) == value else None
+    if not fragments:
+        return []
+    spans: list[tuple[int, int]] = []
+    for m in words:
+        parts = [fragments.get(name) for name in _SPLIT_NAME.findall(m.group(1))]
+        if any(p is None for p in parts):
+            continue
+        if "".join(parts).lower() in _HIDDEN_WORDS:  # type: ignore[arg-type]
+            spans.append((m.start(1), m.end(1)))
+    return spans
 R_PASSWORD_ARCHIVE = "ST-ARCHIVE-PASSWORD-EXTRACT"  # nosec B105 - a rule id, not a password
 R_ACTION_SECRET_EXFIL = "ST-ACTION-SECRET-EXFIL"  # nosec B105 - a rule id, not a secret
 
@@ -673,7 +738,8 @@ class ShellScriptScanner(Scanner):
             description=(
                 "A shell command decodes data and executes it "
                 "(e.g. `... base64 -d | bash`, `eval \"$(... base64 -d)\"`, `bash <(... | "
-                "base64 -d)`, the same with `base32 -d`, `xxd -r` or `openssl ... -d`, or the "
+                "base64 -d)`, the same with `base32 -d`, `xxd -r` or `openssl ... -d`, a string "
+                "written backwards and piped through `rev` into a shell, or the "
                 "decoded text kept in a variable or written to a file that a later command "
                 "runs). Decoding then executing hides behaviour from review and is a common "
                 "dropper idiom."
@@ -722,6 +788,30 @@ class ShellScriptScanner(Scanner):
                 _FETCH_EXEC_INLINE,
                 flags=re.IGNORECASE,
             ),
+        ),
+        RuleSpec(
+            id=R_HIDDEN_COMMAND,
+            category="obfuscation",
+            severity=Severity.HIGH,
+            title="Shell command word spelled so that it is not in the script's text",
+            description=(
+                "A shell script writes the name of the program it runs in a form the shell "
+                "expands but a reader or a text search does not see: a word made only of hex or "
+                "octal escapes (`$'\\x63\\x75\\x72\\x6c'`), variables holding fragments that are "
+                "joined into the name (`a=cu; b=rl; $a$b ...`), a brace expansion that produces "
+                "the command line (`{curl,-fsSL,URL}`), or `${IFS}` in place of the space between "
+                "a command and its argument. A setup script has no reason to write a command "
+                "this way; payloads do it to get past filters."
+            ),
+            recommendation=(
+                "Expand the word by hand to see which command runs, and treat the script as "
+                "hostile until that command is explained."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            suffixes=SHELL_SUFFIXES,
+            code_context="comments",
+            pattern=_HIDDEN_COMMAND,
         ),
         RuleSpec(
             id=R_PASSWORD_ARCHIVE,
@@ -910,6 +1000,7 @@ _VERIFIES = re.compile(
 _TWO_STEP = {
     R_DECODE_EXEC_SH: decode_then_run_spans,
     R_PIPE_EXEC: download_then_run_spans,
+    R_HIDDEN_COMMAND: split_command_spans,
 }
 
 

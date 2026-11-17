@@ -27,6 +27,7 @@ from skilltotal.scanners.base import (
     alternation,
     findings_from_rules,
 )
+from skilltotal.scanners.python_literal_fold import SINK_EXEC, python_decoded_sinks
 from skilltotal.text_normalize import original_span
 
 CATEGORY = "obfuscation"
@@ -788,7 +789,9 @@ class ObfuscationScanner(Scanner):
             description=(
                 "A pattern that decodes data and executes it was detected "
                 "(e.g. eval(atob(...)), new Function(Buffer.from(x, 'hex').toString()) or "
-                "exec(b64decode(...)), directly or through a variable that holds the decoded text)."
+                "exec(b64decode(...)), directly or through a variable that holds the decoded text; "
+                "in Python also text rebuilt from a literal by XOR with a constant key, joined "
+                "character codes or string reversal)."
             ),
             recommendation=(
                 "Decoding and executing data hides behavior from review. Decode the payload "
@@ -859,9 +862,12 @@ class ObfuscationScanner(Scanner):
             description=(
                 "A file decodes an embedded blob (gzip/brotli/base64/hex) and passes the result "
                 "to a child process with an inline-code flag (e.g. spawn(execPath, ['-e', stage]) "
-                "or node -e / python -c), or writes it to a file it then runs. Running decoded "
-                "text as a spawned interpreter hides behavior from review exactly like "
-                "eval(atob(...)), with the execution moved out of process."
+                "or node -e / python -c), or writes it to a file it then runs; or a Python shell "
+                "call (os.system, os.popen, subprocess with shell=True) is given a command the "
+                "file decodes from a literal written in it (XOR with a constant key, joined "
+                "character codes, a reversed string, base64 or hex). Running decoded "
+                "text as a spawned interpreter or a shell command hides behavior from review "
+                "exactly like eval(atob(...)), with the execution moved out of process."
             ),
             recommendation=(
                 "Decode the payload offline and inspect what it does before trusting this "
@@ -907,7 +913,8 @@ class ObfuscationScanner(Scanner):
     def scan(self, index: FileIndex) -> ScanResult:
         scored_ids = {"ST-OBF-DECODE-EXEC", "ST-OBF-DYNAMIC-DECODE-EXEC"}
         findings = findings_from_rules(index, [r for r in self.rules if r.id in scored_ids])
-        flow = _decoded_then_executed(index) + _indirect_decode_exec(index)
+        py_exec, py_shell = self._python_decoded_sinks(index)
+        flow = _decoded_then_executed(index) + _indirect_decode_exec(index) + py_exec
         if flow:
             rule = self.rules[0]
             direct = next((f for f in findings if f.id == rule.id), None)
@@ -920,7 +927,7 @@ class ObfuscationScanner(Scanner):
             findings = [f for f in findings if f.id != rule.id]
             findings.insert(0, _finding_from_rule(rule, evidence[:MAX_EVIDENCE_SCANNED]))
 
-        decode_spawn = self._decode_spawn(index)
+        decode_spawn = self._decode_spawn(index) + py_shell
         if decode_spawn:
             rule = next(r for r in self.rules if r.id == "ST-OBF-DECODE-SPAWN")
             findings.append(
@@ -953,6 +960,20 @@ class ObfuscationScanner(Scanner):
                         "Excessive hex escaping", "run(s) of hex escape sequences", needs_review)
         self._minified(index, needs_review)
         return ScanResult(findings=findings, needs_review=needs_review)
+
+    @staticmethod
+    def _python_decoded_sinks(index: FileIndex) -> tuple[list[Evidence], list[Evidence]]:
+        """Python calls whose argument the file decodes from its own literals (XOR with a constant
+        key, joined character codes, a reversed string, base64/hex): those of exec/eval, and those
+        that hand the text to a shell. See python_literal_fold."""
+        to_exec: list[Evidence] = []
+        to_shell: list[Evidence] = []
+        for f in index.select(suffixes=_PY_SUFFIXES):
+            for kind, ev, _text in python_decoded_sinks(f):
+                (to_exec if kind == SINK_EXEC else to_shell).append(ev)
+            if len(to_exec) + len(to_shell) >= MAX_EVIDENCE_SCANNED:
+                break
+        return to_exec, to_shell
 
     @staticmethod
     def _decode_spawn(index: FileIndex) -> list[Evidence]:

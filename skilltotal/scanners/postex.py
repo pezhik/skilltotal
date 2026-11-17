@@ -49,6 +49,7 @@ R_PERSIST = "ST-POSTEX-PERSIST"
 R_MASQUERADE = "ST-POSTEX-MASQUERADE"
 R_BEACON = "ST-POSTEX-BEACON"
 R_STAGER = "ST-POSTEX-STAGER"
+R_REVERSE_SHELL = "ST-POSTEX-REVERSE-SHELL"
 
 _JS = (".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")
 _PY = (".py", ".pyw")
@@ -161,6 +162,64 @@ _PERSIST_PLACE = _c(
     r"|[\\/](?:pre-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout"
     r"|post-merge|pre-push|post-rewrite|pre-receive|post-receive)\b",
     _I)
+
+
+# A reverse shell the code starts itself, at an address written out in it: an interactive shell
+# on /dev/tcp, or netcat handed a shell (`-e /bin/sh`, or a shell piped through it). The host is
+# literal: a helper that takes the listener from an argument or a variable (`/dev/tcp/$LHOST/...`)
+# is a tool someone points at their own machine and stays the risky construct.
+_SHELL_HOST = r"(?=[A-Za-z0-9.-]*[A-Za-z0-9])[A-Za-z0-9][A-Za-z0-9.-]{2,120}"
+_REVERSE_SHELL = _c(
+    rf"\b(?:ba|z|k)?sh\s+-i\b[^\n$]{{0,40}}?/dev/(?:tcp|udp)/{_SHELL_HOST}/\d{{2,5}}\b"
+    rf"|/dev/(?:tcp|udp)/{_SHELL_HOST}/\d{{2,5}}\s*0>&1"
+    rf"|\b(?:nc|ncat|netcat)\s+(?:-[a-z]+\s+)*{_SHELL_HOST}\s+\d{{2,5}}\s+-[a-z]*[ec]\s+[\"']?"
+    r"(?:/bin/)?(?:ba|z)?sh\b"
+    rf"|\b(?:nc|ncat|netcat)\s+-[a-z]*[ec]\s+[\"']?(?:/bin/)?(?:ba|z)?sh[\"']?\s+{_SHELL_HOST}"
+    r"\s+\d{2,5}\b"
+    rf"|(?:/bin/)?\b(?:ba)?sh\s+-i\b[^\n$]{{0,40}}?\|\s*(?:nc|ncat|netcat)\s+(?:-[a-z]+\s+)*"
+    rf"{_SHELL_HOST}\s+\d{{2,5}}\b",
+    _I)
+# What hands a quoted command line to a shell: `bash -c "`, or a process call of Python or
+# JavaScript whose first string (after at most a few short argv elements) is the command.
+_RUNS_QUOTED = _c(
+    r"(?:\b(?:ba|z|da|k)?sh\s+-[a-z]*c\s+"
+    r"|\b(?:os\.system|os\.popen|subprocess\.\w+|execSync|exec|spawnSync|spawn|execFileSync"
+    r"|execFile|popen|system)\s*\(\s*\[?\s*(?:[\"'][^\"'\n]{0,40}[\"']\s*,\s*){0,3})[rbf]?$"
+)
+_RUNS_QUOTED_REACH = 200
+
+
+def _reverse_shell_evidence(f: IndexedFile) -> list[Evidence]:
+    """Reverse shells with a literal host that the file runs: a command of a shell script, or the
+    command string of a process call. One that is printed, kept as data or commented stays with
+    ST-POSTEX-REMOTE-ACCESS."""
+    evidence: list[Evidence] = []
+    scan: _FileScan | None = None
+    for m in islice(_REVERSE_SHELL.finditer(f.text), _MAX_ANCHORS):
+        start = m.start()
+        if _in_comment(f, start) or f.in_printed_command(start):
+            continue
+        if _in_quoted(f, start):
+            span = f.string_span_at(start)
+            quote = span[0] if span is not None else f.text.rfind("\n", 0, start) + 1
+            if span is None:  # a quoted argument on a shell line: find its opening quote
+                line = f.text[quote:start]
+                opened = max(line.rfind('"'), line.rfind("'"))
+                if opened < 0:
+                    continue
+                quote += opened
+            before = f.text[max(0, quote - _RUNS_QUOTED_REACH) : quote]
+            if not _RUNS_QUOTED.search(before):
+                continue
+            scan = scan or _FileScan(f)
+            if scan.in_pattern_list(start):
+                continue
+        elif not f.is_shell_like:
+            continue
+        evidence.append(f.evidence_for_span(start, m.end()))
+        if len(evidence) >= MAX_EVIDENCE_SCANNED:
+            break
+    return evidence
 
 
 _SIGNALS: tuple[_Signal, ...] = (
@@ -639,6 +698,27 @@ _RULES = [
         tactic=TACTIC_REMOTE_ACCESS,
     ),
     RuleSpec(
+        id=R_REVERSE_SHELL,
+        category="remote_access",
+        severity=Severity.HIGH,
+        title="Code starts a reverse shell to an address written into it",
+        description=(
+            "A command the code runs connects an interactive shell to a host and port written "
+            "out in it: a shell on /dev/tcp or /dev/udp with its input and output redirected to "
+            "the connection, or netcat handed a shell (-e /bin/sh, or a shell piped through it). "
+            "Whoever listens at that address gets a command prompt on the machine that runs the "
+            "code."
+        ),
+        recommendation=(
+            "Do not install or run the component. On a machine that ran it, look for the shell "
+            "process and for what was done through it."
+        ),
+        capability=Capability.SHELL_EXECUTION,
+        threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        code_context="comments_and_docstrings",
+        tactic=TACTIC_REMOTE_ACCESS,
+    ),
+    RuleSpec(
         id=R_PERSIST,
         category="persistence",
         severity=Severity.MEDIUM,
@@ -754,6 +834,14 @@ class PostExploitationScanner(Scanner):
                     add(signal.rule, _signal_evidence(file_scan, signal))
             if any(k in lower for k in _RECON_KEYWORDS):
                 add(R_BEACON, _beacon_evidence(f))
+            if "/dev/tcp" in lower or "/dev/udp" in lower or "nc" in lower:
+                add(R_REVERSE_SHELL, _reverse_shell_evidence(f))
+        # A reverse shell reported as one is not reported a second time as remote access.
+        shells = {(ev.file, ev.line_start) for ev in evidence[R_REVERSE_SHELL]}
+        if shells:
+            evidence[R_REMOTE_ACCESS] = [
+                ev for ev in evidence[R_REMOTE_ACCESS] if (ev.file, ev.line_start) not in shells
+            ]
         findings = [
             _finding_from_rule(_RULE_BY_ID[rule_id], items)
             for rule_id, items in evidence.items() if items

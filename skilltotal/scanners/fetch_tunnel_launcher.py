@@ -30,6 +30,7 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     searched_for,
 )
+from skilltotal.scanners.python_ast import _resolve_dotted
 
 R_PY_FETCH_EXEC = "ST-PY-FETCH-EXEC"
 R_SSH_TUNNEL = "ST-SSH-TUNNEL-BACKDOOR"
@@ -94,10 +95,26 @@ def _scope_fetch_exec(scope: ast.AST) -> ast.Call | None:
             for item in node.items:
                 if isinstance(item.optional_vars, ast.Name) and _tainted(item.context_expr, names):
                     names.add(item.optional_vars.id)
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
-                and node.func.id in _RUNNERS and node.args and _tainted(node.args[0], names):
+        elif isinstance(node, ast.Call) and node.args and _is_runner(node.func) \
+                and _tainted(node.args[0], names):
             return node
     return None
+
+
+_BUILTINS_ALIASES = {"builtins": "builtins"}
+_RUNNER_NAMES = _RUNNERS | {f"builtins.{name}" for name in _RUNNERS}
+
+
+def _is_runner(func: ast.expr) -> bool:
+    """exec / eval, written out or looked up on the builtins module: ``builtins.exec``,
+    ``getattr(builtins, "ex" + "ec")``, ``__builtins__.__dict__["exec"]``,
+    ``vars(builtins)["exec"]`` (see python_ast: a lookup resolves only for a name spelled out in
+    constants)."""
+    if isinstance(func, ast.Name):
+        return func.id in _RUNNERS
+    if not isinstance(func, (ast.Attribute, ast.Call, ast.Subscript)):
+        return False
+    return _resolve_dotted(func, _BUILTINS_ALIASES, {}) in _RUNNER_NAMES
 
 
 _RUNNER_WORD = re.compile(r"\b(?:exec|eval)\b")
@@ -109,7 +126,8 @@ def _could_run_text(text: str) -> bool:
     (NFKC) into it, so a file with any non-ASCII text is parsed whatever it spells. Most files hold
     neither name, and parsing and walking them for this rule cost as much as the whole Python
     scanner (2026-11-07 profile)."""
-    return not text.isascii() or _RUNNER_WORD.search(text) is not None
+    return (not text.isascii() or _RUNNER_WORD.search(text) is not None
+            or "builtins" in text)
 
 
 def _py_fetch_exec(f: IndexedFile) -> Evidence | None:

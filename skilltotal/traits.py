@@ -436,6 +436,8 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     # Post-exploitation tactics. A way in for someone else is an inbound surface the component
     # opens; a beacon is egress; persistence and a vendor-named entry run code again later.
     "ST-POSTEX-REMOTE-ACCESS": (_T.NETWORK_EXPOSURE, _T.EXECUTION_AUTHORITY),
+    "ST-POSTEX-REVERSE-SHELL": (_T.NETWORK_EXPOSURE, _T.EXECUTION_AUTHORITY),
+    "ST-SHELL-HIDDEN-COMMAND": (_T.EXECUTION_AUTHORITY, _T.CODE_OBFUSCATION),
     "ST-POSTEX-PERSIST": (_T.EXECUTION_AUTHORITY,),
     "ST-POSTEX-MASQUERADE": (_T.EXECUTION_AUTHORITY, _T.METADATA_INTEGRITY),
     "ST-POSTEX-BEACON": (_T.NETWORK_EGRESS,),

