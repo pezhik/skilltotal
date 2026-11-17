@@ -632,14 +632,22 @@ _LINK_TITLE_LEAD = re.compile(
     r"[ \t]+$"
 )
 _LINK_TITLE_QUOTES = "\"'"
+# Longer than the longest link the pattern above accepts before its title.
+_LINK_TITLE_REACH = 2300
 
 
 def _in_link_title(text: str, start: int, bounds: tuple[int, int] | None) -> bool:
     """True if ``start`` lies in a link title that is still open on its line."""
     line_start = bounds[0] if bounds else text.rfind("\n", 0, start) + 1
-    head = text[line_start:start]
-    opened = max(head.rfind(ch) for ch in _LINK_TITLE_QUOTES)
-    return opened >= 0 and _LINK_TITLE_LEAD.search(head[:opened]) is not None
+    opened = max(text.rfind(ch, line_start, start) for ch in _LINK_TITLE_QUOTES)
+    if opened < 0:
+        return False
+    # Only the text right before the quote can be the link: a long line with many matches was
+    # re-read from its start for each one (quadratic). A window cut short does not begin at the
+    # line start, so the reference-definition form must not match at its edge.
+    cut = max(line_start, opened - _LINK_TITLE_REACH)
+    window = ("\x00" if cut > line_start else "") + text[cut:opened]
+    return _LINK_TITLE_LEAD.search(window) is not None
 
 
 def _is_quoted_citation(

@@ -4,6 +4,129 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 103 (engine 1.4.0)
+
+Four new rules, and the existing rules read commands that a file decodes or spells indirectly,
+tool descriptions that change at run time, and instruction text that carries no command. The
+changes are grouped by area. Limits are listed at the end.
+- Decoded and indirect commands:
+  - `ST-OBF-DECODE-SPAWN` and `ST-OBF-DECODE-EXEC` (changed) report a Python shell call or
+    `exec`/`eval` given text the file decodes from its own literals: XOR with a constant or
+    through a helper, joined character codes, base64 or hex, or a reversed string. The constants
+    are folded within a step and size budget. The sample's code is not executed.
+  - `exec` reached through `__builtins__.__dict__[...]`, `vars(builtins)[...]`, `os.__dict__[...]`
+    or a joined string is resolved to the real call. A name assembled from pieces is reported by
+    `ST-PY-BUILTIN-NAME-LOOKUP` (changed), and downloaded text run this way by `ST-PY-FETCH-EXEC`
+    (changed).
+  - `ST-SHELL-PIPE-EXEC-PY` (changed) follows a renamed process call (`run = sp.check_output`)
+    and reads the inline program of `['python', '-c', "..."]`. It stays a risky construct, like
+    a direct `curl | sh`.
+  - `ST-SHELL-HIDDEN-COMMAND` (new, high, malicious indicator): a shell script writes the name of
+    the program it runs in a form the shell expands and a reader does not see. The forms are a
+    word of hex or octal escapes (`$'\x63\x75\x72\x6c'`), variables holding fragments that join
+    into the name (`a=cu; b=rl; $a$b`), a brace expansion that produces the command line
+    (`{curl,-fsSL,URL}`), and `${IFS}` between a command and its argument. Only the command
+    position counts, so `$PREFIX$NAME`, braces and `${IFS}` in arguments are not reported.
+  - `ST-OBF-DECODE-EXEC-SH` (changed) matches reversed text piped into a shell (`| rev | sh`).
+- Remote access:
+  - `ST-POSTEX-REVERSE-SHELL` (new, high, malicious indicator): a command the code runs connects
+    a shell to a host and port written out in it, through `/dev/tcp` or through netcat handed a
+    shell. A reverse shell whose address comes from an argument or a variable, or one that is
+    only printed or listed as a signature, stays a risky construct under
+    `ST-POSTEX-REMOTE-ACCESS`.
+- Credential exfiltration:
+  - `ST-SECRET-EXFIL` (changed) reports a Python or JavaScript resolver call on a name under a
+    zone written into the code, when both an encoder and a secret reach that name through
+    assignments. A blocklist lookup and a service key placed in a name without encoding are not
+    reported.
+  - `ST-SECRET-EXFIL` (changed) reports Python code that reads an agent client's MCP
+    configuration (`~/.cursor/mcp.json`, `claude_desktop_config.json`, `~/.claude.json`) and
+    passes its contents into a network send. Only the read-to-send flow counts, because MCP
+    installers read and rewrite these files.
+- Dependency names:
+  - `ST-DEP-TYPOSQUAT` (new, high, risky construct): a package name is written like a popular
+    package and is not that package. The forms are two letters swapped, a doubled letter added
+    or dropped, a letter left out of a long name, digits or look-alike characters in place of
+    letters, other separators, and an npm scope one character from a well-known one.
+  - The names are read from `package.json` dependency sections, `requirements*.txt`, the
+    `dependencies` and `requires` arrays of `pyproject.toml`, MCP launch commands (`npx`,
+    `bunx`, `pnpm dlx`, `uvx`, `uv tool run`, `pipx run`) and install commands in instruction
+    files. Nothing is looked up or installed, and the finding reports the resemblance only.
+- MCP tools:
+  - `ST-MCP-TOOL-POISONING` (changed) reads a reroute sentence wrapped over two docstring lines
+    and a request to include the full conversation in a parameter.
+  - `ST-MCP-TOOL-POISONING` (changed) reads parameter names that are instructions: JSON property
+    names, annotated Python parameters and JavaScript or TypeScript schema keys.
+  - Text assigned to `fn.__doc__` or `tool.description` in a Python MCP server file is read as
+    tool metadata, so poisoned text swapped in at run time is reported by
+    `ST-MCP-TOOL-POISONING`.
+  - `ST-MCP-DESCRIPTION-SWAP` (new, medium, risky construct): Python server code replaces a
+    registered tool's description depending on the date, a marker file, or from inside a tool
+    function. The rule names the mechanism. What the later text says is judged by
+    `ST-MCP-TOOL-POISONING`. A description chosen by configuration is not reported.
+  - The report lists each MCP tool with a hash of its description and schema
+    (`metadata.mcp_tools`), and `skilltotal diff` lists the tools added, removed or changed
+    between two versions.
+- Instruction files:
+  - `ST-PROMPT-INJECTION` (changed) reads five directives that carry no command, in instruction
+    files only: instructions fetched from a URL together with an override of the user or
+    concealment from the user; a write into the agent's memory file whose planted text sends
+    data to a URL or obeys one; an order to replace a placeholder with secrets beside an image
+    whose address carries that placeholder; a base64 block to decode and follow, with the
+    decoded text in the evidence; and a fake end marker followed by a "System:" line.
+  - A phrase in a markdown link title or reference definition is read as text, so an injection
+    phrase placed there is reported.
+  - `ST-SKILL-MEMORY-WRITE-HIDDEN` (changed) accepts a memory file written with a folder prefix
+    (`~/.claude/CLAUDE.md`).
+  - A script that an instruction file starts (`python x.py`, `bash x.sh`, `./x.sh`) is an entry
+    point. It is read from folders the scan otherwise skips, is not demoted under `examples/`
+    or `tests/`, and has a larger size cap.
+- Hidden and look-alike text:
+  - `ST-SKILL-FETCH-EXEC-HIDDEN` (changed, malicious indicator) reports a fetch-and-run
+    instruction whose downloader or interpreter name is written with full-width or Cyrillic
+    letters or has an invisible character inside the word. A command pasted with non-breaking
+    spaces stays the plain `ST-SKILL-FETCH-EXEC`, a risky construct.
+  - `ST-SKILL-FETCH-EXEC-HIDDEN` (changed) also reports fetch-and-run text styled so it is not
+    drawn (`font-size:0`, `opacity:0`, transparent, white with no background, off-screen, a
+    zero-size box) or placed behind 40 or more blank lines or 200 or more blanks.
+  - `ST-HIDDEN-UNICODE` (changed) reads a run of 16 or more invisible or blank characters of two
+    to four kinds as a bit stream, in any file, and shows the decoded text. Padding of a single
+    kind and ordinary joiners are not counted.
+  - `ST-HIDDEN-UNICODE` (changed) reports a right-to-left override or embedding on a line with
+    no right-to-left letter, in code and instruction files, and shows the text as it is
+    displayed. Right-to-left strings and tables of control characters are not reported.
+- Precision:
+  - A log or table query that looks for a tool name (`message CONTAINS 'sshd'`,
+    `LIKE '%regsvr32%'`) is not read as starting the tool by `ST-SSH-TUNNEL-BACKDOOR` and
+    `ST-PY-SCRIPTLET-HOST`. A scriptlet technique written with an address that names no host is
+    not a command.
+  - `ST-SECRET-EXFIL` does not treat a helper function that calls itself as returning the whole
+    environment. A telemetry helper that trims nested values is not read as sending the
+    environment.
+- Limits:
+  - Python code that writes a download to a file and runs it in a later step is not reported.
+    The same holds for loading through `importlib` or `runpy` and for a payload split across
+    files. Honest installers download and run in the same way.
+  - JavaScript forms `(0, eval)`, `globalThis[k]`, `vm.runInThisContext`, a renamed `exec` and
+    `require("child_" + "process")` are not resolved.
+  - Constant folding does not follow function parameters or values imported from another file.
+    The DNS flow is read line by line.
+  - `ST-DEP-TYPOSQUAT` never uses plain edit distance, because real packages sit one letter from
+    popular ones. It skips a single-letter substitution, a letter added inside a name, and a
+    misspelt name inside a real scope. Lockfiles, `setup.py` and Python imports are not read.
+  - `ST-MCP-DESCRIPTION-SWAP`, the run-time description reading and the client-configuration
+    flow cover Python only.
+  - A tool description read from the network, an upload of agent transcripts, and "read this
+    URL and follow it" with no override or concealment are review notes and do not affect the
+    score.
+  - Hidden text with no injection phrase and no command, such as an HTML comment, is not
+    reported. An instruction to read a local file and follow it is not followed into that file.
+  - The look-alike fold does not read `()` for o, `v` for u or `cl` for d. `<details>` blocks,
+    terminal escape sequences, private-use and braille characters and trailing whitespace are
+    not read as carriers of hidden text.
+- Eval corpus: 350 malicious and 264 benign samples (308 and 239 in ruleset 102). All 350
+  malicious samples are detected and no benign sample is flagged.
+
 ## ruleset 102 (engine 1.3.0)
 
 Five new rules, and the existing rules read more of the places where a component hands a command

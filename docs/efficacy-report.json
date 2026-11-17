@@ -1,9 +1,9 @@
 {
-  "engine_version": "1.3.0",
-  "ruleset_version": 102,
+  "engine_version": "1.4.0",
+  "ruleset_version": 103,
   "python_version": "3.14",
-  "positives": 308,
-  "negatives": 242,
+  "positives": 350,
+  "negatives": 264,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -75,6 +75,7 @@
     "scriptlet-host": 1.0,
     "setup-detached-fetch": 1.0,
     "shell-decode-exec": 1.0,
+    "shell-hidden-command": 1.0,
     "skill-dynamic-exec": 1.0,
     "skill-fetch-exec": 1.0,
     "skill-scanner-directed-audit-override-text": 1.0,
@@ -91,13 +92,13 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 51,
-      "manifest/text": 39,
-      "python": 39,
-      "shell": 21
+      "node": 52,
+      "manifest/text": 43,
+      "python": 53,
+      "shell": 27
     },
     "AST02": {
-      "manifest/text": 36,
+      "manifest/text": 41,
       "shell": 8,
       "node": 32,
       "python": 10
@@ -107,8 +108,8 @@
     },
     "AST04": {
       "node": 6,
-      "manifest/text": 48,
-      "python": 10
+      "manifest/text": 56,
+      "python": 14
     },
     "AST05": {
       "python": 6
@@ -197,7 +198,7 @@
         "AST04"
       ],
       "malicious_samples": 1,
-      "benign_samples": 2,
+      "benign_samples": 3,
       "should_fire": 0,
       "fired": 0,
       "should_stay_silent": 0,
@@ -344,7 +345,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 55,
+      "malicious_samples": 57,
       "benign_samples": 0,
       "should_fire": 1,
       "fired": 1,
@@ -355,7 +356,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 8,
+      "malicious_samples": 9,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -383,6 +384,17 @@
       "fired": 2,
       "should_stay_silent": 1,
       "stayed_silent": 1
+    },
+    "ST-DEP-TYPOSQUAT": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 0,
+      "benign_samples": 0,
+      "should_fire": 5,
+      "fired": 5,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
     },
     "ST-DESERIALIZE-PY": {
       "owasp": [
@@ -474,7 +486,7 @@
       "owasp": [
         "AST04"
       ],
-      "malicious_samples": 9,
+      "malicious_samples": 13,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -664,12 +676,23 @@
       "owasp": [
         "AST03"
       ],
-      "malicious_samples": 5,
+      "malicious_samples": 6,
       "benign_samples": 4,
       "should_fire": 3,
       "fired": 3,
       "should_stay_silent": 2,
       "stayed_silent": 2
+    },
+    "ST-MCP-DESCRIPTION-SWAP": {
+      "owasp": [
+        "AST04"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
     },
     "ST-MCP-ELICIT-SECRET": {
       "owasp": [
@@ -765,7 +788,7 @@
       "owasp": [
         "AST04"
       ],
-      "malicious_samples": 29,
+      "malicious_samples": 35,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -854,7 +877,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 25,
+      "malicious_samples": 27,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -876,7 +899,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 14,
+      "malicious_samples": 15,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -888,7 +911,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 5,
+      "malicious_samples": 9,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -989,7 +1012,18 @@
         "AST01"
       ],
       "malicious_samples": 8,
-      "benign_samples": 1,
+      "benign_samples": 2,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-POSTEX-REVERSE-SHELL": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 2,
+      "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
       "should_stay_silent": 0,
@@ -1010,7 +1044,7 @@
       "owasp": [
         "AST04"
       ],
-      "malicious_samples": 33,
+      "malicious_samples": 41,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -1077,7 +1111,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 3,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -1089,7 +1123,7 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 1,
+      "malicious_samples": 2,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -1157,7 +1191,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 39,
+      "malicious_samples": 45,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -1174,6 +1208,17 @@
       "fired": 2,
       "should_stay_silent": 1,
       "stayed_silent": 1
+    },
+    "ST-SHELL-HIDDEN-COMMAND": {
+      "owasp": [
+        "AST01"
+      ],
+      "malicious_samples": 3,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
     },
     "ST-SHELL-PIPE-EXEC": {
       "owasp": [
@@ -1203,10 +1248,10 @@
       ],
       "malicious_samples": 2,
       "benign_samples": 0,
-      "should_fire": 0,
-      "fired": 0,
-      "should_stay_silent": 0,
-      "stayed_silent": 0
+      "should_fire": 2,
+      "fired": 2,
+      "should_stay_silent": 1,
+      "stayed_silent": 1
     },
     "ST-SKILL-AUDIT-OVERRIDE": {
       "owasp": [
@@ -1270,9 +1315,9 @@
         "AST02"
       ],
       "malicious_samples": 1,
-      "benign_samples": 3,
-      "should_fire": 4,
-      "fired": 4,
+      "benign_samples": 5,
+      "should_fire": 1,
+      "fired": 1,
       "should_stay_silent": 2,
       "stayed_silent": 2
     },
@@ -1281,12 +1326,12 @@
         "AST01",
         "AST02"
       ],
-      "malicious_samples": 2,
+      "malicious_samples": 7,
       "benign_samples": 0,
-      "should_fire": 0,
-      "fired": 0,
-      "should_stay_silent": 0,
-      "stayed_silent": 0
+      "should_fire": 3,
+      "fired": 3,
+      "should_stay_silent": 2,
+      "stayed_silent": 2
     },
     "ST-SKILL-MEMORY-WRITE-HIDDEN": {
       "owasp": [

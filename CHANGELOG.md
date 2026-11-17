@@ -4,6 +4,57 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.4.0]
+
+### Added
+- Ruleset 103 adds four rules. Each one, and every change listed below, is described in
+  `RULES_CHANGELOG.md`.
+- `ST-SHELL-HIDDEN-COMMAND`: a shell script that spells the program it runs as hex escapes,
+  joined variable fragments, a brace expansion or `${IFS}` (`$'\x63\x75\x72\x6c'`,
+  `{curl,-fsSL,URL}`).
+- `ST-POSTEX-REVERSE-SHELL`: code that starts a reverse shell to a host written into it, through
+  `/dev/tcp` or netcat.
+- `ST-DEP-TYPOSQUAT`: a dependency, an MCP launch command or an install instruction that names a
+  package written like a popular one, with swapped, doubled or dropped letters, digits or
+  look-alike characters.
+- `ST-MCP-DESCRIPTION-SWAP`: Python server code that replaces a registered tool's description
+  depending on the date, a marker file or a tool call.
+- Report schema 1.12: `metadata.mcp_tools` lists the MCP tools found in the component with a hash
+  of each description and schema. `skilltotal diff` lists MCP tools added, removed or changed
+  between two versions, and `skilltotal diff --json` gains `mcp_tools_changed`.
+
+### Changed
+- Decoded and indirect commands in Python: `ST-OBF-DECODE-SPAWN` and `ST-OBF-DECODE-EXEC` report
+  a shell call or `exec`/`eval` given text the file decodes from its own literals (XOR with a
+  constant, joined character codes, base64 or hex, a reversed string). `exec` reached through the
+  builtins namespace, a renamed process call and the inline program of `python -c` are resolved.
+  The sample's code is not executed.
+- Shell: `rev | sh` is reported by `ST-OBF-DECODE-EXEC-SH`.
+- Credential exfiltration: `ST-SECRET-EXFIL` reports an encoded credential looked up as DNS
+  labels from Python or JavaScript, and Python code that reads an agent client's MCP
+  configuration and sends its contents.
+- MCP tool poisoning: `ST-MCP-TOOL-POISONING` reads a recipient change wrapped over two lines, a
+  request to put the whole conversation into a parameter, and parameter names that are
+  instructions. Text assigned to a tool's docstring or description at run time is read as tool
+  metadata.
+- Instruction files: `ST-PROMPT-INJECTION` reads directives that carry no command. These are
+  instructions loaded from a URL that outrank the user or are kept from the user, a memory-file
+  write whose text sends data to a URL or loads rules from one, an image address the agent is
+  told to fill with secrets, a base64 block to decode and follow, and a fake end marker followed
+  by a line that speaks as the system. A phrase in a markdown link title is read as text.
+- Hidden text: `ST-SKILL-FETCH-EXEC-HIDDEN` reports a fetch-and-run instruction that is drawn
+  invisible, sits behind a wall of blank lines, or has its command name written in look-alike
+  letters. `ST-HIDDEN-UNICODE` decodes long runs of invisible or blank characters as bit streams
+  and reports a right-to-left override on a line with no right-to-left text.
+- Entry points: a script that an instruction file starts is analyzed as an entry point, whatever
+  its folder or size.
+- Precision: a log or table query that looks for a tool name (`message CONTAINS 'sshd'`,
+  `LIKE '%regsvr32%'`) is not read as starting the tool. A scriptlet technique written with an
+  address that names no host is not read as a command. `ST-SECRET-EXFIL` does not read a helper
+  function that calls itself as returning the whole environment.
+- Eval corpus: 350 malicious and 264 benign samples (308 and 239 in 1.3.0), recall 350/350 with
+  0 false positives.
+
 ## [1.3.0]
 
 ### Added

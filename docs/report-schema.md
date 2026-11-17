@@ -23,7 +23,7 @@ It is the stable, machine-readable contract for any consumer: CI scripts, dashbo
 that imports the engine and returns `Report.to_dict()`.
 
 > **Formal contract:** [`report.schema.json`](report.schema.json) (JSON Schema, report
-> schema version **1.11**) is the machine-readable source of truth. Consumers should validate
+> schema version **1.12**) is the machine-readable source of truth. Consumers should validate
 > against it. `tests/test_report_schema.py` guards it: any change to the report shape that is
 > not reflected in the schema fails CI, forcing a deliberate `REPORT_SCHEMA_VERSION` bump.
 > See [releasing.md](releasing.md) for version-bump rules.
@@ -172,7 +172,7 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `files_skipped_large` | integer | Files over the size cap skipped |
 | `scanners_run` | array | Scanner names that ran |
 | `findings_by_severity` | object | Counts per severity |
-| `mcp_tools` | array | One entry per MCP tool the files define (a JSON tool listing, a Python `.tool` decorator, a JS/TS `server.tool` / `registerTool` call): `name`, `file`, `description_sha256`, `schema_sha256` (first 16 hex characters). `skilltotal diff` compares the two sides' lists to report tool definitions that changed. At most 500 entries; empty when the component defines no tools |
+| `mcp_tools` | array | One entry per MCP tool the files define (a JSON tool listing, a Python `.tool` decorator, a JS/TS `server.tool` / `registerTool` call): `name`, `file`, `description_sha256`, `schema_sha256` (first 16 hex characters). `skilltotal diff` compares the two sides' lists to report tool definitions that changed. At most 500 entries; empty when the component defines no tools (added in 1.12) |
 | `suppressed_count` | integer | Evidence occurrences removed via `--baseline` or an inline `skilltotal:ignore` marker (honored only for `scan` of a local directory; a marker never removes a malicious indicator) |
 | `baseline` | string | Optional; present only when `scan` applied a baseline file (`--baseline`, or `baseline` in `.skilltotal.toml`): its path (added in 1.9) |
 | `baseline_suppressed_count` | integer | Optional; present only when a baseline was applied: how many of the `suppressed_count` occurrences the baseline removed. The rest were inline markers (added in 1.9) |

@@ -23,6 +23,7 @@
  "negative/AST01/agent-cred-helper-exec/static-key-helper": [],
  "negative/AST01/agent-dotenv-exec/gemini-plain-sandbox": [],
  "negative/AST01/agent-launcher-hijack/local-gateway-default-approvals": [],
+ "negative/AST01/builtin-name-lookup/builtins-namespace-plain-names": [],
  "negative/AST01/builtin-name-lookup/named-builtin-lookup": [],
  "negative/AST01/clipboard-swap/address-validator-lib": [],
  "negative/AST01/clipboard-swap/dapp-copy-contract": [],
@@ -77,6 +78,12 @@
   "ST-SENS-PATH-PY",
   "ST-SHELL-PY"
  ],
+ "negative/AST01/credential-exfil/python-mcp-installer-edits-client-config": [
+  "ST-AGENT-CONFIG-INJECT",
+  "ST-FS-PY-READ",
+  "ST-FS-PY-WRITE",
+  "ST-NET-PY"
+ ],
  "negative/AST01/credential-exfil/real-virtualenv-skipped": [],
  "negative/AST01/credential-exfil/sandbox-deny-profile": [
   "ST-NET-NODE"
@@ -109,6 +116,11 @@
   "ST-DYN-PY",
   "ST-TAINT-EXEC-PY"
  ],
+ "negative/AST01/decode-exec/python-shell-built-from-constants": [
+  "ST-CMDI-PY",
+  "ST-FS-PY-WRITE",
+  "ST-SHELL-PY"
+ ],
  "negative/AST01/decrypt-and-execute/node-decrypt-write-file": [
   "ST-FS-NODE-WRITE"
  ],
@@ -118,6 +130,7 @@
  "negative/AST01/dns-exfil/mx-record-validator": [
   "ST-NET-NODE"
  ],
+ "negative/AST01/dns-exfil/python-blocklist-lookup-with-api-auth": [],
  "negative/AST01/dynamic-call-resolution/js-escapes-in-display-strings": [],
  "negative/AST01/dynamic-call-resolution/python-benign-dynamic-resolution": [],
  "negative/AST01/email-exfil/normal-transactional": [
@@ -131,6 +144,7 @@
  "negative/AST01/entry-point-path-demotion/npm-examples-demo-not-entry": [],
  "negative/AST01/entry-point-path-demotion/npm-examples-demo-nothing-loads": [],
  "negative/AST01/entry-point-path-demotion/pyproject-script-tests-not-entry": [],
+ "negative/AST01/entry-point-path-demotion/skill-mentions-example-script": [],
  "negative/AST01/entry-point-path-demotion/sphinx-docs-conf": [],
  "negative/AST01/env-dump-exfil/api-client-own-config": [
   "ST-NET-NODE",
@@ -168,7 +182,9 @@
   "ST-MCP-DETECTED"
  ],
  "negative/AST01/hidden-unicode/rtl-and-joiner-scripts": [],
+ "negative/AST01/hidden-unicode/rtl-strings-and-control-table": [],
  "negative/AST01/hidden-unicode/sanitizer-strip-list": [],
+ "negative/AST01/hidden-unicode/single-kind-padding-and-joiners": [],
  "negative/AST01/hidden-unicode/skill-identifier-break-hints": [],
  "negative/AST01/hidden-unicode/ts-korean-strings": [],
  "negative/AST01/lethal-trifecta/caps-without-injection": [
@@ -226,6 +242,9 @@
  "negative/AST01/post-exploitation/installer-prints-upgrade-command": [
   "ST-POSTEX-PERSIST"
  ],
+ "negative/AST01/post-exploitation/listener-address-from-argument": [
+  "ST-POSTEX-REMOTE-ACCESS"
+ ],
  "negative/AST01/post-exploitation/ops-provision-own-servers": [
   "ST-POSTEX-PERSIST"
  ],
@@ -254,11 +273,14 @@
  "negative/AST01/shell-decode-exec/decode-token-inspect": [],
  "negative/AST01/shell-decode-exec/installer-case-arm-hint": [],
  "negative/AST01/shell-decode-exec/installer-prints-uv-hint": [],
+ "negative/AST01/shell-decode-exec/rev-prints-text": [],
  "negative/AST01/shell-decode-exec/skill-vendor-installer": [
   "ST-SKILL-FETCH-EXEC"
  ],
+ "negative/AST01/shell-hidden-command/honest-expansions": [],
  "negative/AST01/skill-dynamic-exec/benign-dynamic-context": [],
  "negative/AST01/skill-dynamic-exec/inline-git-context": [],
+ "negative/AST01/skill-writes-agent-memory-files-persistence/claude-md-records-docs-link": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/list-item-hides-other-step": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/memory-file-reference": [],
  "negative/AST01/skill-writes-agent-memory-files-persistence/never-mention-paths": [],
@@ -275,6 +297,9 @@
  "negative/AST01/url-exec-loader/fetch-json-config": [
   "ST-DYN-PY",
   "ST-FS-PY-READ",
+  "ST-NET-PY"
+ ],
+ "negative/AST01/url-exec-loader/python-builtins-print-fetch": [
   "ST-NET-PY"
  ],
  "negative/AST01/wallet-key-exfil/local-signer": [
@@ -484,8 +509,14 @@
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
  ],
+ "negative/AST02/skill-fetch-exec/nbsp-pasted-install-command": [
+  "ST-SKILL-FETCH-EXEC"
+ ],
  "negative/AST02/skill-fetch-exec/own-repo-quick-install": [
   "ST-SKILL-CAP-MISMATCH",
+  "ST-SKILL-FETCH-EXEC"
+ ],
+ "negative/AST02/skill-fetch-exec/styled-note-beside-install": [
   "ST-SKILL-FETCH-EXEC"
  ],
  "negative/AST02/startup-hook-exec/sitecustomize-setpath": [],
@@ -526,7 +557,13 @@
  "negative/AST04/mcp-sampling-injection/python-benign-summarizer": [
   "ST-MCP-DETECTED"
  ],
+ "negative/AST04/mcp-tool-poisoning/honest-key-parameter-names": [
+  "ST-MCP-DETECTED"
+ ],
  "negative/AST04/mcp-tool-poisoning/json-benign-schema-enums": [
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-tool-poisoning/json-honest-conversation-field": [
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/mcp-tool-poisoning/json-honest-credential-tools": [
@@ -550,6 +587,10 @@
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/mcp-tool-poisoning/plain-descriptions": [
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-tool-poisoning/python-description-chosen-by-configuration": [
+  "ST-FS-PY-READ",
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/mcp-tool-poisoning/python-docstring-guidance": [
@@ -580,8 +621,13 @@
  "negative/AST04/prompt-injection/rule-file-guards-credentials": [
   "ST-SENS-PATH"
  ],
+ "negative/AST04/prompt-injection/skill-badge-version-placeholder": [],
+ "negative/AST04/prompt-injection/skill-base64-sample-payload": [],
  "negative/AST04/prompt-injection/skill-cites-obfuscated-injection": [],
  "negative/AST04/prompt-injection/skill-fetches-docs": [],
+ "negative/AST04/prompt-injection/skill-follows-hosted-setup-guide": [],
+ "negative/AST04/prompt-injection/skill-link-title-plain": [],
+ "negative/AST04/prompt-injection/skill-template-end-marker": [],
  "negative/AST04/prompt-injection/skill-updates-claude-md": [],
  "negative/AST04/prompt-injection/subagent-guardrails": [],
  "negative/AST04/prompt-injection/threat-model-asset": [
@@ -642,7 +688,15 @@
   "ST-SHELL-EVASION",
   "ST-SHELL-NODE"
  ],
+ "positive/AST01/builtin-name-lookup/builtins-dict-split-name": [
+  "ST-DYN-PY",
+  "ST-PY-BUILTIN-NAME-LOOKUP"
+ ],
  "positive/AST01/builtin-name-lookup/chr-built-exec": [
+  "ST-PY-BUILTIN-NAME-LOOKUP"
+ ],
+ "positive/AST01/builtin-name-lookup/joined-name-exec": [
+  "ST-DYN-PY",
   "ST-PY-BUILTIN-NAME-LOOKUP"
  ],
  "positive/AST01/clipboard-swap/node-clipboardy": [
@@ -860,6 +914,11 @@
   "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
  ],
+ "positive/AST01/credential-exfil/skill-script-mcp-client-config-upload": [
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SECRET-EXFIL"
+ ],
  "positive/AST01/credential-exfil/skill-script-provider-token-foreign-host": [
   "ST-SECRET-EXFIL"
  ],
@@ -900,9 +959,19 @@
   "ST-DYN-PY",
   "ST-OBF-DECODE-EXEC"
  ],
+ "positive/AST01/decode-exec/python-b64-os-system": [
+  "ST-CMDI-PY",
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-PY"
+ ],
  "positive/AST01/decode-exec/python-base": [
   "ST-DYN-PY",
   "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/python-chr-join-popen": [
+  "ST-CMDI-PY",
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-PY"
  ],
  "positive/AST01/decode-exec/python-evasion-alias": [
   "ST-DYN-PY",
@@ -910,12 +979,28 @@
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/python-evasion-getattr": [
+  "ST-CONVERGENCE",
   "ST-DYN-PY",
+  "ST-OBF-DECODE-EXEC",
   "ST-OBF-DYNAMIC-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/python-evasion-hex": [
   "ST-DYN-PY",
   "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/python-reversed-exec": [
+  "ST-DYN-PY",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/python-xor-constant-popen": [
+  "ST-CMDI-PY",
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-PY"
+ ],
+ "positive/AST01/decode-exec/python-xor-helper-shell": [
+  "ST-CMDI-PY",
+  "ST-OBF-DECODE-SPAWN",
+  "ST-SHELL-PY"
  ],
  "positive/AST01/decode-exec/python-zlib-exec": [
   "ST-DYN-PY",
@@ -929,13 +1014,22 @@
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
+  "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
  ],
  "positive/AST01/dns-exfil/aws-creds-over-dns": [
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
   "ST-NET-NODE",
+  "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
+ ],
+ "positive/AST01/dns-exfil/node-env-token-hex-labels": [
+  "ST-NET-NODE",
+  "ST-SECRET-EXFIL"
+ ],
+ "positive/AST01/dns-exfil/python-env-token-base32-labels": [
+  "ST-SECRET-EXFIL"
  ],
  "positive/AST01/dns-exfil/skill-script-nslookup-chunks": [
   "ST-COMBO-EXFIL",
@@ -1042,6 +1136,17 @@
   "ST-SHELL-PIPE-EXEC-PY",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/entry-point-path-demotion/skill-runs-script-in-vendor-folder": [
+  "ST-COMBO-EXFIL",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SENS-PATH-PY"
+ ],
+ "positive/AST01/entry-point-path-demotion/skill-runs-script-under-examples": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
+ ],
  "positive/AST01/env-dump-exfil/node-env-one-hop": [
   "ST-NET-NODE",
   "ST-SECRET-EXFIL"
@@ -1092,8 +1197,17 @@
   "ST-HIDDEN-ANSI",
   "ST-MCP-DETECTED"
  ],
+ "positive/AST01/hidden-unicode/py-comment-direction-mark-bit-stream": [
+  "ST-HIDDEN-UNICODE"
+ ],
+ "positive/AST01/hidden-unicode/py-trojan-source-comment": [
+  "ST-HIDDEN-UNICODE"
+ ],
  "positive/AST01/hidden-unicode/skill-ansi-conceal": [
   "ST-HIDDEN-ANSI"
+ ],
+ "positive/AST01/hidden-unicode/skill-rtl-override-reversed-text": [
+  "ST-HIDDEN-UNICODE"
  ],
  "positive/AST01/hidden-unicode/skill-sneaky-bits": [
   "ST-HIDDEN-UNICODE"
@@ -1105,6 +1219,9 @@
   "ST-HIDDEN-UNICODE"
  ],
  "positive/AST01/hidden-unicode/skill-variation-selectors": [
+  "ST-HIDDEN-UNICODE"
+ ],
+ "positive/AST01/hidden-unicode/skill-zero-width-bit-stream": [
   "ST-HIDDEN-UNICODE"
  ],
  "positive/AST01/lethal-trifecta/injection-plus-read-egress": [
@@ -1194,11 +1311,18 @@
   "ST-SENS-PATH-PY",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/post-exploitation/python-system-netcat-shell": [
+  "ST-POSTEX-REVERSE-SHELL",
+  "ST-SHELL-PY"
+ ],
  "positive/AST01/post-exploitation/shell-gitconfig-hook-fetch": [
   "ST-GIT-HOOK-PERSIST",
   "ST-POSTEX-CHAIN",
   "ST-POSTEX-STAGER",
   "ST-SHELL-PIPE-EXEC"
+ ],
+ "positive/AST01/post-exploitation/shell-setup-reverse-shell": [
+  "ST-POSTEX-REVERSE-SHELL"
  ],
  "positive/AST01/post-exploitation/shell-ssh-backdoor": [
   "ST-INSTALL-NPM",
@@ -1283,11 +1407,23 @@
  "positive/AST01/shell-decode-exec/process-substitution-decode": [
   "ST-OBF-DECODE-EXEC-SH"
  ],
+ "positive/AST01/shell-decode-exec/rev-pipe-sh": [
+  "ST-OBF-DECODE-EXEC-SH"
+ ],
  "positive/AST01/shell-decode-exec/skill-markdown-prerequisite": [
   "ST-OBF-DECODE-EXEC-SH"
  ],
  "positive/AST01/shell-decode-exec/xxd-reverse-pipe-zsh": [
   "ST-OBF-DECODE-EXEC-SH"
+ ],
+ "positive/AST01/shell-hidden-command/ansi-c-hex-word": [
+  "ST-SHELL-HIDDEN-COMMAND"
+ ],
+ "positive/AST01/shell-hidden-command/brace-expansion-ifs": [
+  "ST-SHELL-HIDDEN-COMMAND"
+ ],
+ "positive/AST01/shell-hidden-command/shell-split-variables": [
+  "ST-SHELL-HIDDEN-COMMAND"
  ],
  "positive/AST01/skill-dynamic-exec/clawsights-skill": [
   "ST-SKILL-DYNAMIC-EXEC"
@@ -1304,6 +1440,12 @@
  ],
  "positive/AST01/skill-dynamic-exec/inline-dynamic-context": [
   "ST-SKILL-DYNAMIC-EXEC"
+ ],
+ "positive/AST01/skill-writes-agent-memory-files-persistence/agents-md-planted-remote-rules": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST01/skill-writes-agent-memory-files-persistence/claude-md-planted-upload-order": [
+  "ST-PROMPT-INJECTION"
  ],
  "positive/AST01/skill-writes-agent-memory-files-persistence/claude-md-without-asking": [
   "ST-SKILL-MEMORY-WRITE-HIDDEN"
@@ -1324,6 +1466,12 @@
  "positive/AST01/stdlib-shadow/struct-import-exec": [
   "ST-PY-STDLIB-SHADOW",
   "ST-SHELL-PY"
+ ],
+ "positive/AST01/url-exec-loader/python-builtins-namespace-exec": [
+  "ST-DYN-PY",
+  "ST-NET-PY",
+  "ST-PY-FETCH-EXEC",
+  "ST-TAINT-EXEC-PY"
  ],
  "positive/AST01/url-exec-loader/python-urlopen-exec": [
   "ST-DYN-PY",
@@ -1736,10 +1884,25 @@
   "ST-PY-SETUP-DETACHED-FETCH",
   "ST-SHELL-PY"
  ],
+ "positive/AST02/skill-fetch-exec/blank-line-wall-setup-step": [
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
+ "positive/AST02/skill-fetch-exec/cyrillic-lookalike-command": [
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
+ "positive/AST02/skill-fetch-exec/fullwidth-letters-command": [
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
  "positive/AST02/skill-fetch-exec/hidden-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"
  ],
  "positive/AST02/skill-fetch-exec/html-comment-setup-step": [
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
+ "positive/AST02/skill-fetch-exec/offscreen-box-setup-step": [
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
+ "positive/AST02/skill-fetch-exec/zero-size-text-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"
  ],
  "positive/AST02/startup-hook-exec/sitecustomize-fork-net": [
@@ -1811,6 +1974,11 @@
   "ST-MCP-TOOL-POISONING",
   "ST-SENS-PATH"
  ],
+ "positive/AST04/mcp-tool-poisoning/json-conversation-with-secrets-into-field": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
  "positive/AST04/mcp-tool-poisoning/json-covert-send-history": [
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
@@ -1850,6 +2018,10 @@
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING",
   "ST-SENS-PATH"
+ ],
+ "positive/AST04/mcp-tool-poisoning/json-parameter-name-instruction": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
  ],
  "positive/AST04/mcp-tool-poisoning/json-prompt-resource-metadata": [
   "ST-MCP-DETECTED",
@@ -1897,11 +2069,30 @@
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
+ "positive/AST04/mcp-tool-poisoning/python-docstring-reroute-wrapped": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/python-docstring-swapped-after-date": [
+  "ST-MCP-DESCRIPTION-SWAP",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/python-docstring-swapped-on-marker-file": [
+  "ST-FS-PY-WRITE",
+  "ST-MCP-DESCRIPTION-SWAP",
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
  "positive/AST04/mcp-tool-poisoning/python-field-description": [
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
  "positive/AST04/mcp-tool-poisoning/python-instructions-env-into-argument": [
+  "ST-MCP-DETECTED",
+  "ST-MCP-TOOL-POISONING"
+ ],
+ "positive/AST04/mcp-tool-poisoning/python-parameter-name-instruction": [
   "ST-MCP-DETECTED",
   "ST-MCP-TOOL-POISONING"
  ],
@@ -2003,19 +2194,37 @@
  "positive/AST04/prompt-injection/skill-attacker-roleplay": [
   "ST-PROMPT-INJECTION"
  ],
+ "positive/AST04/prompt-injection/skill-base64-decode-and-follow": [
+  "ST-PROMPT-INJECTION"
+ ],
  "positive/AST04/prompt-injection/skill-context-persistence": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-env-key-in-urls": [
   "ST-PROMPT-INJECTION"
  ],
+ "positive/AST04/prompt-injection/skill-fake-end-marker": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/skill-image-url-exfil-in-words": [
+  "ST-PROMPT-INJECTION"
+ ],
  "positive/AST04/prompt-injection/skill-injection-in-table": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/skill-link-title-injection": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-reference-injection": [
   "ST-PROMPT-INJECTION"
  ],
+ "positive/AST04/prompt-injection/skill-remote-instructions-concealed": [
+  "ST-PROMPT-INJECTION"
+ ],
  "positive/AST04/prompt-injection/skill-remote-instructions-override": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/skill-remote-second-stage-concealed": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-rogue-agent-role": [

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://www.skilltotal.ai/schemas/report-1.11.json",
+  "$id": "https://www.skilltotal.ai/schemas/report-1.12.json",
   "title": "SkillTotal Report",
-  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.11 (1.10 + verdict.unverified_artifacts); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
+  "description": "Machine-readable contract for skilltotal.models.Report.to_dict(). Report schema version 1.12 (1.11 + metadata.mcp_tools); each field notes the version that added it. Consumers (e.g. the web app) should validate against this; a breaking change here corresponds to a major engine version bump.",
   "type": "object",
   "required": [
     "component",
@@ -122,6 +122,19 @@
         "files_skipped_large": { "type": "integer" },
         "scanners_run": { "type": "array", "items": { "type": "string" } },
         "findings_by_severity": { "type": "object" },
+        "mcp_tools": {
+          "type": "array",
+          "description": "One entry per MCP tool the files define, at most 500: its name, file and short hashes of its description and input schema. `skilltotal diff` compares two reports' lists (added in 1.12).",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string" },
+              "description_sha256": { "type": "string" },
+              "schema_sha256": { "type": "string" }
+            }
+          }
+        },
         "suppressed_count": { "type": "integer" },
         "baseline_suppressed_count": {
           "type": "integer",
