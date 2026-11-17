@@ -3,7 +3,7 @@
   "ruleset_version": 102,
   "python_version": "3.14",
   "positives": 308,
-  "negatives": 239,
+  "negatives": 242,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,

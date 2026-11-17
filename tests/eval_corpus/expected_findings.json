@@ -152,6 +152,9 @@
   "ST-NET-PY",
   "ST-SHELL-PY"
  ],
+ "negative/AST01/env-dump-exfil/telemetry-recursive-cleaner": [
+  "ST-NET-PY"
+ ],
  "negative/AST01/github-action-secret-exfil/composite-token-to-github": [],
  "negative/AST01/github-action-secret-exfil/named-secret-deploy-call": [],
  "negative/AST01/github-action-secret-exfil/secrets-dump-no-upload": [],
@@ -264,6 +267,7 @@
   "ST-FS-PY-WRITE",
   "ST-POSTEX-REMOTE-ACCESS"
  ],
+ "negative/AST01/ssh-tunnel-backdoor/log-search-playbook": [],
  "negative/AST01/ssh-tunnel-backdoor/ngrok-web-preview": [
   "ST-SHELL-PY"
  ],
@@ -465,6 +469,7 @@
   "ST-SHELL-PIPE-EXEC"
  ],
  "negative/AST02/plugin-hook-trojan/lsp-monitor-plugin": [],
+ "negative/AST02/scriptlet-host/log-search-playbook": [],
  "negative/AST02/scriptlet-host/setup-compile-step": [
   "ST-INSTALL-PY",
   "ST-SHELL-PY"

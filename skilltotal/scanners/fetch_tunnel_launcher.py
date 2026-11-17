@@ -23,7 +23,13 @@ from skilltotal import bounded_json
 from skilltotal.file_index import FileIndex, IndexedFile
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.agent_approval import _elsewhere
-from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
+from skilltotal.scanners.base import (
+    RuleSpec,
+    Scanner,
+    ScanResult,
+    _finding_from_rule,
+    searched_for,
+)
 
 R_PY_FETCH_EXEC = "ST-PY-FETCH-EXEC"
 R_SSH_TUNNEL = "ST-SSH-TUNNEL-BACKDOOR"
@@ -167,8 +173,10 @@ def _ssh_tunnel(f: IndexedFile) -> list[Evidence]:
     listed = _listed_lines(f)
 
     def first(pattern: re.Pattern[str]) -> re.Match[str] | None:
+        # A name a log query looks for (`message CONTAINS 'sshd'`) starts nothing either.
         return next((m for m in pattern.finditer(text)
-                     if not f.in_comment(m.start()) and f.line_of_offset(m.start()) not in listed),
+                     if not f.in_comment(m.start()) and f.line_of_offset(m.start()) not in listed
+                     and not searched_for(text, m.start() + (text[m.start()] in "\"'/ "))),
                     None)
 
     ssh, tun = first(_SSH_SERVER), first(_TUNNEL_CLIENT)

@@ -803,6 +803,9 @@ _PY_ENV_MEMBER = frozenset(
      "clear", "popitem"}
 )
 _PY_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+# Bound for a crafted file: how many times "does this function return the environment" is worked
+# out (a real module asks once per function and parameter).
+_MAX_RETURN_QUESTIONS = 2000
 
 
 class _PyImports:
@@ -959,21 +962,42 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
         )
 
     returned: dict[tuple[int, str | None], bool] = {}
+    working: list[tuple[int, str | None]] = []  # the questions being answered, outermost first
+    unsettled: set[tuple[int, str | None]] = set()
+    asked = 0
 
     def returns(fn: ast.AST, param: str | None) -> bool:
         """True if ``fn`` returns (or yields) its parameter ``param``, or with None, the
-        environment it reads itself."""
+        environment it reads itself.
+
+        A function that calls itself adds nothing to what it returns: a helper that walks a value
+        (``return {k: clean(v) for k, v in value.items()}``) returns the environment only if one of
+        its other returns does. So a call met while its own answer is being worked out counts as
+        "no", and a "no" reached on the way through such a call is not kept (the outer answer may
+        still turn out "yes"); it is worked out again when asked for."""
+        nonlocal asked
         key = (id(fn), param)
-        if key not in returned:
-            returned[key] = True  # a recursive call meanwhile: assume it does
-            inner: Tainted = {(fn, param)} if param else set()
-            spread(inner, [a for a in assignments if fn in chain(scope_of(a))])
-            returned[key] = any(
-                isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom)) and n.value is not None
-                and scope_of(n) is fn and carries(n.value, fn, inner)
-                for n in ast.walk(fn)
-            )
-        return returned[key]
+        if key in returned:
+            return returned[key]
+        if key in working:
+            unsettled.update(working[working.index(key) + 1:])
+            return False
+        asked += 1
+        if asked > _MAX_RETURN_QUESTIONS:
+            return True  # a file built to make this expensive: assume it does
+        working.append(key)
+        inner: Tainted = {(fn, param)} if param else set()
+        spread(inner, [a for a in assignments if fn in chain(scope_of(a))])
+        result = any(
+            isinstance(n, (ast.Return, ast.Yield, ast.YieldFrom)) and n.value is not None
+            and scope_of(n) is fn and carries(n.value, fn, inner)
+            for n in ast.walk(fn)
+        )
+        working.pop()
+        if result or key not in unsettled:
+            returned[key] = result
+        unsettled.discard(key)
+        return result
 
     def spread(tainted: Tainted, among: list[ast.AST]) -> None:
         for _ in range(4):

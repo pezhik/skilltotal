@@ -228,6 +228,21 @@ def alternation(*patterns: str, flags: int = 0) -> re.Pattern[str]:
     return re.compile("|".join(f"(?:{p})" for p in patterns), flags)
 
 
+# A quoted word that a log or table query compares a field with: `message CONTAINS 'sshd'`,
+# `CommandLine LIKE '%regsvr32%'`, `ProcessName has "ngrok"`. The query looks for the tool in
+# records; it does not start it.
+_QUERY_OPERATOR = re.compile(
+    r"\b(?:CONTAINS|I?LIKE|RLIKE|REGEXP|MATCH(?:ES)?|HAS|STARTSWITH|ENDSWITH)\s{1,4}[\"']%?$",
+    re.IGNORECASE,
+)
+
+
+def searched_for(text: str, word_start: int) -> bool:
+    """True if the word starting at ``word_start`` is what a query operator is given to look for
+    (the operator and the opening quote sit right before it)."""
+    return _QUERY_OPERATOR.search(text, max(0, word_start - 24), word_start) is not None
+
+
 def findings_from_rules(index: FileIndex, rules: list[RuleSpec]) -> list[Finding]:
     """Run every regex-bearing rule and produce at most one Finding per rule.
 
