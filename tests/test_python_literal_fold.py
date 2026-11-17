@@ -157,7 +157,14 @@ def test_folder_values(source: str, value: str, decoded: bool):
     assert folded[0] == value and folded[1] is decoded
 
 
-@pytest.mark.parametrize("source", ["unknown_name", "open('x').read()", "1 / 0", "'a' * 10 ** 9"])
+@pytest.mark.parametrize("source", [
+    "unknown_name", "open('x').read()", "1 / 0", "'a' * 10 ** 9",
+    # Values that would be huge are refused before they are built.
+    "('a' * 50000).replace('a', 'b' * 50000)",
+    "('s' * 50000).join(['x'] * 50000)",
+    "'a' * 1000 * 1000 * 1000",
+    "1 << 63 << 63",
+])
 def test_folder_gives_up_on_what_is_not_a_literal(source: str):
     assert _fold(source) is None
 

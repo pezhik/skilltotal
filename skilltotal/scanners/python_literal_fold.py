@@ -436,7 +436,10 @@ class LiteralFolder:
             items = self._iterate(self._arg(node, 0), env, depth)
             if not all(isinstance(i, type(owner)) for i in items):
                 raise _Unfoldable
-            return self._sized(owner.join(items))  # type: ignore[arg-type]
+            # Checked before joining: a long separator between many items is built in one go.
+            if sum(len(i) for i in items) + len(owner) * len(items) > _MAX_LEN:
+                raise _Unfoldable
+            return owner.join(items)  # type: ignore[arg-type]
         if attr == "decode" and isinstance(owner, bytes):
             codec = self._eval(node.args[0], env, depth + 1) if node.args else "utf-8"
             if isinstance(codec, str) and codec.lower() in _TEXT_CODECS:
@@ -455,7 +458,12 @@ class LiteralFolder:
             if not isinstance(old, str) or not isinstance(new, str):
                 raise _Unfoldable
             self._tick(len(owner) // 16)
-            return self._sized(owner.replace(old, new))
+            # Checked before replacing: every occurrence may grow into a long replacement.
+            if old and owner.count(old) * len(new) + len(owner) > _MAX_LEN:
+                raise _Unfoldable
+            if not old and (len(owner) + 1) * len(new) + len(owner) > _MAX_LEN:
+                raise _Unfoldable
+            return owner.replace(old, new)
         if attr == "split" and isinstance(owner, str) and len(node.args) <= 1:
             sep = self._eval(node.args[0], env, depth + 1) if node.args else None
             if sep is not None and not isinstance(sep, str):
