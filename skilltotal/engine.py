@@ -61,6 +61,7 @@ from skilltotal.loaded_code import _module_paths as _py_module_paths
 from skilltotal.loaded_code import bundled_module_file as _bundled_module_file
 from skilltotal.loaded_code import loaded_by as _loaded_by
 from skilltotal.loaded_code import module_file as _module_file
+from skilltotal.mcp_tools import tool_definitions
 from skilltotal.models import (
     COMPILED_WITHOUT_SOURCE,
     NOTHING_READ,
@@ -2242,4 +2243,7 @@ def _metadata(
         "findings_by_severity": by_severity,
         "suppressed_count": suppressed_count,
         **baseline,
+        # Per MCP tool, a hash of its description and of its schema: what `skilltotal diff`
+        # compares to show a tool definition that changed between two versions.
+        "mcp_tools": tool_definitions(index),
     }

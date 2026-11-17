@@ -172,6 +172,7 @@ Low-confidence or un-evidenced signals. **Never affects the score.**
 | `files_skipped_large` | integer | Files over the size cap skipped |
 | `scanners_run` | array | Scanner names that ran |
 | `findings_by_severity` | object | Counts per severity |
+| `mcp_tools` | array | One entry per MCP tool the files define (a JSON tool listing, a Python `.tool` decorator, a JS/TS `server.tool` / `registerTool` call): `name`, `file`, `description_sha256`, `schema_sha256` (first 16 hex characters). `skilltotal diff` compares the two sides' lists to report tool definitions that changed. At most 500 entries; empty when the component defines no tools |
 | `suppressed_count` | integer | Evidence occurrences removed via `--baseline` or an inline `skilltotal:ignore` marker (honored only for `scan` of a local directory; a marker never removes a malicious indicator) |
 | `baseline` | string | Optional; present only when `scan` applied a baseline file (`--baseline`, or `baseline` in `.skilltotal.toml`): its path (added in 1.9) |
 | `baseline_suppressed_count` | integer | Optional; present only when a baseline was applied: how many of the `suppressed_count` occurrences the baseline removed. The rest were inline markers (added in 1.9) |
@@ -224,6 +225,7 @@ the repository root, for Code Scanning), and `--sarif-category NAME` sets
 | `capabilities_added`, `capabilities_removed` | array of string | Capability names |
 | `ruleset_mismatch` | boolean | `true` when the two sides were scanned with different rulesets, so some changes may come from the rules rather than the component |
 | `coverage_gaps_added` | array | `needs_review` notes that say part of the new version was not analyzed, which the old version did not have. A finding that disappeared with such a part may only be out of view |
+| `mcp_tools_changed` | array | MCP tools added, removed or changed between the two versions: `name`, `file`, `change` (`added`, `removed`, `changed`) and `changed` (`description`, `schema`). Compared from each side's `metadata.mcp_tools`; empty when a side was saved by an engine that did not record it. Not a finding and not counted by `--fail-on-new` |
 | `summary` | string | One line for a person |
 
 `--fail-on-new` counts `new_findings` and the entries of `changed_findings` that have

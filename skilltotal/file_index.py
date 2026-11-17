@@ -1203,7 +1203,26 @@ def _python_agent_facing_spans(
         if isinstance(value, ast.Name) and value.id in module_values:
             strings_in(module_values[value.id])
 
+    def described(value: ast.AST) -> None:
+        # Text put into a description after the fact: every string in the value, and the strings
+        # of a module-level name it uses (`fn.__doc__ = LATER if expired() else SAFE`).
+        for sub in ast.walk(value):
+            if isinstance(sub, ast.JoinedStr) or (
+                isinstance(sub, ast.Constant) and isinstance(sub.value, str)
+            ):
+                spans.append(span(sub))
+            elif isinstance(sub, ast.Name) and sub.id in module_values:
+                strings_in(module_values[sub.id])
+
     for node in ast.walk(tree):
+        if mcp_server and isinstance(node, (ast.Assign, ast.AugAssign)):
+            # `tool_fn.__doc__ = "..."` and `tool.description = "..."` replace what the client
+            # shows the model, as the decorator's docstring does.
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Attribute) and t.attr in ("__doc__", "description")
+                   for t in targets):
+                described(node.value)
+            continue
         if mcp_server and isinstance(node, ast.Call):
             name = decorator_name(node)
             if name in _MCP_METADATA_CALLS:

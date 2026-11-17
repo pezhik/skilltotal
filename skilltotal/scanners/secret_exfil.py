@@ -40,6 +40,11 @@ network somewhere. This rule is the narrower, stronger case: a single construct 
   stealers do. One named variable sent as a header is ordinary API use and is not matched, nor is
   the environment handed to a child process or written to a local file, nor what a helper reads
   from it (``token = resolve_token(os.environ)``, ``resolveHost(process.env)``).
+* **Python code that reads an agent client's MCP configuration and sends its contents**:
+  ``~/.cursor/mcp.json``, ``claude_desktop_config.json`` and ``~/.claude.json`` hold the tokens of
+  every server the user configured. Reading or rewriting one is what an installer does and is not
+  matched; the contents reaching a network request is. The same flow from conversation
+  transcripts (``~/.claude/projects``) is a review note: session-sharing tools do it on request.
 
 Detection patterns below are string literals and parsing; nothing here runs or sends anything.
 """
@@ -1051,6 +1056,131 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
     return found
 
 
+# --- Python: an agent client's stored configuration or conversations, sent --------------------
+# `~/.cursor/mcp.json`, `claude_desktop_config.json` and `~/.claude.json` hold the launch command
+# and the tokens of every MCP server the user configured. Installers read and rewrite them all the
+# time, so naming or reading one says nothing; the file's contents passed into a network request
+# is the credential leaving. Conversation transcripts (`~/.claude/projects/*/*.jsonl`,
+# `~/.codex/sessions`) are read by usage meters and uploaded by session-sharing tools the user
+# asked for, so the same flow from them is a review note, not a finding.
+_AGENT_CLIENT_CONFIG = re.compile(
+    r"\.cursor/mcp\.json|claude_desktop_config\.json|(?<![\w-])\.claude\.json\b|"
+    r"\.codeium/windsurf/mcp_config\.json",
+    re.IGNORECASE,
+)
+_AGENT_TRANSCRIPTS = re.compile(
+    r"\.claude/projects\b|\.codex/sessions\b|\.claude/history\.jsonl|\.gemini/tmp\b",
+    re.IGNORECASE,
+)
+# Calls that take a path and return a fact about the file, not what is in it.
+_PY_NOT_CONTENT = frozenset(
+    {"exists", "isfile", "is_file", "isdir", "is_dir", "getsize", "getmtime", "stat", "lstat",
+     "access", "basename", "dirname", "len", "bool", "hexdigest", "unlink", "remove"}
+)
+_MAX_TAINT_ROUNDS = 6
+AGENT_TRANSCRIPT_SEND = "Agent conversation transcripts are read and sent over the network"
+
+
+def _py_agent_store_sends(f: IndexedFile, store: re.Pattern[str]) -> list[Evidence]:
+    """Network sends in ``f`` that carry what was read from a path matching ``store``.
+
+    A name holds the contents in the function it was assigned in (module-level names everywhere);
+    it gets them from an assignment, a ``for`` over them, or a ``with ... as``."""
+    if store.search(f.text) is None:
+        return []
+    try:
+        tree = ast.parse(f.text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return []
+    imports = _PyImports(tree)
+    if not imports.network():
+        return []
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+
+    def scope_of(node: ast.AST) -> ast.AST:
+        parent = parents.get(id(node))
+        while parent is not None and not isinstance(parent, _PY_SCOPES):
+            parent = parents.get(id(parent))
+        return parent if parent is not None else tree
+
+    tainted: set[tuple[int, str]] = set()
+
+    def carries(expr: ast.AST, scope: ast.AST) -> bool:
+        stack = [expr]
+        while stack:
+            node = stack.pop()
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if store.search(node.value):
+                    return True
+                continue
+            if isinstance(node, ast.Name):
+                if (id(scope), node.id) in tainted or (id(tree), node.id) in tainted:
+                    return True
+                continue
+            if isinstance(node, ast.Call):
+                func = node.func
+                leaf = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+                if leaf in _PY_NOT_CONTENT:
+                    continue
+            stack.extend(ast.iter_child_nodes(node))
+        return False
+
+    # (value, targets) of every statement that gives names a value.
+    flows: list[tuple[ast.AST, list[ast.AST], ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            flows.append((node.value, list(node.targets), node))
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)) and node.value is not None:
+            flows.append((node.value, [node.target], node))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            flows.append((node.iter, [node.target], node))
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    flows.append((item.context_expr, [item.optional_vars], node))
+    for _ in range(_MAX_TAINT_ROUNDS):
+        grown = False
+        for value, targets, node in flows:
+            scope = scope_of(node)
+            if not carries(value, scope):
+                continue
+            for target in targets:
+                for name in ast.walk(target):
+                    # `self.config = ...` does not make `self` the file (see the environment check).
+                    if isinstance(name, ast.Name) and not isinstance(
+                        parents.get(id(name)), ast.Attribute
+                    ) and (id(scope), name.id) not in tainted:
+                        tainted.add((id(scope), name.id))
+                        grown = True
+        if not grown:
+            break
+
+    found: list[Evidence] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, (ast.Name, ast.Attribute)):
+            continue
+        name = imports.dotted(node.func) or ""
+        head = name.partition(".")[0]
+        leaf = name.rsplit(".", 1)[-1]
+        module_send = head in _PY_NET_MODULES and leaf in _PY_SEND_LEAVES
+        method_send = (
+            isinstance(node.func, ast.Attribute) and node.func.attr in _PY_METHOD_SENDS
+            and head not in imports.modules and head not in imports.names
+        )
+        if not (module_send or method_send):
+            continue
+        scope = scope_of(node)
+        if any(carries(a, scope) for a in (*node.args, *(k.value for k in node.keywords))):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            found.append(f.evidence_for_lines(node.lineno, end))
+            if len(found) >= MAX_EVIDENCE_SCANNED:
+                break
+    return found
+
+
 class SecretExfilScanner(Scanner):
     name = "secret_exfil"
     rules = [
@@ -1071,7 +1201,10 @@ class SecretExfilScanner(Scanner):
                 "(`$GITHUB_TOKEN`, `$ANTHROPIC_API_KEY`) to a host that is not that provider, "
                 "or collects credentials into a file, an archive or a variable and sends that "
                 "on a later line; or code passes the whole process environment "
-                "(`process.env`, `os.environ`) into an HTTP request. The environment holds the "
+                "(`process.env`, `os.environ`) into an HTTP request, or Python code reads an "
+                "agent client's MCP configuration (`~/.cursor/mcp.json`, "
+                "`claude_desktop_config.json`, `~/.claude.json`: the tokens of every configured "
+                "server) and passes its contents into one. The environment holds the "
                 "machine's tokens and keys, so either way they reach whoever runs the endpoint."
             ),
             recommendation=(
@@ -1108,8 +1241,13 @@ class SecretExfilScanner(Scanner):
                 partly.append((f.relpath, None))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
+        transcripts: list[tuple[str, int | None]] = []
         for f in index.select(suffixes=(".py", ".pyw")):
             evidence.extend(_py_env_dumps(f))
+            evidence.extend(_py_agent_store_sends(f, _AGENT_CLIENT_CONFIG))
+            transcripts.extend(
+                (ev.file, ev.line_start) for ev in _py_agent_store_sends(f, _AGENT_TRANSCRIPTS)
+            )
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 break
         # A file with more uses of the environment, or more calls beside them, than a real one
@@ -1122,6 +1260,17 @@ class SecretExfilScanner(Scanner):
                  "than the check for the environment being sent follows",
             advice="Part of each was not checked for sending the environment off the machine.",
         )] if partly else []
+        if transcripts:
+            needs_review.append(aggregated_review(
+                category="exfiltration_path",
+                title=AGENT_TRANSCRIPT_SEND,
+                places=transcripts,
+                what="network request(s) carry what was read from an agent's stored "
+                     "conversations (~/.claude/projects, ~/.codex/sessions)",
+                advice="Transcripts hold everything typed and pasted into the agent, secrets "
+                       "included. A tool the user installed to share or sync sessions does "
+                       "this; anything else has no reason to.",
+            ))
         if not evidence:
             return ScanResult(needs_review=needs_review)
         return ScanResult(findings=[_finding_from_rule(self.rules[0], evidence)],

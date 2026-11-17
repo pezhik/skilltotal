@@ -84,6 +84,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-SSH-TUNNEL-BACKDOOR": ("AST01",),
     "ST-AGENT-LAUNCHER-HIJACK": ("AST01", "AST04"),
     "ST-MCP-STATIC-AUTH-EXEC": ("AST01",),
+    "ST-MCP-DESCRIPTION-SWAP": ("AST04",),
     "ST-CLIPPER": ("AST01",),
     "ST-SHELL-EVASION": ("AST01",),
     # Post-exploitation tactics: access, persistence, masquerading and beacons are what a

@@ -201,6 +201,12 @@ A finding can also disappear because the new version's scan could not read the f
 large, minified, unparseable). The diff lists those parts as `coverage_gaps_added` (JSON) and under
 "Not analyzed in the new version only" (text), and `--fail-on-unanalyzed` exits 2 on them.
 
+The diff also lists the MCP tools whose definition changed between the two versions (a description
+or an input schema that differs, a tool added or removed), as `mcp_tools_changed` (JSON) and under
+"MCP tool definitions changed" (text). It is shown whether or not the new text matches a rule, so
+a description that was rewritten after you approved the server does not pass as "0 changed". It is
+information, not a finding, and `--fail-on-new` does not count it.
+
 A side given as a saved report is not scanned: its findings are taken as the file states them, and
 the console says so. In CI, scan both sides rather than accept a report file from the change under
 review. A CI recipe for dependency-upgrade pull requests is in

@@ -9,6 +9,7 @@ manifest source.
 
 from __future__ import annotations
 
+import ast
 import bisect
 import json
 import re
@@ -31,6 +32,7 @@ from skilltotal.scanners.base import (
     RuleSpec,
     Scanner,
     ScanResult,
+    aggregated_review,
     alternation,
     deep_json_review,
 )
@@ -1360,6 +1362,28 @@ class McpScanner(Scanner):
             capability=Capability.MCP_TOOLS_DETECTED,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
         ),
+        RuleSpec(
+            id="ST-MCP-DESCRIPTION-SWAP",
+            category=CATEGORY,
+            severity=Severity.MEDIUM,
+            title="MCP tool description replaced at run time",
+            description=(
+                "Server code replaces the description of a tool it registers depending on "
+                "something that changes without the operator: the date, a marker file the "
+                "server looks for, or how many times a tool was called (a tool function that "
+                "rewrites a registered tool's description or its own docstring). The text a "
+                "client showed when the server was approved is then not the text the model "
+                "reads later (a \"rug pull\"). This names the mechanism; what the later text "
+                "says is judged by the tool-poisoning rule."
+            ),
+            recommendation=(
+                "Read both versions of the description and the condition that picks one. A "
+                "description that depends on configuration is set once at start; one that "
+                "depends on the date or a call count has no ordinary use."
+            ),
+            capability=Capability.MCP_TOOLS_DETECTED,
+            threat_class=ThreatClass.RISKY_CONSTRUCT,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -1500,6 +1524,28 @@ class McpScanner(Scanner):
             findings.append(self._finding("ST-MCP-AUTO-APPROVE", auto_approve))
         if overbroad_scope:
             findings.append(self._finding("ST-MCP-OVERBROAD-SCOPE", overbroad_scope))
+        swaps: list[Evidence] = []
+        downloaded: list[tuple[str, int | None]] = []
+        for f in index.select(suffixes=(".py", ".pyw")):
+            if len(swaps) >= MAX_EVIDENCE_SCANNED or not _CODE_SURFACE.search(f.text):
+                continue
+            found, remote = _description_swaps(f)
+            swaps.extend(found)
+            downloaded.extend((f.relpath, line) for line in remote)
+        if swaps:
+            findings.append(self._finding("ST-MCP-DESCRIPTION-SWAP", swaps))
+        if downloaded:
+            needs_review.append(aggregated_review(
+                category=CATEGORY,
+                title=REMOTE_DESCRIPTION_TITLE,
+                places=downloaded,
+                what="tool description(s) are read from the network when the server starts",
+                advice=(
+                    "The text the model reads is not in the scanned files and can change at "
+                    "any start. Read what the address serves, and prefer a server whose "
+                    "descriptions ship with its code."
+                ),
+            ))
         if detected:
             findings.append(self._finding("ST-MCP-DETECTED", detected))
 
@@ -1877,6 +1923,116 @@ class McpScanner(Scanner):
             evidence=evidence[:MAX_EVIDENCE_SCANNED],
             recommendation=rule.recommendation,
         )
+
+
+# --- A tool description that changes after the server was approved --------------------------------
+# What the condition that picks a description looks at: the clock, a file's presence, chance.
+# Configuration (`os.environ`, a flag) is how an honest server chooses its wording once at start.
+_RUN_STATE = re.compile(
+    r"\b(?:datetime|date\.today|time\.time|time\.localtime|\.exists\(|isfile\(|getmtime\(|"
+    r"random\.|randint\(|\.stat\()"
+)
+# How code reaches a tool the SDK already registered.
+_REGISTERED_TOOL = re.compile(r"_tool_manager\b|\b_tools\b|\bget_tools?\(|\blist_tools\(")
+# A network read whose result becomes a description.
+_REMOTE_READ = re.compile(
+    r"\b(?:urlopen|requests\.(?:get|post|request)|httpx\.(?:get|post|request)|"
+    r"urllib3\.request|aiohttp\.)"
+)
+_SWAP_HINT = re.compile(r"__doc__|\.description\b|description\s*=")
+_MAX_SWAP_FILE = 2_000_000
+REMOTE_DESCRIPTION_TITLE = "MCP tool description is downloaded when the server starts"
+
+
+def _unparsed(node: ast.AST) -> str:
+    try:
+        return ast.unparse(node)
+    except (RecursionError, ValueError):
+        return ""
+
+
+def _description_swaps(f: IndexedFile) -> tuple[list[Evidence], list[int]]:
+    """Evidence for descriptions replaced on run-time state, and the lines where a description
+    is read from the network (see ``ST-MCP-DESCRIPTION-SWAP``). Python only, by parsing."""
+    if len(f.text) > _MAX_SWAP_FILE or not _SWAP_HINT.search(f.text):
+        return [], []
+    try:
+        tree = ast.parse(f.text)
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        return [], []
+    parents: dict[int, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+
+    def is_tool(fn: ast.AST) -> bool:
+        return isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+            isinstance(t, ast.Attribute) and t.attr == "tool"
+            for t in ((d.func if isinstance(d, ast.Call) else d) for d in fn.decorator_list)
+        )
+
+    def enclosing(node: ast.AST) -> tuple[ast.AST | None, list[ast.expr]]:
+        """The function ``node`` sits in, and the tests of the ``if`` statements around it."""
+        tests: list[ast.expr] = []
+        child, parent = node, parents.get(id(node))
+        while parent is not None:
+            if isinstance(parent, ast.If) and child is not parent.test:
+                tests.append(parent.test)
+            if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return parent, tests
+            child, parent = parent, parents.get(id(parent))
+        return None, tests
+
+    remote_names = set()
+    registered_names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                and isinstance(node.targets[0], ast.Name):
+            source = _unparsed(node.value)
+            if _REMOTE_READ.search(source):
+                remote_names.add(node.targets[0].id)
+            if _REGISTERED_TOOL.search(source):
+                registered_names.add(node.targets[0].id)
+
+    def from_network(value: ast.AST) -> bool:
+        if _REMOTE_READ.search(_unparsed(value)):
+            return True
+        return any(isinstance(n, ast.Name) and n.id in remote_names for n in ast.walk(value))
+
+    swaps: list[Evidence] = []
+    remote: list[int] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "description":
+            if from_network(node.value):
+                remote.append(node.value.lineno)
+            continue
+        if not isinstance(node, (ast.Assign, ast.AugAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        target = next((t for t in targets if isinstance(t, ast.Attribute)
+                       and t.attr in ("__doc__", "description")), None)
+        if target is None:
+            continue
+        function, tests = enclosing(node)
+        if target.attr == "description":
+            # Only a tool the SDK registered: `issue.description = text` is the tool's work.
+            base = _unparsed(target.value)
+            root = target.value
+            while isinstance(root, (ast.Attribute, ast.Subscript)):
+                root = root.value
+            known = isinstance(root, ast.Name) and root.id in registered_names
+            if not known and not _REGISTERED_TOOL.search(base):
+                continue
+        if from_network(node.value):
+            remote.append(node.lineno)
+        conditions = [*tests, *(n.test for n in ast.walk(node.value) if isinstance(n, ast.IfExp))]
+        on_state = any(_RUN_STATE.search(_unparsed(test)) for test in conditions)
+        if on_state or is_tool(function):
+            end = getattr(node, "end_lineno", None) or node.lineno
+            swaps.append(f.evidence_for_lines(node.lineno, end))
+        if len(swaps) >= MAX_EVIDENCE_SCANNED:
+            break
+    return swaps, remote
 
 
 def _unparseable_manifest(f: IndexedFile, exc: Exception) -> NeedsReview:
