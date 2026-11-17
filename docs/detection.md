@@ -54,9 +54,9 @@ Each row names what the engine checks today. The code-behavior rows (dangerous c
 exfiltration, dynamic code execution, decode-and-execute) cover Python and JavaScript/TypeScript;
 shell, PowerShell and batch scripts are checked for download-and-run, decode-and-run, evasion and
 post-exploitation idioms. Code in other languages gets only the secret, sensitive-path and
-hidden-text checks (see [Limitations](#limitations)). Bidi controls and lone zero-width
-characters are listed for review and left out of the score, because locale and CJK files use them
-legitimately.
+hidden-text checks (see [Limitations](#limitations)). Bidi controls next to right-to-left text and
+lone zero-width characters are listed for review and left out of the score, because locale and CJK
+files use them legitimately.
 
 A VS Code extension usually ships one minified bundle as its entry point. SkillTotal reads it (up
 to 8 MiB) and judges it like build output: capabilities and the post-exploitation rules count,
@@ -178,8 +178,11 @@ a substitute for:
 - **Hidden Unicode** (ASCII-smuggling tag characters, variation selectors and invisible math
   operators used as bytes, zero-width and other invisible format characters threaded through
   words, Hangul filler identifiers) is detected; where it encodes text, that text is decoded into
-  the evidence. Trojan-Source bidi overrides, lone zero-width characters and zero-width line-break
-  hints inside a long identifier go to `needs_review`. Attackers
+  the evidence. A long unbroken run of zero-width or blank characters of two to four kinds is read
+  as a bit stream and decoded. A right-to-left override, embedding or isolate on a line of code
+  or agent instructions that holds no right-to-left letter (Trojan Source) is detected; the same
+  control next to Hebrew or Arabic text, in a locale file or in a character table, lone zero-width
+  characters and zero-width line-break hints inside a long identifier go to `needs_review`. Attackers
   use hidden text to smuggle instructions past human review. See `tests/manual_eval/` for
   calibration against real-world attacks.
 - **Obfuscated text is folded before the phrase rules run** (`skilltotal.text_normalize`):
@@ -193,6 +196,21 @@ a substitute for:
   multi-word phrase. In JavaScript and TypeScript, `\uXXXX`, `\u{...}` and `\xNN` escapes are
   written out before the Node.js rules run, so a call or module name with an escaped letter
   reads as `cp.exec(...)` or `require("child_process")`.
+- **Agent instructions that carry no command** are read in the files an agent follows (SKILL.md,
+  subagent and command prompts, CLAUDE.md, rule files): instructions loaded from a URL that
+  outrank the user or are kept from the user, a write into the agent's memory file whose text
+  sends data to a URL or loads rules from one, an image address whose query the agent is told to
+  fill with secrets or the conversation, a base64 block the agent is told to decode and follow
+  (the decoded text is shown), and a fake end-of-file marker followed by a line that speaks as the
+  system. A page the agent is only told to read and follow is listed for review. A phrase in a
+  markdown link title is read as text, not as a quotation.
+- **A fetch-and-run instruction kept out of sight** is rated as hidden when it sits in an HTML
+  comment or an element styled invisible (no size, transparent, off-screen, white on a page with
+  no background), behind a wall of blank lines, or when the downloader or interpreter name is
+  written with look-alike or invisible characters.
+- **A script the instructions start** (`python scripts/setup.py`, `bash examples/quickstart.sh` in
+  SKILL.md) is read like a declared entry point: from a folder the walk skips, under `examples/`
+  or `tests/`, and up to the larger entry-point size limit.
 - Shell execution covers `subprocess`/`os.system`, `asyncio.create_subprocess_*`, Node
   `child_process`, and common process-spawning libraries (Python `sh`/`plumbum`/`pexpect`/
   `invoke`/`fabric`; Node `zx`/`execa`/`cross-spawn`/`shelljs`/`tinyexec`/`node-pty`).

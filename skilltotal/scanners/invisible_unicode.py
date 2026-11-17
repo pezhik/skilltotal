@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import replace
+from itertools import permutations
 
 from skilltotal.file_index import FileIndex, IndexedFile, _c_code_spans, is_instruction_path
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
@@ -105,6 +106,106 @@ _OP_ZERO, _OP_ONE = "\u2062", "\u2064"
 # Hangul fillers: letters that render as blank space and are legal in a JavaScript identifier.
 _HANGUL_FILLER = re.compile("[\u115f\u1160\u3164\uffa0]")
 _JS_SUFFIXES = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
+
+
+# A bit stream: a long unbroken run of invisible or blank-drawn characters of two to four kinds,
+# each standing for a bit or two (zero-width space and non-joiner, the two direction marks, two
+# widths of space, the two Hangul fillers). Text never needs such a run: a joiner or a break hint
+# stands alone between letters, padding repeats one character, and a sanitizer's list of the set
+# names each character once and is shorter. Tag characters, variation selectors and the invisible
+# math operators have their own checks above.
+_STREAM_CLASS = ignorable_class(exclude=(
+    (0x0000, 0x00AD), (0x2061, 0x2064), (0xFE00, 0xFE0F), (0xE0000, 0xE0FFF),
+)) + "\u2000-\u200a"
+_STREAM_MIN = 16
+_STREAM = re.compile(f"[{_STREAM_CLASS}]{{{_STREAM_MIN},}}")
+_STREAM_DECODE_MAX = 4096
+
+# Trojan Source (CVE-2021-42574): a control that forces right-to-left order (embedding, override
+# or isolate) on a line of code or agent instructions that holds no right-to-left letter. With
+# Hebrew or Arabic text on the line the control is how that text is set; without it, it only
+# changes the order in which a person reads the line, while the compiler or model reads it as
+# stored. A control that stands alone between quotes, brackets or range dashes is an entry of a
+# character table or of a sanitizer's pattern, not a reordering.
+_RTL_CONTROL = re.compile("[\u202b\u202e\u2067]")
+_BIDI_CONTROL = "\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\u200e\u200f"
+_RTL_OVERRIDE = chr(0x202E)
+# Bounds that keep the check linear on a crafted line made of controls only.
+_MAX_CONTROLS_PER_LINE = 32
+_NEIGHBOUR_REACH = 32
+_TABLE_PUNCTUATION = frozenset("'\"`[]-,|\\{}()<>:=;")
+_RTL_LETTER = re.compile(
+    "[\u0590-\u08ff\ufb1d-\ufdff\ufe70-\ufefc\U00010800-\U00010fff\U0001e800-\U0001efff]"
+)
+_TROJAN_CODE_SUFFIXES = (
+    ".py", ".pyw", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".go", ".rs",
+    ".c", ".h", ".cc", ".cpp", ".hpp", ".java", ".kt", ".cs", ".rb", ".php", ".swift", ".lua",
+    ".pl", ".sh", ".bash", ".zsh", ".ps1",
+)
+
+
+def _stream_reading(run: str) -> str:
+    """The first readable ASCII text a bit stream decodes to, or ""."""
+    run = run[:_STREAM_DECODE_MAX]
+    symbols = sorted(set(run))
+    readings: list[tuple[dict[str, str], int]] = []
+    if len(symbols) == 2:
+        a, b = symbols
+        readings = [(bits, width) for width in (8, 7)
+                    for bits in ({a: "0", b: "1"}, {a: "1", b: "0"})]
+    elif len(symbols) == 4:
+        readings = [
+            ({s: format(value, "02b") for s, value in zip(symbols, order, strict=True)}, 8)
+            for order in permutations(range(4))
+        ]
+    for bits, width in readings:
+        stream = "".join(bits[c] for c in run)
+        data = bytes(int(stream[i:i + width], 2) for i in range(0, len(stream) - width + 1, width))
+        text = data.decode("ascii", errors="replace")
+        if len(text) >= 2 and all(c.isprintable() and c != "\ufffd" for c in text):
+            return text
+    return ""
+
+
+def _reorders_line(line: str, rtl_file: bool = False) -> bool:
+    """True if a right-to-left control on ``line`` reorders text that is not right-to-left.
+
+    In a file written in a right-to-left script (``rtl_file``) an embedding or isolate may wrap a
+    Latin term on a line of its own; only the override, which reverses the letters, counts there.
+    """
+    if _RTL_LETTER.search(line):
+        return False
+    for k, m in enumerate(_RTL_CONTROL.finditer(line)):
+        if k >= _MAX_CONTROLS_PER_LINE:
+            break
+        if rtl_file and m.group() != _RTL_OVERRIDE:
+            continue
+        before = _visible_neighbour(line, m.start() - 1, -1)
+        after = _visible_neighbour(line, m.end(), 1)
+        if any(c not in _TABLE_PUNCTUATION for c in (before, after) if c):
+            return True
+    return False
+
+
+def _visible_neighbour(line: str, pos: int, step: int) -> str:
+    """The nearest character from ``pos`` in direction ``step`` that is not itself invisible (a
+    table lists the invisible characters side by side); "" at the end of the line."""
+    for _ in range(_NEIGHBOUR_REACH):
+        if not (0 <= pos < len(line) and _is_invisible(ord(line[pos]))):
+            break
+        pos += step
+    return line[pos] if 0 <= pos < len(line) and not _is_invisible(ord(line[pos])) else ""
+
+
+def _shown_reversed(line: str) -> str:
+    """The text after a right-to-left override as a person sees it (reversed), or ""."""
+    start = line.find("\u202e")
+    if start < 0:
+        return ""
+    end = line.find("\u202c", start)
+    shown = line[start + 1:end if end >= 0 else len(line)][::-1].strip()
+    shown = "".join(c for c in shown if c not in _BIDI_CONTROL)
+    return shown if len(shown) >= 8 else ""
 
 
 # Every code point the per-line pass acts on, as one character class: a file or a line without
@@ -304,7 +405,10 @@ class InvisibleUnicodeScanner(Scanner):
                 "characters (U+E0000+), zero-width or other invisible format characters threaded "
                 "between the letters of words, runs of variation selectors or invisible math "
                 "operators (each carries "
-                "bits of a hidden payload), or Hangul filler letters used as invisible "
+                "bits of a hidden payload), a long run of zero-width or blank characters of two "
+                "to four kinds (a bit stream), a right-to-left control that reorders a line of "
+                "code or instructions holding no right-to-left text (Trojan Source), or Hangul "
+                "filler letters used as invisible "
                 "JavaScript identifiers. All of them hide text or code from a person while a "
                 "model or interpreter still reads it, and none has a legitimate use in that "
                 "form."
@@ -372,12 +476,50 @@ class InvisibleUnicodeScanner(Scanner):
             for ev in _hangul_identifier_evidence(f):
                 if len(evidence) < MAX_EVIDENCE_SCANNED:
                     evidence.append(ev)
+            vector_file: bool | None = None
+            stream_lines: set[int] = set()
+            for m in _STREAM.finditer(f.text):
+                run = m.group()
+                if not 2 <= len(set(run)) <= 4:
+                    continue  # one character repeated is padding; many kinds is a table
+                if vector_file is None:
+                    vector_file = _is_detector_vector_file(f)
+                ev = f.evidence_for_span(m.start(), m.end())
+                if ev.line_start in stream_lines:
+                    continue
+                stream_lines.add(ev.line_start)
+                if vector_file:
+                    if f.relpath not in vector_seen:
+                        vector_seen.add(f.relpath)
+                        vector_places.append((f.relpath, ev.line_start))
+                elif len(evidence) < MAX_EVIDENCE_SCANNED:
+                    snippet = _render(f.line_text(ev.line_start).strip())[:200]
+                    snippet += (f"  [{len(run)} invisible characters of {len(set(run))} kinds "
+                                "in a row")
+                    reading = _stream_reading(run)
+                    snippet += f", read as bits: {reading[:120]!r}]" if reading else "]"
+                    evidence.append(replace(ev, line_end=ev.line_start, snippet=snippet))
             if not _HUNTED.search(f.text):
                 continue
-            vector_file: bool | None = None
+            reorder_checked = (f.relpath.lower().endswith(_TROJAN_CODE_SUFFIXES)
+                               or is_instruction_path(f.relpath))
+            rtl_file: bool | None = None
             for lineno, raw_line in enumerate(f.text.splitlines(), start=1):
-                if not _HUNTED.search(raw_line):
+                if lineno in stream_lines or not _HUNTED.search(raw_line):
                     continue  # nothing this scanner acts on (most lines of a CJK document)
+                if reorder_checked and rtl_file is None and _RTL_CONTROL.search(raw_line):
+                    rtl_file = _RTL_LETTER.search(f.text) is not None  # once per file
+                if reorder_checked and _reorders_line(raw_line, bool(rtl_file)):
+                    if len(evidence) < MAX_EVIDENCE_SCANNED:
+                        shown = _shown_reversed(raw_line)
+                        note = ("  [a right-to-left control changes the order this line is "
+                                "shown in; no right-to-left text on it"
+                                + (f"; shown as: {shown[:120]!r}]" if shown else "]"))
+                        evidence.append(
+                            Evidence(file=f.relpath, line_start=lineno, line_end=lineno,
+                                     snippet=_render(raw_line.strip())[:200] + note)
+                        )
+                    continue
                 # Strip valid emoji tag sequences (subdivision flags) so the tag-character
                 # check below only sees tag chars with no legitimate reading.
                 line = (_EMOJI_TAG_SEQ.sub("", raw_line)

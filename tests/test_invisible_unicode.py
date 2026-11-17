@@ -29,12 +29,18 @@ def test_tag_smuggling_detected_and_decoded(tmp_path: Path):
     assert "ignore previous instructions" in f.evidence[0].snippet
 
 
-def test_bidi_override_is_needs_review_not_malicious(tmp_path: Path):
-    # U+202E RIGHT-TO-LEFT OVERRIDE (Trojan Source) is ambiguous (also legitimate in RTL
-    # locale files) -> needs_review, never a malware verdict.
+def test_bidi_override_in_code_without_rtl_text_is_trojan_source(tmp_path: Path):
+    # U+202E RIGHT-TO-LEFT OVERRIDE on a line of code that holds no right-to-left letter
+    # only changes the order a person reads the line in (Trojan Source): a finding. With
+    # right-to-left text on the line, or in a file that is not code or instructions, it
+    # stays a note (test_i18n_locale_bidi_not_malicious below).
     result = _scan(tmp_path, "code.py", "x = 1  # safe‮ reversed\n")
-    assert result.findings == []
-    assert any(n.category == "hidden_unicode" for n in result.needs_review)
+    assert [f.id for f in result.findings] == ["ST-HIDDEN-UNICODE"]
+    assert result.findings[0].evidence[0].line_start == 1
+    (tmp_path / "other").mkdir()
+    note = _scan(tmp_path / "other", "notes.txt","x = 1  # safe\u202e reversed\n")
+    assert note.findings == []
+    assert any(n.category == "hidden_unicode" for n in note.needs_review)
 
 
 def test_zero_width_space_is_needs_review(tmp_path: Path):

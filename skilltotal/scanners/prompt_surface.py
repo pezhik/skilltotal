@@ -23,7 +23,9 @@ from skilltotal.scanners.base import (
     alternation,
     deobfuscated_spans,
 )
+from skilltotal.scanners.prompt_directives import directives
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
+from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
 from skilltotal.text_normalize import loose_pattern, original_span
 
 CATEGORY = "prompt_surface"
@@ -622,6 +624,24 @@ def is_cued_quotation(text: str, start: int, end: int) -> bool:
     return close >= 0 and not _CUED_QUOTE_BREAK.search(tail, 0, close)
 
 
+# The title of a markdown link or of a reference definition: `[docs](https://x "title")`,
+# `[docs]: https://x "title"`. Its quotes are link syntax, not a citation, and a rendered page
+# shows the title only as a tooltip, while the agent reads it with the rest of the file.
+_LINK_TITLE_LEAD = re.compile(
+    r"(?:\]\(\s*<?[^\s()<>]{1,2000}>?|^[ \t]{0,3}\[[^\]\n]{1,200}\]:[ \t]*<?[^\s<>]{1,2000}>?)"
+    r"[ \t]+$"
+)
+_LINK_TITLE_QUOTES = "\"'"
+
+
+def _in_link_title(text: str, start: int, bounds: tuple[int, int] | None) -> bool:
+    """True if ``start`` lies in a link title that is still open on its line."""
+    line_start = bounds[0] if bounds else text.rfind("\n", 0, start) + 1
+    head = text[line_start:start]
+    opened = max(head.rfind(ch) for ch in _LINK_TITLE_QUOTES)
+    return opened >= 0 and _LINK_TITLE_LEAD.search(head[:opened]) is not None
+
+
 def _is_quoted_citation(
     text: str,
     start: int,
@@ -651,6 +671,8 @@ def _is_quoted_citation(
        scores. Single quotes are excluded (apostrophes). Never applied to code/structured data,
        where every value is quote-wrapped by syntax, not by citation.
     """
+    if prose and _in_link_title(text, start, bounds):
+        return False
     before = text[start - 1] if start > 0 else ""
     # An elided quotation is still a quotation: `'Ignore previous instructions...'` cuts the cited
     # phrase off with an ellipsis and then closes the quote (gemini-cli's issue-triage skill lists
@@ -799,7 +821,7 @@ class PromptSurfaceScanner(Scanner):
             else:
                 title = "Cited prompt-injection example"
                 reason = (
-                    f"Phrase '{phrase}' at line {ev.line_start} is quoted as an example, "
+                    f"Phrase '{phrase[:160]}' at line {ev.line_start} is quoted as an example, "
                     "not a live directive; review the surrounding text to confirm."
                 )
             needs_review.append(
@@ -882,6 +904,39 @@ class PromptSurfaceScanner(Scanner):
                     start, end = original_span(idx, nstart, nend)
                     if start < end:
                         classify(f, start, end, f.evidence_for_span(start, end))
+
+        # Directives that carry no command (remote instructions that outrank the user, a network
+        # order planted in the agent's memory, an image address that carries data out, encoded
+        # instructions, a fake end of the file), in the files an agent follows.
+        for f in index.files:
+            if not (is_instruction_path(f.relpath) or _INSTRUCTION_FILE.search(f.relpath)):
+                continue
+            noted = False
+            for text, idx in ((f.text, None), *f.folded_views()):
+                for found in directives(text):
+                    start, end = ((found.start, found.end) if idx is None
+                                  else original_span(idx, found.start, found.end))
+                    if start >= end:
+                        continue
+                    ev = f.evidence_for_span(start, end)
+                    if found.scored:
+                        if found.note:
+                            ev = replace(ev, snippet=ev.snippet[:200] + found.note)
+                        classify(f, start, end, ev)
+                    elif not noted and (ev.file, ev.line_start) not in nr_seen:
+                        noted = True
+                        nr_seen.add((ev.file, ev.line_start))
+                        needs_review.append(NeedsReview(
+                            category=CATEGORY,
+                            title="Instructions loaded from a URL at run time",
+                            reason=(
+                                f"Line {ev.line_start} tells the agent to load a page and follow "
+                                "what it says. The text the agent then follows is not in this "
+                                "component and can change; read what the address serves."
+                            ),
+                            file=ev.file,
+                            line=ev.line_start,
+                        ))
 
         findings = [_finding_from_rule(inj_rule, evidence)] if evidence else []
 

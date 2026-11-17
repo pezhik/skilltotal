@@ -42,6 +42,7 @@ from skilltotal.file_index import (
     is_data_corpus_path,
     is_doc_path,
     is_example_path,
+    is_instruction_path,
     is_regular_file,
     is_test_path,
     skill_dirs,
@@ -91,6 +92,7 @@ from skilltotal.scanners.disguised_script import (
     disguised_runs,
 )
 from skilltotal.scanners.mcp import is_mcp_listing
+from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
 from skilltotal.scoring import compute_score, is_own_provider_read, risk_level
 from skilltotal.traits import build_trait_profile
 from skilltotal.typosquatting import TYPOSQUAT_FINDING_ID, package_name_typosquatting
@@ -212,7 +214,14 @@ def analyze_directory(
     # The file an MCP manifest launches is an entry point too. It is known only once the manifests
     # are read; one the walk set aside for its shape or size is read on a second walk (rare).
     # So is a file an `env` block makes every process load (`NODE_OPTIONS=--require ./x.js`).
-    launched = (_mcp_launched_files(index) | _env_loaded_files(index)) - entry_points
+    # And a script the component's own instructions tell the agent to start (`python
+    # scripts/run.py` in SKILL.md): the agent runs it whatever its size or folder.
+    run_paths = _instruction_run_paths(index)
+    walked = {f.relpath for f in index.files} | set(index.minified) | set(index.large)
+    launched = (
+        _mcp_launched_files(index) | _env_loaded_files(index)
+        | {path for path in run_paths if path in walked}
+    ) - entry_points
     if launched & {*index.minified, *index.large}:
         index = build_index(entry_points | launched)
     entry_points |= launched
@@ -223,7 +232,11 @@ def analyze_directory(
     ) if bundled else frozenset()
     # Code the component loads by a literal path from a folder the walk passed over (its own
     # `lib/env/`, `src/vendor/`, ...) is read too: it runs whatever folder it is filed under.
-    index, unloaded = follow_skipped_references(index, _env_loaded_paths(index))
+    before_follow = len(index.files)
+    index, unloaded = follow_skipped_references(index, [*_env_loaded_paths(index), *run_paths])
+    if len(index.files) > before_follow:
+        # A script the instructions start from a folder the walk passed over (`.tox/`, `vendor/`).
+        entry_points |= set(run_paths) & {f.relpath for f in index.files}
     # A file started under a name that hides it (`node assets/logo.png`, `python3 x.docx`) is read
     # as the language it is started in, and is an entry point like any file a command starts.
     disguised = disguised_runs(index, _component_file_check(Path(root)))
@@ -1037,6 +1050,43 @@ def _mcp_launched_files(index: FileIndex) -> set[str]:
         if len(found) >= _MAX_ENTRY_POINTS:
             break
     return found
+
+
+# A script an instruction file starts by name: an interpreter and a path with a suffix, or a path
+# run directly (`./scripts/setup.sh`). Flags may stand between; `python -c "..."` names no file.
+_INSTRUCTION_RUN = re.compile(
+    r"(?<![\w./-])(?:(?:python[0-9.]*|node|deno[ \t]+run|bun(?:[ \t]+run)?|tsx|ts-node|ruby|perl"
+    r"|php|pwsh|powershell|(?:ba|z|da|k)?sh|source)(?:[ \t]+-[\w-]+){0,4}[ \t]+[\"']?|(?=\./))"
+    r"((?:\$\{?[A-Za-z_][\w:.-]{0,60}\}?/)?(?:\.{1,2}/){0,4}[\w@.-]{1,100}(?:/[\w@.-]{1,100}){0,12}"
+    r"\.[A-Za-z0-9]{1,5})(?![\w/-])"
+)
+_MAX_INSTRUCTION_RUNS = 4 * _MAX_ENTRY_POINTS
+
+
+def _instruction_run_paths(index: FileIndex) -> list[str]:
+    """Relative paths of the scripts that the component's instruction files (SKILL.md, a
+    subagent or command prompt, CLAUDE.md, rule files) tell the agent to start, read relative to
+    the instruction file's folder and to the component root. Candidates only: the caller keeps
+    those that name a file of the component. An instruction file that is itself a fixture (under
+    tests/, examples/, a corpus) starts nothing for whoever installs the component."""
+    paths: list[str] = []
+    for f in index.files:
+        if not (is_instruction_path(f.relpath) or _INSTRUCTION_FILE.search(f.relpath)):
+            continue
+        if _is_fixture_file(f.relpath):
+            continue
+        folder = posixpath.dirname(f.relpath)
+        for m in _INSTRUCTION_RUN.finditer(f.text):
+            word = m.group(1)
+            variable = _LAUNCH_ROOT_VARIABLE.match(word)
+            word = word[variable.end():] if variable else word
+            for start in {folder, ""}:
+                rel = posixpath.normpath(posixpath.join(start, word))
+                if not rel.startswith("..") and rel not in paths:
+                    paths.append(rel)
+            if len(paths) >= _MAX_INSTRUCTION_RUNS:
+                return paths
+    return paths
 
 
 def _is_fixture_file(relpath: str) -> bool:

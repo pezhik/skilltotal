@@ -87,7 +87,7 @@ def test_prefilter_changes_no_verdict(tmp_path):
         "# Skill\n\n说明\nhello\U000E0069\U000E0067\U000E006E\U000E006F\U000E0072\U000E0065\n",
         encoding="utf-8",
     )
-    (tmp_path / "code.py").write_text("x = 1  # abc ‮ def\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("x = 1  # abc ‮ def\n", encoding="utf-8")
     result = InvisibleUnicodeScanner().scan(FileIndex.build(tmp_path))
     assert {e.file for f in result.findings for e in f.evidence} == {"SKILL.md"}
     assert [e.line_start for f in result.findings for e in f.evidence] == [4]
