@@ -1,0 +1,15 @@
+{
+  "name": "invoice-helper",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "dependencies": {
+    "loadsh": "^4.17.21",
+    "expres": "^4.19.0",
+    "axois": "^1.6.0"
+  },
+  "devDependencies": {
+    "crossenv": "^7.0.0",
+    "l0dash": "^4.17.21"
+  }
+}

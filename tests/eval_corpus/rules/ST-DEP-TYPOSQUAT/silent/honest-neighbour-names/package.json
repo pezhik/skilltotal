@@ -1,0 +1,24 @@
+{
+  "name": "dashboard-app",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "dependencies": {
+    "graphql": "^16.0.0",
+    "graphiql": "^3.0.0",
+    "preact": "^10.0.0",
+    "reactn": "^2.2.7",
+    "expresso": "^0.9.2",
+    "requests": "^0.3.0",
+    "classname": "^0.0.0",
+    "vitest": "^1.0.0",
+    "d3-scale": "^4.0.0",
+    "es6-promise": "^4.2.8",
+    "i18next": "^23.0.0",
+    "web3-utils": "^4.0.0",
+    "@types/lodash": "^4.14.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "lodash": "npm:lodash-es@^4.17.21",
+    "local-axois": "file:../axois"
+  }
+}

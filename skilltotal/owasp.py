@@ -106,6 +106,7 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-DEP-FOREIGN-SOURCE": ("AST02",),
     "ST-NPM-BIN-SHADOW": ("AST02",),
     "ST-DEP-REGISTRY-LOOKALIKE": ("AST02",),
+    "ST-DEP-TYPOSQUAT": ("AST02",),
     "ST-DISGUISED-SCRIPT": ("AST02",),
     "ST-AGENT-ENV-INJECT": ("AST02",),
     "ST-ARTIFACT-FOREIGN-IMAGE": ("AST02",),

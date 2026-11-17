@@ -1,0 +1,7 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+reqeusts==2.31.0
+urlib3==2.2.1
+requ3sts>=2
+colourama==0.4.6
+python-dotnev==1.0.0
+nurnpy==1.26.0

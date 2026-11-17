@@ -1,0 +1,12 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+requests==2.31.0
+pedantic==2.1.0
+scapy==2.5.0
+ptest==2.0.3
+pandasql==0.7.3
+h5py==3.10.0
+py2neo==2021.2.4
+urllib3>=2
+-r other.txt
+-e ./vendor/reqeusts
+python_dotenv==1.0.0
