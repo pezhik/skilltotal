@@ -1,9 +1,9 @@
 {
-  "engine_version": "1.4.0",
-  "ruleset_version": 103,
-  "python_version": "3.14",
-  "positives": 350,
-  "negatives": 264,
+  "engine_version": "1.5.0",
+  "ruleset_version": 104,
+  "python_version": "3.11",
+  "positives": 352,
+  "negatives": 268,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -45,6 +45,7 @@
     "github-action-secret-exfil": 1.0,
     "gyp-command-substitution": 1.0,
     "hidden-unicode": 1.0,
+    "init-remote-archive-loader": 1.0,
     "install-dropper": 1.0,
     "js-shell-polyglot-preinstall": 1.0,
     "known-trojanized-image": 1.0,
@@ -74,6 +75,7 @@
     "pth-persistence": 1.0,
     "scriptlet-host": 1.0,
     "setup-detached-fetch": 1.0,
+    "setup-host-beacon": 1.0,
     "shell-decode-exec": 1.0,
     "shell-hidden-command": 1.0,
     "skill-dynamic-exec": 1.0,
@@ -92,16 +94,16 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 52,
+      "node": 53,
       "manifest/text": 43,
-      "python": 53,
+      "python": 52,
       "shell": 27
     },
     "AST02": {
       "manifest/text": 41,
-      "shell": 8,
-      "node": 32,
-      "python": 10
+      "shell": 7,
+      "node": 33,
+      "python": 12
     },
     "AST03": {
       "node": 2
@@ -631,8 +633,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 8,
-      "benign_samples": 5,
+      "malicious_samples": 9,
+      "benign_samples": 7,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -1130,6 +1132,18 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-PY-INIT-REMOTE-ARCHIVE-LOADER": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-PY-MAIN-FILE-HARVEST": {
       "owasp": [
         "AST01"
@@ -1154,6 +1168,18 @@
       "stayed_silent": 0
     },
     "ST-PY-SETUP-DETACHED-FETCH": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-SETUP-HOST-BEACON": {
       "owasp": [
         "AST01",
         "AST02"

@@ -4,6 +4,20 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 104 (engine 1.5.0)
+
+Two new rules for Python packages that act at install or object-construction time.
+- `ST-PY-SETUP-HOST-BEACON` (new, high, malicious indicator): `setup.py` overrides an install
+  command class, reads the account or host name (`getpass.getuser`, `socket.gethostname`,
+  `platform.node`) and makes an outbound request in the same file. An install override that only
+  copies files, or a plain `setup()` without an override, is not reported.
+- `ST-PY-INIT-REMOTE-ARCHIVE-LOADER` (new, high, malicious indicator): a module with an
+  `__init__` or `model_post_init` method downloads a repository archive from a code host, unpacks
+  it and imports or starts the unpacked code. A download that is only unpacked, or an installer
+  function that is not a constructor, is not reported.
+- Limits: both rules read one file; a payload split across files, or a request built from names
+  stored elsewhere, is not joined.
+
 ## ruleset 103 (engine 1.4.0)
 
 Four new rules, and the existing rules read commands that a file decodes or spells indirectly,

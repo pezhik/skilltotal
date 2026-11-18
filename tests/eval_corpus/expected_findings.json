@@ -380,6 +380,12 @@
  ],
  "negative/AST02/gyp-command-substitution/gyp-action-own-build-tool": [],
  "negative/AST02/gyp-command-substitution/node-addon-include": [],
+ "negative/AST02/init-remote-archive-loader/dataset-downloader-no-run": [
+  "ST-NET-PY"
+ ],
+ "negative/AST02/init-remote-archive-loader/installer-function-not-constructor": [
+  "ST-NET-PY"
+ ],
  "negative/AST02/install-dropper/npm-normal-build": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE"
@@ -505,6 +511,14 @@
   "ST-SHELL-PY"
  ],
  "negative/AST02/setup-detached-fetch/usage-text-shows-download-and-run": [],
+ "negative/AST02/setup-host-beacon/fetch-without-install-override": [
+  "ST-INSTALL-PY",
+  "ST-NET-PY"
+ ],
+ "negative/AST02/setup-host-beacon/install-copies-data": [
+  "ST-FS-PY-WRITE",
+  "ST-INSTALL-PY"
+ ],
  "negative/AST02/skill-fetch-exec/honest-tool-install": [
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
@@ -1624,6 +1638,10 @@
   "ST-SHELL-NODE",
   "ST-SHELL-PIPE-EXEC-NODE"
  ],
+ "positive/AST02/init-remote-archive-loader/model-init-fetch-unpack": [
+  "ST-NET-PY",
+  "ST-PY-INIT-REMOTE-ARCHIVE-LOADER"
+ ],
  "positive/AST02/install-dropper/npm-postinstall-decode-exec": [
   "ST-DYN-NODE",
   "ST-INSTALL-DROPPER",
@@ -1883,6 +1901,11 @@
   "ST-INSTALL-PY",
   "ST-PY-SETUP-DETACHED-FETCH",
   "ST-SHELL-PY"
+ ],
+ "positive/AST02/setup-host-beacon/install-override-fingerprint": [
+  "ST-INSTALL-PY",
+  "ST-NET-PY",
+  "ST-PY-SETUP-HOST-BEACON"
  ],
  "positive/AST02/skill-fetch-exec/blank-line-wall-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"

@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.5.0]
+
+### Added
+- Ruleset 104 adds `ST-PY-SETUP-HOST-BEACON` and `ST-PY-INIT-REMOTE-ARCHIVE-LOADER`; see
+  `RULES_CHANGELOG.md`.
+
 ## [1.4.0]
 
 ### Added
