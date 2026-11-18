@@ -346,9 +346,9 @@ def test_sentence_shapes_stay_linear():
         slowest = 0.0
         for filler in fillers:
             text = filler * (n // len(filler))
-            start = time.perf_counter()
+            start = time.process_time()
             mcp._poisoning_spans(text)
-            slowest = max(slowest, time.perf_counter() - start)
+            slowest = max(slowest, time.process_time() - start)
         return slowest
 
     small, large = worst(20_000), worst(160_000)

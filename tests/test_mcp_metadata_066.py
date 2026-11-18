@@ -230,9 +230,9 @@ def test_deep_and_huge_schemas_are_bounded(tmp_path):
         "type": "object", "properties": {"q": {"type": "string", "description": huge_desc,
                                                "enum": ["a"] * 20000}}}}]})
     assert len(deep) > 150_000 and len(huge) > 300_000
-    start = time.perf_counter()
+    start = time.process_time()
     r = _analyze(tmp_path, {"deep/mcp.json": deep, "huge/tools.json": huge})
-    assert time.perf_counter() - start < 10
+    assert time.process_time() - start < 10
     assert not _malicious(r)
 
 

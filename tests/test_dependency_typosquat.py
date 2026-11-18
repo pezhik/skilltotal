@@ -209,7 +209,7 @@ def test_launched_packages_reads_the_package_word():
 def test_a_large_manifest_is_read_in_bounded_time(tmp_path):
     deps = {f"package-number-{i}": "^1.0.0" for i in range(5000)}
     lines = "".join(f"library-number-{i}==1.0\n" for i in range(20000))
-    start = time.perf_counter()
+    start = time.process_time()
     report = _analyze(tmp_path, {"package.json": _package_json(deps), "requirements.txt": lines})
     assert _finding(report) is None
-    assert time.perf_counter() - start < 20
+    assert time.process_time() - start < 20

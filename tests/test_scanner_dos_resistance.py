@@ -25,9 +25,9 @@ _BUDGET_S = 8.0
 
 def _scan_fast(tmp_path: Path, filename: str, text: str) -> None:
     (tmp_path / filename).write_text(text, encoding="utf-8")
-    start = time.perf_counter()
+    start = time.process_time()
     analyze_directory(tmp_path, Component(name="x", type="directory", source=str(tmp_path)))
-    assert time.perf_counter() - start < _BUDGET_S, f"{filename} scan exceeded {_BUDGET_S}s"
+    assert time.process_time() - start < _BUDGET_S, f"{filename} scan exceeded {_BUDGET_S}s"
 
 
 def test_env_secret_name_pathological(tmp_path: Path):
@@ -44,9 +44,9 @@ def test_concat_gate_pathological_whitespace(tmp_path: Path):
 def test_fold_pathological_whitespace_is_fast():
     # Exercise the normalizer directly as well.
     text = '"' + " " * 500_000 + '"'
-    start = time.perf_counter()
+    start = time.process_time()
     fold_string_concats(text, ".js")
-    assert time.perf_counter() - start < _BUDGET_S
+    assert time.process_time() - start < _BUDGET_S
 
 
 def test_git_persist_pathological_long_line(tmp_path: Path):

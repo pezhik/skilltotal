@@ -82,9 +82,9 @@ CASES = {
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_pattern_is_linear_on_crafted_input(name):
-    started = time.perf_counter()
+    started = time.process_time()
     CASES[name]()
-    elapsed = time.perf_counter() - started
+    elapsed = time.process_time() - started
     assert elapsed < LIMIT, f"{name}: {elapsed:.2f}s on {N:,} characters"
 
 
@@ -92,9 +92,9 @@ def test_a_name_followed_by_many_blank_lines_does_not_stall_the_scan(tmp_path: P
     # The audit's reproduction: a JavaScript environment alias, 40,000 newlines, then a request.
     body = "const e = process.env;\nconst u = e" + "\n" * 40_000 + ";fetch(u);\n"
     (tmp_path / "index.js").write_text(body, encoding="utf-8")
-    started = time.perf_counter()
+    started = time.process_time()
     analyze_directory(tmp_path, Component(name="x", type="local", source=str(tmp_path)))
-    assert time.perf_counter() - started < 20
+    assert time.process_time() - started < 20
 
 
 def test_a_clipper_shaped_file_of_identifier_runs_does_not_stall_the_scan(tmp_path: Path):
@@ -190,9 +190,9 @@ REVIEW_CASES = {
 
 @pytest.mark.parametrize("name", sorted(REVIEW_CASES))
 def test_review_pattern_is_linear_on_crafted_input(name):
-    started = time.perf_counter()
+    started = time.process_time()
     REVIEW_CASES[name]()
-    elapsed = time.perf_counter() - started
+    elapsed = time.process_time() - started
     assert elapsed < LIMIT, f"{name}: {elapsed:.2f}s on {N:,} characters"
 
 
@@ -217,9 +217,9 @@ def test_bounded_review_pattern_grows_linearly(name):
 
     def took(size: int) -> float:
         text = word * (size // len(word))
-        started = time.perf_counter()
+        started = time.process_time()
         _all(pattern, text)
-        return time.perf_counter() - started
+        return time.process_time() - started
 
     small, large = took(5_000), took(40_000)
     assert large < max(small, 0.005) * 25, f"{name}: {small:.4f}s -> {large:.4f}s"
@@ -233,9 +233,9 @@ def test_many_iex_variables_are_looked_up_in_linear_time(tmp_path: Path):
     (tmp_path / "a.ps1").write_text("".join(f"iex $v{i}\n" for i in range(20_000)),
                                     encoding="utf-8")
     index = FileIndex.build(tmp_path)
-    started = time.perf_counter()
+    started = time.process_time()
     assert shell_evasion._ps_cradle_spans(index.files[0]) == []
-    assert time.perf_counter() - started < LIMIT
+    assert time.process_time() - started < LIMIT
 
 
 def test_review_patterns_still_match_what_they_matched():

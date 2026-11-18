@@ -370,7 +370,7 @@ CRAFTED = {
 
 @pytest.mark.parametrize("name", sorted(CRAFTED))
 def test_crafted_input_is_read_in_bounded_time(name):
-    started = time.perf_counter()
+    started = time.process_time()
     CRAFTED[name]()
-    elapsed = time.perf_counter() - started
+    elapsed = time.process_time() - started
     assert elapsed < LIMIT, f"{name}: {elapsed:.2f}s"

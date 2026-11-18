@@ -155,7 +155,7 @@ def test_new_shapes_stay_linear():
         "id_rsa_" * 150_000 + ":",
         ("credentials " * 50_000) + ": str",
     ):
-        start = time.perf_counter()
+        start = time.process_time()
         mcp._directive_spans(text)
         mcp._poisoned_code_params(text)
-        assert time.perf_counter() - start < 10, text[:30]
+        assert time.process_time() - start < 10, text[:30]

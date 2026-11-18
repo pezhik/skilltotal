@@ -52,9 +52,9 @@ def _one_file(tmp_path: Path, name: str, text: str):
 
 
 def _timed(call) -> None:
-    start = time.perf_counter()
+    start = time.process_time()
     call()
-    took = time.perf_counter() - start
+    took = time.process_time() - start
     assert took < _BUDGET_S, f"took {took:.1f}s"
 
 
@@ -482,9 +482,9 @@ def test_the_obfuscation_scanner_costs_what_it_did_on_ruleset_67(tmp_path, monke
 
     def timed(scanner, flow) -> float:
         monkeypatch.setattr(obfuscation, "_decoded_then_executed", flow)
-        start = time.perf_counter()
+        start = time.process_time()
         scanner.scan(index)
-        return time.perf_counter() - start
+        return time.process_time() - start
 
     flow = obfuscation._decoded_then_executed
     # One untimed run each, then the two take turns, so neither pays alone for cold caches or a

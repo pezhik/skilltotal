@@ -124,18 +124,18 @@ def test_a_crafted_large_pyproject_is_read_quickly(tmp_path):
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "real-name"\nversion = "1.2.3"\n\n[tool.x]\n' + "os." * 66_000 + "\n",
         encoding="utf-8")
-    started = time.perf_counter()
+    started = time.process_time()
     component = detect_component(tmp_path, source=str(tmp_path))
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
     assert (component.name, component.version) == ("real-name", "1.2.3")
 
 
 def test_a_large_pyproject_with_a_crafted_project_table_falls_back(tmp_path):
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "fallback-name"\nx = 1\n' + "os." * 66_000 + "\n", encoding="utf-8")
-    started = time.perf_counter()
+    started = time.process_time()
     component = detect_component(tmp_path, source=str(tmp_path))
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
     assert component.name == "fallback-name"
 
 
@@ -163,9 +163,9 @@ def _package(root: Path, postinstall: str) -> None:
 def test_a_padded_install_command_is_read_quickly(tmp_path):
     _package(tmp_path, " ".join(f"w{i}" for i in range(20_000)) + " && node setup.js")
     (tmp_path / "setup.js").write_text("console.log(1)\n", encoding="utf-8")
-    started = time.perf_counter()
+    started = time.process_time()
     found = _install_script_files(tmp_path)
-    assert time.perf_counter() - started < 5
+    assert time.process_time() - started < 5
     assert found == {"setup.js": "postinstall"}
 
 

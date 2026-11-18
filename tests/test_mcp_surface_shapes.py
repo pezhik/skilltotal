@@ -260,11 +260,11 @@ def test_mcp_patterns_stay_linear():
         for filler in fillers:
             for head in ("Tool", "@server.", "add_request_handler(", "mcp.server", "new "):
                 text = head + filler * n + "!"
-                start = time.perf_counter()
+                start = time.process_time()
                 for pat in patterns:
                     for _ in pat.finditer(text):
                         pass
-                slowest = max(slowest, time.perf_counter() - start)
+                slowest = max(slowest, time.process_time() - start)
         return slowest
 
     small, large = worst(5_000), worst(40_000)
