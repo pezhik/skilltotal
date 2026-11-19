@@ -4,6 +4,25 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.6.0]
+
+### Added
+- Ruleset 105 adds one rule and widens four. Each change is described in `RULES_CHANGELOG.md`.
+- `ST-NODE-FETCH-EXEC`: a JavaScript file requests a URL and runs the response as code through
+  `eval`, the `Function` constructor or the `vm` module, including when the call is written
+  indirectly (`(0, eval)(t)`, `globalThis[k](t)`, a renamed `eval`).
+
+### Changed
+- `ST-SHELL-PIPE-EXEC-NODE` reports a fetched response used as the `child_process` command, and
+  reads `require("child_" + "process")` and `cp["ex" + "ec"]`.
+- `ST-SHELL-PIPE-EXEC-PY` reports a Python file that saves a download and then runs that file.
+  `ST-PY-FETCH-EXEC` reports the saved file read back into `exec`, a download saved under a
+  hidden name and started with its output discarded, and `exec` of a response returned by another
+  module of the component.
+- `ST-DYN-NODE` reads indirect `eval` forms and `vm.Script`, `vm.runInContext` and
+  `vm.compileFunction`.
+- Detection benchmark corpus: 359 malicious and 273 benign samples.
+
 ## [1.5.0]
 
 ### Added

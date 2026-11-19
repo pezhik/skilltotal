@@ -4,6 +4,37 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 105 (engine 1.6.0)
+
+One new rule, and four existing rules follow code that downloads something and runs it in more
+than one step.
+- `ST-NODE-FETCH-EXEC` (new, high, malicious indicator): a JavaScript file requests a URL
+  (`fetch`, `http.get` / `https.get`, axios, got, undici) and the response reaches a call that
+  runs text as code: `eval`, the `Function` constructor or the `vm` module. The call may be
+  written indirectly: `(0, eval)(t)`, `globalThis["ev" + "al"](t)`, `g[k](t)` where the file binds
+  `g` to the global object and `k` to the name, or a name bound to `eval`. The response is
+  followed through a promise chain, the callbacks of the request, assignments and a function
+  parameter. A request and an `eval` that only share a file are not linked, and `eval`, `Function`
+  or `vm` on a local template or config is not reported by this rule.
+- `ST-SHELL-PIPE-EXEC-NODE` (changed) reports a fetched response passed as the command of
+  `exec` / `execSync`, including through a renamed or promisified `exec`. It reads a module name and a
+  method name written in pieces (`require("child_" + "process")`, `cp["ex" + "ec"]`). It stays a
+  risky construct, like a direct `curl | sh`. A value from a response placed inside a longer
+  command line (a version number in `npm install tool@${v}`) is not reported by this rule.
+- `ST-SHELL-PIPE-EXEC-PY` (changed) reports a Python file that saves a download to a path and
+  then runs that same path: `subprocess` or `os.system`, `runpy.run_path`, or `importlib`
+  loading from the path. It stays a risky construct, because installers and updaters do this.
+- `ST-PY-FETCH-EXEC` (changed) reports three more shapes: the saved download read back and passed
+  to `exec`; a download saved under a hidden name and started with its output discarded; and
+  `exec` of a network response that a function in another module of the component returns
+  (followed up to three modules deep).
+- `ST-DYN-NODE` (changed, capability) reads `(0, eval)(x)`, `eval` looked up on the global object,
+  a name bound to `eval`, and `vm.Script`, `vm.runInContext` and `vm.compileFunction`, the same
+  way it reads a direct `eval`.
+- Limits: the JavaScript flow is read inside one file and within a bounded distance of the
+  request. `XMLHttpRequest`, superagent and needle are not read as requests. The Python
+  save-then-run pair is matched by the same literal path or name in one file.
+
 ## ruleset 104 (engine 1.5.0)
 
 Two new rules for Python packages that act at install or object-construction time.

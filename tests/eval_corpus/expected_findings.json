@@ -299,8 +299,33 @@
   "ST-FS-PY-READ",
   "ST-NET-PY"
  ],
+ "negative/AST01/url-exec-loader/node-template-engine-local": [
+  "ST-DYN-NODE",
+  "ST-FS-NODE-READ",
+  "ST-NET-NODE"
+ ],
+ "negative/AST01/url-exec-loader/node-vm-local-config": [
+  "ST-DYN-NODE",
+  "ST-FS-NODE-READ",
+  "ST-NET-NODE"
+ ],
  "negative/AST01/url-exec-loader/python-builtins-print-fetch": [
   "ST-NET-PY"
+ ],
+ "negative/AST01/url-exec-loader/python-crossfile-local-snippet": [
+  "ST-DYN-PY",
+  "ST-FS-PY-READ",
+  "ST-NET-PY"
+ ],
+ "negative/AST01/url-exec-loader/python-local-plugin-loader": [
+  "ST-FS-PY-READ",
+  "ST-NET-PY"
+ ],
+ "negative/AST01/url-exec-loader/python-updater-verifies-checksum": [
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SHELL-PIPE-EXEC-PY",
+  "ST-SHELL-PY"
  ],
  "negative/AST01/wallet-key-exfil/local-signer": [
   "ST-SECRET-ENV"
@@ -945,7 +970,10 @@
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-evasion-indirect-eval": [
+  "ST-CONVERGENCE",
+  "ST-DYN-NODE",
   "ST-NET-NODE",
+  "ST-NODE-FETCH-EXEC",
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-fromcharcode": [
@@ -956,6 +984,7 @@
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-global-eval-alias": [
+  "ST-DYN-NODE",
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-hex-function": [
@@ -967,6 +996,7 @@
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-vm-script-inline": [
+  "ST-DYN-NODE",
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/python-alias-sink": [
@@ -1481,11 +1511,50 @@
   "ST-PY-STDLIB-SHADOW",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/url-exec-loader/node-fetch-indirect-eval": [
+  "ST-DYN-NODE",
+  "ST-NET-NODE",
+  "ST-NODE-FETCH-EXEC"
+ ],
+ "positive/AST01/url-exec-loader/node-fetch-renamed-eval": [
+  "ST-DYN-NODE",
+  "ST-NET-NODE",
+  "ST-NODE-FETCH-EXEC"
+ ],
+ "positive/AST01/url-exec-loader/node-global-index-eval": [
+  "ST-DYN-NODE",
+  "ST-NET-NODE",
+  "ST-NODE-FETCH-EXEC"
+ ],
+ "positive/AST01/url-exec-loader/node-https-vm-run": [
+  "ST-DYN-NODE",
+  "ST-NET-NODE",
+  "ST-NODE-FETCH-EXEC"
+ ],
  "positive/AST01/url-exec-loader/python-builtins-namespace-exec": [
   "ST-DYN-PY",
   "ST-NET-PY",
   "ST-PY-FETCH-EXEC",
   "ST-TAINT-EXEC-PY"
+ ],
+ "positive/AST01/url-exec-loader/python-crossfile-fetch-exec": [
+  "ST-DYN-PY",
+  "ST-NET-PY",
+  "ST-PY-FETCH-EXEC"
+ ],
+ "positive/AST01/url-exec-loader/python-download-file-exec": [
+  "ST-DYN-PY",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-PY-FETCH-EXEC",
+  "ST-SHELL-PIPE-EXEC-PY"
+ ],
+ "positive/AST01/url-exec-loader/python-hidden-download-silent-run": [
+  "ST-FS-PY-WRITE",
+  "ST-NET-PY",
+  "ST-PY-FETCH-EXEC",
+  "ST-SHELL-PIPE-EXEC-PY",
+  "ST-SHELL-PY"
  ],
  "positive/AST01/url-exec-loader/python-urlopen-exec": [
   "ST-DYN-PY",
@@ -1679,6 +1748,7 @@
  "positive/AST02/install-dropper/pep517-in-tree-backend-download-exec": [
   "ST-INSTALL-PY-DOWNLOAD-EXEC",
   "ST-NET-PY",
+  "ST-SHELL-PIPE-EXEC-PY",
   "ST-SHELL-PY"
  ],
  "positive/AST02/install-dropper/python-setup-decode-exec": [
@@ -1775,7 +1845,9 @@
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-js-split-command": [
   "ST-INSTALL-NPM",
-  "ST-INSTALL-NPM-REMOTE-EXEC"
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-SHELL-NODE",
+  "ST-SHELL-PIPE-EXEC-NODE"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-js-starts-shell-payload": [
   "ST-INSTALL-NPM",
@@ -1796,7 +1868,8 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC",
   "ST-NET-NODE",
-  "ST-SHELL-NODE"
+  "ST-SHELL-NODE",
+  "ST-SHELL-PIPE-EXEC-NODE"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-npm-run-chain": [
   "ST-INSTALL-NPM",
