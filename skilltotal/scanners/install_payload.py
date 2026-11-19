@@ -23,6 +23,7 @@ from skilltotal.loaded_code import _module_paths, _python_targets
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
 from skilltotal.scanners.install_scripts import install_run_interpreters, npm_install_commands
+from skilltotal.scanners.py_download_run import download_runs
 
 CATEGORY = "install_time_execution"
 R_MASKED_REGISTRY = "ST-INSTALL-NPM-MASKED-REGISTRY"
@@ -54,53 +55,6 @@ _USER_SERVICE = re.compile(
 )
 _TOKEN_REVOKED = re.compile(r"\b401\b|\brevoked\b|\bBad credentials\b", re.IGNORECASE)
 _TOKEN_WORD = re.compile(r"\btoken\b|\bAuthorization\b", re.IGNORECASE)
-
-_PY_DOWNLOAD = re.compile(
-    r"\burlretrieve\(\s{0,3}[^,\n]{1,200},\s{0,3}"
-    r"(?:([\"'])([^\"'\n]{1,120})\1|([A-Za-z_]\w{0,40}))\s{0,3}\)"
-)
-_PY_EXEC_CALL = r"(?:Popen|run|call|check_call|check_output|system|execv\w{0,2}|spawn\w{0,2})"
-_INTERPRETER_ARG = r"(?:[\"'](?:sudo|sh|bash|python3?|node)[\"'],\s{0,3})?"
-
-
-# A response fetched into a name (`r = requests.get(u)`, `resp = urlopen(u)`, httpx, a urllib3
-# pool), or opened with `with urlopen(u) as r:`.
-_PY_FETCH_INTO = re.compile(
-    r"\b([A-Za-z_]\w{0,40})\s{0,3}=\s{0,3}(?:(?:requests|httpx|session|client)\.(?:get|post|request)"
-    r"|(?:urllib\.request\.|request\.)?urlopen|[\w.]{0,60}PoolManager\(\s{0,3}\)\.request)\s{0,3}\("
-    r"|\bwith\s{1,3}(?:urllib\.request\.)?urlopen\([^\n]{0,300}?\)\s{1,3}as\s{1,3}([A-Za-z_]\w{0,40})"
-)
-# A file opened for writing (`open(path, "wb")`) or written whole (`Path(path).write_bytes(`).
-_PY_WRITE_TARGET = r"(?:([\"'])([^\"'\n]{1,120})\1|([A-Za-z_]\w{0,40}))"
-_PY_OPEN_WRITE = re.compile(
-    rf"\bopen\(\s{{0,3}}{_PY_WRITE_TARGET}\s{{0,3}},\s{{0,3}}[\"'][wax]b?\+?[\"']"
-    rf"|\bPath\(\s{{0,3}}{_PY_WRITE_TARGET}\s{{0,3}}\)\.write_(?:bytes|text)\("
-)
-_PY_WRITE_REACH = 400
-
-
-def _py_downloads(f: IndexedFile) -> list[tuple[int, int, str | None, str | None]]:
-    """``(start, end, literal path, path variable)`` of each file a Python script downloads: an
-    ``urlretrieve`` target, or a file the script writes a fetched response into (the response's
-    own name is written within a few lines of the ``open``)."""
-    text = f.text
-    out = [(m.start(), m.end(), m.group(2), m.group(3)) for m in _PY_DOWNLOAD.finditer(text)]
-    fetched = [(m.group(1) or m.group(2), m.end()) for m in _PY_FETCH_INTO.finditer(text)]
-    if not fetched:
-        return out
-    for w in _PY_OPEN_WRITE.finditer(text):
-        literal = w.group(2) or w.group(5)
-        name = w.group(3) or w.group(6)
-        window = text[w.start():w.end() + _PY_WRITE_REACH]
-        for response, after in fetched:
-            if after > w.start():
-                continue
-            r = re.escape(response)
-            if re.search(rf"(?:\.write(?:_bytes|_text)?|copyfileobj)\(\s{{0,3}}{r}\b", window):
-                out.append((w.start(), w.end(), literal, name))
-                break
-    return out
-
 
 class InstallPayloadScanner(Scanner):
     name = "install_payload"
@@ -235,18 +189,9 @@ class InstallPayloadScanner(Scanner):
 
     @staticmethod
     def _setup_py(f: IndexedFile, out: list[Evidence]) -> None:
-        for start, end, literal, name in _py_downloads(f):
-            if f.in_comment(start) or not (literal or name):
-                continue
-            target = re.escape(literal) if literal else rf"\b{re.escape(name)}\b"
-            call = re.compile(
-                rf"\b{_PY_EXEC_CALL}\(\s{{0,3}}(?:\[\s{{0,3}})?{_INTERPRETER_ARG}[\"']?{target}"
-            )
-            run = call.search(f.text, end)
-            if run and not f.in_comment(run.start()):
-                out.append(f.evidence_for_span(start, end))
-                out.append(f.evidence_for_span(run.start(), run.end()))
-                return
+        for hit in download_runs(f)[:1]:
+            out.append(f.evidence_for_span(*hit.download))
+            out.append(f.evidence_for_span(*hit.run))
 
 
 # `[build-system]` of a pyproject.toml: the backend pip imports to build the package, and the

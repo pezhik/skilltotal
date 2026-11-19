@@ -33,6 +33,7 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     alternation,
 )
+from skilltotal.scanners.node_fetch_exec import fetched_text_sinks
 from skilltotal.scanners.shell_script import REMOTE_EXEC
 from skilltotal.text_normalize import original_span
 
@@ -97,6 +98,45 @@ def _call_prefixes(f: IndexedFile, text: str | None = None) -> list[str]:
     return prefixes
 
 
+def _calls(f: IndexedFile, text: str, names: str) -> str:
+    """The call heads of ``names`` (an alternation of child_process functions) in this file, up to
+    the opening bracket: after one of ``_call_prefixes``, or as a quoted member of the module's
+    alias (`cp["exec"](`, which is how `cp["ex" + "ec"](` reads once its literals are joined)."""
+    prefixes = "|".join(f"(?:{p})" for p in _call_prefixes(f, text))
+    heads = rf"(?:{prefixes}){names}"
+    aliases = _aliases(text) if _IMPORTS_CP.search(text) else []
+    if aliases:
+        receivers = "|".join(re.escape(a) for a in [*aliases, "child_process"])
+        heads += rf"|{_BARE}(?:{receivers})\s*\[\s*['\"`]{names}['\"`]\s*\]"
+    return heads
+
+
+_QUOTED_MEMBER = re.compile(
+    r"\[\s*['\"`](?:exec|execSync|spawn|spawnSync|execFile|execFileSync)['\"`]\s*\]"
+)
+# The names a file gives child_process.exec / execSync: a renamed destructuring or import, the
+# member read off the require, and the promisified function.
+_EXEC_RENAMES = re.compile(
+    rf"\bexec(?:Sync)?\s*:\s*({_IDENT})(?=[^{{}}]{{0,300}}\}}\s*=\s*require\(\s*{_CP}\s*\))"
+    rf"|\bexec(?:Sync)?\s+as\s+({_IDENT})(?=[^{{}}]{{0,300}}\}}\s*from\s*{_CP})"
+    rf"|(?:const|let|var)\s+({_IDENT})\s*=\s*require\(\s*{_CP}\s*\)\s*\.\s*exec(?:Sync)?\b"
+    rf"|(?:const|let|var)\s+({_IDENT})\s*=\s*(?:util\s*\.\s*)?promisify\(\s*"
+    rf"(?:{_IDENT}\s*\.\s*)?exec\s*\)"
+)
+
+
+def _command_sink_heads(f: IndexedFile, text: str) -> str | None:
+    """The calls of ``f`` whose first argument a shell runs as a command line (exec / execSync,
+    under whatever name the file gives them), for node_fetch_exec.fetched_text_sinks."""
+    if not _IMPORTS_CP.search(text) and "child_process." not in text:
+        return None
+    heads = _calls(f, text, r"(?:execSync|exec)")
+    renamed = sorted({n for m in _EXEC_RENAMES.finditer(text) for n in m.groups() if n})
+    if renamed:
+        heads += rf"|{_BARE}(?:" + "|".join(re.escape(n) for n in renamed) + ")"
+    return heads
+
+
 def exec_call_pattern(f: IndexedFile) -> re.Pattern[str]:
     """The process-running call sites in this file: those ST-SHELL-NODE counts, with execFile /
     execFileSync as ST-SHELL-PIPE-EXEC-NODE reads them (imports left out)."""
@@ -159,8 +199,9 @@ PIPE_EXEC_RULE = RuleSpec(
     description=(
         "A child_process call (exec / execSync, or spawn of `sh -c`) is given a command that "
         "downloads code and pipes it into a shell or interpreter, e.g. "
-        "`execSync(\"curl ... | bash\")`. The component runs whatever the host serves at that "
-        "moment, which no review of the component can see."
+        "`execSync(\"curl ... | bash\")`; or exec / execSync is given, as its command, the text "
+        "of a response the same file fetched (fetch, http(s).get, axios, got). The component runs "
+        "whatever the host serves at that moment, which no review of the component can see."
     ),
     recommendation=(
         "Ship the code instead, or download a pinned artifact, verify its checksum, and run that "
@@ -197,19 +238,32 @@ class ShellExecScanner(Scanner):
             plain = f.js_unescaped_or_none()
             if plain is not None:
                 views.append(plain)
+            # And with spliced string literals joined: `require("child_" + "process")`,
+            # `cp["ex" + "ec"](...)`. Only a file that writes the module's name or a function's
+            # name in pieces has more to show there than the views above.
+            joined = f.concat_folded_or_none()
+            if joined is not None and "child_process" in joined[0] and (
+                joined[0].count("child_process") != f.text.count("child_process")
+                or (_QUOTED_MEMBER.search(joined[0]) and not _QUOTED_MEMBER.search(f.text))
+            ):
+                views.append(joined)
+            names_module = "child_process" in f.text or (
+                joined is not None and "child_process" in joined[0]
+            )
             pipe_lines: set[int] = set()
             for text, origin in views:
-                prefixes = "|".join(f"(?:{p})" for p in _call_prefixes(f, text))
-                calls = re.compile(rf"(?:{prefixes}){_CALLS}\s*\(", re.MULTILINE)
+                calls = re.compile(rf"(?:{_calls(f, text, _CALLS)})\s*\(", re.MULTILINE)
+                exec_heads = _calls(f, text, r"exec(?:Sync)?")
                 injections = re.compile(
-                    "|".join(rf"(?:(?:{prefixes})exec(?:Sync)?\s*\({t})"
-                             for t in _INJECTION_TAILS),
+                    "|".join(rf"(?:(?:{exec_heads})\s*\({t})" for t in _INJECTION_TAILS),
                     re.MULTILINE,
                 )
                 _collect(f, text, (_ANYWHERE, calls), shell, seen_shell, origin)
                 _collect(f, text, (injections,), cmdi, seen_cmdi, origin)
                 if len(pipe) < MAX_EVIDENCE_SCANNED and ("curl" in text or "wget" in text):
-                    pipe_calls = re.compile(rf"(?:{prefixes}){_PIPE_CALLS}\s*\(", re.MULTILINE)
+                    pipe_calls = re.compile(
+                        rf"(?:{_calls(f, text, _PIPE_CALLS)})\s*\(", re.MULTILINE
+                    )
                     for m in pipe_calls.finditer(text):
                         end = _call_end(text, m.end())
                         command = " ".join(_string_literals(text, m.end(), end))
@@ -217,6 +271,17 @@ class ShellExecScanner(Scanner):
                             continue
                         ev = f.evidence_for_span(*_span(origin, m.start(), end))
                         if origin is None or ev.line_start not in pipe_lines:
+                            pipe.append(ev)
+                        pipe_lines.add(ev.line_start)
+            # The same download-and-run with the download done by the file itself: the text of a
+            # response it fetched is the command.
+            if names_module and len(pipe) < MAX_EVIDENCE_SCANNED:
+                for request, sink in fetched_text_sinks(
+                    f, _command_sink_heads, whole_argument=True
+                ):
+                    for span in (request, sink):
+                        ev = f.evidence_for_span(*span)
+                        if ev.line_start not in pipe_lines:
                             pipe.append(ev)
                         pipe_lines.add(ev.line_start)
         findings = []
