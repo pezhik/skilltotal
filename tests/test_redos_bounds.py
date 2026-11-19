@@ -215,13 +215,16 @@ def test_bounded_review_pattern_grows_linearly(name):
     (scanner_name, rule_id), word = BOUNDED_CASES[name]
     pattern = _rule_pattern(scanner_name, rule_id)
 
-    def took(size: int) -> float:
+    def took(size: int, rounds: int) -> float:
         text = word * (size // len(word))
         started = time.process_time()
-        _all(pattern, text)
-        return time.process_time() - started
+        for _ in range(rounds):
+            _all(pattern, text)
+        return (time.process_time() - started) / rounds
 
-    small, large = took(5_000), took(40_000)
+    # CPU time ticks in steps of about 16 ms on Windows, where one run of the small input used to
+    # read 0.0000 s: it is run 8 times, which costs as much as the one large run.
+    small, large = took(5_000, 8), took(40_000, 1)
     assert large < max(small, 0.005) * 25, f"{name}: {small:.4f}s -> {large:.4f}s"
 
 
