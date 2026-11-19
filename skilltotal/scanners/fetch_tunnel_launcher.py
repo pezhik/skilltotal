@@ -17,10 +17,13 @@ from __future__ import annotations
 
 import ast
 import json
+import posixpath
 import re
+from collections.abc import Callable
 
 from skilltotal import bounded_json
 from skilltotal.file_index import FileIndex, IndexedFile
+from skilltotal.loaded_code import _module_paths
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.agent_approval import _elsewhere
 from skilltotal.scanners.base import (
@@ -30,9 +33,12 @@ from skilltotal.scanners.base import (
     _finding_from_rule,
     searched_for,
 )
-from skilltotal.scanners.python_ast import _resolve_dotted
+from skilltotal.scanners.node_fetch_exec import NODE_SUFFIXES, code_sink_heads, fetched_text_sinks
+from skilltotal.scanners.py_download_run import RUN_TEXT, download_runs
+from skilltotal.scanners.python_ast import _DOWNLOAD_RUN_REACH, _resolve_dotted
 
 R_PY_FETCH_EXEC = "ST-PY-FETCH-EXEC"
+R_NODE_FETCH_EXEC = "ST-NODE-FETCH-EXEC"
 R_SSH_TUNNEL = "ST-SSH-TUNNEL-BACKDOOR"
 R_LAUNCHER_HIJACK = "ST-AGENT-LAUNCHER-HIJACK"
 
@@ -62,8 +68,12 @@ def _is_fetch_call(node: ast.AST) -> bool:
     return False
 
 
-def _tainted(node: ast.AST, names: set[str]) -> bool:
-    """True if the expression is (derived from) a fetched response."""
+_Remote = Callable[[ast.Call], bool]
+
+
+def _tainted(node: ast.AST, names: set[str], remote: _Remote | None = None) -> bool:
+    """True if the expression is (derived from) a fetched response. ``remote`` says whether a call
+    is to a function of another module of the component that returns one."""
     if isinstance(node, ast.Name):
         return node.id in names
     if _is_fetch_call(node):
@@ -71,34 +81,158 @@ def _tainted(node: ast.AST, names: set[str]) -> bool:
     if isinstance(node, ast.Call):
         fn = node.func
         if isinstance(fn, ast.Attribute) and fn.attr in _BODY_ATTRS | {"encode", "decode"}:
-            return _tainted(fn.value, names)
+            if _tainted(fn.value, names, remote):
+                return True
         if isinstance(fn, ast.Name) and fn.id in ("str", "bytes", "compile", "bytearray"):
-            return any(_tainted(a, names) for a in node.args)
-        return False
+            return any(_tainted(a, names, remote) for a in node.args)
+        return remote is not None and remote(node)
     if isinstance(node, ast.Attribute):
-        return node.attr in _BODY_ATTRS and _tainted(node.value, names)
+        return node.attr in _BODY_ATTRS and _tainted(node.value, names, remote)
     if isinstance(node, ast.Subscript):
-        return _tainted(node.value, names)
+        return _tainted(node.value, names, remote)
     return False
 
 
-def _scope_fetch_exec(scope: ast.AST) -> ast.Call | None:
+def _fetched_flow(
+    scope: ast.AST, remote: _Remote | None, *, returned: bool = False
+) -> ast.AST | None:
+    """The first exec / eval call of ``scope`` that is given a fetched response or, with
+    ``returned``, the first ``return`` of one."""
     names: set[str] = set()
     nodes = sorted(
         (n for n in ast.walk(scope) if hasattr(n, "lineno")),
         key=lambda n: (n.lineno, n.col_offset),
     )
     for node in nodes:
-        if isinstance(node, ast.Assign) and _tainted(node.value, names):
+        if isinstance(node, ast.Assign) and _tainted(node.value, names, remote):
             names.update(t.id for t in node.targets if isinstance(t, ast.Name))
         elif isinstance(node, ast.With):
             for item in node.items:
-                if isinstance(item.optional_vars, ast.Name) and _tainted(item.context_expr, names):
+                if isinstance(item.optional_vars, ast.Name) and _tainted(
+                    item.context_expr, names, remote
+                ):
                     names.add(item.optional_vars.id)
+        elif returned:
+            if isinstance(node, ast.Return) and node.value is not None and _tainted(
+                node.value, names, remote
+            ):
+                return node
         elif isinstance(node, ast.Call) and node.args and _is_runner(node.func) \
-                and _tainted(node.args[0], names):
+                and _tainted(node.args[0], names, remote):
             return node
     return None
+
+
+# --- a fetched response returned by a function of another module of the component -------------
+# `exec(bridge.staged())`, where `bridge.staged` returns `download.payload()` and that returns
+# `requests.get(url).text`: the fetch and the exec are in different files. A call is followed only
+# into a module the file imports that is a file of the component, a few modules deep.
+_MAX_HOPS = 3
+_MAX_MODULE_CHARS = 400_000
+_MAX_MODULES_PARSED = 40
+
+
+class _Modules:
+    """The Python modules of one component, for calls from one of them into another."""
+
+    def __init__(self, index: FileIndex) -> None:
+        self._index = index
+        self._files: dict[str, IndexedFile] | None = None
+        self._trees: dict[str, ast.Module | None] = {}
+        self._imports: dict[str, dict[str, tuple[str, str | None]]] = {}
+        self._returns: dict[tuple[str, str], bool] = {}
+
+    def _file(self, relpath: str) -> IndexedFile | None:
+        if self._files is None:
+            self._files = {f.relpath: f for f in self._index.select(suffixes=_PY_SUFFIXES)}
+        return self._files.get(relpath)
+
+    def tree(self, f: IndexedFile) -> ast.Module | None:
+        if f.relpath not in self._trees:
+            tree = None
+            if len(f.text) <= _MAX_MODULE_CHARS and len(self._trees) < _MAX_MODULES_PARSED:
+                try:
+                    tree = ast.parse(f.text)
+                except (SyntaxError, ValueError, RecursionError, MemoryError):
+                    tree = None
+            self._trees[f.relpath] = tree
+        return self._trees[f.relpath]
+
+    def _module_file(self, bases: list[str], parts: list[str]) -> str | None:
+        for base in bases:
+            for candidate in _module_paths(base, parts):
+                if self._file(candidate) is not None:
+                    return candidate
+        return None
+
+    def _bindings(self, f: IndexedFile) -> dict[str, tuple[str, str | None]]:
+        """Local name -> (module file, function name), or (module file, None) for a name bound
+        to the module itself, for the imports of ``f`` that are files of the component."""
+        if f.relpath in self._imports:
+            return self._imports[f.relpath]
+        bound: dict[str, tuple[str, str | None]] = {}
+        self._imports[f.relpath] = bound
+        tree = self.tree(f)
+        if tree is None:
+            return bound
+        package = posixpath.dirname(f.relpath)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    parts = alias.name.split(".")
+                    if alias.asname is None and len(parts) > 1:
+                        continue
+                    module = self._module_file([package, ""], parts)
+                    if module is not None:
+                        bound[alias.asname or alias.name] = (module, None)
+            elif isinstance(node, ast.ImportFrom):
+                base = package
+                for _ in range(max(node.level - 1, 0)):
+                    base = posixpath.dirname(base)
+                bases = [base] if node.level else [package, ""]
+                parts = node.module.split(".") if node.module else []
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    submodule = self._module_file(bases, [*parts, alias.name])
+                    if submodule is not None:
+                        bound[local] = (submodule, None)
+                        continue
+                    module = self._module_file(bases, parts) if parts else None
+                    if module is not None:
+                        bound[local] = (module, alias.name)
+        return bound
+
+    def returns_fetched(self, f: IndexedFile, call: ast.Call, hops: int = 0) -> bool:
+        """True if ``call`` in ``f`` is to a function of another module of the component that
+        returns a fetched response, itself or through a function of a further module."""
+        fn = call.func
+        target: tuple[str, str | None] | None = None
+        if isinstance(fn, ast.Name):
+            target = self._bindings(f).get(fn.id)
+            if target is not None and target[1] is None:
+                target = None
+        elif isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name):
+            module = self._bindings(f).get(fn.value.id)
+            if module is not None and module[1] is None:
+                target = (module[0], fn.attr)
+        if target is None or target[1] is None or hops >= _MAX_HOPS:
+            return False
+        key = (target[0], target[1])
+        if key not in self._returns:
+            self._returns[key] = False  # a cycle of calls returns nothing fetched
+            defined = self._file(target[0])
+            tree = self.tree(defined) if defined is not None else None
+            for node in tree.body if tree is not None and defined is not None else ():
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                        and node.name == target[1]:
+                    inner = defined
+
+                    def remote(c: ast.Call, inner: IndexedFile = inner) -> bool:
+                        return self.returns_fetched(inner, c, hops + 1)
+
+                    self._returns[key] = _fetched_flow(node, remote, returned=True) is not None
+                    break
+        return self._returns[key]
 
 
 _BUILTINS_ALIASES = {"builtins": "builtins"}
@@ -130,7 +264,7 @@ def _could_run_text(text: str) -> bool:
             or "builtins" in text)
 
 
-def _py_fetch_exec(f: IndexedFile) -> Evidence | None:
+def _py_fetch_exec(f: IndexedFile, modules: _Modules | None = None) -> Evidence | None:
     if not _could_run_text(f.text):
         return None
     try:
@@ -140,9 +274,13 @@ def _py_fetch_exec(f: IndexedFile) -> Evidence | None:
     scopes: list[ast.AST] = [tree] + [
         n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     ]
+    remote: _Remote | None = None
+    if modules is not None:
+        def remote(call: ast.Call) -> bool:
+            return modules.returns_fetched(f, call)
     for scope in scopes:
         try:
-            hit = _scope_fetch_exec(scope)
+            hit = _fetched_flow(scope, remote)
         except RecursionError:
             return None
         if hit is not None:
@@ -261,8 +399,12 @@ class FetchTunnelLauncherScanner(Scanner):
             title="Python execs fetched code",
             description=(
                 "A Python function fetches a response (urlopen, requests, httpx) and passes the "
-                "text it got to exec or eval. What runs is whatever the remote host serves when "
-                "the function is called; it is not in the package for review."
+                "text it got to exec or eval, directly, through a function of another module of "
+                "the component that returns it, or by saving it to a file and reading that file "
+                "back into exec; or the file saves a download under a hidden name (or in a "
+                "temporary folder, detached) and starts it with its output discarded. What runs "
+                "is whatever the remote host serves when the function is called; it is not in "
+                "the package for review."
             ),
             recommendation=(
                 "Ship the code that runs, or download a pinned artifact and verify its checksum "
@@ -270,6 +412,28 @@ class FetchTunnelLauncherScanner(Scanner):
             ),
             capability=Capability.DYNAMIC_CODE_EXECUTION,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
+        RuleSpec(
+            id=R_NODE_FETCH_EXEC,
+            category="dynamic_code",
+            severity=Severity.HIGH,
+            title="Node.js runs fetched code",
+            description=(
+                "A JavaScript file requests a URL (fetch, http(s).get, axios, got) and the "
+                "response reaches a call that runs text as code: eval, the Function constructor "
+                "or the vm module, written out or reached indirectly (`(0, eval)(t)`, "
+                "`globalThis[k](t)`, a renamed eval). What runs is whatever the remote host "
+                "serves when the file is run; it is not in the package for review."
+            ),
+            recommendation=(
+                "Ship the code that runs, or download a pinned artifact and verify its checksum "
+                "before using it. Do not evaluate a response body."
+            ),
+            capability=Capability.DYNAMIC_CODE_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            # The request and the sink are both checked to be code, not text in a string or a
+            # comment; the declaration keeps the engine's own demotion in step.
+            code_context="strings_and_comments_all",
         ),
         RuleSpec(
             id=R_SSH_TUNNEL,
@@ -310,16 +474,41 @@ class FetchTunnelLauncherScanner(Scanner):
 
     def scan(self, index: FileIndex) -> ScanResult:
         found: dict[str, list[Evidence]] = {r.id: [] for r in self.rules}
+        modules = _Modules(index)
+        for f in index.select(suffixes=NODE_SUFFIXES):
+            for request, sink in fetched_text_sinks(f, code_sink_heads):
+                found[R_NODE_FETCH_EXEC] += [
+                    f.evidence_for_span(*span) for span in (request, sink)
+                ]
         for f in index.select(suffixes=_CODE_SUFFIXES):
             if f.suffix in _PY_SUFFIXES:
-                ev = _py_fetch_exec(f)
+                ev = _py_fetch_exec(f, modules)
                 if ev is not None:
                     found[R_PY_FETCH_EXEC].append(ev)
+                for hit in download_runs(f, reach=_DOWNLOAD_RUN_REACH):
+                    if hit.kind == RUN_TEXT or hit.concealed:
+                        found[R_PY_FETCH_EXEC] += [
+                            f.evidence_for_span(*span) for span in (hit.download, hit.run)
+                        ]
             found[R_SSH_TUNNEL].extend(_ssh_tunnel(f))
             if f.suffix in _NODE_SUFFIXES or f.suffix in (".ps1", ".sh", ".bash"):
                 found[R_LAUNCHER_HIJACK].extend(_launcher_hijack(f))
-        findings = [_finding_from_rule(r, found[r.id][:6]) for r in self.rules if found[r.id]]
+        findings = [
+            _finding_from_rule(r, _one_per_line(found[r.id])[:6]) for r in self.rules if found[r.id]
+        ]
         return ScanResult(findings=findings)
+
+
+def _one_per_line(evidence: list[Evidence]) -> list[Evidence]:
+    """A request and the sink it reaches are often on one line: that line is shown once."""
+    seen: set[tuple[str, int, int]] = set()
+    kept: list[Evidence] = []
+    for ev in evidence:
+        key = (ev.file, ev.line_start, ev.line_end)
+        if key not in seen:
+            seen.add(key)
+            kept.append(ev)
+    return kept
 
 
 def platform_fetch_evidence(index: FileIndex) -> list[Evidence]:

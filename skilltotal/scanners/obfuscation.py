@@ -533,11 +533,16 @@ def _expression_names(code: str) -> set[str]:
 @dataclass
 class _DecodeFlow:
     """Where the decoded values of one file go. ``names`` maps a name that holds one to the offset
-    from which it does (-1 for a function, which is hoisted) and the span of its decode."""
+    from which it does (-1 for a function, which is hoisted) and the span of its decode. The same
+    flow follows any other value by where it starts (a network response: see node_fetch_exec).
+    ``reach`` bounds how far past the point a name got the value a read of that name still counts
+    (None: to the end of the file), for callers whose sinks are common in bundled code, where a
+    one-letter name means something else a few thousand characters on."""
 
     text: str
     decodes: list[tuple[int, int]]
     names: dict[str, tuple[int, tuple[int, int]]] = field(default_factory=dict)
+    reach: int | None = None
 
     def __post_init__(self) -> None:
         self.assignments = list(_JS_ASSIGNMENT.finditer(self.text))
@@ -592,7 +597,9 @@ class _DecodeFlow:
 
     def follow(self) -> None:
         """Fill ``names`` from every decode, then from every use of a name that holds one."""
-        queue = [(start, (start, end)) for start, end in self.decodes]
+        self._follow_uses([(start, (start, end)) for start, end in self.decodes])
+
+    def _follow_uses(self, queue: list[tuple[int, tuple[int, int]]]) -> None:
         while queue and len(self.names) < _MAX_FLOW_NAMES:
             offset, origin = queue.pop()
             held = self._holder(offset)
@@ -600,10 +607,29 @@ class _DecodeFlow:
                 continue
             name, since = held
             self.names[name] = (since, origin)
-            uses = re.finditer(rf"(?<![\w$.]){re.escape(name)}(?![\w$])", self.text)
-            for use in islice(uses, _MAX_NAME_USES):
-                if use.start() > since:
-                    queue.append((use.start(), origin))
+            queue.extend((use, origin) for use in self._uses(name, since))
+
+    def _uses(self, name: str, since: int) -> list[int]:
+        """Where ``name`` is read after ``since`` (within ``reach`` of it, when there is one)."""
+        text = self.text
+        stop = len(text)
+        if self.reach is not None and since >= 0:
+            stop = min(stop, since + self.reach)
+        uses = re.compile(rf"(?<![\w$.]){re.escape(name)}(?![\w$])").finditer(
+            text, max(since, 0) if self.reach is not None else 0, stop
+        )
+        return [use.start() for use in islice(uses, _MAX_NAME_USES) if use.start() > since]
+
+    def hold(self, name: str, since: int, origin: tuple[int, int]) -> None:
+        """Record that ``name`` holds the value of ``origin`` from ``since`` on (a binding the
+        assignment pattern does not read, such as a destructuring one), and follow its uses."""
+        if name in self.names or len(self.names) >= _MAX_FLOW_NAMES:
+            return
+        self.names[name] = (since, origin)
+        self._follow_uses([(use, origin) for use in self._uses(name, since)])
+
+    def _in_reach(self, since: int, origin: tuple[int, int], before: int) -> bool:
+        return self.reach is None or before - (since if since >= 0 else origin[0]) <= self.reach
 
     def decoded_in(self, start: int, end: int, before: int) -> tuple[int, int] | None:
         """The decode behind a value read in ``text[start:end]`` by code at offset ``before``."""
@@ -612,16 +638,20 @@ class _DecodeFlow:
             return self.decodes[k]
         for name in _expression_names(self.text[start:end]):
             found = self.names.get(name)
-            if found is not None and found[0] < before:
+            if found is not None and found[0] < before and self._in_reach(*found, before):
                 return found[1]
         return None
 
-    def reaches_launch(self, launch: int, args: int) -> tuple[int, int] | None:
-        """The decode whose value is in the arguments of this launch (they start at ``args``),
-        directly or through a parameter of the function around it: `function run(code) {
-        spawn(..., code) }` called as `run(atob(blob))`."""
+    def reaches_launch(
+        self, launch: int, args: int, close: int | None = None
+    ) -> tuple[int, int] | None:
+        """The decode whose value is in the arguments of this launch (they start at ``args`` and
+        end at ``close``, by default the call's closing bracket), directly or through a parameter
+        of the function around it: `function run(code) { spawn(..., code) }` called as
+        `run(atob(blob))`."""
         text = self.text
-        close = _balanced_end(text, args)
+        if close is None:
+            close = _balanced_end(text, args)
         found = self.decoded_in(args, close, launch)
         if found is not None:
             return found

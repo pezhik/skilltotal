@@ -29,6 +29,7 @@ from skilltotal.scanners.base import (
     aggregated_review,
     alternation,
 )
+from skilltotal.scanners.py_download_run import download_runs
 from skilltotal.scanners.sensitive_paths import (  # reuse the credential-path set
     _STRONG_PATHS,
     is_metadata_without_credentials,
@@ -220,6 +221,9 @@ R_SENS_PY = "ST-SENS-PATH-PY"
 R_PICKLE_REDUCE = "ST-PICKLE-REDUCE"
 # A shell call whose command downloads code and runs it (`os.system("curl … | bash")`).
 R_PIPE_EXEC_PY = "ST-SHELL-PIPE-EXEC-PY"
+# How far after a download the call that runs the saved file is looked for (any Python file; a
+# setup.py is read whole by ST-INSTALL-PY-DOWNLOAD-EXEC).
+_DOWNLOAD_RUN_REACH = 3000
 # The shells an argv list can hand a command string to (`["bash", "-c", "…"]`).
 _SHELL_PROGRAMS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
 
@@ -336,7 +340,10 @@ class PythonAstScanner(Scanner):
                 "A Python shell call (os.system / os.popen, subprocess with shell=True, an "
                 "argv list that runs `sh -c`, or the inline program of an argv list that runs "
                 "`python -c` / `node -e`) is given a command that downloads code and pipes it "
-                "into a shell or interpreter, e.g. `os.system(\"curl ... | bash\")`. The component "
+                "into a shell or interpreter, e.g. `os.system(\"curl ... | bash\")`; or the file "
+                "saves a download (urlretrieve, or a requests / urllib / httpx response written "
+                "to a file) and then runs that same file: starts it as a process, runs it with "
+                "runpy.run_path or loads it as a module from its path. The component "
                 "runs whatever the host serves at that moment, which no review of the component "
                 "can see."
             ),
@@ -648,6 +655,11 @@ class PythonAstScanner(Scanner):
             dynamic_imports.extend((ev.file, ev.line_start) for ev in visitor.dynamic_imports)
             for rid, evidence in taint.hits.items():
                 acc.setdefault(rid, []).extend(evidence)
+            if f.name != "setup.py":
+                for hit in download_runs(f, reach=_DOWNLOAD_RUN_REACH):
+                    acc.setdefault(R_PIPE_EXEC_PY, []).extend(
+                        f.evidence_for_span(*span) for span in (hit.download, hit.run)
+                    )
 
         # One note per heuristic, not one per file or call site (see aggregated_review).
         if unparseable:
