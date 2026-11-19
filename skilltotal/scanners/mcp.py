@@ -16,6 +16,7 @@ import re
 from collections.abc import Callable, Iterator
 from dataclasses import replace
 from itertools import islice
+from urllib.parse import urlsplit
 
 from skilltotal import bounded_json
 from skilltotal.autorun import KIND_MCP_SERVER, _strip_jsonc, autorun_commands
@@ -39,6 +40,7 @@ from skilltotal.scanners.base import (
 from skilltotal.scanners.prompt_surface import _STRONG as _INJECTION
 from skilltotal.scanners.prompt_surface import _is_quoted_citation, is_cued_quotation
 from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
+from skilltotal.scanners.shell_script import DECODE_EXEC_SH, REMOTE_EXEC
 from skilltotal.text_normalize import normalize_with_map, original_span
 
 CATEGORY = "mcp"
@@ -1063,6 +1065,71 @@ def _schema_property_names(schema: object) -> Iterator[str]:
             stack.extend((item, depth + 1) for item in node)
 
 
+# Two things a tool's schema can carry that are not text for the model.
+#
+# A parameter `default` that is a shell command line: `"default": "127.0.0.1; curl URL | bash"`.
+# A handler that puts the parameter into a command line runs it whenever the model leaves the
+# parameter out. A value that ends itself (`;`, `&&`, `|`, `$(`, a backtick) and goes on to
+# download code and run it is the finding; a default that is such a command as a whole, or that
+# continues into a shell or network tool some other way, is a note: a shell tool's own default
+# command (`npm test && npm run lint`, `ps aux | grep node`) is neither.
+#
+# A `$ref` to an address outside the file: the schema, and the descriptions in it, are then
+# whatever that address serves on the day a client resolves it. Clients mostly do not resolve
+# such references and vendors publish schemas this way, so it is a note. A `$ref` inside the
+# document (`#/$defs/x`), a relative one and the json-schema.org meta-schemas are not reported.
+_MAX_DEFAULT = 2000
+_DEFAULT_ENDS_VALUE = re.compile(r"(?:[;&|`\n]|\$\()[ \t]*$")
+_DEFAULT_SHELL_SYNTAX = re.compile(
+    r"(?:[;&|`\n]|\$\()[ \t]*(?:sudo[ \t]+)?(?:curl|wget|nc|ncat|netcat|(?:ba|z|da|k)?sh|"
+    r"powershell|pwsh|python[0-9.]*[ \t]+-c|base64[ \t]+(?:-d|-D|--decode)|eval)(?![\w.-])"
+)
+_REMOTE_REF = re.compile(r"(?i)^\s*(?:https?|ftp|file):")
+_META_SCHEMA_HOSTS = frozenset({"json-schema.org", "www.json-schema.org"})
+DEFAULT_COMMAND_TITLE = "MCP tool parameter default is written as a shell command"
+REMOTE_SCHEMA_TITLE = "MCP tool schema refers to a schema outside the component"
+
+
+def _schema_defaults_and_refs(schema: object) -> Iterator[tuple[str, str]]:
+    """``("default", text)`` for each string ``default`` and ``("ref", address)`` for each
+    ``$ref`` that leaves the document, at any depth (bounded like ``_schema_texts``)."""
+    stack: list[tuple[object, int]] = [(schema, 0)]
+    count = 0
+    while stack and count < _MAX_METADATA_STRINGS:
+        node, depth = stack.pop()
+        if depth > _MAX_SCHEMA_DEPTH:
+            continue
+        if isinstance(node, dict):
+            default, ref = node.get("default"), node.get("$ref")
+            if isinstance(default, str) and 3 <= len(default) <= _MAX_DEFAULT:
+                count += 1
+                yield "default", default
+            if isinstance(ref, str) and len(ref) <= _MAX_DEFAULT and _REMOTE_REF.match(ref):
+                count += 1
+                yield "ref", ref
+            stack.extend((v, depth + 1) for v in node.values() if isinstance(v, (dict, list)))
+        elif isinstance(node, list):
+            stack.extend((item, depth + 1) for item in node)
+
+
+def _default_command(text: str) -> tuple[str, bool] | None:
+    """``(the command part, appended)`` when a parameter default is written as a shell command
+    (see above): ``appended`` is True when the value ends itself and goes on to download code and
+    run it or to decode data and run it."""
+    m = REMOTE_EXEC.search(text) or DECODE_EXEC_SH.search(text)
+    if m is not None:
+        return text[m.start():m.end()], bool(_DEFAULT_ENDS_VALUE.search(text, 0, m.start()))
+    m = _DEFAULT_SHELL_SYNTAX.search(text)
+    return (text[m.start():m.end()], False) if m is not None else None
+
+
+def _is_meta_schema(ref: str) -> bool:
+    try:
+        return (urlsplit(ref.strip()).hostname or "").lower() in _META_SCHEMA_HOSTS
+    except ValueError:
+        return False
+
+
 def _dicts(value: object) -> list[dict]:
     """The dict entries of a manifest list (or of a name-keyed dict)."""
     items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
@@ -1384,6 +1451,27 @@ class McpScanner(Scanner):
             capability=Capability.MCP_TOOLS_DETECTED,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
         ),
+        RuleSpec(
+            id="ST-MCP-DEFAULT-COMMAND",
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="MCP tool parameter default appends a download-and-run command",
+            description=(
+                "The `default` of a parameter in an MCP tool's schema ends its own value (`;`, "
+                "`&&`, `|`, `$(...)` or a backtick) and continues with a command that downloads "
+                "code and runs it or decodes data and runs it, for example "
+                "`\"default\": \"127.0.0.1; curl https://... | bash\"`. A handler that puts the "
+                "parameter into a shell command line runs that command whenever the model "
+                "leaves the parameter out. A default value has no use for a second command. "
+                "Whether this server's handler reaches a shell is not judged here."
+            ),
+            recommendation=(
+                "Do not use this server. Read the tool's handler: a parameter that reaches a "
+                "shell must be passed as an argument, never joined into a command line."
+            ),
+            capability=Capability.MCP_TOOLS_DETECTED,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
@@ -1395,6 +1483,9 @@ class McpScanner(Scanner):
         shadowing: list[Evidence] = []
         auto_approve: list[Evidence] = []
         overbroad_scope: list[Evidence] = []
+        default_commands: list[Evidence] = []
+        # Review-only places: (file, line) of command-like defaults and of remote `$ref`s.
+        schema_notes: tuple[list, list] = ([], [])
         needs_review: list[NeedsReview] = []
         dangerous_categories: set[str] = set()
 
@@ -1423,6 +1514,8 @@ class McpScanner(Scanner):
                     f, data, is_manifest_name, detected, dangerous, server_exec, hidden_exec,
                     poisoning, shadowing, auto_approve, overbroad_scope, dangerous_categories,
                 )
+                if '"default"' in f.text or '"$ref"' in f.text:
+                    _schema_commands_and_refs(f, data, default_commands, *schema_notes)
             except RecursionError as exc:  # a value nested too deep to turn into text
                 if looks_like_manifest:
                     needs_review.append(_unparseable_manifest(f, exc))
@@ -1534,6 +1627,33 @@ class McpScanner(Scanner):
             downloaded.extend((f.relpath, line) for line in remote)
         if swaps:
             findings.append(self._finding("ST-MCP-DESCRIPTION-SWAP", swaps))
+        if default_commands:
+            findings.append(self._finding("ST-MCP-DEFAULT-COMMAND", default_commands))
+        command_like, remote_refs = schema_notes
+        if command_like:
+            needs_review.append(aggregated_review(
+                category=CATEGORY,
+                title=DEFAULT_COMMAND_TITLE,
+                places=command_like,
+                what="parameter default(s) in an MCP tool schema are a shell command or "
+                     "continue into a shell or network tool",
+                advice=(
+                    "A handler that joins the parameter into a command line runs the default "
+                    "when the model leaves the parameter out. Read the default and the handler."
+                ),
+            ))
+        if remote_refs:
+            needs_review.append(aggregated_review(
+                category=CATEGORY,
+                title=REMOTE_SCHEMA_TITLE,
+                places=remote_refs,
+                what="`$ref`(s) in an MCP tool schema point at a web address or a `file:` path",
+                advice=(
+                    "A client that resolves the reference reads the schema, and the "
+                    "descriptions in it, from there: that text is not in the scanned files and "
+                    "can change after review. Prefer a schema written out in the listing."
+                ),
+            ))
         if downloaded:
             needs_review.append(aggregated_review(
                 category=CATEGORY,
@@ -2033,6 +2153,35 @@ def _description_swaps(f: IndexedFile) -> tuple[list[Evidence], list[int]]:
         if len(swaps) >= MAX_EVIDENCE_SCANNED:
             break
     return swaps, remote
+
+
+def _schema_commands_and_refs(
+    f: IndexedFile, data: object, default_commands: list[Evidence],
+    command_like: list[tuple[str, int | None]], remote_refs: list[tuple[str, int | None]],
+) -> None:
+    """Read the tool schemas of an MCP listing ``data`` for parameter defaults written as shell
+    commands and for ``$ref``s that leave the file (see ``_schema_defaults_and_refs``)."""
+    if not is_mcp_listing(data):
+        return
+    for tool in _dicts(data.get("tools")):
+        for key in _SCHEMA_KEYS:
+            for kind, text in _schema_defaults_and_refs(tool.get(key)):
+                if kind == "ref":
+                    if not _is_meta_schema(text) and len(remote_refs) < MAX_EVIDENCE_SCANNED:
+                        ev = _phrase_evidence(f, text, text) or _evidence_for(f, '"$ref"')
+                        remote_refs.append((f.relpath, ev.line_start if ev else None))
+                    continue
+                found = _default_command(text)
+                if found is None:
+                    continue
+                command, appended = found
+                ev = _phrase_evidence(f, command, text) or _evidence_for(f, '"default"')
+                if ev is None:
+                    continue
+                if appended and len(default_commands) < MAX_EVIDENCE_SCANNED:
+                    default_commands.append(ev)
+                elif not appended and len(command_like) < MAX_EVIDENCE_SCANNED:
+                    command_like.append((f.relpath, ev.line_start))
 
 
 def _unparseable_manifest(f: IndexedFile, exc: Exception) -> NeedsReview:

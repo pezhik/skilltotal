@@ -1,0 +1,32 @@
+{
+  "name": "storefront-app",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "dependencies": {
+    "react-17": "npm:react@17.0.2",
+    "lodash": "npm:lodash-es@^4.17.21",
+    "react": "npm:@preact/compat@17.1.2",
+    "react-dom": "npm:preact-compat@3.19.0",
+    "node-fetch": "npm:@acme/node-fetch@2.6.7",
+    "underscore": "npm:lodash@4.17.21",
+    "types-react": "npm:@types/react@18",
+    "string-width-cjs": "npm:string-width@^4.2.0",
+    "eslint-plugin-import": "npm:eslint-plugin-i@2.29.0"
+  },
+  "devDependencies": {
+    "vite": "npm:rolldown-vite@latest",
+    "prettier": "npm:wp-prettier@3.0.3",
+    "typescript": "npm:@typescript/native-preview@7.0.0-dev",
+    "sass": "npm:sass-embedded@^1.80.0"
+  },
+  "overrides": {
+    "esbuild": "npm:esbuild-wasm@0.25.0",
+    "bcrypt": "npm:bcryptjs@^2.4.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "moment": "npm:dayjs@^1.11.0"
+    }
+  }
+}

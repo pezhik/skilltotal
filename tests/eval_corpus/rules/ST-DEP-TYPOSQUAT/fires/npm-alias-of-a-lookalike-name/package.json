@@ -1,0 +1,9 @@
+{
+  "name": "notes-sync",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "dependencies": {
+    "http-client": "npm:axois@1.6.0"
+  }
+}

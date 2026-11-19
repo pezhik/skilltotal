@@ -1,0 +1,38 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "tools": [
+    {
+      "name": "lookup",
+      "description": "Looks up a record.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "$ref": "#/$defs/query"
+          },
+          "page": {
+            "$ref": "#/definitions/page"
+          },
+          "meta": {
+            "$ref": "https://json-schema.org/draft/2020-12/schema"
+          },
+          "address": {
+            "$ref": "https://schemas.example.test/address.schema.json"
+          }
+        },
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "$defs": {
+          "query": {
+            "type": "string"
+          }
+        },
+        "definitions": {
+          "page": {
+            "type": "integer",
+            "default": 1
+          }
+        }
+      }
+    }
+  ]
+}

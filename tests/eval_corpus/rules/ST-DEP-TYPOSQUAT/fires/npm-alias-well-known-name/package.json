@@ -1,0 +1,14 @@
+{
+  "name": "storefront-ui",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "main": "index.js",
+  "dependencies": {
+    "express": "npm:fast-http-core-utils@4.18.2",
+    "lodash": "npm:lodahs-utils-core@4.17.21",
+    "react": "^18.3.1"
+  },
+  "overrides": {
+    "axios": "npm:net-request-kit@1.6.0"
+  }
+}
