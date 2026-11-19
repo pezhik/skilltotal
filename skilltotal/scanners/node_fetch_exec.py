@@ -68,6 +68,11 @@ _GLOBAL_BINDING = re.compile(
     rf"(?:const|let|var)\s+({_IDENT})\s*=\s*(?:{'|'.join(_GLOBAL_OBJECTS)})\s*(?=[;,\n\r])"
 )
 _CODE_NAMES = frozenset({"eval", "Function"})
+# A name bound to eval itself (written out, indirect, or looked up on the global object).
+_EVAL_BINDING = re.compile(
+    rf"(?:const|let|var)\s+({_IDENT})\s*=\s*(?:\(\s*0\s*,\s*eval\s*\)|eval"
+    rf"|(?:{'|'.join(_GLOBAL_OBJECTS)})\s*(?:\.\s*eval|\[\s*['\"`]eval['\"`]\s*\]))\s*(?=[;\n\r])"
+)
 # `owner[key](`: starts with a literal bracket, so the regex engine skips to the few places one
 # can begin; the owner is read off the text in front of it.
 _INDEXED_CALL = re.compile(rf"\[\s*({_IDENT})\s*\]\s*\(")
@@ -98,9 +103,14 @@ def code_sink_heads(f: IndexedFile, text: str) -> str | None:
     return "|".join(f"(?:{h})" for h in (_CODE_SINK, *_named_sink_heads(f, text)))
 
 
-def _named_sink_heads(f: IndexedFile, text: str) -> list[str]:
-    """The sinks of ``f`` that go by a name the file chose: see :func:`code_sink_heads`."""
-    heads = [re.escape(a) for a in _sink_aliases(f, text)]
+def _named_sink_heads(f: IndexedFile, text: str, *, eval_only: bool = False) -> list[str]:
+    """The sinks of ``f`` that go by a name the file chose: see :func:`code_sink_heads`. With
+    ``eval_only`` a name bound to the Function constructor is left out."""
+    aliases = _sink_aliases(f, text)
+    if aliases and eval_only:
+        to_eval = {m.group(1) for m in _EVAL_BINDING.finditer(text)}
+        aliases = [a for a in aliases if a in to_eval]
+    heads = [re.escape(a) for a in aliases]
     if not any(g in text for g in _GLOBAL_OBJECTS):
         return heads
     # A call through an object indexed by a bare name (`g[k](`) is uncommon; only a file that has
@@ -131,8 +141,11 @@ def _named_sink_heads(f: IndexedFile, text: str) -> list[str]:
 
 def _indirect_heads(f: IndexedFile, text: str) -> str:
     """eval reached without an `eval(` token, and the vm runners ST-DYN-NODE's own pattern leaves
-    out. A form is looked for only in a text that holds its fixed word."""
-    heads = _named_sink_heads(f, text)
+    out. A form is looked for only in a text that holds its fixed word. A name bound to the
+    Function constructor is not one of them: `const F = Function` is how a schema compiler or a
+    polyfill reaches it (bundled zod, get-intrinsic), often only to probe with an empty body that
+    ST-DYN-NODE leaves out on purpose; such a name is still a sink for a fetched response."""
+    heads = _named_sink_heads(f, text, eval_only=True)
     if "eval" in text:
         heads.append(r"\(\s*0\s*,\s*eval\s*\)")
         heads.append(rf"(?:{'|'.join(_GLOBAL_OBJECTS)})\s*\[\s*['\"`]eval['\"`]\s*\]")

