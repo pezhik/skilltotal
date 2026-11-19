@@ -13,7 +13,8 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
-  # The hash-pinned tools the release build installs (.github/requirements/build.txt).
+  # The hash-pinned tools the release build, the CI jobs and the release smoke job install
+  # (.github/requirements/build.txt, ci.txt, journeys.txt).
   - package-ecosystem: "pip"
     directory: "/.github/requirements"
     schedule:

@@ -29,8 +29,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          python -m pip install --no-deps --no-build-isolation -e .
       - name: Lint
         run: ruff check .
       - name: Test
@@ -49,8 +49,8 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          python -m pip install --no-deps --no-build-isolation -e .
       - name: Test
         # pytest-xdist, one worker per core: the suite runs about 2.5x faster, and the release
         # gate waits for this job.
@@ -75,11 +75,16 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
+      - name: Install the hash-pinned tools
+        run: python -m pip install --require-hashes -r .github/requirements/ci.txt
+      - name: Newest pip and pipx on the weekly run
+        # The one unpinned install, on purpose: a customer installs with whatever pip and pipx are
+        # current, so the weekly run meets a release of either that breaks the README's install.
+        if: github.event_name == 'schedule'
+        run: python -m pip install --upgrade pip pipx
       - name: Build the wheel and install it with pipx
         run: |
-          python -m pip install --upgrade pip
-          pip install build pytest pre-commit pipx
-          python -m build --wheel --outdir dist .
+          python -m build --wheel --no-isolation --outdir dist .
           python -m pipx install "$(ls dist/*.whl)"
           echo "SKILLTOTAL_JOURNEY_CLI=$(python -m pipx environment --value PIPX_BIN_DIR)/skilltotal" >> "$GITHUB_ENV"
       - name: Pre-commit journey on Linux
@@ -105,8 +110,8 @@ jobs:
           python-version: "3.12"
       - name: Install the engine
         run: |
-          python -m pip install --upgrade pip
-          pip install -e .
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          python -m pip install --no-deps --no-build-isolation -e .
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -139,8 +144,8 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          python -m pip install --require-hashes -r .github/requirements/ci.txt
+          python -m pip install --no-deps --no-build-isolation -e .
       - name: Static security scan (bandit)
         run: bandit -r skilltotal
 
