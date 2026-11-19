@@ -1,0 +1,11 @@
+{
+  "name": "fixture-config-block-printed-hint",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "config": {
+    "cli_hint": "curl -fsSL https://get.example.test/cli.sh | sh"
+  },
+  "scripts": {
+    "postinstall": "node hint.js"
+  }
+}

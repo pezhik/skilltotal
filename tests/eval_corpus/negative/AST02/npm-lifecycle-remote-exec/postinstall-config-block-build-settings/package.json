@@ -1,0 +1,14 @@
+{
+  "name": "fixture-config-block-build-settings",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "config": {
+    "build": "node-gyp rebuild",
+    "port": "8080",
+    "mirror": "https://downloads.example.test/prebuilt"
+  },
+  "scripts": {
+    "postinstall": "$npm_package_config_build",
+    "start": "node server.js --port $npm_package_config_port"
+  }
+}

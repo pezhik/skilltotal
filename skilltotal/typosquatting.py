@@ -261,6 +261,38 @@ def name_lookalike(raw: str, ecosystem: str) -> tuple[str, str] | None:
     return None
 
 
+# --- A well-known name aliased to another package ------------------------------------------------
+# `"express": "npm:<other>@4"` installs <other> under the name `express`: the code and its reviewer
+# read `require("express")` and something else answers. Aliases are honest far more often than not,
+# and the honest ones say what they are: the same package at another version (`react-17:
+# npm:react@17`), a fork under a scope (`npm:@acme/node-fetch`), a build of the same project whose
+# name carries the original's (`lodash-es`, `rolldown-vite`, `wp-prettier`, `preact-compat`), or
+# another well-known package (`underscore` -> `lodash`). What is left is a well-known name that
+# stands for an unscoped package named after something else.
+# Drop-in replacements that do not carry the original's name and are not in the lists above.
+_KNOWN_REPLACEMENTS = frozenset({
+    "inferno-compat", "nervjs", "anujs", "es-toolkit", "undici", "picocolors", "tinyglobby",
+    "zepto", "cash-dom", "luxon", "ky", "got", "bun-types",
+})
+_ALIASED_NAMES = _POPULAR_NPM | frozenset(_DEPENDENCY_ONLY_NPM)
+_NAME_WORD = re.compile(r"[a-z0-9]{3,}")
+
+
+def alias_replaces_known_name(name: str, target: str) -> bool:
+    """Whether the npm alias ``"name": "npm:target@..."`` puts an unrelated package behind a
+    well-known name (see above). ``target`` is the package name without its version."""
+    key, other = _canon_npm(name), _canon_npm(target)
+    if key not in _ALIASED_NAMES or not other or len(other) > _MAX_DEPENDENCY_NAME:
+        return False
+    if other.startswith("@") or other in _NOT_A_SQUAT["npm"] or other in _KNOWN_REPLACEMENTS:
+        return False
+    bare_key, bare_other = _SEPARATORS.sub("", key), _SEPARATORS.sub("", other)
+    if bare_key in bare_other or bare_other in bare_key:
+        return False
+    # A word of the name inside the other name: `react-dom` -> `preact-compat`.
+    return not any(word in bare_other for word in _NAME_WORD.findall(key))
+
+
 def package_name_typosquatting(component: Component, index: FileIndex) -> Finding | None:
     """Synthesize ST-TYPOSQUAT when an npm/PyPI package name closely resembles a popular package."""
     if component.type == "npm_package":

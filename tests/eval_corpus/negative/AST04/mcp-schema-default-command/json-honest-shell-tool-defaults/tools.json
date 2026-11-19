@@ -1,0 +1,46 @@
+{
+  "_fixture": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "tools": [
+    {
+      "name": "run_checks",
+      "description": "Runs the project's checks in a shell and returns the output.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "default": "npm test && npm run lint"
+          },
+          "filter": {
+            "type": "string",
+            "default": "ps aux | grep node"
+          },
+          "flags": {
+            "type": "string",
+            "default": "--format=json"
+          },
+          "pattern": {
+            "type": "string",
+            "description": "Regular expression.",
+            "default": "a|b"
+          },
+          "separator": {
+            "type": "string",
+            "default": ";"
+          },
+          "log": {
+            "type": "string",
+            "default": "$(date +%F).log"
+          },
+          "install": {
+            "type": "string",
+            "description": "Printed in the setup help.",
+            "examples": [
+              "curl -fsSL https://get.example.test/install.sh | sh"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

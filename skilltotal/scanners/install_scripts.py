@@ -8,9 +8,11 @@ call is not, by itself, suspicious).
 
 from __future__ import annotations
 
+import json
 import posixpath
 import re
 from collections.abc import Sequence
+from itertools import islice
 from pathlib import Path
 
 from skilltotal import bounded_json
@@ -210,6 +212,127 @@ def npm_install_commands(
     return out
 
 
+# npm puts the `config` object of package.json into the environment of every script it runs, as
+# `npm_package_config_<key>` (nested keys joined with `_`). An install command that is only
+# `$npm_package_config_cmd`, or install code that runs `process.env.npm_package_config_cmd`, keeps
+# the command text out of the line and the file the install rules read. The value is in the same
+# package.json, so it is looked up there and judged as the command it is.
+_CONFIG_MARK = "npm_package_config_"
+_CONFIG_REF = re.compile(
+    r"\bprocess\s{0,3}\.\s{0,3}env\s{0,3}(?:\.\s{0,3}|\[\s{0,3}['\"`])npm_package_config_(\w{1,100})"
+    r"(?:['\"`]\s{0,3}\])?"
+    r"|\$\{?npm_package_config_(\w{1,100})\}?"
+    r"|%npm_package_config_(\w{1,100})%"
+)
+_MAX_CONFIG_KEYS = 200
+_MAX_CONFIG_DEPTH = 4
+_MAX_CONFIG_VALUE = 4000
+_MAX_CONFIG_REFS = 50
+_NOT_ENV_NAME = re.compile(r"[^A-Za-z0-9_]")
+_JS_PRINTED = re.compile(r"\bconsole\s*\.\s*\w+\s*\([^\n;]{0,300}$")
+
+
+def npm_package_config(f: IndexedFile) -> dict[str, str]:
+    """The string values of the ``config`` object of ``f`` (a package.json), keyed as npm names
+    them in a script's environment after ``npm_package_config_``."""
+    if '"config"' not in f.text:
+        return {}
+    try:
+        data = bounded_json.loads(f.text)
+    except ValueError:
+        return {}
+    config = data.get("config") if isinstance(data, dict) else None
+    out: dict[str, str] = {}
+    stack: list[tuple[str, object, int]] = [("", config, 0)]
+    while stack and len(out) < _MAX_CONFIG_KEYS:
+        prefix, node, depth = stack.pop()
+        if isinstance(node, str):
+            if prefix and len(node) <= _MAX_CONFIG_VALUE:
+                out[prefix] = node
+            continue
+        if depth >= _MAX_CONFIG_DEPTH:
+            continue
+        items = (
+            node.items() if isinstance(node, dict)
+            else enumerate(node) if isinstance(node, list) else ()
+        )
+        for key, value in islice(items, _MAX_CONFIG_KEYS):
+            name = _NOT_ENV_NAME.sub("_", str(key))
+            stack.append((f"{prefix}_{name}" if prefix else name, value, depth + 1))
+    return out
+
+
+def _with_package_config(command: str, config: dict[str, str]) -> str | None:
+    """``command`` with each ``npm_package_config_*`` reference replaced by its value from
+    ``config``: as shell text where the shell expands it, as a string literal where JavaScript
+    reads it. None when the command has no reference that resolves."""
+    resolved = False
+
+    def value(m: re.Match[str]) -> str:
+        nonlocal resolved
+        found = config.get(m.group(1) or m.group(2) or m.group(3))
+        if found is None:
+            return m.group(0)
+        resolved = True
+        return json.dumps(found) if m.group(1) else found
+
+    out = _CONFIG_REF.sub(value, command, count=_MAX_CONFIG_REFS)
+    return out if resolved else None
+
+
+def _config_value_evidence(f: IndexedFile, value: str) -> Evidence | None:
+    """Where package.json ``f`` writes the config ``value`` (None when written with escapes that
+    ``json.dumps`` does not reproduce)."""
+    at = f.text.find(json.dumps(value, ensure_ascii=False))
+    return f.evidence_for_span(at, at + len(value) + 2) if at >= 0 else None
+
+
+def _config_command_evidence(f: IndexedFile, manifest: IndexedFile) -> list[Evidence]:
+    """Evidence for an install-run file ``f`` that reads a ``npm_package_config_*`` variable whose
+    value in ``manifest`` (the package.json it belongs to) downloads code and runs it or decodes
+    data and runs it: the reference, then the value. A reference in a comment or in printed text
+    is not a command."""
+    config = npm_package_config(manifest)
+    if not config:
+        return []
+    shell = f.is_shell_like
+    found: list[Evidence] = []
+    judged: dict[str, bool] = {}
+    for m in islice(_CONFIG_REF.finditer(f.text), _MAX_CONFIG_REFS):
+        key = m.group(1) or m.group(2) or m.group(3)
+        value = config.get(key)
+        if value is None:
+            continue
+        if key not in judged:
+            judged[key] = runs_fetched_or_decoded_code(value)
+        if not judged[key]:
+            continue
+        if shell:
+            if f.in_shell_comment(m.start()) or f.in_printed_command(m.start()):
+                continue
+        elif f.in_c_comment(m.start()) or _JS_PRINTED.search(
+            f.text, f.text.rfind("\n", 0, m.start()) + 1, m.start()
+        ):
+            continue
+        found.append(f.evidence_for_span(m.start(), m.end()))
+        where = _config_value_evidence(manifest, value)
+        if where is not None:
+            found.append(where)
+        break
+    return found
+
+
+def _owning_manifest(relpath: str, manifests: dict[str, IndexedFile]) -> IndexedFile | None:
+    """The package.json of the nearest folder above ``relpath``."""
+    folder = posixpath.dirname(relpath)
+    while True:
+        if folder in manifests:
+            return manifests[folder]
+        if not folder:
+            return None
+        folder = posixpath.dirname(folder)
+
+
 # `sh ./scripts/bootstrap`, `bash -e setup`, `node ./scripts/update.data`: the interpreter an
 # install command starts on a file, whatever the file is named.
 _RUNS_FILE = re.compile(
@@ -344,6 +467,9 @@ class InstallScriptsScanner(PatternScanner):
                 "executes it, for example `curl -fsSL https://... | bash`, "
                 "`curl -o /tmp/p https://... && /tmp/p` or "
                 "`node -e \"eval(Buffer.from(..., 'base64')...)\"`. "
+                "A command the script takes from the package's own `config` block "
+                "(`$npm_package_config_cmd`, `process.env.npm_package_config_cmd`) is read with "
+                "the value written there. "
                 "What runs is whatever the host serves, or the decoded text, on every install; "
                 "neither is in the package for review."
             ),
@@ -421,16 +547,33 @@ class InstallScriptsScanner(PatternScanner):
 
     def scan(self, index: FileIndex) -> ScanResult:
         result = super().scan(index)
-        evidence = [
-            f.evidence_for_span(start, end)
-            for f in index.select(names=("package.json",))
-            for _name, command, start, end in npm_install_commands(f, _NPM_LIFECYCLE_SCRIPTS)
-            if runs_fetched_or_decoded_code(command)
-        ]
+        evidence: list[Evidence] = []
+        manifests: dict[str, IndexedFile] = {}
+        for f in index.select(names=("package.json",)):
+            manifests[posixpath.dirname(f.relpath)] = f
+            for _name, command, start, end in npm_install_commands(f, _NPM_LIFECYCLE_SCRIPTS):
+                if runs_fetched_or_decoded_code(command):
+                    evidence.append(f.evidence_for_span(start, end))
+                elif _CONFIG_MARK in command:
+                    # The command is in the `config` block (see `_CONFIG_REF`).
+                    config = npm_package_config(f)
+                    resolved = _with_package_config(command, config)
+                    if resolved is None or not runs_fetched_or_decoded_code(resolved):
+                        continue
+                    evidence.append(f.evidence_for_span(start, end))
+                    for ref in islice(_CONFIG_REF.finditer(command), _MAX_CONFIG_REFS):
+                        value = config.get(ref.group(1) or ref.group(2) or ref.group(3))
+                        where = _config_value_evidence(f, value) if value else None
+                        if where is not None:
+                            evidence.append(where)
         shell_run, node_run = install_run_interpreters(index)
         for f in index.files:
             if f.relpath not in index.install_scripts:
                 continue
+            if _CONFIG_MARK in f.text:
+                manifest = _owning_manifest(f.relpath, manifests)
+                if manifest is not None:
+                    evidence += _config_command_evidence(f, manifest)
             if f.is_shell_like or f.relpath in shell_run:
                 evidence += _remote_exec_lines(f)
             elif f.suffix in (".js", ".cjs", ".mjs") or f.relpath in node_run:

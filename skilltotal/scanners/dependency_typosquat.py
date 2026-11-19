@@ -9,8 +9,11 @@ to whoever registered the look-alike, and none of it is in the scanned files.
 ``ST-DEP-TYPOSQUAT`` (risky construct) reads the names from:
 
 * ``package.json``: ``dependencies``, ``devDependencies``, ``optionalDependencies`` and
-  ``peerDependencies`` whose value is a registry version (an alias, a path, a URL or a repository
-  is a different source and is not a registry name);
+  ``peerDependencies`` whose value is a registry version (a path, a URL or a repository is a
+  different source and is not a registry name). An alias (``"name": "npm:other@1"``) is read by the
+  package it installs: ``other`` is checked like any name, and a well-known ``name`` that stands
+  for an unrelated package is reported too, also in ``overrides`` / ``resolutions`` /
+  ``pnpm.overrides`` (``typosquatting.alias_replaces_known_name``);
 * ``requirements*.txt`` / ``constraints*.txt`` and the ``dependencies`` / ``requires`` arrays of
   ``pyproject.toml``;
 * the launch command of an MCP server (``skilltotal.autorun``: npx / bunx / ``pnpm dlx``, uvx /
@@ -25,6 +28,7 @@ Lockfiles are not read: they list every transitive name. Nothing is looked up or
 
 from __future__ import annotations
 
+import json
 import re
 from itertools import islice
 
@@ -35,13 +39,18 @@ from skilltotal.models import Evidence, Finding, Severity, ThreatClass
 from skilltotal.scanners.base import MAX_EVIDENCE_SCANNED, RuleSpec, Scanner, ScanResult
 from skilltotal.scanners.mcp_pinning import launched_packages
 from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
-from skilltotal.typosquatting import name_lookalike
+from skilltotal.typosquatting import alias_replaces_known_name, name_lookalike
 
 RULE_ID = "ST-DEP-TYPOSQUAT"
 
 _NPM_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
 # A registry version or range. Anything with a scheme, a path or a slash comes from elsewhere.
 _NOT_REGISTRY_VERSION = re.compile(r"[:/]|^\s*(?:\.|~/)")
+# `npm:<package>@<range>`: the package an alias installs under another name.
+_NPM_ALIAS = re.compile(r"^\s*npm:((?:@[^/@\s]+/)?[^@\s/]+)(?:@|\s*$)")
+# The package an override applies to: `lodash`, `lodash@^4`, `parent>lodash`, `**/lodash`.
+_OVERRIDE_NAME = re.compile(r"(?:^|[>/])((?:@[^/@\s>]+/)?[^@\s/>]+)(?:@[^>/]*)?$")
+_OVERRIDE_SECTIONS = ("overrides", "resolutions")
 _MAX_MANIFESTS = 50
 _MAX_NAMES = 2000
 _REQUIREMENTS_FILE = re.compile(r"^(?:requirements|constraints)[\w.-]*\.(?:txt|in)$", re.IGNORECASE)
@@ -95,14 +104,19 @@ class DependencyTyposquatScanner(Scanner):
                 "install is named like a widely-used package and is not that package: two "
                 "letters swapped, a doubled letter added or dropped, a letter left out of a "
                 "long name, digits or look-alike characters in place of letters, other "
-                "separators, or a scope one character from a well-known one. Installing the "
+                "separators, or a scope one character from a well-known one. An npm alias is "
+                "read the same way (`\"name\": \"npm:other@1\"` installs `other`), and a "
+                "well-known name aliased to an unscoped package that is neither well known nor "
+                "named after it is reported as well: code that imports the familiar name gets "
+                "the other package. Installing the "
                 "component installs that other package, whose code is not part of this scan. "
-                "This flags the resemblance only."
+                "This flags the name only."
             ),
             recommendation=(
                 "Check the name against the package you expect. If it is a typo, the look-alike "
-                "may already be registered by someone else: fix the name before installing. If "
-                "it is a real package you chose, accept the finding."
+                "may already be registered by someone else: fix the name before installing. For "
+                "an alias, look at the package it points to. If it is a real package you chose, "
+                "accept the finding."
             ),
             capability=None,
             threat_class=ThreatClass.RISKY_CONSTRUCT,
@@ -110,16 +124,31 @@ class DependencyTyposquatScanner(Scanner):
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
-        hits: list[tuple[Evidence, str, str, str]] = []  # evidence, name, popular, how
+        hits: list[tuple[Evidence, str]] = []  # evidence, what was found
         seen: set[tuple[str, str]] = set()
 
-        def check(f: IndexedFile, name: str | None, eco: str, start: int, end: int) -> None:
-            if not name or len(hits) >= MAX_EVIDENCE_SCANNED or (eco, name) in seen:
+        def check(f: IndexedFile, name: str | None, eco: str, start: int, end: int,
+                  alias_of: str | None = None) -> None:
+            """``alias_of``: the name an npm alias installs the package ``name`` under."""
+            if not name or len(hits) >= MAX_EVIDENCE_SCANNED:
                 return
-            seen.add((eco, name))
-            found = name_lookalike(name, eco)
-            if found:
-                hits.append((f.evidence_for_span(start, end), name, *found))
+            if (eco, name) not in seen:
+                seen.add((eco, name))
+                found = name_lookalike(name, eco)
+                if found:
+                    hits.append((
+                        f.evidence_for_span(start, end),
+                        f"'{name}' reads as '{found[0]}' ({found[1]})",
+                    ))
+                    return
+            if alias_of and ("alias:" + alias_of, name) not in seen:
+                seen.add(("alias:" + alias_of, name))
+                if alias_replaces_known_name(alias_of, name):
+                    hits.append((
+                        f.evidence_for_span(start, end),
+                        f"'{alias_of}' is an alias of '{name}' (a well-known name for an "
+                        "unrelated package)",
+                    ))
 
         for f in islice(index.select(names=("package.json",)), _MAX_MANIFESTS):
             _package_json(f, check)
@@ -142,14 +171,12 @@ class DependencyTyposquatScanner(Scanner):
         if not hits:
             return ScanResult()
         rule = self.rules[0]
-        shown = "; ".join(
-            f"'{name}' reads as '{popular}' ({how})" for _ev, name, popular, how in hits[:6]
-        )
+        shown = "; ".join(what for _ev, what in hits[:6])
         more = f"; and {len(hits) - 6} more" if len(hits) > 6 else ""
         return ScanResult(findings=[Finding(
             id=rule.id, severity=rule.severity, category=rule.category, title=rule.title,
             description=f"{rule.description} Found: {shown}{more}.",
-            evidence=[ev for ev, *_ in hits],
+            evidence=[ev for ev, _what in hits],
             recommendation=rule.recommendation,
             threat_class=rule.threat_class,
         )])
@@ -172,6 +199,10 @@ def _package_json(f: IndexedFile, check) -> None:
         for name, version in islice(deps.items(), _MAX_NAMES):
             if not isinstance(name, str) or not isinstance(version, str):
                 continue
+            alias = _NPM_ALIAS.match(version)
+            if alias:
+                at = _alias(f, name, name, version, alias.group(1), at, check)
+                continue
             if _NOT_REGISTRY_VERSION.search(version):
                 continue
             # The key as written (a non-ASCII name may be escaped: then anchor the section).
@@ -185,6 +216,41 @@ def _package_json(f: IndexedFile, check) -> None:
                 continue
             at = key
             check(f, name, "npm", key + 1, key + 1 + len(name))
+
+
+    pnpm = data.get("pnpm")
+    blocks = [data.get(section) for section in _OVERRIDE_SECTIONS]
+    blocks.append(pnpm.get("overrides") if isinstance(pnpm, dict) else None)
+    at = 0
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        for key, version in islice(block.items(), _MAX_NAMES):
+            # A nested override (`{"parent": {"child": "npm:..."}}`) is not followed.
+            alias = _NPM_ALIAS.match(version) if isinstance(version, str) else None
+            name = _OVERRIDE_NAME.search(key) if alias and isinstance(key, str) else None
+            if alias and name:
+                at = _alias(f, key, name.group(1), version, alias.group(1), at, check)
+
+
+def _alias(f: IndexedFile, key: str, name: str, version: str, target: str, at: int, check) -> int:
+    """Check the alias ``"key": "npm:target@..."`` (``name`` is the package ``key`` stands for).
+    The evidence is the entry as written, or the key alone when the value is written with
+    escapes. Returns where the entry was found, or ``at``."""
+    entry = re.compile(
+        re.escape(json.dumps(key, ensure_ascii=False)) + r"\s*:\s*"
+        + re.escape(json.dumps(version, ensure_ascii=False))
+    )
+    m = entry.search(f.text, at) or entry.search(f.text)
+    if m is None:
+        start = f.text.find('"' + key + '"')
+        if start < 0:
+            return at
+        end = start + len(key) + 2
+    else:
+        start, end = m.start(), m.end()
+    check(f, target, "npm", start, end, alias_of=name)
+    return start
 
 
 def _requirements(f: IndexedFile, check) -> None:
