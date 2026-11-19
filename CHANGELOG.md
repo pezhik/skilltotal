@@ -4,6 +4,30 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.7.0]
+
+### Added
+- Ruleset 106 adds two rules and widens five. Each change is described in `RULES_CHANGELOG.md`.
+- `ST-LOOKALIKE-HOST`: an address whose host is spelled to read as another host, for example
+  Latin letters mixed with look-alike Cyrillic or Greek letters in one word (also written as
+  punycode). It is read in install commands, manifests, registry settings and MCP server URLs.
+- `ST-MCP-DEFAULT-COMMAND`: the `default` of an MCP tool parameter ends its own value and
+  continues with a command that downloads and runs code.
+- A prose file that an instruction file tells the agent to read and follow ("read
+  `docs/SETUP.md` and follow every step") is scanned as an instruction file under any name and
+  in any folder.
+
+### Changed
+- `ST-DEP-TYPOSQUAT` reads npm aliases (`"name": "npm:other@1"`): the package an alias installs
+  is checked like any dependency name, and a well-known name aliased to an unrelated package is
+  reported.
+- `ST-INSTALL-NPM-REMOTE-EXEC` resolves `npm_package_config_*` from the `config` block of the
+  same `package.json`, in lifecycle scripts and in the files they run.
+- `ST-HIDDEN-ANSI` reports a download-and-run command, an instruction-override phrase or a
+  credential path placed where a terminal does not draw it: in an OSC payload, in text in its
+  own background colour, or in text drawn over after a carriage return or a run of backspaces.
+- Detection benchmark corpus: 378 malicious and 284 benign samples.
+
 ## [1.6.0]
 
 ### Added

@@ -103,7 +103,9 @@ def _script_of(ch: str) -> str:
 def _label_reading(label: str) -> tuple[str, str] | None:
     """``(the ASCII text the label reads as, how it is disguised)``, or None for an honest one."""
     compat = unicodedata.normalize("NFKC", label)
-    if compat != label and compat.isascii():
+    if compat != label and compat.isascii() and any(
+        not c.isascii() and unicodedata.normalize("NFKC", c).isalnum() for c in label
+    ):
         return compat.lower(), "is written in full-width or enclosed letters"
     reading: list[str] = []
     how = ""
@@ -162,6 +164,18 @@ def lookalike_host(host: str) -> tuple[str, str] | None:
     if not reasons:
         return None
     return ".".join(read).lower(), "; ".join(reasons)
+
+
+def _host_text(token: str) -> str:
+    """``token`` up to the first full-width punctuation mark: `（`, `）`, `，`, `：` and the like
+    close or follow an address in CJK prose the way their ASCII forms do, and are no part of it."""
+    for i, ch in enumerate(token):
+        if ch.isascii() or ch in _DOTS:
+            continue
+        plain = unicodedata.normalize("NFKC", ch)
+        if plain.isascii() and not plain.isalnum() and plain not in ".-":
+            return token[:i]
+    return token
 
 
 def _file_kind(f: IndexedFile) -> str:
@@ -250,19 +264,20 @@ def _file_hosts(f: IndexedFile, kind: str) -> dict[str, Evidence]:
         line_start, line_end = f.line_bounds(suspect.start(), suspect.end())
         pos = line_end + 1
         for m in _URL_HOST.finditer(text, line_start, line_end):
-            host = m.group(1)
+            host = _host_text(m.group(1))
+            host_end = m.start(1) + len(host)
             if host in found or (host.isascii() and "xn--" not in host.lower()):
                 continue
             reading = lookalike_host(host)
             if reading is None:
                 continue
-            if "full stop" in reading[1] and text[m.end(1):m.end(1) + 1] not in ("/", ":"):
+            if "full stop" in reading[1] and text[host_end:host_end + 1] not in ("/", ":"):
                 continue  # a sentence that ends after an address, in CJK punctuation
             if kind == "instruction" and not _FETCH_COMMAND.search(text, line_start, m.start()):
                 continue  # an address shown in prose, not one a command is run against
             if kind == "script" and f.in_shell_comment(m.start()):
                 continue
-            ev = f.evidence_for_span(m.start(1), m.end(1))
+            ev = f.evidence_for_span(m.start(1), host_end)
             note = f"  [host {ascii(host)} reads as {reading[0]!r}: it {reading[1]}]"
             found[host] = replace(ev, snippet=ev.snippet[:200] + note)
     return found

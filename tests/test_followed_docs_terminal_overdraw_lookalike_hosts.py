@@ -270,6 +270,11 @@ def test_a_lookalike_host_in_a_command_or_manifest_is_a_malicious_indicator(tmp_
     {"SKILL.md": SKILL_HEAD + "curl -fsSLO https://downloads.example.com" + chr(0x3002)
                  + chr(0x6B21) + "\n"},
     {"install.sh": f"#!/bin/sh\n# not https://dl.g{CYR_I}thub.invalid/tool.tgz\necho ok\n"},
+    # An address in full-width brackets, as a translated interface string writes it.
+    {"locale.json": '{"mcpServers": "MCP", "hint": "Anthropic ' + chr(0xFF08)
+                    + "https://api.example.com" + chr(0xFF09) + chr(0x3002) + '"}\n'},
+    {"SKILL.md": SKILL_HEAD + "curl -fsSLO https://downloads.example.com" + chr(0xFF0C)
+                 + chr(0x6B21) + "\n"},
 ])
 def test_honest_addresses_and_shown_examples_are_not_lookalike_findings(tmp_path, files):
     report = _report(tmp_path, files)

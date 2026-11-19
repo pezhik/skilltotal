@@ -31,6 +31,7 @@ _CORPUS = Path(__file__).parent / "eval_corpus"
 _TECHNIQUE = "AST01/entry-point-path-demotion"
 _POSITIVES = sorted(p for p in (_CORPUS / "positive" / _TECHNIQUE).iterdir() if p.is_dir())
 _NEGATIVES = sorted(p for p in (_CORPUS / "negative" / _TECHNIQUE).iterdir() if p.is_dir())
+_FOLLOWED_DOCS = {"skill-follows-setup-doc", "command-follows-install-notes"}
 
 
 def _report(root: Path):
@@ -49,7 +50,9 @@ def _write(root: Path, files: dict[str, str]) -> Path:
 def test_declared_entry_point_under_demoted_folder_is_scored(sample: Path) -> None:
     report = _report(sample)
     assert report.risk_level.value in ("high", "critical"), sample.name
-    assert "ST-COMBO-EXFIL" in {f.id for f in report.findings}
+    # A prose file the agent is told to follow carries a setup command, not a credential upload.
+    expected = "ST-SKILL-FETCH-EXEC-HIDDEN" if sample.name in _FOLLOWED_DOCS else "ST-COMBO-EXFIL"
+    assert expected in {f.id for f in report.findings}
 
 
 @pytest.mark.parametrize("sample", _NEGATIVES, ids=lambda p: p.name)

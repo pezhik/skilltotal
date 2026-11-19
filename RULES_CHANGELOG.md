@@ -4,6 +4,51 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 106 (engine 1.7.0)
+
+Two new rules. Existing rules now read npm aliases, commands kept in the `config` block of
+`package.json`, text a terminal does not draw, and prose files an instruction file hands to the
+agent.
+- `ST-LOOKALIKE-HOST` (new, high, malicious indicator): an address whose host is spelled to read
+  as another host. The tells are Latin letters mixed with look-alike letters of Cyrillic, Greek,
+  Armenian or Cherokee in one word (also when the host is written as punycode), a well-known name
+  written wholly in such letters, full-width or enclosed letters, and an ideographic full stop in
+  place of a dot. It is read in the command lines of instruction files, manifests, registry
+  settings, lockfiles, requirements files, MCP configs and shell scripts. The evidence shows how
+  the host reads. An internationalized domain in one script is not reported, and neither is a
+  look-alike letter in a host that imitates no known name. A file with more than three such
+  hosts gets a review note.
+- `ST-MCP-DEFAULT-COMMAND` (new, high, malicious indicator): in an MCP tool listing, the
+  `default` of a parameter ends its own value (`;`, `&&`, `|`, `$(`, a backtick) and continues
+  with a command that downloads or decodes code and runs it. A default that is a whole shell
+  command gets a review note, and so does a `$ref` to a web address or a `file:` path. A `$ref`
+  to json-schema.org or to a local definition is not mentioned. Whether the tool passes the
+  value to a shell cannot be read from the listing.
+- `ST-DEP-TYPOSQUAT` (changed) reads npm aliases. The package an alias installs
+  (`"http-client": "npm:axois@1"`) is checked like any dependency name. A well-known name
+  aliased to an unscoped package that is neither well known nor named after the original is
+  reported. The rule reads `dependencies`, `devDependencies`, `optionalDependencies`,
+  `peerDependencies` and flat `overrides`, `resolutions` and `pnpm.overrides`. An alias to a
+  scoped package, to a package named after the original, or to another version of the same
+  package is not reported.
+- `ST-INSTALL-NPM-REMOTE-EXEC` (changed) resolves `npm_package_config_*`. A value from the
+  `config` block of the same `package.json` replaces `$npm_package_config_x`, `${...}`,
+  `%...%` or `process.env.npm_package_config_x` in a lifecycle command, and the resulting
+  command is judged as before. The same holds for a file the install script runs that reads
+  such a key. A `config` block of build settings is not reported.
+- `ST-HIDDEN-ANSI` (changed) reports content a terminal does not draw: the payload of an OSC
+  sequence such as a window title or a link address, text in its own background colour,
+  concealed text, and text drawn over after a carriage return in the middle of a line or after
+  three or more backspaces. It is a finding only when the undrawn part holds a download-and-run
+  command, an instruction-override phrase or a credential path. It is read in agent
+  instructions, MCP tool descriptions and shell scripts. Colour codes, a progress line that
+  rewrites itself and Windows line endings are not reported.
+- Instruction files (changed scope): a prose file that an instruction file tells the agent to
+  read and act on ("read `docs/SETUP.md` and follow every step", "follow the instructions in
+  `notes.txt`") is read by the instruction-file rules under any name and in any folder. The
+  sentence needs a verb of acting (follow, obey, execute, carry out, perform). A file that is
+  only linked for details stays documentation. The reference is followed one step deep.
+
 ## ruleset 105 (engine 1.6.0)
 
 One new rule, and four existing rules follow code that downloads something and runs it in more

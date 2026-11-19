@@ -144,6 +144,7 @@
  "negative/AST01/entry-point-path-demotion/npm-examples-demo-not-entry": [],
  "negative/AST01/entry-point-path-demotion/npm-examples-demo-nothing-loads": [],
  "negative/AST01/entry-point-path-demotion/pyproject-script-tests-not-entry": [],
+ "negative/AST01/entry-point-path-demotion/skill-links-doc-for-details": [],
  "negative/AST01/entry-point-path-demotion/skill-mentions-example-script": [],
  "negative/AST01/entry-point-path-demotion/sphinx-docs-conf": [],
  "negative/AST01/env-dump-exfil/api-client-own-config": [
@@ -181,11 +182,16 @@
  "negative/AST01/hidden-unicode/mcp-listing-escaped-accents-emoji": [
   "ST-MCP-DETECTED"
  ],
+ "negative/AST01/hidden-unicode/mcp-tool-description-line-breaks": [
+  "ST-MCP-DETECTED"
+ ],
  "negative/AST01/hidden-unicode/rtl-and-joiner-scripts": [],
  "negative/AST01/hidden-unicode/rtl-strings-and-control-table": [],
  "negative/AST01/hidden-unicode/sanitizer-strip-list": [],
+ "negative/AST01/hidden-unicode/sh-progress-line-raw-carriage-return": [],
  "negative/AST01/hidden-unicode/single-kind-padding-and-joiners": [],
  "negative/AST01/hidden-unicode/skill-identifier-break-hints": [],
+ "negative/AST01/hidden-unicode/skill-terminal-link-and-status-colours": [],
  "negative/AST01/hidden-unicode/ts-korean-strings": [],
  "negative/AST01/lethal-trifecta/caps-without-injection": [
   "ST-FS-PY-READ",
@@ -384,6 +390,7 @@
  ],
  "negative/AST02/dep-redirect/lockfile-declared-private-registry": [],
  "negative/AST02/dep-redirect/lockfile-public-registry-and-scoped-private": [],
+ "negative/AST02/dep-redirect/npmrc-scoped-idn-registry": [],
  "negative/AST02/dep-redirect/overrides-semver-and-workspace-file": [],
  "negative/AST02/dep-redirect/private-registry-skill": [],
  "negative/AST02/dependency-confusion-beacon/local-dev-loopback": [
@@ -462,6 +469,10 @@
   "ST-INSTALL-NPM",
   "ST-SHELL-PIPE-EXEC"
  ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-config-block-build-settings": [
+  "ST-INSTALL-NPM",
+  "ST-NET-NODE"
+ ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-download-unpack-only": [
   "ST-INSTALL-NPM"
  ],
@@ -475,6 +486,9 @@
   "ST-INSTALL-NPM"
  ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-fetches-json-manifest": [
+  "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-lifecycle-remote-exec/postinstall-js-prints-config-block-hint": [
   "ST-INSTALL-NPM"
  ],
  "negative/AST02/npm-lifecycle-remote-exec/postinstall-js-prints-install-hint": [
@@ -548,6 +562,7 @@
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
  ],
+ "negative/AST02/skill-fetch-exec/idn-host-one-script": [],
  "negative/AST02/skill-fetch-exec/nbsp-pasted-install-command": [
   "ST-SKILL-FETCH-EXEC"
  ],
@@ -555,6 +570,7 @@
   "ST-SKILL-CAP-MISMATCH",
   "ST-SKILL-FETCH-EXEC"
  ],
+ "negative/AST02/skill-fetch-exec/skill-warns-about-lookalike-domains": [],
  "negative/AST02/skill-fetch-exec/styled-note-beside-install": [
   "ST-SKILL-FETCH-EXEC"
  ],
@@ -594,6 +610,13 @@
  "negative/AST04/mcp-oauth-endpoint-injection/clean-discovery": [],
  "negative/AST04/mcp-oauth-endpoint-injection/issuer-filter-param": [],
  "negative/AST04/mcp-sampling-injection/python-benign-summarizer": [
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-schema-default-command/json-honest-shell-tool-defaults": [
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED"
+ ],
+ "negative/AST04/mcp-schema-default-command/json-schema-references": [
   "ST-MCP-DETECTED"
  ],
  "negative/AST04/mcp-tool-poisoning/honest-key-parameter-names": [
@@ -1110,6 +1133,11 @@
  "positive/AST01/encrypted-instructions-decoy-key-env-read/decrypt-env-key-follow": [
   "ST-SKILL-ENCRYPTED-INSTRUCTIONS"
  ],
+ "positive/AST01/entry-point-path-demotion/command-follows-install-notes": [
+  "ST-CONVERGENCE",
+  "ST-PROMPT-INJECTION",
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
  "positive/AST01/entry-point-path-demotion/console-script-imports-tests-module": [
   "ST-COMBO-EXFIL",
   "ST-FS-PY-READ",
@@ -1180,6 +1208,9 @@
   "ST-SHELL-PIPE-EXEC-PY",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/entry-point-path-demotion/skill-follows-setup-doc": [
+  "ST-SKILL-FETCH-EXEC-HIDDEN"
+ ],
  "positive/AST01/entry-point-path-demotion/skill-runs-script-in-vendor-folder": [
   "ST-COMBO-EXFIL",
   "ST-FS-PY-READ",
@@ -1241,6 +1272,13 @@
   "ST-HIDDEN-ANSI",
   "ST-MCP-DETECTED"
  ],
+ "positive/AST01/hidden-unicode/mcp-tool-carriage-return-overdraw": [
+  "ST-CONVERGENCE",
+  "ST-HIDDEN-ANSI",
+  "ST-MCP-DANGEROUS-TOOL",
+  "ST-MCP-DETECTED",
+  "ST-PROMPT-INJECTION"
+ ],
  "positive/AST01/hidden-unicode/py-comment-direction-mark-bit-stream": [
   "ST-HIDDEN-UNICODE"
  ],
@@ -1249,6 +1287,22 @@
  ],
  "positive/AST01/hidden-unicode/skill-ansi-conceal": [
   "ST-HIDDEN-ANSI"
+ ],
+ "positive/AST01/hidden-unicode/skill-backspace-overdraw": [
+  "ST-HIDDEN-ANSI",
+  "ST-SKILL-FETCH-EXEC"
+ ],
+ "positive/AST01/hidden-unicode/skill-carriage-return-overdraw": [
+  "ST-HIDDEN-ANSI",
+  "ST-SKILL-FETCH-EXEC"
+ ],
+ "positive/AST01/hidden-unicode/skill-osc-link-address-command": [
+  "ST-HIDDEN-ANSI"
+ ],
+ "positive/AST01/hidden-unicode/skill-osc-title-instruction": [
+  "ST-CONVERGENCE",
+  "ST-HIDDEN-ANSI",
+  "ST-PROMPT-INJECTION"
  ],
  "positive/AST01/hidden-unicode/skill-rtl-override-reversed-text": [
   "ST-HIDDEN-UNICODE"
@@ -1261,6 +1315,11 @@
  ],
  "positive/AST01/hidden-unicode/skill-tagchars": [
   "ST-HIDDEN-UNICODE"
+ ],
+ "positive/AST01/hidden-unicode/skill-text-in-background-colour": [
+  "ST-CONVERGENCE",
+  "ST-HIDDEN-ANSI",
+  "ST-PROMPT-INJECTION"
  ],
  "positive/AST01/hidden-unicode/skill-variation-selectors": [
   "ST-HIDDEN-UNICODE"
@@ -1466,6 +1525,10 @@
  "positive/AST01/shell-hidden-command/brace-expansion-ifs": [
   "ST-SHELL-HIDDEN-COMMAND"
  ],
+ "positive/AST01/shell-hidden-command/sh-carriage-return-overdraw": [
+  "ST-HIDDEN-ANSI",
+  "ST-SHELL-PIPE-EXEC"
+ ],
  "positive/AST01/shell-hidden-command/shell-split-variables": [
   "ST-SHELL-HIDDEN-COMMAND"
  ],
@@ -1613,6 +1676,10 @@
   "ST-SECRET-EXFIL",
   "ST-SENS-PATH"
  ],
+ "positive/AST02/agent-config-autorun/mcp-server-url-lookalike-host": [
+  "ST-LOOKALIKE-HOST",
+  "ST-MCP-DETECTED"
+ ],
  "positive/AST02/agent-config-autorun/miasma-claude-hook": [
   "ST-AGENT-AUTORUN",
   "ST-AGENT-AUTORUN-REMOTE",
@@ -1669,6 +1736,13 @@
  ],
  "positive/AST02/dep-redirect/npmrc-registry-lookalike-host": [
   "ST-DEP-REGISTRY-LOOKALIKE"
+ ],
+ "positive/AST02/dep-redirect/npmrc-registry-punycode-lookalike-host": [
+  "ST-LOOKALIKE-HOST"
+ ],
+ "positive/AST02/dep-redirect/package-json-tarball-lookalike-host": [
+  "ST-LOOKALIKE-HOST",
+  "ST-NPM-URL-DEP"
  ],
  "positive/AST02/dep-redirect/skill-hidden-index": [
   "ST-SKILL-DEP-REDIRECT"
@@ -1830,6 +1904,10 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-command-from-config-block": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-curl-sh-credential-post": [
   "ST-COMBO-EXFIL",
   "ST-FS-NODE-READ",
@@ -1842,6 +1920,11 @@
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-download-then-run": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/postinstall-js-runs-config-block-command": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC",
+  "ST-SHELL-NODE"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/postinstall-js-split-command": [
   "ST-INSTALL-NPM",
@@ -1889,6 +1972,10 @@
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
  "positive/AST02/npm-lifecycle-remote-exec/preinstall-curl-bash": [
+  "ST-INSTALL-NPM",
+  "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-lifecycle-remote-exec/preinstall-node-runs-nested-config-value": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-REMOTE-EXEC"
  ],
@@ -1995,6 +2082,14 @@
  "positive/AST02/skill-fetch-exec/html-comment-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"
  ],
+ "positive/AST02/skill-fetch-exec/lookalike-host-mixed-script": [
+  "ST-LOOKALIKE-HOST",
+  "ST-SKILL-FETCH-EXEC"
+ ],
+ "positive/AST02/skill-fetch-exec/lookalike-host-punycode": [
+  "ST-LOOKALIKE-HOST",
+  "ST-SKILL-FETCH-EXEC"
+ ],
  "positive/AST02/skill-fetch-exec/offscreen-box-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"
  ],
@@ -2060,6 +2155,14 @@
  "positive/AST04/mcp-sampling-injection/python-sampling-abuse": [
   "ST-MCP-DETECTED",
   "ST-MCP-SAMPLING-INJECTION"
+ ],
+ "positive/AST04/mcp-schema-default-command/json-default-appended-curl-bash": [
+  "ST-MCP-DEFAULT-COMMAND",
+  "ST-MCP-DETECTED"
+ ],
+ "positive/AST04/mcp-schema-default-command/json-default-command-substitution": [
+  "ST-MCP-DEFAULT-COMMAND",
+  "ST-MCP-DETECTED"
  ],
  "positive/AST04/mcp-tool-poisoning/js-server-tool-handover": [
   "ST-MCP-DETECTED",
