@@ -155,7 +155,7 @@ name and that nothing in the repository builds. This wording does not change the
   command unpacks, imports from or runs, are read in memory and reported as
   `<archive>!/<member>`; so is the text of an office document the instructions hand to the
   agent. Limits apply (16 MiB per archive, 200 files and 4 MiB read from one, 512 KiB per file,
-  one archive inside another). What is not read (compiled code, an encrypted or oversized
+  64 MiB inflated from one archive, one archive inside another). What is not read (compiled code, an encrypted or oversized
   member, deeper nesting, 7z and rar) is listed under "Archive contents not analyzed". An
   archive that nothing in the component names is not opened.
 - **Detection is at the call/import level.** A capability used through an *unrecognized*

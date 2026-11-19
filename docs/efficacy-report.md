@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.7.0 · ruleset 106 · Python 3.14 · offline corpus.
+Engine 1.8.0 · ruleset 107 · Python 3.14 · offline corpus.
 
-- **recall: 100.0%** (378/378 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/284 benign samples wrongly flagged)
+- **recall: 100.0%** (382/382 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/288 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -101,10 +101,10 @@ Engine 1.7.0 · ruleset 106 · Python 3.14 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 51 | 56 | 56 | 28 |
-| AST02 | 48 | 33 | 12 | 8 |
+| AST01 | 52 | 56 | 57 | 28 |
+| AST02 | 48 | 34 | 12 | 8 |
 | AST03 | 0 | 2 | 0 | 0 |
-| AST04 | 58 | 6 | 14 | 0 |
+| AST04 | 59 | 6 | 14 | 0 |
 | AST05 | 0 | 0 | 6 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -118,13 +118,15 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-FS-NODE-WRITE` | - | 14 | 10 | 2/2 | 1/1 |
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
+| `ST-BYTECODE-NO-SOURCE` | AST01 | 0 | 0 | 2/2 | 2/2 |
 | `ST-CLIPPER` | AST01 | 4 | 0 | - | - |
-| `ST-COMBO-EXFIL` | AST01 | 57 | 0 | 1/1 | 1/1 |
+| `ST-COMBO-EXFIL` | AST01 | 59 | 0 | 1/1 | 1/1 |
 | `ST-CONVERGENCE` | AST01 | 14 | 0 | - | - |
 | `ST-EMAIL-BCC-EXFIL` | AST01 | 1 | 0 | 1/1 | 1/1 |
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
 | `ST-FLOW-TRIFECTA` | AST01 | 1 | 0 | - | - |
 | `ST-HTML-FILE-URL-EXFIL` | AST01 | 1 | 0 | - | - |
+| `ST-LOOKALIKE-IDENTIFIER` | AST01 | 0 | 0 | 3/3 | 3/3 |
 | `ST-MCP-SERVER-HIDDEN-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-MCP-STATIC-AUTH-EXEC` | AST01 | 3 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC` | AST01 | 27 | 0 | - | - |
@@ -147,7 +149,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-PY-MAIN-FILE-HARVEST` | AST01 | 1 | 0 | - | - |
 | `ST-PY-SOCKET-SHELL` | AST01 | 1 | 0 | - | - |
 | `ST-PY-STDLIB-SHADOW` | AST01 | 1 | 0 | - | - |
-| `ST-SECRET-EXFIL` | AST01 | 45 | 0 | - | - |
+| `ST-SECRET-EXFIL` | AST01 | 47 | 0 | - | - |
 | `ST-SHELL-EVASION` | AST01 | 2 | 1 | 2/2 | 1/1 |
 | `ST-SHELL-HIDDEN-COMMAND` | AST01 | 3 | 0 | - | - |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 4 | 0 | - | - |
@@ -162,7 +164,7 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-NODE-FETCH-EXEC` | AST01, AST02 | 5 | 0 | - | - |
 | `ST-NPM-SANDBOX-GATED-LOADER` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-OBF-DECODE-SPAWN` | AST01, AST02 | 9 | 0 | - | - |
-| `ST-PY-FETCH-EXEC` | AST01, AST02 | 5 | 0 | - | - |
+| `ST-PY-FETCH-EXEC` | AST01, AST02 | 6 | 0 | - | - |
 | `ST-PY-INIT-REMOTE-ARCHIVE-LOADER` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-PY-SCRIPTLET-HOST` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-PY-SETUP-DETACHED-FETCH` | AST01, AST02 | 1 | 0 | - | - |
@@ -190,9 +192,9 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-DEP-TYPOSQUAT` | AST02 | 0 | 0 | 7/7 | 3/3 |
 | `ST-DISGUISED-SCRIPT` | AST02 | 3 | 0 | 2/2 | 2/2 |
 | `ST-GIT-HOOK-PERSIST` | AST02 | 2 | 0 | 1/1 | 2/2 |
-| `ST-INSTALL-DROPPER` | AST02 | 19 | 0 | 1/1 | 1/1 |
+| `ST-INSTALL-DROPPER` | AST02 | 20 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 2 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 50 | 28 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 51 | 29 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-DNS-BEACON` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-MASKED-REGISTRY` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-PREPARE` | AST02 | 3 | 6 | 1/1 | 1/1 |
@@ -231,12 +233,12 @@ Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule sa
 | `ST-MCP-SAMPLING-INJECTION` | AST04 | 1 | 0 | - | - |
 | `ST-MCP-TOOL-POISONING` | AST04 | 35 | 0 | - | - |
 | `ST-MCP-TOOL-SHADOWING` | AST04 | 0 | 0 | - | - |
-| `ST-PROMPT-INJECTION` | AST04 | 45 | 0 | - | - |
+| `ST-PROMPT-INJECTION` | AST04 | 46 | 0 | - | - |
 | `ST-PROMPT-WEAK` | AST04 | 0 | 0 | - | - |
 | `ST-SKILL-AUDIT-OVERRIDE` | AST04 | 2 | 0 | - | - |
 | `ST-DESERIALIZE-PY` | AST05 | 1 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-114 of 121 rules fire on at least one sample.
+116 of 123 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

@@ -4,6 +4,28 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.8.0]
+
+### Added
+- Ruleset 107 adds two rules and reads archives a component uses. Each change is described in
+  `RULES_CHANGELOG.md`.
+- An archive a component unpacks, imports from or runs (zip, wheel, jar, pyz, tarball) is read
+  in memory within size limits. Its text files are judged by every rule and reported as
+  `<archive>!/<member>`. The text of an office document that the instructions hand to the agent
+  is read the same way. Nothing is unpacked to disk or run.
+- `ST-BYTECODE-NO-SOURCE`: a command or an import runs a `.pyc` or `.pyo` file shipped without
+  its `.py`.
+- `ST-LOOKALIKE-IDENTIFIER`: two names in one Python or JavaScript file look the same because
+  one mixes Latin letters with look-alike letters of another alphabet.
+
+### Changed
+- The review note "Started file not analyzed" also lists a compiled or native program that an
+  instruction file, an install script, a hook or an MCP launch command starts.
+- The new review note "Archive contents not analyzed" lists what was not read in an archive the
+  component uses (compiled code, an encrypted or oversized member, deeper nesting, 7z and rar).
+  `--fail-on-unanalyzed` counts it.
+- Detection benchmark corpus: 382 malicious and 288 benign samples.
+
 ## [1.7.0]
 
 ### Added

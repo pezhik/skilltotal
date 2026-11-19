@@ -4,6 +4,38 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 107 (engine 1.8.0)
+
+Two new rules. All rules now read code inside an archive the component uses.
+- Archives (new scope): an archive in the component is read when the component names it
+  anywhere in an instruction file, or on a line of a script, code file, `package.json` or
+  auto-run command that unpacks it, imports from it or runs it (`unzip`, `tar -x`, `extractall`,
+  `zipimport`, `sys.path`, `java -jar`, `pip install`). Its text files are read in memory and
+  judged by every rule under the name `<archive>!/<member>`. Code found there is treated as an
+  entry point in any folder of the archive. Formats: zip, wheel, egg, jar, pyz, tar with gzip,
+  bzip2 or xz, and one archive inside another. An office document the instructions hand to the
+  agent is read as its text, including hidden text. Limits: 16 MiB per archive, 8 archives,
+  200 files and 4 MiB of text from one archive, 512 KiB per file, 64 MiB inflated from one
+  archive. An archive that nothing names is not opened. A line that writes an archive (a build
+  or backup step) does not count as using it.
+- Review note "Archive contents not analyzed" (new) lists what was not read: compiled or native
+  code, an encrypted or oversized member, an archive nested deeper, a macro project, and the 7z
+  and rar formats.
+- `ST-BYTECODE-NO-SOURCE` (new, medium, risky construct): an install script, an instruction
+  file, a hook, an MCP launch command or an `import` of the component runs a `.pyc` or `.pyo`
+  file that has no `.py` beside it (for a file in `__pycache__`, in the folder above). The
+  evidence is the line that runs it. Bytecode is not read, so what it does is not known.
+  Bytecode beside its source is not reported, and neither is orphan bytecode that nothing runs.
+- Review note "Started file not analyzed" (changed) also lists a compiled or native program
+  that a command starts (`./bin/helper`, `wasmtime x.wasm`, an `.exe`). It stays a note because
+  MCP servers are commonly shipped as binaries.
+- `ST-LOOKALIKE-IDENTIFIER` (new, high, risky construct): a Python or JavaScript/TypeScript
+  identifier in which one word mixes Latin letters with look-alike letters of another alphabet
+  (or, in JavaScript, holds a zero-width joiner), and the name it reads as is also used in the
+  same file. A reader cannot tell which of the two a line refers to. A mixed name with no such
+  twin gets a review note. A name written in one script is not reported, and neither is text in
+  strings and comments.
+
 ## ruleset 106 (engine 1.7.0)
 
 Two new rules. Existing rules now read npm aliases, commands kept in the `config` block of

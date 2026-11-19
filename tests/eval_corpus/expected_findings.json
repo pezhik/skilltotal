@@ -99,6 +99,7 @@
  "negative/AST01/credential-exfil/skill-security-review-example-block": [
   "ST-SENS-PATH"
  ],
+ "negative/AST01/credential-exfil/skill-unzips-archive-of-templates": [],
  "negative/AST01/decode-exec/decode-only-no-exec": [],
  "negative/AST01/decode-exec/getattr-decode-no-exec": [
   "ST-FS-PY-WRITE"
@@ -323,6 +324,7 @@
   "ST-FS-PY-READ",
   "ST-NET-PY"
  ],
+ "negative/AST01/url-exec-loader/python-imports-module-from-bundled-zip": [],
  "negative/AST01/url-exec-loader/python-local-plugin-loader": [
   "ST-FS-PY-READ",
   "ST-NET-PY"
@@ -427,6 +429,9 @@
  ],
  "negative/AST02/install-dropper/pep517-in-tree-backend-wraps-setuptools": [
   "ST-SHELL-PY"
+ ],
+ "negative/AST02/install-dropper/postinstall-untars-bundled-assets": [
+  "ST-INSTALL-NPM"
  ],
  "negative/AST02/install-dropper/setup-py-chr-table": [
   "ST-FS-PY-WRITE",
@@ -688,6 +693,7 @@
  "negative/AST04/prompt-injection/skill-cites-obfuscated-injection": [],
  "negative/AST04/prompt-injection/skill-fetches-docs": [],
  "negative/AST04/prompt-injection/skill-follows-hosted-setup-guide": [],
+ "negative/AST04/prompt-injection/skill-hands-agent-docx-style-guide": [],
  "negative/AST04/prompt-injection/skill-link-title-plain": [],
  "negative/AST04/prompt-injection/skill-template-end-marker": [],
  "negative/AST04/prompt-injection/skill-updates-claude-md": [],
@@ -983,6 +989,11 @@
  ],
  "positive/AST01/credential-exfil/skill-script-provider-token-foreign-host": [
   "ST-SECRET-EXFIL"
+ ],
+ "positive/AST01/credential-exfil/skill-unzips-archive-and-runs-script": [
+  "ST-COMBO-EXFIL",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
  ],
  "positive/AST01/decode-exec/node-buffer-encoding-name": [
   "ST-DYN-NODE",
@@ -1619,6 +1630,11 @@
   "ST-SHELL-PIPE-EXEC-PY",
   "ST-SHELL-PY"
  ],
+ "positive/AST01/url-exec-loader/python-imports-module-from-bundled-zip": [
+  "ST-DYN-PY",
+  "ST-NET-PY",
+  "ST-PY-FETCH-EXEC"
+ ],
  "positive/AST01/url-exec-loader/python-urlopen-exec": [
   "ST-DYN-PY",
   "ST-NET-PY",
@@ -1824,6 +1840,13 @@
   "ST-NET-PY",
   "ST-SHELL-PIPE-EXEC-PY",
   "ST-SHELL-PY"
+ ],
+ "positive/AST02/install-dropper/postinstall-untars-bundled-script": [
+  "ST-COMBO-EXFIL",
+  "ST-INSTALL-DROPPER",
+  "ST-INSTALL-NPM",
+  "ST-SECRET-EXFIL",
+  "ST-SENS-PATH"
  ],
  "positive/AST02/install-dropper/python-setup-decode-exec": [
   "ST-DYN-PY",
@@ -2404,6 +2427,10 @@
  ],
  "positive/AST04/prompt-injection/skill-fake-end-marker": [
   "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/skill-hands-agent-docx-with-hidden-text": [
+  "ST-PROMPT-INJECTION",
+  "ST-SENS-PATH"
  ],
  "positive/AST04/prompt-injection/skill-image-url-exfil-in-words": [
   "ST-PROMPT-INJECTION"
