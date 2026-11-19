@@ -37,6 +37,12 @@ invisible code points. We split these by how unambiguous the malice is:
   screen erasure hide text from a person reading it in a terminal -> ``ST-HIDDEN-ANSI``. Other
   ANSI there (colors) is only noted for review; ANSI in ordinary source, logs and tests is not
   looked at.
+* **Other terminal overwrites** (``terminal_overwrite``): an OSC or other string sequence, text
+  in its own background colour, the alternate screen, an 8-bit CSI, a carriage return in the
+  middle of a line, a run of backspaces. Each has an everyday use (a link, a progress line), so
+  one is reported under ``ST-HIDDEN-ANSI`` only when the part a terminal does not draw holds a
+  download-and-run command, an instruction-override phrase or a credential path. Read in the
+  same agent-facing text, and in shell scripts, which a person reviews with ``cat``.
 
 Evidence renders invisible characters as ``<U+XXXX>`` so they are visible in the report.
 """
@@ -46,8 +52,15 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from itertools import permutations
+from urllib.parse import unquote_plus
 
-from skilltotal.file_index import FileIndex, IndexedFile, _c_code_spans, is_instruction_path
+from skilltotal.file_index import (
+    FileIndex,
+    IndexedFile,
+    _c_code_spans,
+    is_instruction_file,
+    is_instruction_path,
+)
 from skilltotal.models import Capability, Evidence, Finding, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_SCANNED,
@@ -57,6 +70,10 @@ from skilltotal.scanners.base import (
     aggregated_review,
 )
 from skilltotal.scanners.mcp import exposes_mcp_surface
+from skilltotal.scanners.prompt_surface import _STRONG as _INJECTION
+from skilltotal.scanners.sensitive_paths import _STRONG_PATHS
+from skilltotal.scanners.skill_fetch_exec import _FETCH_EXEC
+from skilltotal.scanners.terminal_overwrite import TRIGGER, hidden_spans
 from skilltotal.text_normalize import BLANK_DRAWN, ignorable_class, is_ignorable
 
 CATEGORY = "hidden_unicode"
@@ -379,9 +396,28 @@ def _in_code_description(f: IndexedFile, offset: int) -> bool:
     return bool(_DESCRIPTION_KEY.search(head) or _TOOL_DESCRIPTION_ARG.search(head))
 
 
+_SHELL_SUFFIXES = (".sh", ".bash", ".zsh", ".command")
+_MAX_OVERWRITE_LINES = 200
+_MAX_OVERWRITE_LINE = 8000
+
+
+def _carried_risk(text: str) -> str | None:
+    """What makes text a terminal does not draw worth reporting: something the rules for
+    instruction text and shell commands already treat as risky. A link address is also read
+    with its percent- and plus-encoding undone."""
+    for candidate in dict.fromkeys((text, unquote_plus(text))):
+        if _FETCH_EXEC.search(candidate):
+            return "a download-and-run command"
+        if _INJECTION.search(candidate):
+            return "an instruction-override phrase"
+        if _STRONG_PATHS.search(candidate):
+            return "a credential path"
+    return None
+
+
 def _ansi_context(f: IndexedFile, offset: int, mcp_code: bool) -> str | None:
     """Where an ANSI sequence sits: "agent" text, an "example" in an instruction file, or None."""
-    if is_instruction_path(f.relpath):
+    if is_instruction_file(f):
         if f.suffix in (".md", ".mdx") and not f.in_markdown_prose(offset):
             return "example"  # a fenced code block in a skill: a snippet it shows, not its text
         return "agent"
@@ -390,6 +426,55 @@ def _ansi_context(f: IndexedFile, offset: int, mcp_code: bool) -> str | None:
     if mcp_code and _in_code_description(f, offset):
         return "agent"
     return None
+
+
+def _scan_overwrites(
+    f: IndexedFile, spelled: bool, script: bool, mcp_code: bool,
+    evidence: list[Evidence], hiding_lines: set[int],
+    review_places: list[tuple[str, int | None]],
+) -> bool:
+    """Text a terminal does not draw (``terminal_overwrite.hidden_spans``) that carries a risky
+    payload, in agent-facing text or in a shell script. Returns whether a place was noted for
+    review: an OSC or other escape sequence in agent-facing text whose payload is not one."""
+    text = f.text
+    trigger = TRIGGER[spelled]
+    noted = False
+    pos = 0
+    # A file whose lines end in a bare carriage return (classic Mac OS): there it is the line
+    # break, and the walk reads the whole file as a few long lines.
+    cr_ends_lines = not spelled and text.count("\r") > 2 * text.count("\n")
+    for _ in range(_MAX_OVERWRITE_LINES):
+        m = trigger.search(text, pos)
+        if m is None:
+            break
+        start, end = f.line_bounds(m.start(), m.end())
+        pos = end + 1
+        if end - start > _MAX_OVERWRITE_LINE:
+            continue
+        line = text[start:end].rstrip("\r")
+        lineno = f.line_of_offset(start)
+        for span in hidden_spans(line, spelled=spelled):
+            if cr_ends_lines and "carriage return" in span.how:
+                continue
+            if not script and _ansi_context(f, start + span.at, mcp_code) != "agent":
+                continue
+            hidden = line[span.start:span.end]
+            risk = _carried_risk(hidden)
+            if risk is None:
+                if not script and not noted and "\x1b" in line:
+                    noted = True
+                    review_places.append((f.relpath, lineno))
+                continue
+            if lineno in hiding_lines or len(evidence) >= MAX_EVIDENCE_SCANNED:
+                continue
+            hiding_lines.add(lineno)
+            ev = f.evidence_for_span(start + span.start, start + span.end)
+            shown = "".join(c for c in hidden if c.isprintable())[:120]
+            evidence.append(replace(
+                ev, snippet=ev.snippet[:200]
+                + f"  [not drawn by a terminal ({span.how}): {shown!r}, which holds {risk}]",
+            ))
+    return noted
 
 
 class InvisibleUnicodeScanner(Scanner):
@@ -444,7 +529,11 @@ class InvisibleUnicodeScanner(Scanner):
                 "tool description, or MCP server instructions) carries an ANSI escape sequence "
                 "that conceals text, moves the cursor or erases the line. Shown in a terminal, "
                 "the text around it is hidden or overwritten for the person, while the model "
-                "still reads all of it."
+                "still reads all of it. Also reported: a download-and-run command, an "
+                "instruction-override phrase or a credential path in a part of such text, or "
+                "of a shell script, that a terminal does not draw (the payload of an OSC "
+                "sequence, text in its own background colour, text drawn over after a "
+                "carriage return or backspaces)."
             ),
             recommendation=(
                 "Treat the component as malicious until reviewed. Read the raw text with the "
@@ -502,7 +591,7 @@ class InvisibleUnicodeScanner(Scanner):
             if not _HUNTED.search(f.text):
                 continue
             reorder_checked = (f.relpath.lower().endswith(_TROJAN_CODE_SUFFIXES)
-                               or is_instruction_path(f.relpath))
+                               or is_instruction_file(f))
             rtl_file: bool | None = None
             for lineno, raw_line in enumerate(f.text.splitlines(), start=1):
                 if lineno in stream_lines or not _HUNTED.search(raw_line):
@@ -607,14 +696,29 @@ class InvisibleUnicodeScanner(Scanner):
         review_places: list[tuple[str, int | None]],
     ) -> None:
         """ANSI escape sequences in text an agent reads (see the module docstring)."""
-        if not _ANSI_CSI.search(f.text):
-            return
         lower = f.relpath.lower()
-        mcp_code = lower.endswith(_CODE_SUFFIXES) and exposes_mcp_surface(f.text)
-        if not (mcp_code or lower.endswith(".json") or is_instruction_path(f.relpath)):
+        code = lower.endswith(_CODE_SUFFIXES)
+        script = lower.endswith(_SHELL_SUFFIXES)
+        instruction = is_instruction_file(f)
+        if not (code or script or instruction or lower.endswith(".json")):
+            return
+        # Escaped spellings (`\u001b`, `\r`) are control characters only inside a JSON or source
+        # string; in prose and in a shell script they are the text they look like.
+        spelled = not (instruction or script)
+        csi = _ANSI_CSI.search(f.text) is not None
+        overwrite = TRIGGER[spelled].search(f.text) is not None
+        if not (csi or overwrite):
+            return
+        mcp_code = code and exposes_mcp_surface(f.text)
+        if code and not mcp_code:
             return
         hiding_lines: set[int] = set()
         noted = False
+        if overwrite:
+            noted = _scan_overwrites(f, spelled, script and not instruction, mcp_code,
+                                     evidence, hiding_lines, review_places)
+        if not csi or (script and not instruction):
+            return
         for m in _ANSI_CSI.finditer(f.text):
             context = _ansi_context(f, m.start(), mcp_code)
             if context is None:

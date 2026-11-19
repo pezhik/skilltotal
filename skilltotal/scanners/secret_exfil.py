@@ -1528,7 +1528,9 @@ def _instruction_evidence(index: FileIndex) -> list[Evidence]:
     is not a step."""
     found: list[Evidence] = []
     for f in index.files:
-        if f.suffix not in (".md", ".mdx") or not _INSTRUCTION_FILE.search(f.relpath):
+        if f.suffix not in (".md", ".mdx") or not (
+            f.agent_read or _INSTRUCTION_FILE.search(f.relpath)
+        ):
             continue
         if not _may_send(f.text):
             continue

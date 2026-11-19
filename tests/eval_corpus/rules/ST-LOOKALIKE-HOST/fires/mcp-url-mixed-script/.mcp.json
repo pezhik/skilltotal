@@ -1,0 +1,9 @@
+{
+ "_comment": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+ "mcpServers": {
+  "docs": {
+   "type": "sse",
+   "url": "https://mcр.example.invalid/sse"
+  }
+ }
+}

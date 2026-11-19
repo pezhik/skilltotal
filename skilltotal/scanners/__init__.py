@@ -28,6 +28,7 @@ from skilltotal.scanners.html_file_exfil import HtmlFileExfilScanner
 from skilltotal.scanners.install_payload import InstallPayloadScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
+from skilltotal.scanners.lookalike_host import LookalikeHostScanner
 from skilltotal.scanners.mcp import McpScanner
 from skilltotal.scanners.mcp_annotations import McpAnnotationScanner
 from skilltotal.scanners.mcp_elicitation import McpElicitationScanner
@@ -102,6 +103,7 @@ SCANNERS: list[Scanner] = [
     DependencySourceScanner(),
     DependencyTyposquatScanner(),
     DisguisedScriptScanner(),
+    LookalikeHostScanner(),
 ]
 
 

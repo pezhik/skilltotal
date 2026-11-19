@@ -159,7 +159,7 @@ class SkillDirectivesScanner(Scanner):
         memory: list[Evidence] = []
         encrypted: list[Evidence] = []
         for f in index.files:
-            if not _INSTRUCTION_FILE.search(f.relpath):
+            if not (f.agent_read or _INSTRUCTION_FILE.search(f.relpath)):
                 continue
             for para in _PARAGRAPH.finditer(f.text):
                 text = para.group(0)

@@ -211,6 +211,25 @@ a substitute for:
 - **A script the instructions start** (`python scripts/setup.py`, `bash examples/quickstart.sh` in
   SKILL.md) is read like a declared entry point: from a folder the walk skips, under `examples/`
   or `tests/`, and up to the larger entry-point size limit.
+- **A prose file the instructions tell the agent to follow** ("read docs/SETUP.md and follow
+  every step in it", "follow the instructions in INSTALL.txt") is read as an instruction file,
+  whatever its name or folder: the rules for agent instructions apply to it and its findings
+  are not set aside as documentation. A file that is only linked ("see docs/usage.md for
+  details") stays documentation. One step deep: a file named this way is not searched for more.
+- **Text a terminal does not draw** is reported as hidden when it carries a download-and-run
+  command, an instruction-override phrase or a credential path: the payload of an OSC or other
+  string sequence (a window title, the address of an OSC 8 link), text in its own background
+  colour or concealed through the 8-bit CSI, text sent to the alternate screen, and text drawn
+  over after a carriage return or a run of backspaces. Read in agent instructions, MCP tool
+  descriptions (also in their escaped spelling) and shell scripts. Colour codes, a link with an
+  ordinary address and a progress line are not reported.
+- **A host spelled to read as another host** in an install command, a package or agent
+  manifest, a registry setting, a requirements file or a shell script: Latin letters mixed with
+  look-alike Cyrillic, Greek, Armenian or Cherokee letters in one word (also in the punycode
+  `xn--` form), a word wholly in such letters that reads as a well-known name, full-width or
+  enclosed letters, an ideographic full stop for a dot. The evidence shows the host it reads
+  as. An internationalized domain written in one script is not reported, and neither is an
+  address shown in the prose of an instruction file.
 - Shell execution covers `subprocess`/`os.system`, `asyncio.create_subprocess_*`, Node
   `child_process`, and common process-spawning libraries (Python `sh`/`plumbum`/`pexpect`/
   `invoke`/`fabric`; Node `zx`/`execa`/`cross-spawn`/`shelljs`/`tinyexec`/`node-pty`).

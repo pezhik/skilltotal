@@ -118,7 +118,7 @@ class SkillFetchExecScanner(Scanner):
         plain: list[Evidence] = []
         hidden: list[Evidence] = []
         for f in index.files:
-            if _INSTRUCTION_FILE.search(f.relpath):
+            if f.agent_read or _INSTRUCTION_FILE.search(f.relpath):
                 _instruction_file(f, plain, hidden)
         findings = [_finding_from_rule(rule, evidence)
                     for rule, evidence in zip(self.rules, (plain, hidden), strict=True)

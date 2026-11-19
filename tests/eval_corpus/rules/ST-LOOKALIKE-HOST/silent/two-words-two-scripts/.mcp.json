@@ -1,0 +1,9 @@
+{
+ "_comment": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+ "mcpServers": {
+  "city": {
+   "type": "sse",
+   "url": "https://москва-city.example/sse"
+  }
+ }
+}
