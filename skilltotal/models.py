@@ -201,12 +201,18 @@ OWN_OUTPUTS_SKIPPED = "SkillTotal output files not analyzed"
 # to every scanner that reads source; the note makes it a gap the gate and the hook see.
 COMPILED_WITHOUT_SOURCE = "Compiled code shipped without source"
 
+# The needs_review title for an archive the component unpacks, imports from or hands to the agent
+# in which something was not read (compiled code, an encrypted or oversized member, an archive
+# nested too deep, a format that is not read). Its text members were read; the rest runs unseen.
+UNANALYZED_ARCHIVE = "Archive contents not analyzed"
+
 # The needs_review titles that say a file, or a part of one, was not analyzed: what
 # `scan --fail-on-unanalyzed` fails on. Every other note is a signal to read, not a gap in the scan.
 UNANALYZED_TITLES = frozenset({
     UNANALYZED_INSTALL_SCRIPT,
     NOTHING_READ,
     COMPILED_WITHOUT_SOURCE,
+    UNANALYZED_ARCHIVE,
     "Files could not be read",
     "Files too large to analyze",
     "Links not followed",

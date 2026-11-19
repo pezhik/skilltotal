@@ -2669,10 +2669,15 @@ class FileIndex:
                    compiled=sorted(compiled))
 
     def with_files(
-        self, extra: list[IndexedFile], minified: list[str] | None = None
+        self,
+        extra: list[IndexedFile],
+        minified: list[str] | None = None,
+        install_scripts: Iterable[str] = (),
     ) -> FileIndex:
         """A copy of this index with ``extra`` files added (read outside the walk, e.g. code the
-        component loads from a folder the walk skipped) and ``minified`` bundles noted."""
+        component loads from a folder the walk skipped) and ``minified`` bundles noted. Those of
+        them named in ``install_scripts`` run at install time like the walk's own (a script in an
+        archive an install command unpacks)."""
         files = sorted([*self.files, *extra], key=lambda f: f.relpath)
         stats = dict(self.stats)
         stats["indexed"] = stats.get("indexed", 0) + len(extra)
@@ -2680,7 +2685,8 @@ class FileIndex:
             self.root, files, stats, sorted({*self.minified, *(minified or [])}), self.git_config,
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
             skip_build_output=self.skip_build_output, large=self.large,
-            install_scripts=self.install_scripts, own_outputs=self.own_outputs,
+            install_scripts=self.install_scripts | frozenset(install_scripts),
+            own_outputs=self.own_outputs,
             exclude=self.exclude, compiled=self.compiled,
         )
 
@@ -2816,6 +2822,16 @@ class FileIndex:
             for f in self.files
         ]
         return self._with_same_walk(files)
+
+    def with_compiled(self, relpaths: Iterable[str]) -> FileIndex:
+        """A copy of this index that also lists ``relpaths`` among its bytecode files
+        (``compiled``): bytecode outside the walk that the component is seen to start."""
+        compiled = sorted({*self.compiled, *relpaths})
+        if compiled == sorted(self.compiled):
+            return self
+        index = self._with_same_walk(list(self.files))
+        index.compiled = compiled
+        return index
 
     def _with_same_walk(self, files: list[IndexedFile]) -> FileIndex:
         return FileIndex(

@@ -22,6 +22,7 @@ from skilltotal.file_index import MAX_FILE_BYTES
 from skilltotal.models import (
     COMPILED_WITHOUT_SOURCE,
     NOTHING_READ,
+    UNANALYZED_ARCHIVE,
     UNANALYZED_INSTALL_SCRIPT,
     UNANALYZED_LOADED_CODE,
     UNANALYZED_TITLES,
@@ -145,7 +146,7 @@ def test_every_title_in_the_set_is_one_the_engine_writes():
             written |= _string_literals(path)
     # Titles defined as constants in models.py are written through the constant's name.
     constants = {UNANALYZED_INSTALL_SCRIPT, NOTHING_READ, UNANALYZED_LOADED_CODE,
-                 COMPILED_WITHOUT_SOURCE}
+                 COMPILED_WITHOUT_SOURCE, UNANALYZED_ARCHIVE}
     for title in UNANALYZED_TITLES - constants:
         assert title in written, title
     users = [p for p in package.rglob("*.py") if p.name != "models.py"]

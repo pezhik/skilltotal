@@ -432,6 +432,8 @@ TRAIT_BY_RULE: dict[str, tuple[ComponentTrait, ...]] = {
     "ST-OBF-HEX": (_T.CODE_OBFUSCATION,),
     "ST-OBF-MINIFIED": (_T.CODE_OBFUSCATION,),
     "ST-ENCRYPTED-ARCHIVE": (_T.CODE_OBFUSCATION,),
+    "ST-BYTECODE-NO-SOURCE": (_T.CODE_OBFUSCATION,),
+    "ST-LOOKALIKE-IDENTIFIER": (_T.CODE_OBFUSCATION, _T.METADATA_INTEGRITY),
     # Emergent combinations (synthesized risky-construct findings).
     "ST-COMBO-EXFIL": (_T.EXFIL_CORRELATION,),
     # One command or call that reads a credential (or the whole environment) and sends it:

@@ -19,12 +19,14 @@ from pathlib import Path, PurePosixPath
 
 from skilltotal import REPORT_SCHEMA_VERSION, RULESET_VERSION, __version__, bounded_json
 from skilltotal.agent_skill import skill_capability_mismatch
+from skilltotal.archive_members import is_member_path, read_archive, referenced_archives
 from skilltotal.autorun import KIND_MCP_SERVER, autorun_commands
 from skilltotal.baseline import apply_suppressions
 from skilltotal.capabilities import extract_capabilities
 from skilltotal.collector import SourceContext, collect, vscode_extension_package
 from skilltotal.combinations import post_classification, pre_classification
 from skilltotal.file_index import (
+    BINARY_SNIFF_BYTES,
     MAX_DECLARED_ENTRY_POINT_BYTES,
     MAX_ENTRY_POINT_BYTES,
     MAX_FILE_BYTES,
@@ -36,7 +38,9 @@ from skilltotal.file_index import (
     FileIndex,
     IndexedFile,
     _is_minified,
+    _matches_any,
     agent_prompt_dirs,
+    is_binary_content,
     is_build_output_path,
     is_ci_path,
     is_data_corpus_path,
@@ -68,6 +72,7 @@ from skilltotal.models import (
     NOTHING_READ,
     OWN_OUTPUTS_SKIPPED,
     SKIPPED_FOLDERS,
+    UNANALYZED_ARCHIVE,
     UNANALYZED_INSTALL_SCRIPT,
     UNANALYZED_LOADED_CODE,
     Component,
@@ -87,6 +92,7 @@ from skilltotal.scan_cache import ScanCache
 from skilltotal.scanners import SCANNERS
 from skilltotal.scanners.artifact_provenance import prebuilt_artifacts
 from skilltotal.scanners.base import MAX_EVIDENCE_PER_FINDING, aggregated_review
+from skilltotal.scanners.compiled_run import KIND_PROGRAM, bytecode_source, started_binaries
 from skilltotal.scanners.disguised_script import (
     DISGUISE_SUFFIXES,
     SOURCE_INSTALL,
@@ -243,6 +249,22 @@ def analyze_directory(
     if len(index.files) > before_follow:
         # A script the instructions start from a folder the walk passed over (`.tox/`, `vendor/`).
         entry_points |= {*run_paths, *read_paths} & {f.relpath for f in index.files}
+    # An archive the component unpacks, imports from or hands to the agent holds files it runs or
+    # reads all the same: its text members are read (in memory, within limits) like any file.
+    index, archives_read, archive_gaps = _with_archive_members(
+        Path(root), index, install_scripts
+    )
+    # What is unpacked runs from whatever folder it has inside the archive (`data/run.sh`,
+    # `tests/x.py`), so code in it is judged like an entry point; prose keeps the rules for prose.
+    entry_points |= {
+        f.relpath for f in index.files
+        if is_member_path(f.relpath) and f.suffix not in _PROSE_MEMBER_SUFFIXES
+    }
+    # A compiled or binary file a command starts is run all the same, and never read. Bytecode
+    # started from a `__pycache__` folder, which the walk never enters, joins the bytecode the
+    # walk found, so the report and the rule for bytecode without source see it.
+    started = started_binaries(index, _unread_binary_check(Path(root), index))
+    index = index.with_compiled(run.target for run in started if run.kind != KIND_PROGRAM)
     index = index.read_by_agent(read_paths)
     # A file started under a name that hides it (`node assets/logo.png`, `python3 x.docx`) is read
     # as the language it is started in, and is an entry point like any file a command starts.
@@ -262,8 +284,11 @@ def analyze_directory(
     needs_review: list[NeedsReview] = []
     indexed = {f.relpath for f in index.files}
     for relpath, script in install_scripts.items():
-        if relpath not in indexed:
+        # An archive an install command unpacks was read member by member (or has a note below).
+        if relpath not in indexed and relpath not in archives_read:
             needs_review.append(_unanalyzed_install_script(Path(root), relpath, script))
+    if archive_gaps:
+        needs_review.append(_archive_gaps_note(archive_gaps))
     if install_limits:
         # The walk of what install scripts run stopped at a limit: what lies past it runs at
         # install time and was not followed. The install guard keys on this title.
@@ -308,16 +333,32 @@ def analyze_directory(
         run.target for run in disguised
         if not run.read and not (run.source == SOURCE_INSTALL and run.target in install_scripts)
     })
-    if unread_started:
+    # So is a compiled or binary program a command starts (`./bin/helper`, `wasmtime x.wasm`).
+    # Bytecode without its source has the note for that below.
+    programs = sorted({
+        run.target for run in started
+        if run.kind == KIND_PROGRAM
+        and run.target not in install_scripts and run.target not in unloaded
+    } - set(unread_started))
+    if unread_started or programs:
+        if not programs:
+            what = ("file(s) named like an image, a document or data are started with an "
+                    "interpreter by an instruction file or an auto-run command, and could not be "
+                    "read as text")
+            advice = ("They are run as code, and nothing in them was checked. Read them, or "
+                      "treat the component as unverified.")
+        else:
+            what = ("file(s) that an instruction file, an install script or an auto-run command "
+                    "starts are compiled or binary (or a script under an image, document or data "
+                    "name that is not text) and were not read")
+            advice = ("They run as programs, and nothing in them was checked. Ask for the "
+                      "source, or treat the component as unverified.")
         needs_review.append(aggregated_review(
             category="coverage",
             title="Started file not analyzed",
-            places=[(p, None) for p in unread_started],
-            what="file(s) named like an image, a document or data are started with an "
-                 "interpreter by an instruction file or an auto-run command, and could not be "
-                 "read as text",
-            advice="They are run as code, and nothing in them was checked. Read them, or treat "
-                   "the component as unverified.",
+            places=[(p, None) for p in sorted({*unread_started, *programs})],
+            what=what,
+            advice=advice,
         ))
     skipped_note = _skipped_folders_note(index)
     if skipped_note is not None:
@@ -1241,6 +1282,122 @@ def _package_manifests(root: Path) -> list[Path]:
     return manifests
 
 
+def _compiled_without_source(index: FileIndex) -> list[str]:
+    """The bytecode files the index lists with no source file beside them: a ``.pyc`` or ``.pyo``
+    without its ``.py`` (for one in ``__pycache__``, in the folder above), a ``.class`` (inner
+    classes included) without its ``.java``. Beside its source, bytecode is a build artifact the
+    source already answers for."""
+    out = []
+    for relpath in index.compiled:
+        path = PurePosixPath(relpath)
+        if path.suffix.lower() == ".class":
+            source = (path.parent / (path.stem.split("$", 1)[0] + ".java")).as_posix()
+        else:
+            source = bytecode_source(relpath)
+        if not (index.root / source).is_file():
+            out.append(relpath)
+    return out
+
+
+def _cached_bytecode_without_source(root: Path, relpath: str) -> bool:
+    """Whether ``relpath`` is a file in a ``__pycache__`` folder (which the walk never enters)
+    whose module has no ``.py`` in the folder above: ``pkg/__pycache__/x.cpython-311.pyc`` with no
+    ``pkg/x.py``. Python does not import such a file, but a command can still be started on it."""
+    path = PurePosixPath(relpath)
+    if path.parent.name != "__pycache__" or relpath.startswith(("/", "../")):
+        return False
+    return is_regular_file(root / relpath) and not (root / bytecode_source(relpath)).is_file()
+
+
+def _unread_binary_check(root: Path, index: FileIndex) -> Callable[[str], bool]:
+    """A test for "this relative path is a file of the component the scan did not read, and it is
+    not text": a compiled or binary program, or Python bytecode with no source beside it. A file
+    in a folder the walk skips (``node_modules/.bin/eslint``) is not one: those folders have a
+    note of their own, and a command that starts a tool from them is ordinary."""
+    exists = _component_file_check(root)
+    read = {f.relpath for f in index.files} | {*index.large, *index.minified, *index.own_outputs}
+    skipped = tuple(rel + "/" for rel, _kind in index.skipped_dirs)
+    orphans = set(_compiled_without_source(index))
+
+    def unread(rel: str) -> bool:
+        if rel in read:
+            return False
+        if rel.lower().endswith((".pyc", ".pyo")):
+            return rel in orphans or _cached_bytecode_without_source(root, rel)
+        if rel.startswith(skipped) or not exists(rel):
+            return False
+        try:
+            with (root / rel).open("rb") as handle:
+                head = handle.read(BINARY_SNIFF_BYTES)
+        except OSError:
+            return True  # started, and not even its start could be read
+        return is_binary_content(rel.rsplit("/", 1)[-1], head)
+
+    return unread
+
+
+# Members of an unpacked archive that are prose or markup, not code a command can start.
+_PROSE_MEMBER_SUFFIXES = frozenset(
+    {".md", ".mdx", ".markdown", ".txt", ".rst", ".adoc", ".html", ".htm", ".xml"}
+)
+
+
+def _with_archive_members(
+    root: Path, index: FileIndex, install_archives: Iterable[str] = ()
+) -> tuple[FileIndex, set[str], dict[str, dict[str, int]]]:
+    """``index`` with the text members of each archive the component unpacks, imports from or
+    hands to the agent (``archive_members.referenced_archives``) added as files named
+    ``<archive>!/<member>``; the archives read in full; and, for each of the others, what in it
+    was not read as ``{reason: number of members}``. Code in an archive named in
+    ``install_archives`` (those an npm install command names) joins the index's install scripts."""
+    install_archives = set(install_archives)
+    exists = _component_file_check(root)
+    skipped = tuple(rel + "/" for rel, _kind in index.skipped_dirs)
+
+    def shipped(rel: str) -> bool:
+        if rel.startswith(skipped) or (index.exclude and _matches_any(rel, index.exclude)):
+            return False
+        return exists(rel)
+
+    named = referenced_archives(
+        index, shipped, lambda rel: is_test_path(rel) or _is_fixture_file(rel)
+    )
+    extra: list[IndexedFile] = []
+    at_install: list[str] = []
+    gaps: dict[str, dict[str, int]] = {}
+    for relpath, handed_to_agent in named.items():
+        files, unread = read_archive(root, relpath, handed_to_agent=handed_to_agent)
+        extra.extend(files)
+        if relpath in install_archives:
+            # An archive an install command names is unpacked at install: its code runs then.
+            at_install += [f.relpath for f in files if f.suffix not in _PROSE_MEMBER_SUFFIXES]
+        if unread:
+            gaps[relpath] = unread
+    if extra:
+        index = index.with_files(extra, install_scripts=at_install)
+    return index, set(named) - set(gaps), gaps
+
+
+def _archive_gaps_note(gaps: dict[str, dict[str, int]]) -> NeedsReview:
+    """What was not read in the archives the component unpacks or imports from."""
+    shown = "; ".join(
+        f"{relpath} (" + ", ".join(f"{n} {why}" for why, n in sorted(unread.items())) + ")"
+        for relpath, unread in list(gaps.items())[:5]
+    )
+    more = f"; and {len(gaps) - 5} more" if len(gaps) > 5 else ""
+    return NeedsReview(
+        category="coverage",
+        title=UNANALYZED_ARCHIVE,
+        reason=(
+            f"The component unpacks, imports from or hands to the agent {len(gaps)} archive(s) "
+            f"holding file(s) that were not read: {shown}{more}. The text files in them were "
+            "read and checked like the rest of the component; these were not, and they are "
+            "unpacked or loaded all the same."
+        ),
+        file=next(iter(gaps)),
+    )
+
+
 def _unanalyzed_install_script(root: Path, relpath: str, script: str) -> NeedsReview:
     try:
         too_large = (root / relpath).stat().st_size > MAX_FILE_BYTES
@@ -1354,20 +1511,6 @@ def _skipped_code_files(index: FileIndex) -> dict[str, int]:
     ]
     counts = {"too_large": len(too_large), "minified": len(minified)}
     return {reason: n for reason, n in counts.items() if n}
-
-
-def _compiled_without_source(index: FileIndex) -> list[str]:
-    """The bytecode files the walk found with no source file of the same name beside them: a
-    ``.pyc`` or ``.pyo`` without its ``.py``, a ``.class`` (inner classes included) without its
-    ``.java``. Beside its source, bytecode is a build artifact the source already answers for."""
-    out = []
-    for relpath in index.compiled:
-        path = PurePosixPath(relpath)
-        stem = path.stem.split("$", 1)[0] if path.suffix.lower() == ".class" else path.stem
-        source = ".java" if path.suffix.lower() == ".class" else ".py"
-        if not (index.root / path.parent / f"{stem}{source}").is_file():
-            out.append(relpath)
-    return out
 
 
 def _skipped_code_phrase(skipped: dict[str, int]) -> str:

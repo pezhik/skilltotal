@@ -12,6 +12,7 @@ from skilltotal.scanners.agent_config import AgentConfigScanner
 from skilltotal.scanners.artifact_provenance import ArtifactProvenanceScanner
 from skilltotal.scanners.base import RuleSpec, Scanner
 from skilltotal.scanners.clipper import ClipperScanner
+from skilltotal.scanners.compiled_run import CompiledRunScanner
 from skilltotal.scanners.config_exec import ConfigExecScanner
 from skilltotal.scanners.dependency_redirect import DependencyRedirectScanner
 from skilltotal.scanners.dependency_source import DependencySourceScanner
@@ -29,6 +30,7 @@ from skilltotal.scanners.install_payload import InstallPayloadScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
 from skilltotal.scanners.lookalike_host import LookalikeHostScanner
+from skilltotal.scanners.lookalike_identifier import LookalikeIdentifierScanner
 from skilltotal.scanners.mcp import McpScanner
 from skilltotal.scanners.mcp_annotations import McpAnnotationScanner
 from skilltotal.scanners.mcp_elicitation import McpElicitationScanner
@@ -104,6 +106,8 @@ SCANNERS: list[Scanner] = [
     DependencyTyposquatScanner(),
     DisguisedScriptScanner(),
     LookalikeHostScanner(),
+    LookalikeIdentifierScanner(),
+    CompiledRunScanner(),
 ]
 
 

@@ -1,0 +1,8 @@
+{
+  "name": "fixture-report-tools",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "tar -xzf assets.tgz -C public && sh public/assets/link.sh"
+  }
+}

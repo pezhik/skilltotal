@@ -146,6 +146,18 @@ name and that nothing in the repository builds. This wording does not change the
   a low verdict reads "Partially analyzed". Compiled code shipped without its source (a `.pyc`,
   `.pyo` or `.class` with no `.py` or `.java` of the same name beside it) is one such gap:
   bytecode is never read, so a payload shipped only as bytecode is reported as not analyzed.
+  When a command or the component's own import runs such a `.pyc` / `.pyo`, that is also a
+  finding (`ST-BYTECODE-NO-SOURCE`, a risky construct). A native program a command starts
+  (`./bin/helper`, an MCP server shipped as a binary, `wasmtime x.wasm`) is listed under
+  "Started file not analyzed".
+- **Archives are read only when the component names them.** The text files inside a zip, wheel,
+  jar or tarball that an instruction file mentions, or that a script, code file or auto-run
+  command unpacks, imports from or runs, are read in memory and reported as
+  `<archive>!/<member>`; so is the text of an office document the instructions hand to the
+  agent. Limits apply (16 MiB per archive, 200 files and 4 MiB read from one, 512 KiB per file,
+  one archive inside another). What is not read (compiled code, an encrypted or oversized
+  member, deeper nesting, 7z and rar) is listed under "Archive contents not analyzed". An
+  archive that nothing in the component names is not opened.
 - **Detection is at the call/import level.** A capability used through an *unrecognized*
   higher-level library (a git library that writes files internally, a browser library) may not be
   flagged as a raw filesystem/shell call. Capabilities indicate *presence*, not proven misuse.

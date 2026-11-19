@@ -1,0 +1,8 @@
+{
+  "name": "fixture-report-tools",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "tar -xzf data.tgz && sh data/run.sh"
+  }
+}
