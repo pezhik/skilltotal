@@ -1,0 +1,8 @@
+{
+  "name": "fixture-report-formatter",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "dependencies": {
+    "left-pad": "https://registry.nрmjs.invalid/left-pad/-/left-pad-1.3.0.tgz"
+  }
+}

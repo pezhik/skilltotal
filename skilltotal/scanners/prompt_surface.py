@@ -11,7 +11,7 @@ import bisect
 import re
 from dataclasses import replace
 
-from skilltotal.file_index import FileIndex, IndexedFile, is_instruction_path
+from skilltotal.file_index import FileIndex, IndexedFile, is_instruction_file
 from skilltotal.models import Capability, Evidence, NeedsReview, Severity, ThreatClass
 from skilltotal.scanners.base import (
     MAX_EVIDENCE_PER_FINDING,
@@ -568,7 +568,7 @@ _TOOL_MANIFEST = re.compile(r'"(?:inputSchema|input_schema|mcpServers)"')
 def _is_loose_surface(f: IndexedFile) -> bool:
     """A file an agent takes instructions from: an instruction file (SKILL.md, CLAUDE.md, rule
     files) or a JSON manifest that describes MCP tools. Only these are read in the loose view."""
-    if is_instruction_path(f.relpath):
+    if is_instruction_file(f):
         return True
     return f.suffix == ".json" and _TOOL_MANIFEST.search(f.text) is not None
 
@@ -917,7 +917,7 @@ class PromptSurfaceScanner(Scanner):
         # order planted in the agent's memory, an image address that carries data out, encoded
         # instructions, a fake end of the file), in the files an agent follows.
         for f in index.files:
-            if not (is_instruction_path(f.relpath) or _INSTRUCTION_FILE.search(f.relpath)):
+            if not (is_instruction_file(f) or _INSTRUCTION_FILE.search(f.relpath)):
                 continue
             noted = False
             for text, idx in ((f.text, None), *f.folded_views()):

@@ -217,11 +217,14 @@ def analyze_directory(
     # So is a file an `env` block makes every process load (`NODE_OPTIONS=--require ./x.js`).
     # And a script the component's own instructions tell the agent to start (`python
     # scripts/run.py` in SKILL.md): the agent runs it whatever its size or folder.
+    # And a prose file those instructions tell the agent to read and follow (`read docs/SETUP.md
+    # and follow every step`): it is more instructions, so it is read as an instruction file.
     run_paths = _instruction_run_paths(index)
+    read_paths = _instruction_read_paths(index)
     walked = {f.relpath for f in index.files} | set(index.minified) | set(index.large)
     launched = (
         _mcp_launched_files(index) | _env_loaded_files(index)
-        | {path for path in run_paths if path in walked}
+        | {path for path in (*run_paths, *read_paths) if path in walked}
     ) - entry_points
     if launched & {*index.minified, *index.large}:
         index = build_index(entry_points | launched)
@@ -234,10 +237,13 @@ def analyze_directory(
     # Code the component loads by a literal path from a folder the walk passed over (its own
     # `lib/env/`, `src/vendor/`, ...) is read too: it runs whatever folder it is filed under.
     before_follow = len(index.files)
-    index, unloaded = follow_skipped_references(index, [*_env_loaded_paths(index), *run_paths])
+    index, unloaded = follow_skipped_references(
+        index, [*_env_loaded_paths(index), *run_paths, *read_paths]
+    )
     if len(index.files) > before_follow:
         # A script the instructions start from a folder the walk passed over (`.tox/`, `vendor/`).
-        entry_points |= set(run_paths) & {f.relpath for f in index.files}
+        entry_points |= {*run_paths, *read_paths} & {f.relpath for f in index.files}
+    index = index.read_by_agent(read_paths)
     # A file started under a name that hides it (`node assets/logo.png`, `python3 x.docx`) is read
     # as the language it is started in, and is an entry point like any file a command starts.
     disguised = disguised_runs(index, _component_file_check(Path(root)))
@@ -1084,6 +1090,54 @@ def _instruction_run_paths(index: FileIndex) -> list[str]:
             for start in {folder, ""}:
                 rel = posixpath.normpath(posixpath.join(start, word))
                 if not rel.startswith("..") and rel not in paths:
+                    paths.append(rel)
+            if len(paths) >= _MAX_INSTRUCTION_RUNS:
+                return paths
+    return paths
+
+
+# A prose file of the component, named by a relative path (never a URL, never a bare folder).
+_PROSE_PATH = (
+    r"(?<![\w@./:\\-])((?:\$\{?[A-Za-z_][\w:.-]{0,60}\}?/)?(?:\.{1,2}/){0,4}[\w@.-]{1,100}"
+    r"(?:/[\w@.-]{1,100}){0,12}\.(?:mdx?|mdc|markdown|txt|rst|adoc))(?![\w/-])"
+)
+_FOLLOW = (
+    r"(?:follow|obey|execute|carry[ \t]+out|perform|comply[ \t]+with|adhere[ \t]+to"
+    r"|do[ \t]+(?:what|everything|exactly|as)|apply[ \t]+(?:it|them|every|each|all|the))"
+)
+# An instruction file handing a local file to the agent as more instructions: "read docs/SETUP.md
+# and follow every step in it", "follow the instructions in ./INSTALL.md". Reading alone ("see
+# docs/usage.md for details") points a person or the agent at reference material and is not one:
+# the tell is the order to act on what the file says. Sentence-sized, on one line.
+_INSTRUCTION_READ = re.compile(
+    r"\b(?:read|open|load|consult|review|view|cat|see|check)\b[^\n.;!?]{0,80}?" + _PROSE_PATH
+    + r"[^\n;!?]{0,80}?\b" + _FOLLOW + r"\b"
+    r"|\b" + _FOLLOW + r"\b[^\n.;!?]{0,60}?\b(?:steps?|instructions?|directions?|procedures?"
+    r"|rules?|guidelines?|checklist|commands?|everything|what)\b[^\n.;!?]{0,30}?"
+    r"\b(?:in|from|of|at|inside|says)\b[^\n.;!?]{0,20}?" + _PROSE_PATH,
+    re.IGNORECASE,
+)
+
+
+def _instruction_read_paths(index: FileIndex) -> list[str]:
+    """Relative paths of the prose files that the component's instruction files tell the agent to
+    read and follow, read relative to the instruction file's folder and to the component root.
+    Candidates only, like ``_instruction_run_paths``: the caller keeps those that name a file of
+    the component. One step deep: a file named this way is not searched for more."""
+    paths: list[str] = []
+    for f in index.files:
+        if not (is_instruction_path(f.relpath) or _INSTRUCTION_FILE.search(f.relpath)):
+            continue
+        if _is_fixture_file(f.relpath):
+            continue
+        folder = posixpath.dirname(f.relpath)
+        for m in _INSTRUCTION_READ.finditer(f.text):
+            word = m.group(1) or m.group(2)
+            variable = _LAUNCH_ROOT_VARIABLE.match(word)
+            word = word[variable.end():] if variable else word
+            for start in {folder, ""}:
+                rel = posixpath.normpath(posixpath.join(start, word))
+                if not rel.startswith("..") and rel != f.relpath and rel not in paths:
                     paths.append(rel)
             if len(paths) >= _MAX_INSTRUCTION_RUNS:
                 return paths

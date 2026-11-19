@@ -719,6 +719,12 @@ def is_instruction_path(relpath: str) -> bool:
     )
 
 
+def is_instruction_file(f: IndexedFile) -> bool:
+    """True if an agent loads ``f`` as its instructions: by its name (``is_instruction_path``), or
+    because an instruction file of the component tells the agent to read it and follow it."""
+    return f.agent_read or is_instruction_path(f.relpath)
+
+
 def skill_dirs(relpaths: Iterable[str]) -> frozenset[str]:
     """Directories (``""`` for the root) holding a ``SKILL.md``: an agent reads what is in them."""
     dirs = set()
@@ -1801,6 +1807,10 @@ class IndexedFile:
     # interpreter its name hides (`node assets/logo.png` -> ".js"); "" for every other file. See
     # ``FileIndex.reading_as``.
     run_as: str = ""
+    # True for a prose file the component's own instruction file hands to the agent ("read
+    # docs/SETUP.md and follow every step in it"): it is read like the instruction file that
+    # names it, whatever its name or folder. See ``FileIndex.read_by_agent``.
+    agent_read: bool = False
 
     def normalized_or_none(self) -> tuple[str, list[int]] | None:
         """De-obfuscated ``(normalized_text, index_map)``, or None when normalization is the
@@ -2518,6 +2528,9 @@ class FileIndex:
         self.own_outputs = own_outputs or []
         # The globs the walk was told to skip, honored by anything that reads files after it.
         self.exclude = exclude
+        # Relative paths of the files marked ``agent_read`` (see ``read_by_agent``). Kept on the
+        # index as well as on each file so the scan cache's digest of the index covers it.
+        self.agent_read = sorted(f.relpath for f in files if f.agent_read)
 
     # ------------------------------------------------------------------ build
     @classmethod
@@ -2783,10 +2796,28 @@ class FileIndex:
             return self
         files = [
             IndexedFile(path=f.path, relpath=f.relpath, text=f.text, _line_starts=f._line_starts,
-                        run_as=languages[f.relpath])
+                        run_as=languages[f.relpath], agent_read=f.agent_read)
             if f.relpath in languages else f
             for f in self.files
         ]
+        return self._with_same_walk(files)
+
+    def read_by_agent(self, relpaths: Iterable[str]) -> FileIndex:
+        """A copy of this index in which each file named in ``relpaths`` is marked as text the
+        component's instructions hand to the agent (``IndexedFile.agent_read``), so the rules for
+        instruction files read it as one. Evidence keeps the real path."""
+        named = set(relpaths)
+        if not any(f.relpath in named and not f.agent_read for f in self.files):
+            return self
+        files = [
+            IndexedFile(path=f.path, relpath=f.relpath, text=f.text, _line_starts=f._line_starts,
+                        run_as=f.run_as, agent_read=True)
+            if f.relpath in named else f
+            for f in self.files
+        ]
+        return self._with_same_walk(files)
+
+    def _with_same_walk(self, files: list[IndexedFile]) -> FileIndex:
         return FileIndex(
             self.root, files, dict(self.stats), list(self.minified), self.git_config,
             links=self.links, unreadable=self.unreadable, skipped_dirs=self.skipped_dirs,
