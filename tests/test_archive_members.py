@@ -391,6 +391,16 @@ def test_office_document_parts_are_read_as_text_and_marked_for_the_agent(tmp_pat
         ("run.sh", "tar czf assets/t.tgz src", False),  # written, not unpacked
         ("run.sh", "zip -r assets/t.zip src", False),
         ("run.py", 'zipfile.ZipFile("assets/t.zip", "w").write("a")', False),
+        ("run.py", 'subprocess.run(["python", "-m", "pip", "install", "assets/t.whl"])', True),
+        ("run.py", 'sys.path.append("assets/t.zip")', True),
+        ("run.sh", "python3 assets/t.zip --serve", True),
+        ("run.sh", "uv pip install assets/t.whl", True),
+        # A table of bundled wheels: the key is a word, not a command (a package that seeds
+        # environments with pip lists its wheels this way).
+        ("run.py", '    "pip": "assets/t.whl",', False),
+        ("run.py", 'BUNDLED = {"python": "assets/t.whl", "java": "assets/t.jar"}', False),
+        ("run.py", 'SOURCES = ["assets/t.tar.gz", "assets/t.jar"]  # shipped with the tool', False),
+        ("run.sh", "sha256sum assets/t.tar.gz assets/t.jar", False),
         ("run.sh", "ls -l assets/t.zip", False),  # named, not unpacked
         ("run.sh", "unzip -o https://files.example.invalid/assets/t.zip", False),
         ("notes.txt", "unzip -o assets/t.zip -d work", False),  # not a script

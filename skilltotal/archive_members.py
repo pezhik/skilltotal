@@ -86,10 +86,20 @@ _ARCHIVE_PATH = re.compile(
 )
 _ROOT_VARIABLE = re.compile(r"^\$\{?[A-Za-z_][\w:.-]*\}?[\"']?[/\\]")
 # A line of a script, code file or command that unpacks an archive, imports from it or runs it.
+# A tool counts only as a command with its arguments (`pip install x.whl`, `["python", "app.pyz"]`,
+# `tar -xf`), never as a word on the line: a table such as `"pip": "pip-26.3-py3-none-any.whl"`
+# names a bundled wheel and uses nothing, and `tar` or `jar` is also the end of every such name.
+_ARG = r"""(?:\.exe)?["']?[ \t,]+["']?"""
 _USES_ARCHIVE = re.compile(
-    r"(?i)unzip|untar|bsdtar|\b7z[ar]?\b|unrar|\bjar\b|\bjava\b|python|pypy|\bpip3?\b|\buv\b"
-    r"|Expand-Archive|extract|unpack|zipimport|zipfile|tarfile|sys\.path|PYTHONPATH|NODE_PATH"
-    r"|CLASSPATH|adm-?zip|unzipper|decompress|yauzl|jszip|(?<!\w)-(?:cp|jar)\b|\btar\b"
+    r"(?i)unzip|untar|bsdtar|unrar|(?<![\w.])7z[ar]?" + _ARG
+    + r"|(?<![\w.])jar" + _ARG + r"-?[a-z]*x"
+    + r"|(?<![\w.-])java" + _ARG + r"-(?:jar|cp|classpath)\b"
+    + r"|(?<![\w.-])(?:python|pypy)[\d.]*" + _ARG
+    + r"|(?<![\w.-])pip3?" + _ARG + r"(?:install|download|wheel)\b|-m[ \t\"',]+pip\b"
+    + r"|(?<![\w.-])uvx?" + _ARG + r"(?:pip|run|tool|add)\b"
+    + r"|Expand-Archive|extract|unpack|zipimport|zipfile|tarfile|sys\.path|PYTHONPATH|NODE_PATH"
+    + r"|CLASSPATH|adm-?zip|unzipper|decompress|yauzl|jszip|(?<!\w)-(?:cp|jar)\b"
+    + r"|(?<![\w.])tar" + _ARG
 )
 # The same line when it writes the archive instead (a build or backup step): an archive opened
 # for writing, `zip -r`, or `tar` whose first option word has `c` and no `x` (`tar czf`).
