@@ -47,7 +47,6 @@ _CODE_SUFFIXES = (".py", ".pyw", ".js", ".cjs", ".mjs", ".ts", ".sh", ".bash", "
 _NODE_SUFFIXES = (".js", ".cjs", ".mjs", ".ts")
 
 # --- Python: fetched text reaches exec / eval / compile -------------------------------------
-_FETCH_FUNCS = frozenset({"urlopen", "urlretrieve"})
 _HTTP_VERBS = frozenset({"get", "post", "request", "fetch"})
 _HTTP_MODULES = frozenset({"requests", "httpx", "session", "client", "http", "urllib3", "aiohttp"})
 _RUNNERS = frozenset({"exec", "eval"})
@@ -456,7 +455,7 @@ class FetchTunnelLauncherScanner(Scanner):
             id=R_LAUNCHER_HIJACK,
             category="agent_config",
             severity=Severity.HIGH,
-            title="Launcher hijacks API",
+            title="Launcher points the model API at a third-party host and turns approvals off",
             description=(
                 "One file sets a model API base URL (OPENROUTER_BASE_URL, OPENAI_BASE_URL, ...) "
                 "to a host that is neither the vendor's nor this machine, and also turns tool "

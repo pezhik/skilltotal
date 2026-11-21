@@ -2,8 +2,8 @@
 
 This package is the reusable core engine. Everything here is import-safe and free of
 process-level side effects (no printing, no ``sys.exit``) *except* :mod:`skilltotal.cli`,
-which is the thin I/O shell. Future web and enterprise products are intended to import
-:func:`skilltotal.engine.analyze` directly.
+which is the thin I/O shell. Other products, such as the website's scanner, import
+:mod:`skilltotal.engine` directly.
 """
 
 from __future__ import annotations

@@ -497,14 +497,6 @@ def is_test_path(relpath: str) -> bool:
     return bool(_TEST_FILE_RE.search(parts[-1]) or _SELF_TEST_FILE_RE.search(parts[-1]))
 
 
-def is_self_test_path(relpath: str) -> bool:
-    """True if a file is a test by a ``selftest`` name alone. Such a file may also be a program's
-    real entry point (a `selftest.js` that package.json names as ``main``), which is behavior."""
-    parts = relpath.lower().split("/")
-    return bool({"selftest", "selftests"} & set(parts[:-1])
-                or _SELF_TEST_FILE_RE.search(parts[-1]))
-
-
 # Data / evaluation / benchmark corpora: reference data, not the component's executed behavior
 # or its agent-instruction surface. A prompt-injection string in eval_datasets/poisoning.yaml is
 # a *test vector for a detector*, not behavior — analogous to test code, so its evidence is

@@ -332,7 +332,8 @@ npx -y --package=skilltotal@1.9.0 -- skilltotal scan https://github.com/owner/re
 - **Languages.** Shell execution, network access, file access and dynamic code are analyzed in
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
   download-and-run, decode-and-run, evasion and post-exploitation idioms. Other languages get
-  only the secret, sensitive-path and hidden-Unicode checks.
+  only the checks that read any text: secrets, sensitive paths, hidden Unicode, obfuscation and
+  prompt-injection phrasing.
 - **The default gate does not count unread code**, and unread code never passes in silence: the
   log names it (`Not everything was analyzed: ...`), the verdict reads "Partially analyzed", and
   `--fail-on-unanalyzed` fails on it. That covers files too large to read, minified bundles, code in

@@ -111,7 +111,8 @@ class ConfigExecScanner(Scanner):
             id=R_CRED_HELPER,
             category="agent_config",
             severity=Severity.HIGH,
-            title="Distributable config runs a command that fetches or exfiltrates credentials",
+            title=("Distributable config runs a command that fetches code or sends credentials "
+                   "off-host"),
             description=(
                 "A JSON configuration artifact (a provider card, profile bundle, or shipped "
                 "settings.json) defines a Claude Code credential helper (apiKeyHelper, "

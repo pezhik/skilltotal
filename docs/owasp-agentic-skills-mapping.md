@@ -14,6 +14,9 @@ AST category are left **unmapped** (empty `owasp`) rather than forced into a lab
 
 ## Covered (statically checkable)
 
+The table names representative rules for each class. The full mapping is `skilltotal/owasp.py`;
+`skilltotal rules list --json` prints each rule's `owasp` array.
+
 | OWASP category | SkillTotal rules | Notes |
 |---|---|---|
 | **AST01 Malicious Skills** | `ST-OBF-DECODE-EXEC(-PY/-SH)`, `ST-PTH-EXEC`, `ST-ENCRYPTED-ARCHIVE`, `ST-SHELL-EVASION`, `ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, `ST-EMAIL-BCC-EXFIL`, `ST-CONVERGENCE` | deliberate harm: decode-and-execute, persistence, exfiltration, evasion, multi-indicator convergence |
@@ -35,9 +38,9 @@ without asking.
   AST10 Cross-Platform Reuse** — these require executing the skill, registry/advisory data, or
   organizational process, none of which a component-only static engine observes. Update-drift /
   dependency-CVE and cross-platform provenance are out of scope for the offline engine; runtime
-  isolation and governance belong to the hosted SkillTotal Cloud and to deployment process.
-- **Classic code-level findings and raw capabilities carry no AST category** (empty `owasp`):
-  command injection (`ST-CMDI-*`, `ST-TAINT-SHELL/EXEC-PY`), dynamic code execution capability
+  isolation and governance belong to runtime tooling and deployment processes.
+- **Classic code-level findings and raw capabilities carry no AST category** (empty `owasp`),
+  for example: command injection (`ST-CMDI-*`, `ST-TAINT-SHELL/EXEC-PY`), dynamic code execution capability
   (`ST-DYN-*`), filesystem/network/shell capabilities (`ST-FS-*`, `ST-NET-*`, `ST-SHELL-NODE/PY`),
   MCP presence (`ST-MCP-DETECTED`), obfuscation signals (`ST-OBF-BASE64-BLOB/HEX/MINIFIED`),
   hardcoded secrets / sensitive-path access (`ST-SECRET-EMBEDDED`, `ST-SENS-*`), and network

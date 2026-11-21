@@ -75,13 +75,14 @@ class WorkflowExfilScanner(Scanner):
             id=R_WORKFLOW_HISTORY_EXFIL,
             category="exfiltration_path",
             severity=Severity.HIGH,
-            title="GitHub Actions workflow harvests credentials and sends them off GitHub",
+            title="GitHub Actions workflow searches for credentials and sends data off GitHub",
             description=(
                 "A workflow under .github/workflows/ scans for several provider credential "
                 "prefixes (Anthropic/OpenAI/OpenRouter API keys, AWS/GitHub/Google/Slack tokens) "
                 "and a run step sends data to a host that is not GitHub (a hard-coded IP or an "
                 "external domain) through a network client. Run on the repository's own CI with "
-                "its secrets and full git history, this exfiltrates every credential it can find. "
+                "its secrets and full git history, the step can send any credential the search "
+                "finds to that host. "
                 "A legitimate secret-scanning workflow greps for leaked keys but never posts the "
                 "results off GitHub (GhostAction, 2026)."
             ),

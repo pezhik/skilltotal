@@ -1518,7 +1518,9 @@ def resolve_release(source: str, *, timeout: float = _HTTP_TIMEOUT,
             if pin and _EXACT_NPM_VERSION_RE.match(pin):
                 return Release(f"npm:{name}@{pin}")
             base = _registry_base("npm", use_mirror)[0]
-            url = f"{base}/{quote(name, safe='@')}/{quote(pin or 'latest')}"
+            # safe='': a pin like `../../x` must stay one path segment (security review
+            # 2026-11-21, L1), as _npm_release already quotes it.
+            url = f"{base}/{quote(name, safe='@')}/{quote(pin or 'latest', safe='')}"
             with _open(url, timeout=timeout) as resp:
                 version = str(bounded_json.loads(resp.read(8 * 1024 * 1024)).get("version")
                               or "")

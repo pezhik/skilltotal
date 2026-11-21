@@ -713,7 +713,10 @@ _NOT_A_SECRET = re.compile(
     r"|string|number|boolean|object|function|symbol|bigint)$"
 )
 # `snake_case`, `kebab-case`, `dotted.name` or `camelCase` words: a keyword or an identifier.
-_WORD_LIKE = re.compile(r"[A-Z]?[a-z]+(?:[-_.]?[A-Z]?[a-z]+)*|[A-Z]+(?:[-_.][A-Z]+)*")
+# Each later part starts with a separator or a capital, so a run of lower-case letters splits one
+# way only: the old `(?:[-_.]?[A-Z]?[a-z]+)*` was `(a+)+`, exponential on a long lower-case
+# literal (security review 2026-11-21, M2).
+_WORD_LIKE = re.compile(r"[A-Z]?[a-z]+(?:(?:[-_.][A-Z]?|[A-Z])[a-z]+)*|[A-Z]+(?:[-_.][A-Z]+)*")
 # A value the request, its headers or the environment supplied, on the compared side itself
 # (`req.headers.authorization`, `ctx.token`) or assigned to that name a little earlier.
 _REQUEST_RECEIVER = re.compile(

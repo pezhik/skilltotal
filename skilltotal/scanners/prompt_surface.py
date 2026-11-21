@@ -772,7 +772,8 @@ class PromptSurfaceScanner(Scanner):
             id="ST-PROMPT-SPLIT-EXFIL",
             category=CATEGORY,
             severity=Severity.HIGH,
-            title="Split-objective credential exfiltration in an instruction file",
+            title=("Instruction file spreads reading a credential, sending it and hiding it "
+                   "across steps"),
             description=(
                 "An instruction file (skill/agent prompt) directs the agent to read a credential "
                 "location, send data to an external URL, and hide the upload from the user - with "

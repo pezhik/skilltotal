@@ -30,6 +30,26 @@ def test_no_rule_text_names_a_malware_campaign():
     assert not offenders, "rule texts name a campaign: " + "; ".join(offenders)
 
 
+# Verbs that say what the component DOES with intent ("steals", "harvests", "exfiltrates",
+# "hijacks") instead of what was matched: a report says "sends a credential off-host", which the
+# evidence shows, never "steals" it, which it cannot (review 2026-11-21: seven rules said so).
+_INTENT_WORDS = re.compile(
+    r"\b(?:steal(?:s|ing)?|harvest(?:s|ing)?|exfiltrat(?:es|ing|ed)|hijack(?:s|ing|ed)?)\b",
+    re.IGNORECASE,
+)
+
+
+def test_rule_titles_and_descriptions_never_assert_intent():
+    offenders = []
+    for rule in get_rules():
+        for field in ("title", "description"):
+            text = getattr(rule, field, "") or ""
+            match = _INTENT_WORDS.search(text)
+            if match:
+                offenders.append(f"{rule.id}.{field}: {match.group(0)!r}")
+    assert not offenders, "rule texts assert intent: " + "; ".join(offenders)
+
+
 def test_rule_texts_are_ascii():
     """The CLI prints these to consoles in a legacy code page (cp437, cp866), where an ellipsis or
     an em dash came out as mojibake or "?"."""

@@ -161,8 +161,6 @@ _JS_SINK_HANDLE = "|".join((
 _JS_SINK_BINDING = re.compile(
     r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*(?:" + _JS_SINK_HANDLE + r")\s*(?=[;\n\r])"
 )
-# The encodings a Buffer.from decodes with, for a name bound once to one of them.
-_DECODE_ENCODINGS = frozenset({"base64", "base64url", "hex"})
 _JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
 _PY_SUFFIXES = (".py", ".pyw")
 
@@ -442,7 +440,9 @@ _JS_LAUNCH = re.compile(r"\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSy
 _JS_RUN_FILE_PREFIX = (
     r"(?:process\.execPath|['\"`](?:[\w.:/\\-]*[/\\])?"
     r"(?:node|nodejs|python[\d.]*|pwsh|powershell|sh|bash|zsh|cmd)(?:\.exe)?\b)?"
-    r"[\s\"'`,\[+]*(?:-[\w-]+[\s\"'`,+]*)*(?:\$\{)?"
+    # A separator after each flag: with an optional one, `[\w-]+` and the next flag split a run
+    # like `-a-a-a` every possible way, exponential in its length (security review 2026-11-21).
+    r"[\s\"'`,\[+]*(?:-[\w-]+[\s\"'`,+]+)*(?:\$\{)?"
 )
 # A decompression (not a base64/hex decode) whose input is a file read from disk right there.
 _JS_DECOMPRESS = re.compile(

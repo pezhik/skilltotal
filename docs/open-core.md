@@ -1,8 +1,8 @@
 # SkillTotal open-core model
 
-SkillTotal is **open core**: the analysis engine is open source and fully usable on its own;
-paid capabilities are delivered only as hosted services of SkillTotal Cloud, never as code
-shipped in this repository.
+SkillTotal is **open core**: the analysis engine is open source and fully usable on its own.
+Planned paid features (SkillTotal Cloud) will be hosted services. None of their code ships in
+this repository.
 
 ## Direction of dependency
 
@@ -16,9 +16,9 @@ versioned PyPI package plus the report JSON schema (`docs/report.schema.json`).
   evidence (file/line/snippet): shell execution, filesystem/network/install/dynamic-code,
   sensitive paths, MCP dangerous tools, prompt-injection surface, hidden Unicode, the
   sensitive-data + network exfiltration combination, a 0–100 score and risk level.
-- **SkillTotal Cloud (paid)** answers **WHY it matters / WHAT HAPPENS WHEN RUN / WHERE TO KEEP
-  & WATCH IT** — interpretation and prioritization of findings, dynamic sandbox execution,
-  hosting, history, and monitoring.
+- **SkillTotal Cloud (planned, paid)** is meant to answer **WHY it matters**: services on top of
+  the report, such as interpretation and prioritization of findings. None of it is available
+  yet.
 
 **All detection rules stay in OSS.** The engine must be a genuinely useful, complete CI tool on
 its own — that is what makes it worth adopting. Monetization is the hosted layer *above*
@@ -26,10 +26,9 @@ detection, not a subset of it: the paid value is server-side services and operat
 not something that can be "taken from" the open source.
 
 This repository never contains server-side or paid logic — LLM pipelines, finding-verification
-code, sandbox orchestration, billing, server secrets, private datasets, or website code. A
-thin, optional cloud client may live in the CLI (`skilltotal/cloud/`, Python stdlib only, so
-the zero-dependency guarantee holds) purely as request/response plumbing to the hosted API,
-with no premium logic. Without a Cloud account the local scan still works fully and for free.
+code, sandbox orchestration, billing, server secrets, private datasets, or website code. A thin
+client for a hosted API may be added to the CLI later. It would use the Python standard library
+only and carry no premium logic, and the local scan would not depend on it.
 
 ## Versioned contract (recap)
 

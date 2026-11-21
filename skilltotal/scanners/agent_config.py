@@ -907,7 +907,7 @@ class AgentConfigScanner(Scanner):
             id=R_SKILL_EXEC,
             category="agent_config",
             severity=Severity.HIGH,
-            title="Agent skill auto-runs a command that steals credentials or fetches code",
+            title="Agent skill auto-runs a command that sends credentials off-host or fetches code",
             description=(
                 "An Agent Skill embeds a `!` dynamic-context command that runs when the skill "
                 "loads - before the model reads the skill, so its tool restrictions do not apply "

@@ -1238,6 +1238,18 @@ def _env_loaded_languages(index: FileIndex) -> dict[str, str]:
 _MAX_STARTED_LOOKUPS = 64
 
 
+def _resolves_inside(base: Path, path: Path) -> bool:
+    """True when ``path`` stays inside ``base`` after every link along the way is followed. A
+    checked-in link to a folder (`sys -> /`) passes a by-name check and an lstat of the last part,
+    and it once led the archive reader to a file outside the component (security review
+    2026-11-21, M3)."""
+    try:
+        path.resolve().relative_to(base)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _component_file_check(root: Path) -> Callable[[str], bool]:
     """A test for "this relative path is a regular file inside the component", by name first so
     that nothing outside it is touched; at most ``_MAX_STARTED_LOOKUPS`` paths are looked up."""
@@ -1248,7 +1260,7 @@ def _component_file_check(root: Path) -> Callable[[str], bool]:
         if rel not in looked_up:
             if len(looked_up) >= _MAX_STARTED_LOOKUPS or not _inside_by_name(base, base, rel):
                 return False
-            looked_up[rel] = is_regular_file(base / rel)
+            looked_up[rel] = is_regular_file(base / rel) and _resolves_inside(base, base / rel)
         return looked_up[rel]
 
     return exists

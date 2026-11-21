@@ -9,6 +9,7 @@ bounded. The limit is generous so a busy machine does not make the test flaky.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from skilltotal.scanners import (
     mcp,
     mcp_elicitation,
     npm_supply,
+    obfuscation,
     secret_exfil,
     secrets,
     sensitive_paths,
@@ -77,6 +79,12 @@ CASES = {
     "clipper._BOUND_STRING": lambda: list(clipper._BOUND_STRING.finditer("const$" * (N // 6))),
     "clipper._PATTERN_BINDING": lambda: list(clipper._PATTERN_BINDING.finditer("name$" * (N // 5))),
     "clipper._REPLACED_INTO": lambda: list(clipper._REPLACED_INTO.finditer("replace$" * (N // 8))),
+    # 2026-11-21 (security review M2): both were exponential, 22 characters took about a second
+    # and every further one doubled it. A component chooses these literals and arguments itself.
+    "mcp._WORD_LIKE": lambda: mcp._WORD_LIKE.fullmatch("a" * N + "+"),
+    "obfuscation._JS_RUN_FILE_PREFIX": lambda: re.match(
+        obfuscation._JS_RUN_FILE_PREFIX + re.escape("x.js") + r"(?![\w$.])", "-a" * (N // 2)
+    ),
 }
 
 

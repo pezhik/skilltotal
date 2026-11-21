@@ -820,9 +820,9 @@ class ShellScriptScanner(Scanner):
             title="Downloaded archive extracted with a password",
             description=(
                 "A script or setup instruction downloads an archive and extracts it with a "
-                "password (`unzip -P ...`, `7z x -p...`). The password exists to keep the contents "
-                "away from scanners on the way in; malicious agent skills (ToxicSkills, 2026) "
-                "delivered their binaries this way."
+                "password (`unzip -P ...`, `7z x -p...`). A password keeps a scanner from reading "
+                "the contents before they are extracted; malicious agent skills (ToxicSkills, "
+                "2026) delivered their binaries this way."
             ),
             recommendation=(
                 "Do not run it. Download the archive in isolation and inspect what it contains."
@@ -848,7 +848,8 @@ class ShellScriptScanner(Scanner):
                 "(GITHUB_TOKEN, an Actions OIDC/runtime token, or a ${{ secrets.* }} / "
                 "${{ github.token }} expression) to a non-GitHub host through a network client "
                 "(curl / wget / Invoke-WebRequest / nc). The step runs on the runner of whoever "
-                "uses the action, so the token and secrets of every consumer are exfiltrated. "
+                "uses the action, so the step sends the token and secrets of every workflow that "
+                "uses the action to that host. "
                 "Handing the token to gh / git against GitHub, or to the documented Actions "
                 "service URLs, is not matched."
             ),

@@ -106,8 +106,7 @@ class DependencyRedirectScanner(Scanner):
                 "tells the agent to install packages from a non-default package index or registry "
                 "and to keep the substitution from the user. Each time the developer asks the "
                 "agent to add a common dependency, the package then comes from that index and "
-                "nobody is told the source changed (dependency hijack via marketplace skills, "
-                "2026)."
+                "nobody is told the source changed (seen in marketplace skills in 2026)."
             ),
             recommendation=(
                 "Remove the redirect, or make the index explicit and visible. A legitimate private "

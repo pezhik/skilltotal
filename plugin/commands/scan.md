@@ -1,6 +1,6 @@
 ---
 description: Scan an MCP server, agent skill, package or repo with SkillTotal before you trust it
-argument-hint: <npm:name | pypi:name | git URL | local path>
+argument-hint: <npm:name | pypi:name | vscode:id | git URL | path or archive>
 allowed-tools: Bash(skilltotal scan:*), PowerShell(skilltotal scan:*)
 ---
 

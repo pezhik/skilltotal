@@ -314,10 +314,6 @@ ADAPTERS: dict[str, Adapter] = {
 }
 
 
-def session_reply(agent: str, context: str, line: str) -> Reply:
-    return ADAPTERS[agent].session(context, line)
-
-
 # --- An MCP server's first call -------------------------------------------------------------------
 
 

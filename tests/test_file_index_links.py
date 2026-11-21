@@ -232,6 +232,20 @@ def test_a_directory_that_cannot_be_listed_is_reported(tmp_path, monkeypatch):
     assert index.unreadable == ["private/"]
 
 
+def test_a_file_named_through_a_linked_folder_is_not_in_the_component(tmp_path):
+    # Security review 2026-11-21, M3: `sys -> /` passed the by-name check, and lstat of the last
+    # part saw a regular file, so the archive reader opened a file outside the component.
+    from skilltotal.engine import _component_file_check
+
+    comp, outside = _layout(tmp_path)
+    (outside / "tools.zip").write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    (comp / "own.zip").write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    _junction(outside, comp / "sys")
+    exists = _component_file_check(comp)
+    assert exists("own.zip") is True
+    assert exists("sys/tools.zip") is False
+
+
 def test_install_scripts_named_by_a_linked_manifest_are_not_read(tmp_path):
     from skilltotal.engine import _install_script_files
 

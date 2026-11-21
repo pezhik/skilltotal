@@ -13,7 +13,7 @@ import pytest
 
 from skilltotal import engine
 from skilltotal.collector import detect_component
-from skilltotal.file_index import is_self_test_path, is_test_path
+from skilltotal.file_index import is_test_path
 
 
 def _report(root: Path):
@@ -128,13 +128,11 @@ def test_decode_spawn_evidence_shows_the_linked_pair(tmp_path: Path):
 ])
 def test_selftest_names_are_test_paths(path: str):
     assert is_test_path(path)
-    assert is_self_test_path(path)
 
 
 @pytest.mark.parametrize("path", ["myselftest.js", "selftester.py", "src/selfies/a.py"])
 def test_other_names_are_not(path: str):
     assert not is_test_path(path)
-    assert not is_self_test_path(path)
 
 
 _LOADER = _SPAWN + 'spawn(process.execPath, ["-e", atob("eA==")]);\n'

@@ -363,9 +363,10 @@ def _ratio(hit: int, total: int) -> str:
 
 def _rule_coverage_markdown(coverage: dict[str, dict], misses: list[str]) -> list[str]:
     lines = [
-        "## Rule coverage (rules mapped to an OWASP class)",
+        "## Rule coverage (rules mapped to an OWASP class, and rules with their own samples)",
         "",
-        "Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule samples "
+        "Each rule mapped to an OWASP class or with samples of its own, with the corpus samples it "
+        "fired on. Rule samples "
         "under `tests/eval_corpus/rules/<rule>/` test the rule itself: a `fires/` sample must "
         "trigger it and a `silent/` look-alike must not. Rule samples are not part of recall or "
         "precision: a capability rule adds nothing to the score, and one risky construct alone "

@@ -32,8 +32,8 @@ it also trips a cross-language signal (a sensitive path, an embedded secret, obf
 Unicode payload, a poisoned manifest, a typosquat name) — the language-specific exec/egress would
 be missed, and the synthesized exfil combos (`ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`) would not fire.
 
-The coverage matrix in `docs/efficacy-report.md` shows these languages with their real (often
-zero) positive-sample counts rather than hiding the gap.
+The coverage matrix in `docs/efficacy-report.md` has no column for these languages: the corpus
+holds no samples in them.
 
 **Why deferred:** a faithful semantic analyzer for these languages needs a real parser, which the
 zero-dependency constraint rules out (Python’s is the only stdlib parser). The realistic path is

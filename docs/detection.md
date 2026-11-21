@@ -53,8 +53,9 @@ or a set of prompts/configs) that is not a published package.
 Each row names what the engine checks today. The code-behavior rows (dangerous capabilities, data
 exfiltration, dynamic code execution, decode-and-execute) cover Python and JavaScript/TypeScript;
 shell, PowerShell and batch scripts are checked for download-and-run, decode-and-run, evasion and
-post-exploitation idioms. Code in other languages gets only the secret, sensitive-path and
-hidden-text checks (see [Limitations](#limitations)). Bidi controls next to right-to-left text and
+post-exploitation idioms. Code in other languages gets only the checks that read any text
+(secrets, sensitive paths, hidden Unicode, obfuscation, prompt-injection phrasing; see
+[Limitations](#limitations)). Bidi controls next to right-to-left text and
 lone zero-width characters are listed for review and left out of the score, because locale and CJK
 files use them legitimately.
 
@@ -134,7 +135,8 @@ name and that nothing in the repository builds. This wording does not change the
   Python and JavaScript/TypeScript. Shell, PowerShell and batch scripts are checked for
   download-and-run, decode-and-run, evasion and post-exploitation idioms. Go, Rust, Java, Ruby, PHP, C/C++, C#, Swift,
   Kotlin, Scala, Dart, Lua, Perl, Elixir, Groovy, Haskell, Clojure, Erlang, R and Zig files get only
-  the secret, sensitive-path and hidden-Unicode checks; the report adds a `needs_review` note, and
+  the checks that read any text (secrets, sensitive paths, hidden Unicode, obfuscation,
+  prompt-injection phrasing); the report adds a `needs_review` note, and
   a low verdict reads "Partially analyzed". See
   [docs/language-scope.md](https://github.com/pezhik/skilltotal/blob/main/docs/language-scope.md).
 - **Symbolic links and junctions** in a scanned folder are not followed, and links inside an

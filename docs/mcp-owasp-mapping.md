@@ -4,7 +4,7 @@ How SkillTotal's deterministic static analysis maps to the statically-checkable 
 [OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html).
 SkillTotal analyzes an MCP server's own files (manifest + code) only; it never executes the server
 or inspects a deployment. Runtime/deployment controls are out of scope for a static engine and are
-listed at the end as honest gaps (planned for the hosted SkillTotal Cloud).
+listed at the end as known gaps.
 
 ## Statically checkable — covered
 
@@ -26,7 +26,7 @@ listed at the end as honest gaps (planned for the hosted SkillTotal Cloud).
 | Data-exfiltration surface (sensitive access + egress) | `ST-COMBO-EXFIL`, `ST-FLOW-TRIFECTA`, MCP exfiltration-surface review | credential access + network; lethal-trifecta flow |
 | Supply-chain payload in the server's own code | `ST-OBF-DECODE-EXEC*`, `ST-PTH-EXEC`, `ST-INSTALL-DROPPER`, `ST-ENCRYPTED-ARCHIVE`, `ST-HIDDEN-UNICODE` | obfuscation, auto-exec persistence, install droppers, evasion |
 
-## Not statically checkable — runtime / deployment (SkillTotal Cloud)
+## Not statically checkable — runtime / deployment
 
 These OWASP controls require executing the server or observing the live deployment and are **not**
 addressable by static analysis: sandboxing enforcement, human-in-loop approval UI, rate limiting /

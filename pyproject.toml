@@ -7,7 +7,7 @@ name = "skilltotal"
 # Single source of truth for the version is skilltotal/__init__.py (__version__);
 # a hardcoded copy here once drifted (0.1.0 vs 0.3.0) and nearly shipped mislabeled.
 dynamic = ["version"]
-description = "Static security scanner for npm and PyPI packages, MCP servers and agent skills. Runs locally, never runs the code, no LLM."
+description = "Static security scanner for npm and PyPI packages, MCP servers, agent skills and VS Code extensions. Runs locally, never runs the code, no LLM."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -16,7 +16,8 @@ authors = [{ name = "SkillTotal" }]
 keywords = [
     "security", "ai", "mcp", "supply-chain", "static-analysis", "prompt-injection",
     "agentic-ai", "agent-security", "ai-security", "cloud-security-alliance", "csa",
-    "maestro", "mitre-atlas", "llm-security",
+    "maestro", "mitre-atlas", "llm-security", "claude-code", "mcp-server", "agent-skills",
+    "malware-detection", "sarif", "vscode-extension",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
