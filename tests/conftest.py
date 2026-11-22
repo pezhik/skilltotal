@@ -30,6 +30,12 @@ from skilltotal.collector import detect_component
 from skilltotal.engine import analyze_directory
 from skilltotal.models import Report
 
+# The eval corpus and the manual benchmark are data: malicious-looking samples, some of them shaped
+# as tests. They are never collected, whatever the command line says: `-o addopts=""` dropped the
+# --ignore flags of pyproject.toml and a corpus sample ran as a test (2026-11-22; its host is on
+# the reserved .test domain and its file was absent, so nothing left the machine).
+collect_ignore = ["eval_corpus", "manual_eval"]
+
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
