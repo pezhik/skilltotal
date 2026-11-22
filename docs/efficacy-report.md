@@ -1,6 +1,6 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.9.0 · ruleset 108 · Python 3.11 · offline corpus.
+Engine 1.9.0 · ruleset 108 · Python 3.14 · offline corpus.
 
 - **recall: 100.0%** (386/386 malicious samples flagged)
 - **precision: 100.0%** · false-positive rate 0.0% (0/296 benign samples wrongly flagged)
@@ -105,17 +105,17 @@ Engine 1.9.0 · ruleset 108 · Python 3.11 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 52 | 57 | 56 | 28 |
-| AST02 | 49 | 35 | 15 | 7 |
+| AST01 | 52 | 56 | 57 | 28 |
+| AST02 | 49 | 34 | 15 | 8 |
 | AST03 | 0 | 2 | 0 | 0 |
 | AST04 | 59 | 6 | 14 | 0 |
 | AST05 | 0 | 0 | 6 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
 
-## Rule coverage (rules mapped to an OWASP class)
+## Rule coverage (rules mapped to an OWASP class, and rules with their own samples)
 
-Each rule mapped to an OWASP class, with the corpus samples it fired on. Rule samples under `tests/eval_corpus/rules/<rule>/` test the rule itself: a `fires/` sample must trigger it and a `silent/` look-alike must not. Rule samples are not part of recall or precision: a capability rule adds nothing to the score, and one risky construct alone usually stays below high risk, so most rule samples are not flagged, by design. A rule firing on a benign sample is not a false positive by itself, because precision is judged on the verdict. Rule samples show that a rule matches what it describes. They do not estimate how often it fires on benign code in the wild.
+Each rule mapped to an OWASP class or with samples of its own, with the corpus samples it fired on. Rule samples under `tests/eval_corpus/rules/<rule>/` test the rule itself: a `fires/` sample must trigger it and a `silent/` look-alike must not. Rule samples are not part of recall or precision: a capability rule adds nothing to the score, and one risky construct alone usually stays below high risk, so most rule samples are not flagged, by design. A rule firing on a benign sample is not a false positive by itself, because precision is judged on the verdict. Rule samples show that a rule matches what it describes. They do not estimate how often it fires on benign code in the wild.
 
 | rule | class | fired on malicious samples | fired on benign samples | rule samples: fired | rule samples: stayed silent |
 |---|---|---|---|---|---|

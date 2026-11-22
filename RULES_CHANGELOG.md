@@ -22,6 +22,14 @@ two tells together.
   dependency as `name @ http://host/...`. An https address, a loopback address and a commented
   line are not reported.
 
+Wording, not detection: `ST-SKILL-DYNAMIC-EXEC`, `ST-WORKFLOW-HISTORY-EXFIL`,
+`ST-ACTION-SECRET-EXFIL`, `ST-ARCHIVE-PASSWORD-EXTRACT`, `ST-AGENT-CRED-HELPER-EXEC`,
+`ST-AGENT-LAUNCHER-HIJACK`, `ST-PROMPT-SPLIT-EXFIL` and `ST-SKILL-DEP-REDIRECT` describe the
+matched behavior without a verb of intent. The patterns behind the MCP static-token check and the
+decoded-file run in obfuscation no longer backtrack exponentially. The MCP pattern matches what it
+matched before; the obfuscation pattern now needs a space, quote or comma after each flag before
+the file name, as every argument list it is meant for has.
+
 ## ruleset 107 (engine 1.8.0)
 
 Two new rules. All rules now read code inside an archive the component uses.

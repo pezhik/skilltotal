@@ -13,6 +13,30 @@ All notable changes to the SkillTotal engine. Format loosely follows
   (`ST-PY-MAIN-BUNDLED-EXE-HIDDEN`) and a dependency declared as a plain `http://` direct
   reference (`ST-PY-DEP-PLAIN-HTTP-URL`). See `RULES_CHANGELOG.md`.
 
+### Changed
+- Eight rule titles and descriptions now say what the scan matched instead of what the component
+  is for: "sends credentials off-host" replaces "steals" and "exfiltrates", "searches for
+  credentials" replaces "harvests". A test now refuses those verbs in rule texts.
+- The one-line package descriptions on PyPI, npm, the MCP registry and the GitHub Action name
+  VS Code extensions too. The PyPI keywords add `claude-code`, `mcp-server`, `agent-skills`,
+  `malware-detection`, `sarif` and `vscode-extension`.
+- Docs: `open-core.md` describes SkillTotal Cloud as planned, with nothing available yet, and
+  drops the cloud client and the account, which do not exist. The OWASP mapping tables say they
+  list examples. Every page now names the same checks for languages without a dedicated analyzer.
+
+### Fixed
+- Two patterns could take exponential time on text a component chose: a lower-case literal
+  compared with a token in an MCP server, and a long run of `-a-a-a` arguments after a decoded
+  file was written. Both now run in linear time, and the ReDoS test covers them.
+- A checked-in link to a folder outside the component (`sys -> /`) no longer leads the archive
+  reader to a file outside the component.
+- An npm version pin such as `../../x` stays a single path segment when the release is looked up
+  on a mirror.
+
+### Removed
+- Unused internal helpers: `agent_adapters.session_reply`, `file_index.is_self_test_path` and
+  two constants.
+
 ## [1.8.0]
 
 ### Added
