@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.9.0]
+
+### Added
+- Ruleset 108 adds four rules for package install and start-up shapes: a base64 machine query
+  sent by `curl` at install (`ST-NPM-INSTALL-RECON-BEACON`), an `.exe` started by a `setup.py`
+  install command (`ST-PY-SETUP-EXE-LAUNCH`), a bundled `.exe` started hidden by `__main__.py`
+  (`ST-PY-MAIN-BUNDLED-EXE-HIDDEN`) and a dependency declared as a plain `http://` direct
+  reference (`ST-PY-DEP-PLAIN-HTTP-URL`). See `RULES_CHANGELOG.md`.
+
 ## [1.8.0]
 
 ### Added

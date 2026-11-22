@@ -406,6 +406,8 @@
  "negative/AST02/dns-exfil/prints-hostname": [
   "ST-INSTALL-NPM"
  ],
+ "negative/AST02/fake-http-dependency-download-beacon/https-direct-reference": [],
+ "negative/AST02/fake-http-dependency-download-beacon/loopback-http-reference": [],
  "negative/AST02/foreign-image/compose-builds-from-source": [],
  "negative/AST02/foreign-image/fork-builds-own-image": [],
  "negative/AST02/foreign-image/own-registry-image": [],
@@ -467,6 +469,12 @@
   "ST-MCP-DETECTED",
   "ST-MCP-SERVER-EXEC"
  ],
+ "negative/AST02/module-run-embedded-infostealer-exe/bundled-exe-visible-wait": [
+  "ST-SHELL-PY"
+ ],
+ "negative/AST02/module-run-embedded-infostealer-exe/runs-system-tool": [
+  "ST-SHELL-PY"
+ ],
  "negative/AST02/native-addon-dropper-sandbox-gate/ci-skip-prebuilt-binding": [
   "ST-INSTALL-NPM"
  ],
@@ -518,6 +526,12 @@
  "negative/AST02/npm-postinstall-miner/native-build-script": [
   "ST-INSTALL-NPM"
  ],
+ "negative/AST02/npm-preinstall-id-output-curl-beacon/curl-download-only": [
+  "ST-INSTALL-NPM"
+ ],
+ "negative/AST02/npm-preinstall-id-output-curl-beacon/id-piped-to-file": [
+  "ST-INSTALL-NPM"
+ ],
  "negative/AST02/npm-worm/install-notice-mentions-publish": [
   "ST-INSTALL-NPM"
  ],
@@ -560,6 +574,11 @@
   "ST-NET-PY"
  ],
  "negative/AST02/setup-host-beacon/install-copies-data": [
+  "ST-FS-PY-WRITE",
+  "ST-INSTALL-PY"
+ ],
+ "negative/AST02/setup-py-install-cmd-override-embedded-exe/exe-as-package-data": [],
+ "negative/AST02/setup-py-install-cmd-override-embedded-exe/install-override-copies-data": [
   "ST-FS-PY-WRITE",
   "ST-INSTALL-PY"
  ],
@@ -1772,6 +1791,9 @@
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-DNS-BEACON"
  ],
+ "positive/AST02/fake-http-dependency-download-beacon/probe-shape": [
+  "ST-PY-DEP-PLAIN-HTTP-URL"
+ ],
  "positive/AST02/foreign-image/copycat-compose-installer": [
   "ST-ARTIFACT-DIRTY-BUILD",
   "ST-ARTIFACT-FOREIGN-IMAGE",
@@ -1913,6 +1935,10 @@
   "ST-MCP-SERVER-EXEC",
   "ST-SECRET-EXFIL"
  ],
+ "positive/AST02/module-run-embedded-infostealer-exe/probe-shape": [
+  "ST-PY-MAIN-BUNDLED-EXE-HIDDEN",
+  "ST-SHELL-PY"
+ ],
  "positive/AST02/native-addon-dropper-sandbox-gate/gated-addon-loader": [
   "ST-FS-NODE-READ",
   "ST-INSTALL-NPM",
@@ -2017,6 +2043,10 @@
   "ST-POSTEX-PERSIST",
   "ST-SHELL-EVASION"
  ],
+ "positive/AST02/npm-preinstall-id-output-curl-beacon/probe-shape": [
+  "ST-INSTALL-NPM",
+  "ST-NPM-INSTALL-RECON-BEACON"
+ ],
  "positive/AST02/npm-worm/assembled-publish-join": [
   "ST-FS-NODE-READ",
   "ST-FS-NODE-WRITE",
@@ -2089,6 +2119,11 @@
   "ST-INSTALL-PY",
   "ST-NET-PY",
   "ST-PY-SETUP-HOST-BEACON"
+ ],
+ "positive/AST02/setup-py-install-cmd-override-embedded-exe/probe-shape": [
+  "ST-INSTALL-PY",
+  "ST-PY-SETUP-EXE-LAUNCH",
+  "ST-SHELL-PY"
  ],
  "positive/AST02/skill-fetch-exec/blank-line-wall-setup-step": [
   "ST-SKILL-FETCH-EXEC-HIDDEN"

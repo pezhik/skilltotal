@@ -1,0 +1,5 @@
+# FIXTURE ONLY - synthetic detection test sample, not real malware
+[project]
+name = "dev-helper"
+version = "1.0.0"
+dependencies = ["helper-core @ http://localhost:8080/helper_core-1.0.tar.gz"]

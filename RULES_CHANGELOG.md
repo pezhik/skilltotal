@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 108 (engine 1.9.0)
+
+Four new rules for package install and start-up shapes. Each is a malicious indicator that needs
+two tells together.
+- `ST-NPM-INSTALL-RECON-BEACON` (new, high): an install-time command in `package.json` (or an
+  install shell script) runs `id`, `whoami`, `hostname`, `uname` or `pwd`, base64-encodes the
+  output and sends it with `curl` or `wget` to a URL. A download with `curl` alone, or a query
+  written to a file, is not reported.
+- `ST-PY-SETUP-EXE-LAUNCH` (new, high): `setup.py` overrides an install-time command class and
+  starts an `.exe` path through `subprocess`, `os.startfile` or `os.system`. An `.exe` listed as
+  package data is not reported.
+- `ST-PY-MAIN-BUNDLED-EXE-HIDDEN` (new, high): a `__main__.py` starts an `.exe` path built from
+  `__file__` or package resources with a hidden-window or detached process flag. A visible
+  launch that waits for the program is not reported.
+- `ST-PY-DEP-PLAIN-HTTP-URL` (new, high): `setup.py`, `setup.cfg` or `pyproject.toml` lists a
+  dependency as `name @ http://host/...`. An https address, a loopback address and a commented
+  line are not reported.
+
 ## ruleset 107 (engine 1.8.0)
 
 Two new rules. All rules now read code inside an archive the component uses.

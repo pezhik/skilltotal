@@ -27,6 +27,7 @@ from skilltotal.scanners.fetch_tunnel_launcher import FetchTunnelLauncherScanner
 from skilltotal.scanners.filesystem import FilesystemScanner
 from skilltotal.scanners.html_file_exfil import HtmlFileExfilScanner
 from skilltotal.scanners.install_payload import InstallPayloadScanner
+from skilltotal.scanners.install_recon import InstallReconScanner
 from skilltotal.scanners.install_scripts import InstallScriptsScanner
 from skilltotal.scanners.invisible_unicode import InvisibleUnicodeScanner
 from skilltotal.scanners.lookalike_host import LookalikeHostScanner
@@ -90,6 +91,7 @@ SCANNERS: list[Scanner] = [
     ClipperScanner(),
     NpmSupplyScanner(),
     NpmInstallThreatsScanner(),
+    InstallReconScanner(),
     ArtifactProvenanceScanner(),
     AgentApprovalScanner(),
     SkillFetchExecScanner(),

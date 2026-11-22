@@ -1,9 +1,9 @@
 {
-  "engine_version": "1.8.0",
-  "ruleset_version": 107,
-  "python_version": "3.14",
-  "positives": 382,
-  "negatives": 288,
+  "engine_version": "1.9.0",
+  "ruleset_version": 108,
+  "python_version": "3.11",
+  "positives": 386,
+  "negatives": 296,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -40,6 +40,7 @@
     "encrypted-instructions-decoy-key-env-read": 1.0,
     "entry-point-path-demotion": 1.0,
     "env-dump-exfil": 1.0,
+    "fake-http-dependency-download-beacon": 1.0,
     "foreign-image": 1.0,
     "git-hook-persistence": 1.0,
     "github-action-secret-exfil": 1.0,
@@ -60,9 +61,11 @@
     "mcp-schema-default-command": 1.0,
     "mcp-static-auth-exec": 1.0,
     "mcp-tool-poisoning": 1.0,
+    "module-run-embedded-infostealer-exe": 1.0,
     "native-addon-dropper-sandbox-gate": 1.0,
     "npm-lifecycle-remote-exec": 1.0,
     "npm-postinstall-miner": 1.0,
+    "npm-preinstall-id-output-curl-beacon": 1.0,
     "npm-worm": 1.0,
     "password-archive": 1.0,
     "pickle-reduce-gadget": 1.0,
@@ -77,6 +80,7 @@
     "scriptlet-host": 1.0,
     "setup-detached-fetch": 1.0,
     "setup-host-beacon": 1.0,
+    "setup-py-install-cmd-override-embedded-exe": 1.0,
     "shell-decode-exec": 1.0,
     "shell-hidden-command": 1.0,
     "skill-dynamic-exec": 1.0,
@@ -95,16 +99,16 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 56,
+      "node": 57,
       "manifest/text": 52,
-      "python": 57,
+      "python": 56,
       "shell": 28
     },
     "AST02": {
-      "manifest/text": 48,
-      "shell": 8,
-      "node": 34,
-      "python": 12
+      "manifest/text": 49,
+      "shell": 7,
+      "node": 35,
+      "python": 15
     },
     "AST03": {
       "node": 2
@@ -567,8 +571,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 51,
-      "benign_samples": 29,
+      "malicious_samples": 52,
+      "benign_samples": 31,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -645,8 +649,8 @@
       "owasp": [
         "AST02"
       ],
-      "malicious_samples": 9,
-      "benign_samples": 7,
+      "malicious_samples": 10,
+      "benign_samples": 8,
       "should_fire": 1,
       "fired": 1,
       "should_stay_silent": 1,
@@ -904,6 +908,17 @@
         "AST02"
       ],
       "malicious_samples": 4,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-NPM-INSTALL-RECON-BEACON": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
@@ -1178,6 +1193,17 @@
       "should_stay_silent": 0,
       "stayed_silent": 0
     },
+    "ST-PY-DEP-PLAIN-HTTP-URL": {
+      "owasp": [
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
     "ST-PY-FETCH-EXEC": {
       "owasp": [
         "AST01",
@@ -1194,6 +1220,17 @@
       "owasp": [
         "AST01",
         "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-MAIN-BUNDLED-EXE-HIDDEN": {
+      "owasp": [
+        "AST01"
       ],
       "malicious_samples": 1,
       "benign_samples": 0,
@@ -1226,6 +1263,18 @@
       "stayed_silent": 0
     },
     "ST-PY-SETUP-DETACHED-FETCH": {
+      "owasp": [
+        "AST01",
+        "AST02"
+      ],
+      "malicious_samples": 1,
+      "benign_samples": 0,
+      "should_fire": 0,
+      "fired": 0,
+      "should_stay_silent": 0,
+      "stayed_silent": 0
+    },
+    "ST-PY-SETUP-EXE-LAUNCH": {
       "owasp": [
         "AST01",
         "AST02"

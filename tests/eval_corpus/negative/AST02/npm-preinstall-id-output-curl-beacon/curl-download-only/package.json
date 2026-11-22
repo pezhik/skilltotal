@@ -1,0 +1,6 @@
+{
+  "name": "acme-tool",
+  "version": "1.0.0",
+  "description": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "scripts": { "postinstall": "curl -sS -o data.json https://data.example.com/data.json" }
+}
