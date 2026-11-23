@@ -87,10 +87,17 @@ _JS_INDIRECT_SINKS = (
 # slower over a large package), and a dozen alternatives sharing `eval(` re-test it at every `e`.
 _DECODE_EXEC_ALTERNATIVES = (
     rf"exec\s*\(\s*(?:{_PY_DECODE_CALL})",
-    rf"eval\s*\(\s*(?:{_PY_DECODE_CALL}|{_JS_DECODE_CALL})",
+    # `eval?.(atob(blob))`: the optional-call operator between the name and the paren.
+    rf"eval\s*(?:\?\s*\.\s*)?\(\s*(?:{_PY_DECODE_CALL}|{_JS_DECODE_CALL})",
     # Indirect eval to dodge a literal ``eval(`` token: ``(0, eval)(atob(...))``.
     r"\(\s*0\s*,\s*eval\s*\)\s*\(\s*(?:atob|Buffer\.from)\s*\(",
-    rf"Function\s*\(\s*(?:{_JS_DECODE_CALL})",
+    rf"Function\s*(?:\?\s*\.\s*)?\(\s*(?:{_JS_DECODE_CALL})",
+    # A string handed to a timer is evaluated like eval's: `setTimeout(atob(blob), 0)`.
+    rf"set(?:Timeout|Interval)\s*\(\s*(?:{_JS_DECODE_CALL})",
+    # eval or the Function constructor reached through Reflect, so no `eval(` token appears:
+    # `Reflect.apply(eval, null, [atob(blob)])`, `Reflect.construct(Function, [atob(blob)])`.
+    rf"Reflect\s*\.\s*apply\s*\(\s*(?:eval|Function)\s*,[^,()\n]{{0,40}},\s*\[?\s*(?:{_JS_DECODE_CALL})",
+    rf"Reflect\s*\.\s*construct\s*\(\s*Function\s*,\s*\[?\s*(?:{_JS_DECODE_CALL})",
     *(rf"{sink}\s*\(\s*(?:{_JS_DECODE_CALL})" for sink in _JS_INDIRECT_SINKS),
 )
 _DECODE_EXEC = alternation(*_DECODE_EXEC_ALTERNATIVES)
@@ -224,6 +231,47 @@ def _decoded_then_executed(index: FileIndex) -> list[Evidence]:
             run = found[k]
             evidence.append(f.evidence_for_span(*_span(idx, m.start(), m.end())))
             evidence.append(f.evidence_for_span(*_span(idx, run.start(), run.end())))
+            if len(evidence) >= MAX_EVIDENCE_SCANNED:
+                return evidence
+    return evidence
+
+
+_JS_FLOW_SINK = re.compile(
+    r"(?:eval|Function|setTimeout|setInterval)\s*(?:\?\s*\.\s*)?\(|Reflect\s*\.\s*(?:apply|construct)\s*\("
+)
+
+
+def _function_decoded_then_executed(index: FileIndex) -> list[Evidence]:
+    """Evidence for a decode hidden in a helper function that returns it (`function unwrap(s) {
+    return Buffer.from(s, "base64").toString(); }`), whose result a code sink then runs
+    (`eval(unwrap(blob))`). The sink's arguments must read the function or a name that holds its
+    result; a helper nothing evaluates stays quiet."""
+    evidence: list[Evidence] = []
+    for f in index.select(suffixes=_JS_SUFFIXES):
+        text = f.text
+        if not any(t in text for t in _JS_SINK_TOKENS + ("Reflect",)) or not any(
+            t in text for t in _JS_SOURCE_TOKENS
+        ):
+            continue
+        decodes = _js_decodes(f)
+        if not decodes:
+            continue
+        flow = _DecodeFlow(text, decodes, reach=_FLOW_REACH)
+        flow.follow()
+        if not any(since == -1 for since, _ in flow.names.values()):
+            continue
+        for sink in islice(_JS_FLOW_SINK.finditer(text), _MAX_CODE_TRIES):
+            if not _starts_a_word(text, sink.start(), "_$.") or f.in_comment(sink.start()) or (
+                f.in_c_comment(sink.start()) or f.in_string(sink.start())
+                or f.in_c_string(sink.start())
+            ):
+                continue
+            close = _balanced_end(text, sink.end())
+            origin = flow.decoded_in(sink.end(), close, sink.start())
+            if origin is None:
+                continue
+            evidence.append(f.evidence_for_span(*origin))
+            evidence.append(f.evidence_for_span(sink.start(), sink.end()))
             if len(evidence) >= MAX_EVIDENCE_SCANNED:
                 return evidence
     return evidence
@@ -944,7 +992,10 @@ class ObfuscationScanner(Scanner):
         scored_ids = {"ST-OBF-DECODE-EXEC", "ST-OBF-DYNAMIC-DECODE-EXEC"}
         findings = findings_from_rules(index, [r for r in self.rules if r.id in scored_ids])
         py_exec, py_shell = self._python_decoded_sinks(index)
-        flow = _decoded_then_executed(index) + _indirect_decode_exec(index) + py_exec
+        flow = (
+            _decoded_then_executed(index) + _indirect_decode_exec(index)
+            + _function_decoded_then_executed(index) + py_exec
+        )
         if flow:
             rule = self.rules[0]
             direct = next((f for f in findings if f.id == rule.id), None)

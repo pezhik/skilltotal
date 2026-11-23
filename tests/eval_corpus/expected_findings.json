@@ -107,9 +107,13 @@
  "negative/AST01/decode-exec/node-ctor-charcode-helpers": [
   "ST-FS-NODE-WRITE"
  ],
+ "negative/AST01/decode-exec/node-fn-return-decode-benign": [],
  "negative/AST01/decode-exec/node-hex-utility": [
   "ST-DYN-NODE"
  ],
+ "negative/AST01/decode-exec/node-optional-eval-benign": [],
+ "negative/AST01/decode-exec/node-reflect-eval-benign": [],
+ "negative/AST01/decode-exec/node-settimeout-atob-benign": [],
  "negative/AST01/decode-exec/node-string-label": [
   "ST-DYN-NODE"
  ],
@@ -1029,6 +1033,10 @@
   "ST-NODE-FETCH-EXEC",
   "ST-OBF-DECODE-EXEC"
  ],
+ "positive/AST01/decode-exec/node-fn-return-decode": [
+  "ST-DYN-NODE",
+  "ST-OBF-DECODE-EXEC"
+ ],
  "positive/AST01/decode-exec/node-fromcharcode": [
   "ST-DYN-NODE",
   "ST-OBF-DECODE-EXEC"
@@ -1042,6 +1050,15 @@
  ],
  "positive/AST01/decode-exec/node-hex-function": [
   "ST-DYN-NODE",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/node-optional-eval": [
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/node-reflect-eval": [
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/node-settimeout-atob": [
   "ST-OBF-DECODE-EXEC"
  ],
  "positive/AST01/decode-exec/node-string-sink": [

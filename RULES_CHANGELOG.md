@@ -4,6 +4,18 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 109 (engine 1.10.0)
+
+`ST-OBF-DECODE-EXEC` (high) now also reads four JavaScript ways of running a decoded string
+that avoid a plain `eval(atob(...))`. No new rule id.
+- the optional-call operator: `eval?.(atob(blob))`, `Function?.(...)`;
+- a timer given the decoded string: `setTimeout(atob(blob), 0)`, `setInterval(...)`;
+- `Reflect.apply(eval, null, [atob(blob)])` and `Reflect.construct(Function, [atob(blob)])`;
+- a decode kept in a helper function that returns it, whose result `eval`, `Function` or a timer
+  then runs: `eval(unwrap(blob))`.
+A timer given a callback, `Reflect.apply` on another function and a decode helper nothing
+evaluates are not reported.
+
 ## ruleset 108 (engine 1.9.0)
 
 Four new rules for package install and start-up shapes. Each is a malicious indicator that needs
