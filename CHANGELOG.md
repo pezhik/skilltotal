@@ -13,7 +13,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 
 ### Fixed
 - The helper-function form follows the helper's result one step only, so a bundled client
-  whose decoded buffer reaches an unrelated timer through other names is not reported.
+  whose decoded buffer reaches an unrelated timer through other names is not reported; a helper
+  whose name the file declares more than once is not followed.
+- Ruleset 109 also narrows `ST-PROMPT-INJECTION`, `ST-HIDDEN-UNICODE`, `ST-DEP-FOREIGN-SOURCE`,
+  `ST-SHELL-PIPE-EXEC` and `ST-MCP-DESCRIPTION-SWAP` to remove false positives. Among them: a tool
+  described as "Post data to a webhook endpoint.", the Huawei Cloud and Tencent Cloud mirrors, and
+  `jq .` over a downloaded file. See `RULES_CHANGELOG.md`.
 
 ## [1.9.0]
 

@@ -184,11 +184,72 @@ def _stream_reading(run: str) -> str:
     return ""
 
 
-def _reorders_line(line: str, rtl_file: bool = False) -> bool:
+# The line-comment markers of the code files the reorder check reads: a control after one can
+# only reorder the rest of that comment.
+_LINE_COMMENTS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
+    ((".py", ".pyw", ".sh", ".bash", ".zsh", ".rb", ".pl", ".ps1"), ("#",)),
+    ((".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx", ".go", ".rs", ".c", ".h",
+      ".cc", ".cpp", ".hpp", ".java", ".kt", ".cs", ".swift"), ("//",)),
+    ((".php",), ("//", "#")),
+    ((".lua",), ("--",)),
+)
+# What may follow a string literal's closing quote on a line where nothing after it can be
+# shown out of order: the end of an argument, an entry or a statement.
+_INERT_TAIL = re.compile(r"[\s,;)\]]*")
+
+
+def _line_comment_markers(relpath: str) -> tuple[str, ...]:
+    lower = relpath.lower()
+    for suffixes, markers in _LINE_COMMENTS:
+        if lower.endswith(suffixes):
+            return markers
+    return ()
+
+
+def _inert_position(line: str, pos: int, markers: tuple[str, ...]) -> bool:
+    """True when a control at ``pos`` cannot change how code on the line reads: it sits in a line
+    comment that runs to the end of the line, or in a one-line string literal followed by nothing
+    but `,` `;` `)` `]` and spaces. Trojan Source needs code after the control on the same line
+    (the "stretched string": `if (role != "user<RLO> <LRI>// admin<PDI> <LRI>") {`), or a block
+    comment that a reader takes for its end; both still count. Registry diff 2026-11-22: a TS
+    comment explaining bidi spoofing and a Python fuzz payload ("<RLO>...",) scanned as
+    malicious."""
+    quote = ""
+    i = 0
+    while i < pos:
+        c = line[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif any(line.startswith(mark, i) for mark in markers):
+            return True
+        i += 1
+    if not quote:
+        return False
+    j = pos + 1
+    while j < len(line):
+        if line[j] == "\\":
+            j += 2
+            continue
+        if line[j] == quote:
+            tail = "".join(ch for ch in line[j + 1:] if ch not in _BIDI_CONTROL)
+            return _INERT_TAIL.fullmatch(tail) is not None
+        j += 1
+    return False  # the string goes on past the line: not judged here
+
+
+def _reorders_line(line: str, rtl_file: bool = False, markers: tuple[str, ...] = ()) -> bool:
     """True if a right-to-left control on ``line`` reorders text that is not right-to-left.
 
     In a file written in a right-to-left script (``rtl_file``) an embedding or isolate may wrap a
     Latin term on a line of its own; only the override, which reverses the letters, counts there.
+    With the file's line-comment ``markers``, a control that can reorder nothing but comment text
+    or a string literal that ends the line does not count (``_inert_position``).
     """
     if _RTL_LETTER.search(line):
         return False
@@ -196,6 +257,8 @@ def _reorders_line(line: str, rtl_file: bool = False) -> bool:
         if k >= _MAX_CONTROLS_PER_LINE:
             break
         if rtl_file and m.group() != _RTL_OVERRIDE:
+            continue
+        if markers and _inert_position(line, m.start(), markers):
             continue
         before = _visible_neighbour(line, m.start() - 1, -1)
         after = _visible_neighbour(line, m.end(), 1)
@@ -593,12 +656,13 @@ class InvisibleUnicodeScanner(Scanner):
             reorder_checked = (f.relpath.lower().endswith(_TROJAN_CODE_SUFFIXES)
                                or is_instruction_file(f))
             rtl_file: bool | None = None
+            markers = _line_comment_markers(f.relpath) if reorder_checked else ()
             for lineno, raw_line in enumerate(f.text.splitlines(), start=1):
                 if lineno in stream_lines or not _HUNTED.search(raw_line):
                     continue  # nothing this scanner acts on (most lines of a CJK document)
                 if reorder_checked and rtl_file is None and _RTL_CONTROL.search(raw_line):
                     rtl_file = _RTL_LETTER.search(f.text) is not None  # once per file
-                if reorder_checked and _reorders_line(raw_line, bool(rtl_file)):
+                if reorder_checked and _reorders_line(raw_line, bool(rtl_file), markers):
                     if len(evidence) < MAX_EVIDENCE_SCANNED:
                         shown = _shown_reversed(raw_line)
                         note = ("  [a right-to-left control changes the order this line is "

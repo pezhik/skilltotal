@@ -91,3 +91,25 @@ def test_decode_helper_result_stored_then_evaluated(tmp_path: Path) -> None:
         + BLOB + "let r=d(blob);\nsetTimeout(r,0);\n"
     )
     assert RULE in _ids(tmp_path, attack)
+
+
+def test_decode_helper_whose_name_a_bundle_reuses_is_clean(tmp_path: Path) -> None:
+    # @budibase/server 3.38.1 (release sweep 2026-11-23): a bundle declares a base64 helper `T`
+    # in one module and Leaflet's own `T` (bind) in another; `setTimeout(T(this.fire, ...), 200)`
+    # calls Leaflet's and runs nothing decoded.
+    honest = (
+        "function T(e, t) { return e.bind(t); }\n"
+        "var timer = setTimeout(T(this.fire, this, 'moveend'), 200);\n"
+        "function T(d) {\n"
+        "  return Buffer ? Buffer.from(d, 'base64').toString() : window.atob(d);\n"
+        "}\n"
+    )
+    assert RULE not in _ids(tmp_path, honest)
+
+
+def test_decode_helper_with_a_name_of_its_own_still_reported(tmp_path: Path) -> None:
+    attack = (
+        "function unwrapPayload(d) { return Buffer.from(d, 'base64').toString(); }\n"
+        + BLOB + "setTimeout(unwrapPayload(blob), 0);\n"
+    )
+    assert RULE in _ids(tmp_path, attack)

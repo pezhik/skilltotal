@@ -138,21 +138,38 @@ def _runs_file(target: str) -> re.Pattern[str]:
     ``node x.js``, ``. ./env``) or as a command itself (``/tmp/p``, ``./p``)."""
     name = re.escape(target.removeprefix("./"))
     # The interpreter is a command word of its own: the `sh` that ends `./verify.sh ca.pem` is
-    # part of a file name, and that command hands the file to a script as data.
+    # part of a file name, and that command hands the file to a script as data. `.` is the shell's
+    # `source` only where a command starts: in `jq . "$TMP"` it is jq's filter (registry diff
+    # 2026-11-22, compuute-scan-api).
     return re.compile(
-        r"(?:(?<![\w.-])(?:(?:ba|z|da|k)?sh|node|python[0-9.]*|perl|ruby|source)|(?<![\w.])\.)"
-        rf"\s+(?:-[\w-]+\s+){{0,3}}[\"']?(?:\./)?{name}(?=$|[\s\"';&|)])"
-        rf"|(?:^|[;&|(\n])\s*[\"']?((?:\./)?{name})(?=$|[\s\"';&|)])",
+        r"(?:(?<![\w.-])(?P<interp>(?:ba|z|da|k)?sh|node|python[0-9.]*|perl|ruby|source)"
+        r"|(?:^|(?<=[;&|(\n])|(?<=\bthen)|(?<=\bdo)|(?<=\belse))[ \t]*\.)"
+        rf"(?P<flags>\s+(?:-[\w-]+\s+){{0,3}})[\"']?(?:\./)?{name}(?=$|[\s\"';&|)])"
+        rf"|(?:^|[;&|(\n])\s*[\"']?(?P<cmd>(?:\./)?{name})(?=$|[\s\"';&|)])",
         re.MULTILINE,
     )
 
 
+_SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+# Options that only read the file: a shell's syntax check (`bash -n`, `-o noexec` is not a single
+# word and stays counted) and node's `--check`. wisp-mcp's installer checks the script it
+# downloaded with `bash -n` and installs it; nothing runs it (registry diff 2026-11-22).
+_SHELL_NO_EXEC = re.compile(r"(?:^|\s)(?:-[a-zA-Z]*n[a-zA-Z]*|--noexec)(?=\s|$)")
+_NODE_NO_EXEC = re.compile(r"(?:^|\s)(?:-c|--check)(?=\s|$)")
+
+
 def _started(text: str, target: str, after: int) -> re.Match[str] | None:
     """The first command after offset ``after`` (within reach) that starts the file ``target``.
-    A bare word is looked up on PATH, not in the folder the file was saved to, so it is not it."""
+    A bare word is looked up on PATH, not in the folder the file was saved to, so it is not it.
+    A syntax check (``bash -n f``, ``node --check f``) reads the file and runs nothing."""
     for started in _runs_file(target).finditer(text, after, after + _RUN_REACH):
-        as_command = started.group(1)
+        as_command = started.group("cmd")
         if as_command is not None and "/" not in as_command:
+            continue
+        interp, flags = started.group("interp"), started.group("flags") or ""
+        if interp in _SHELLS and _SHELL_NO_EXEC.search(flags):
+            continue
+        if interp == "node" and _NODE_NO_EXEC.search(flags):
             continue
         return started
     return None

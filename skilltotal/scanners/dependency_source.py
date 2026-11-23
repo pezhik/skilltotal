@@ -41,14 +41,22 @@ R_REGISTRY_LOOKALIKE = "ST-DEP-REGISTRY-LOOKALIKE"
 
 # The public registries, their documented aliases and the public mirrors lockfiles are commonly
 # written against.
+# Huawei Cloud's and Tencent Cloud's open mirrors joined 2026-11-23: NextChat's yarn.lock and
+# trueAI's package-lock.json resolve through them, with every hash equal to npmjs's. A private
+# registry (Azure Artifacts, Artifact Registry, a company proxy) stays reported: it is a source
+# the component's author controls, which is what the finding names.
+_CN_CLOUD_MIRRORS = frozenset({
+    "mirrors.huaweicloud.com", "repo.huaweicloud.com", "mirrors.cloud.tencent.com",
+    "mirrors.tencentyun.com",
+})
 _NPM_PUBLIC = frozenset({
     "registry.npmjs.org", "registry.npmjs.com", "registry.yarnpkg.com", "registry.npmmirror.com",
     "registry.npm.taobao.org", "r.cnpmjs.org", "npm.pkg.github.com", "npm.jsr.io",
-})
+}) | _CN_CLOUD_MIRRORS
 _PYPI_PUBLIC = frozenset({
     "pypi.org", "pypi.python.org", "files.pythonhosted.org", "upload.pypi.org", "test.pypi.org",
     "download.pytorch.org", "pypi.tuna.tsinghua.edu.cn", "mirrors.aliyun.com",
-})
+}) | _CN_CLOUD_MIRRORS
 # Git hosting: a lockfile address there is a git dependency (ST-NPM-GIT-DEP names it in
 # package.json), not a registry tarball.
 _GIT_HOSTS = frozenset({"github.com", "codeload.github.com", "gitlab.com", "bitbucket.org"})

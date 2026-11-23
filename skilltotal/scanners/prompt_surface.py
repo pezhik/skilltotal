@@ -149,10 +149,13 @@ _STRONG = alternation(
         for v in ("send", "post", "upload", "transmit", "forward", "exfiltrate", "leak")
     )
     + r")\s+"
-    r"(?:it|this|them|the|your)?\s*(?:user['’]?s?\s+)?"
+    r"(?:(?:it|this|them|the|your)?\s*(?:user['’]?s?\s+)?"
     r"(?:credentials|secrets|api[\s_-]?keys?|tokens?|passwords?|"
-    r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|"
-    r"system\s+prompt|data\b)"
+    r"env(?:ironment)?\s*(?:variables?|vars?)?|conversation\s+history|system\s+prompt)"
+    # "data" only with an owner or a determiner ("the user's data", "your data", "all data"): a
+    # bare "Post data to a webhook endpoint." is how an honest webhook tool describes itself
+    # (pypi:mcp-server-sigma, registry diff 2026-11-22, scanned malicious through this match).
+    r"|(?:(?:the|your|their|all)\s+(?:user['’]?s?\s+)?|user['’]?s?\s+)data\b)"
     r"[^\n]{0,40}?webhook",
     # Self-replicating prompt (Morris-II / GenAI worm, arXiv:2403.02817): a directive to
     # reproduce the injected instructions in the model's OWN output or pass them to downstream

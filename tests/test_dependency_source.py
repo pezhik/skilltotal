@@ -108,6 +108,9 @@ def test_one_piece_of_evidence_per_host(tmp_path):
     NPM, "https://registry.yarnpkg.com", "https://registry.npmmirror.com",
     "http://registry.npmjs.org", "https://npm.pkg.github.com", "https://codeload.github.com",
     "http://localhost:4873",
+    # The open cloud mirrors NextChat and trueAI resolve through (registry diff 2026-11-22).
+    "https://mirrors.huaweicloud.com/repository/npm", "http://mirrors.tencentyun.com/npm",
+    "https://mirrors.cloud.tencent.com/npm",
 ])
 def test_public_registries_mirrors_git_hosts_and_this_machine_are_silent(tmp_path, host):
     _write(tmp_path, {"package-lock.json": _lock(("lodash", host), ("qs", NPM))})

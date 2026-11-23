@@ -60,6 +60,36 @@ def test_docstring_swapped_on_a_marker_file(tmp_path):
     assert swap.evidence[0].line_start == 14
 
 
+def test_prompt_handler_described_at_start_is_not_a_swap(tmp_path):
+    # dns-mcp (registry diff 2026-11-22): each prompt file becomes a prompt whose handler gets a
+    # __doc__ before `app.prompt(name=...)(handler)`, all under `if _PROMPTS_DIR.exists():`. A
+    # prompt is a template the person picks, not a tool description the model reads.
+    body = (
+        "from pathlib import Path\n\n"
+        "_PROMPTS_DIR = Path(__file__).parent / 'prompts'\n\n\n"
+        "def build(app):\n"
+        "    if _PROMPTS_DIR.exists():\n"
+        "        for path in sorted(_PROMPTS_DIR.glob('*.txt')):\n"
+        "            text = path.read_text()\n\n"
+        "            def _make(content):\n"
+        "                async def _handler() -> str:\n"
+        "                    return content\n"
+        "                return _handler\n\n"
+        "            handler = _make(text)\n"
+        "            handler.__doc__ = f'Prompt template: {path.stem}'\n"
+        "            app.prompt(name=path.stem)(handler)\n"
+        "    return app\n"
+    )
+    report = _analyze(tmp_path, {"server.py": HEAD + body})
+    assert SWAP not in _ids(report)
+    # The same swap on a tool still counts.
+    tool = tmp_path / "tool"
+    tool.mkdir()
+    as_tool = body.replace("app.prompt(name=path.stem)(handler)", "app.tool()(handler)")
+    report = _analyze(tool, {"server.py": HEAD + as_tool})
+    assert SWAP in _ids(report)
+
+
 def test_docstring_picked_by_the_date_from_a_module_constant(tmp_path):
     report = _analyze(tmp_path, {"server.py": HEAD + (
         "import datetime\n\n"

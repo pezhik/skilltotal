@@ -241,6 +241,19 @@ _JS_FLOW_SINK = re.compile(
 )
 
 
+def _declared_again(text: str, name: str) -> bool:
+    """True when ``name`` is declared more than once in the file (`function T(`, `var T =`,
+    `, T =` in a declaration list, a class): a bundle reuses one-letter names module by module, so
+    a call to the name may be another function's. @budibase/server 3.38.1 bundles a base64 helper
+    `T` and Leaflet's own `T` (bind), whose `setTimeout(T(this.fire, ...), 200)` read as the
+    decode run by a timer (release sweep, 2026-11-23)."""
+    n = re.escape(name)
+    declared = re.compile(
+        rf"\bfunction\s*\*?\s*{n}\s*\(|\b(?:var|let|const|class)\s+{n}\b|[,{{]\s*{n}\s*=(?!=)"
+    )
+    return len(list(islice(declared.finditer(text), 2))) > 1
+
+
 def _follow_decode_helpers(flow: _DecodeFlow) -> bool:
     """Fill ``flow.names`` with the functions that return a decode themselves, and the names a call
     to one of them is stored in; True when there is such a function. One hop only, unlike
@@ -250,7 +263,8 @@ def _follow_decode_helpers(flow: _DecodeFlow) -> bool:
     helpers: dict[str, tuple[int, int]] = {}
     for start, end in flow.decodes:
         held = flow._holder(start)
-        if held is not None and held[1] == -1 and len(helpers) < _MAX_FLOW_NAMES:
+        if held is not None and held[1] == -1 and len(helpers) < _MAX_FLOW_NAMES \
+                and not _declared_again(text, held[0]):
             helpers.setdefault(held[0], (start, end))
     for name, origin in helpers.items():
         flow.names.setdefault(name, (-1, origin))

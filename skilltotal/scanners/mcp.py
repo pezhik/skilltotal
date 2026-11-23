@@ -2108,6 +2108,20 @@ def _description_swaps(f: IndexedFile) -> tuple[list[Evidence], list[int]]:
 
     remote_names = set()
     registered_names = set()
+    # Handlers registered as prompts (`app.prompt(name=n)(handler)`, `@app.prompt()`): a prompt is
+    # a template the person picks, not a tool description the model chooses from. dns-mcp sets
+    # each prompt handler's __doc__ once, under `if _PROMPTS_DIR.exists():`, before registering
+    # it (registry diff 2026-11-22).
+    prompt_names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Call) \
+                and isinstance(node.func.func, ast.Attribute) and node.func.func.attr == "prompt":
+            prompt_names.update(a.id for a in node.args if isinstance(a, ast.Name))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+            isinstance(t, ast.Attribute) and t.attr == "prompt"
+            for t in ((d.func if isinstance(d, ast.Call) else d) for d in node.decorator_list)
+        ):
+            prompt_names.add(node.name)
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 \
                 and isinstance(node.targets[0], ast.Name):
@@ -2135,6 +2149,9 @@ def _description_swaps(f: IndexedFile) -> tuple[list[Evidence], list[int]]:
         target = next((t for t in targets if isinstance(t, ast.Attribute)
                        and t.attr in ("__doc__", "description")), None)
         if target is None:
+            continue
+        if target.attr == "__doc__" and isinstance(target.value, ast.Name) \
+                and target.value.id in prompt_names:
             continue
         function, tests = enclosing(node)
         if target.attr == "description":

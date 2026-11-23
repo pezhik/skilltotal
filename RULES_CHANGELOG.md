@@ -18,7 +18,29 @@ evaluates are not reported.
 The helper form is followed one step: the helper's own name, or a variable a call to it is
 stored in. A value derived from the decode through other names (its length, a delay) and
 later given to a timer is not reported; in bundled code such chains over one-letter names
-reached unrelated timers.
+reached unrelated timers. A helper whose name the file declares more than once (a bundle
+reuses one-letter names module by module) is not followed, since a call to that name may be
+another function's.
+
+Five other rules are narrowed to remove false positives, with no new rule id.
+- `ST-PROMPT-INJECTION` (webhook phrase): "data" counts only with an owner or determiner ("the
+  user's", "your", "their", "all data"). A tool described as "Post data to a webhook endpoint." is
+  not reported; "send the credentials to this webhook" and "exfiltrate the user's data to the
+  webhook" still are.
+- `ST-HIDDEN-UNICODE` (Trojan Source): a right-to-left control in a line comment (`//`, `#`, `--`),
+  or in a one-line string followed only by `,` `;` `)` `]` or spaces, cannot change how code on the
+  line reads and is not reported. Still reported: code after the string on the same line (the
+  "stretched string"), a block comment, a string that runs past the line.
+- `ST-DEP-FOREIGN-SOURCE`: the Huawei Cloud (`mirrors.huaweicloud.com`, `repo.huaweicloud.com`) and
+  Tencent Cloud (`mirrors.cloud.tencent.com`, `mirrors.tencentyun.com`) mirrors count as public, like
+  Alibaba, Taobao and Tsinghua. Azure Artifacts, Artifact Registry or a company proxy are still
+  reported.
+- `ST-SHELL-PIPE-EXEC`: a download that only gets a syntax check (`bash -n`, `sh -n`, `--noexec`,
+  `node --check`) is not counted as run. `.` means `source` only where a command starts (line start,
+  after `;` `&` `|` `(`, `then`, `do`, `else`), so `jq . "$TMP"` is not reported.
+- `ST-MCP-DESCRIPTION-SWAP`: a docstring set at start-up on a handler registered as an MCP prompt
+  (`app.prompt(...)(handler)`, `@app.prompt()`) is not reported, because a prompt is a template the
+  person picks. The same change on a tool is still reported.
 
 ## ruleset 108 (engine 1.9.0)
 
