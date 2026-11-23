@@ -108,6 +108,7 @@
   "ST-FS-NODE-WRITE"
  ],
  "negative/AST01/decode-exec/node-fn-return-decode-benign": [],
+ "negative/AST01/decode-exec/node-fn-return-decode-chain-benign": [],
  "negative/AST01/decode-exec/node-hex-utility": [
   "ST-DYN-NODE"
  ],

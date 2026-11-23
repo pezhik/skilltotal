@@ -11,6 +11,10 @@ All notable changes to the SkillTotal engine. Format loosely follows
   `Reflect.apply` / `Reflect.construct`, or a helper function that returns the decode. See
   `RULES_CHANGELOG.md`.
 
+### Fixed
+- The helper-function form follows the helper's result one step only, so a bundled client
+  whose decoded buffer reaches an unrelated timer through other names is not reported.
+
 ## [1.9.0]
 
 ### Added

@@ -241,6 +241,29 @@ _JS_FLOW_SINK = re.compile(
 )
 
 
+def _follow_decode_helpers(flow: _DecodeFlow) -> bool:
+    """Fill ``flow.names`` with the functions that return a decode themselves, and the names a call
+    to one of them is stored in; True when there is such a function. One hop only, unlike
+    ``follow``: in a bundle, one-letter names chain a helper's decoded buffer through unrelated
+    values (its length, a delay) into any timer a few thousand characters on."""
+    text = flow.text
+    helpers: dict[str, tuple[int, int]] = {}
+    for start, end in flow.decodes:
+        held = flow._holder(start)
+        if held is not None and held[1] == -1 and len(helpers) < _MAX_FLOW_NAMES:
+            helpers.setdefault(held[0], (start, end))
+    for name, origin in helpers.items():
+        flow.names.setdefault(name, (-1, origin))
+    for name, origin in helpers.items():
+        calls = re.compile(rf"(?<![\w$.]){re.escape(name)}\s*\(").finditer(text)
+        for call in islice(calls, _MAX_NAME_USES):
+            held = flow._holder(call.start())
+            if held is None or held[1] < 0 or len(flow.names) >= _MAX_FLOW_NAMES:
+                continue
+            flow.names.setdefault(held[0], (held[1], origin))
+    return bool(helpers)
+
+
 def _function_decoded_then_executed(index: FileIndex) -> list[Evidence]:
     """Evidence for a decode hidden in a helper function that returns it (`function unwrap(s) {
     return Buffer.from(s, "base64").toString(); }`), whose result a code sink then runs
@@ -257,8 +280,7 @@ def _function_decoded_then_executed(index: FileIndex) -> list[Evidence]:
         if not decodes:
             continue
         flow = _DecodeFlow(text, decodes, reach=_FLOW_REACH)
-        flow.follow()
-        if not any(since == -1 for since, _ in flow.names.values()):
+        if not _follow_decode_helpers(flow):
             continue
         for sink in islice(_JS_FLOW_SINK.finditer(text), _MAX_CODE_TRIES):
             if not _starts_a_word(text, sink.start(), "_$.") or f.in_comment(sink.start()) or (

@@ -15,6 +15,10 @@ that avoid a plain `eval(atob(...))`. No new rule id.
   then runs: `eval(unwrap(blob))`.
 A timer given a callback, `Reflect.apply` on another function and a decode helper nothing
 evaluates are not reported.
+The helper form is followed one step: the helper's own name, or a variable a call to it is
+stored in. A value derived from the decode through other names (its length, a delay) and
+later given to a timer is not reported; in bundled code such chains over one-letter names
+reached unrelated timers.
 
 ## ruleset 108 (engine 1.9.0)
 

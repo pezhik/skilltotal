@@ -71,3 +71,23 @@ def test_timer_given_decoded_string(tmp_path: Path) -> None:
 def test_timer_with_callback_is_clean(tmp_path: Path) -> None:
     honest = BLOB + "setTimeout(() => console.log(atob(blob)), 0);\n"
     assert RULE not in _ids(tmp_path, honest)
+
+
+def test_decode_helper_reached_only_through_other_names_is_clean(tmp_path: Path) -> None:
+    # A bundle's one-letter names chain a helper's decoded buffer through unrelated values (its
+    # length, then a delay) into a timer given a callback: nothing decoded is evaluated.
+    honest = (
+        'function d(e){return Buffer.from(e,"base64url")}\n'
+        "function size(e){let r=d(e);return r.byteLength}\n"
+        "const t=size(input);\n"
+        "const timer=setTimeout(done,t);\n"
+    )
+    assert RULE not in _ids(tmp_path, honest)
+
+
+def test_decode_helper_result_stored_then_evaluated(tmp_path: Path) -> None:
+    attack = (
+        'function d(e){return Buffer.from(e,"base64").toString()}\n'
+        + BLOB + "let r=d(blob);\nsetTimeout(r,0);\n"
+    )
+    assert RULE in _ids(tmp_path, attack)
