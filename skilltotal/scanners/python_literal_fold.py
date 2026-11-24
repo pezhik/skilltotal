@@ -68,6 +68,8 @@ _SINK_GATE = re.compile(
 _DECODE_GATE = re.compile(
     r"\bchr\b|[\w\])]\s*\^\s*[\w(]|\[\s*::\s*-1\s*\]|\breversed\s*\("
     r"|b(?:16|32|64|85)decode|a85decode|fromhex|unhexlify|a2b_|rot_?13|decompress"
+    # Byte values held in a named list: `bytes(codes).decode()`.
+    r"|\b(?:bytes|bytearray)\s*\(\s*[A-Za-z_]"
 )
 
 _B64 = {
@@ -375,6 +377,10 @@ class LiteralFolder:
             items = self._iterate(self._arg(node, 0), env, depth)
             if not all(isinstance(i, int) for i in items):
                 raise _Unfoldable
+            # Byte values kept in a named list (`bytes(codes)`) rebuild text the way a decoder
+            # does; the inline-literal form is the regex's.
+            if isinstance(self._arg(node, 0), ast.Name) and len(items) >= _MIN_DECODED_LEN + 2:
+                self._decoded = True
             return bytes(items)
         if name in ("list", "tuple"):
             return self._iterate(self._arg(node, 0), env, depth)

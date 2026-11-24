@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.11.0]
+
+### Added
+- Ruleset 110 extends `ST-OBF-DECODE-EXEC` to `exec(bytes(codes).decode())` where `codes` is a named
+  list of byte values. See `RULES_CHANGELOG.md`.
+
 ## [1.10.0]
 
 ### Added

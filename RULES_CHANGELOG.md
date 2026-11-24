@@ -4,6 +4,14 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 110 (engine 1.11.0)
+
+`ST-OBF-DECODE-EXEC` (high) now also reads Python code whose bytes are kept in a named list:
+`codes = [112, 114, ...]` followed by `exec(bytes(codes).decode())`. No new rule id. The list
+must hold at least eight integers and be assigned once; the text it rebuilds is run only
+when it reaches `exec`/`eval` or a shell call. A bytes buffer built from a named list and
+never executed is not reported.
+
 ## ruleset 109 (engine 1.10.0)
 
 `ST-OBF-DECODE-EXEC` (high) now also reads four JavaScript ways of running a decoded string

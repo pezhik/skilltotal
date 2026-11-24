@@ -118,6 +118,7 @@
  "negative/AST01/decode-exec/node-string-label": [
   "ST-DYN-NODE"
  ],
+ "negative/AST01/decode-exec/python-bytes-var-benign": [],
  "negative/AST01/decode-exec/python-repl-exec-alias": [
   "ST-DYN-PY",
   "ST-TAINT-EXEC-PY"
@@ -1080,6 +1081,10 @@
   "ST-SHELL-PY"
  ],
  "positive/AST01/decode-exec/python-base": [
+  "ST-DYN-PY",
+  "ST-OBF-DECODE-EXEC"
+ ],
+ "positive/AST01/decode-exec/python-bytes-var": [
   "ST-DYN-PY",
   "ST-OBF-DECODE-EXEC"
  ],
