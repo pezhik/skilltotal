@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.11.0 · ruleset 110 · Python 3.11 · offline corpus.
+Engine 1.12.0 · ruleset 111 · Python 3.11 · offline corpus.
 
-- **recall: 100.0%** (391/391 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/302 benign samples wrongly flagged)
+- **recall: 100.0%** (395/395 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/306 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -31,6 +31,7 @@ Engine 1.11.0 · ruleset 110 · Python 3.11 · offline corpus.
 | cli-relay | 100% |
 | clipboard-swap | 100% |
 | compiled-node-output | 100% |
+| context-file-sealed-artifact-setup-script-run | 100% |
 | credential-exfil | 100% |
 | decode-exec | 100% |
 | decode-spawn | 100% |
@@ -40,6 +41,7 @@ Engine 1.11.0 · ruleset 110 · Python 3.11 · offline corpus.
 | deserialize-exec | 100% |
 | dns-exfil | 100% |
 | dynamic-call-resolution | 100% |
+| dynamic-skill-prepended-entry-script-edit | 100% |
 | email-exfil | 100% |
 | encrypted-instructions-decoy-key-env-read | 100% |
 | entry-point-path-demotion | 100% |
@@ -87,6 +89,7 @@ Engine 1.11.0 · ruleset 110 · Python 3.11 · offline corpus.
 | setup-py-install-cmd-override-embedded-exe | 100% |
 | shell-decode-exec | 100% |
 | shell-hidden-command | 100% |
+| skill-description-trust-claim-selection-bias | 100% |
 | skill-dynamic-exec | 100% |
 | skill-fetch-exec | 100% |
 | skill-scanner-directed-audit-override-text | 100% |
@@ -98,6 +101,7 @@ Engine 1.11.0 · ruleset 110 · Python 3.11 · offline corpus.
 | token-revocation-wiper | 100% |
 | typosquat-dropper | 100% |
 | url-exec-loader | 100% |
+| vscode-folderopen-task-agent-setup-mjs-plant | 100% |
 | wallet-key-exfil | 100% |
 | workflow-history-exfil | 100% |
 
@@ -105,10 +109,10 @@ Engine 1.11.0 · ruleset 110 · Python 3.11 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 52 | 61 | 57 | 28 |
+| AST01 | 53 | 62 | 58 | 28 |
 | AST02 | 49 | 35 | 15 | 7 |
 | AST03 | 0 | 2 | 0 | 0 |
-| AST04 | 59 | 6 | 14 | 0 |
+| AST04 | 60 | 6 | 14 | 0 |
 | AST05 | 0 | 0 | 6 | 0 |
 
 > Languages with no semantic exec/network/deserialization detection (Go, Rust, Java, Ruby, PHP) are a documented gap — see `docs/language-scope.md`.
@@ -125,7 +129,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-BYTECODE-NO-SOURCE` | AST01 | 0 | 0 | 2/2 | 2/2 |
 | `ST-CLIPPER` | AST01 | 4 | 0 | - | - |
 | `ST-COMBO-EXFIL` | AST01 | 59 | 0 | 1/1 | 1/1 |
-| `ST-CONVERGENCE` | AST01 | 14 | 0 | - | - |
+| `ST-CONVERGENCE` | AST01 | 15 | 0 | - | - |
 | `ST-EMAIL-BCC-EXFIL` | AST01 | 1 | 0 | 1/1 | 1/1 |
 | `ST-ENCRYPTED-ARCHIVE` | AST01 | 0 | 0 | - | - |
 | `ST-FLOW-TRIFECTA` | AST01 | 1 | 0 | - | - |
@@ -159,10 +163,13 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-SHELL-HIDDEN-COMMAND` | AST01 | 3 | 0 | - | - |
 | `ST-SKILL-DYNAMIC-EXEC` | AST01 | 4 | 0 | - | - |
 | `ST-SKILL-ENCRYPTED-INSTRUCTIONS` | AST01 | 1 | 0 | - | - |
+| `ST-SKILL-ENTRY-SCRIPT-EDIT` | AST01 | 1 | 0 | - | - |
 | `ST-SKILL-MEMORY-WRITE-HIDDEN` | AST01 | 2 | 0 | - | - |
+| `ST-SKILL-SEALED-SCRIPT-RUN` | AST01 | 1 | 0 | - | - |
 | `ST-SSH-TUNNEL-BACKDOOR` | AST01 | 1 | 0 | - | - |
 | `ST-WORKFLOW-HISTORY-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-WORKFLOW-SECRETS-DUMP-EXFIL` | AST01 | 2 | 0 | - | - |
+| `ST-AGENT-AUTORUN-MIRRORED` | AST01, AST02 | 2 | 0 | - | - |
 | `ST-ARTIFACT-KNOWN-BAD` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-MINER` | AST01, AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-REMOTE-EXEC` | AST01, AST02 | 20 | 0 | - | - |
@@ -186,7 +193,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-MCP-SAMPLING-SYSPROMPT` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PROMPT-SPLIT-EXFIL` | AST01, AST04 | 1 | 0 | - | - |
 | `ST-PICKLE-REDUCE` | AST01, AST05 | 3 | 0 | - | - |
-| `ST-AGENT-AUTORUN` | AST02 | 4 | 5 | 5/5 | 3/3 |
+| `ST-AGENT-AUTORUN` | AST02 | 5 | 6 | 5/5 | 3/3 |
 | `ST-AGENT-AUTORUN-REMOTE` | AST02 | 10 | 0 | - | - |
 | `ST-AGENT-ENV-INJECT` | AST02 | 3 | 0 | 3/3 | 3/3 |
 | `ST-AGENT-GITCONFIG-EXEC-REMOTE` | AST02 | 0 | 0 | - | - |
@@ -244,9 +251,10 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-PROMPT-INJECTION` | AST04 | 46 | 0 | - | - |
 | `ST-PROMPT-WEAK` | AST04 | 0 | 0 | - | - |
 | `ST-SKILL-AUDIT-OVERRIDE` | AST04 | 2 | 0 | - | - |
+| `ST-SKILL-TRUST-CLAIM-PRIORITY` | AST04 | 1 | 0 | - | - |
 | `ST-DESERIALIZE-PY` | AST05 | 1 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-120 of 127 rules fire on at least one sample.
+124 of 131 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

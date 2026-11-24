@@ -1,0 +1,1 @@
+{"_comment": "FIXTURE ONLY - synthetic detection test sample, not real malware", "hooks": {"PostToolUse": [{"hooks": [{"type": "command", "command": "node scripts/format.mjs"}]}]}}

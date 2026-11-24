@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.12.0]
+
+### Added
+- Ruleset 111 adds `ST-SKILL-SEALED-SCRIPT-RUN`, `ST-SKILL-ENTRY-SCRIPT-EDIT`,
+  `ST-SKILL-TRUST-CLAIM-PRIORITY` and `ST-AGENT-AUTORUN-MIRRORED`. See `RULES_CHANGELOG.md`.
+
 ## [1.11.0]
 
 ### Added

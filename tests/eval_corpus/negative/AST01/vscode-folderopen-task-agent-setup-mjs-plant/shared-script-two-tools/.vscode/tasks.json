@@ -1,0 +1,1 @@
+{"_comment": "FIXTURE ONLY - synthetic detection test sample, not real malware", "version": "2.0.0", "tasks": [{"label": "fmt", "type": "shell", "command": "node scripts/format.mjs", "runOptions": {"runOn": "folderOpen"}}]}

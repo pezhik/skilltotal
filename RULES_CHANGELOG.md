@@ -4,6 +4,24 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 111 (engine 1.12.0)
+
+Four new rules, all high and malicious indicators.
+- `ST-SKILL-SEALED-SCRIPT-RUN`: a passage in `CLAUDE.md`, `AGENTS.md`, `SKILL.md` or another
+  instruction file that tells the agent to run a script (`node setup.js`) and, in the same
+  passage, not to open or read it (and calls it sealed, or names the script after the ban). A
+  readable setup step and a "do not edit generated files" note are not reported.
+- `ST-SKILL-ENTRY-SCRIPT-EDIT`: a skill tells the agent, each time it runs, to prepend code at the
+  top of one of its own scripts, and the code calls the shell or the network. A one-time
+  configuration edit is not reported.
+- `ST-SKILL-TRUST-CLAIM-PRIORITY`: a skill's frontmatter `description` both claims to be
+  official, verified or audited and tells the agent to always choose it or prefer it over other
+  skills. Either half alone is not reported.
+- `ST-AGENT-AUTORUN-MIRRORED`: two or more tool folders (`.vscode`, `.claude`, `.gemini`,
+  `.cursor`, `.codex`) each start a script of the same name from inside their own folder
+  (`.vscode/setup.mjs` and `.claude/setup.mjs`). One shared script under `scripts/`, different
+  names or a single tool are not reported.
+
 ## ruleset 110 (engine 1.11.0)
 
 `ST-OBF-DECODE-EXEC` (high) now also reads Python code whose bytes are kept in a named list:

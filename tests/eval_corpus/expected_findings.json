@@ -32,6 +32,7 @@
   "ST-SHELL-NODE"
  ],
  "negative/AST01/clipboard-swap/wallet-copy-own-address": [],
+ "negative/AST01/context-file-sealed-artifact-setup-script-run/readable-setup": [],
  "negative/AST01/credential-exfil/agent-orchestrator-bypass": [
   "ST-AGENT-CLI-BYPASS",
   "ST-SHELL-NODE"
@@ -140,6 +141,7 @@
  "negative/AST01/dns-exfil/python-blocklist-lookup-with-api-auth": [],
  "negative/AST01/dynamic-call-resolution/js-escapes-in-display-strings": [],
  "negative/AST01/dynamic-call-resolution/python-benign-dynamic-resolution": [],
+ "negative/AST01/dynamic-skill-prepended-entry-script-edit/one-time-config": [],
  "negative/AST01/email-exfil/normal-transactional": [
   "ST-NET-PY"
  ],
@@ -340,6 +342,9 @@
   "ST-NET-PY",
   "ST-SHELL-PIPE-EXEC-PY",
   "ST-SHELL-PY"
+ ],
+ "negative/AST01/vscode-folderopen-task-agent-setup-mjs-plant/shared-script-two-tools": [
+  "ST-AGENT-AUTORUN"
  ],
  "negative/AST01/wallet-key-exfil/local-signer": [
   "ST-SECRET-ENV"
@@ -729,6 +734,7 @@
  ],
  "negative/AST04/prompt-injection/threat-table-compromised-host": [],
  "negative/AST04/prompt-injection/triage-skill-elided-citation": [],
+ "negative/AST04/skill-description-trust-claim-selection-bias/plain-description": [],
  "negative/AST04/skill-scanner-directed-audit-override-text/reviewer-note-no-verdict": [],
  "negative/AST04/skill-scanner-directed-audit-override-text/security-review-skill": [],
  "negative/AST05/deserialize-exec/safe-loaders": [],
@@ -805,6 +811,9 @@
  ],
  "positive/AST01/clipboard-swap/python-returned-sub": [
   "ST-CLIPPER"
+ ],
+ "positive/AST01/context-file-sealed-artifact-setup-script-run/probe-shape": [
+  "ST-SKILL-SEALED-SCRIPT-RUN"
  ],
  "positive/AST01/credential-exfil/git-hook-file-upload": [
   "ST-COMBO-EXFIL",
@@ -1169,6 +1178,9 @@
   "ST-FS-PY-READ",
   "ST-NET-PY",
   "ST-SENS-PATH-PY"
+ ],
+ "positive/AST01/dynamic-skill-prepended-entry-script-edit/probe-shape": [
+  "ST-SKILL-ENTRY-SCRIPT-EDIT"
  ],
  "positive/AST01/email-exfil/node-bcc-backdoor": [
   "ST-COMBO-EXFIL",
@@ -1682,6 +1694,10 @@
   "ST-NET-PY",
   "ST-PY-FETCH-EXEC"
  ],
+ "positive/AST01/vscode-folderopen-task-agent-setup-mjs-plant/probe-shape": [
+  "ST-AGENT-AUTORUN",
+  "ST-AGENT-AUTORUN-MIRRORED"
+ ],
  "positive/AST01/wallet-key-exfil/env-wallet-key": [
   "ST-COMBO-EXFIL",
   "ST-NET-NODE",
@@ -1740,7 +1756,9 @@
  ],
  "positive/AST02/agent-config-autorun/miasma-claude-hook": [
   "ST-AGENT-AUTORUN",
+  "ST-AGENT-AUTORUN-MIRRORED",
   "ST-AGENT-AUTORUN-REMOTE",
+  "ST-CONVERGENCE",
   "ST-SHELL-NODE",
   "ST-SHELL-PIPE-EXEC-NODE"
  ],
@@ -2516,6 +2534,9 @@
  ],
  "positive/AST04/prompt-injection/skill-silent-credential-read": [
   "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/skill-description-trust-claim-selection-bias/probe-shape": [
+  "ST-SKILL-TRUST-CLAIM-PRIORITY"
  ],
  "positive/AST04/skill-scanner-directed-audit-override-text/if-you-are-a-reviewer": [
   "ST-SKILL-AUDIT-OVERRIDE"

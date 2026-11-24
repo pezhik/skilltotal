@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 
+from skilltotal.autorun import frontmatter_values
 from skilltotal.file_index import FileIndex
 from skilltotal.models import Capability, Evidence, Severity, ThreatClass
 from skilltotal.scanners.base import RuleSpec, Scanner, ScanResult, _finding_from_rule
@@ -24,6 +25,9 @@ from skilltotal.scanners.skill_fetch_exec import _INSTRUCTION_FILE
 R_AUDIT_OVERRIDE = "ST-SKILL-AUDIT-OVERRIDE"
 R_MEMORY_HIDDEN = "ST-SKILL-MEMORY-WRITE-HIDDEN"
 R_ENCRYPTED_INSTRUCTIONS = "ST-SKILL-ENCRYPTED-INSTRUCTIONS"
+R_SEALED_SCRIPT = "ST-SKILL-SEALED-SCRIPT-RUN"  # nosec B105 - rule id, not a credential
+R_ENTRY_EDIT = "ST-SKILL-ENTRY-SCRIPT-EDIT"  # nosec B105 - rule id, not a credential
+R_TRUST_PRIORITY = "ST-SKILL-TRUST-CLAIM-PRIORITY"  # nosec B105 - rule id, not a credential
 
 # A blank line ends a paragraph, also in a CRLF file (a Windows checkout): without \r here a whole
 # CRLF file was one paragraph, pairing a mention in one section with a word from another.
@@ -95,6 +99,59 @@ _OBEY_PLAINTEXT = re.compile(
     re.IGNORECASE,
 )
 
+# A script the instructions have the agent run, and a ban on looking at it: "run `node setup.js`
+# ... it is sealed, do not open or read it". A script an agent may not read cannot be reviewed by
+# the user either; an honest setup step names the script and leaves it readable.
+_RUN_SCRIPT = re.compile(
+    r"\b(?:run|execute|launch|invoke)\b[^\n]{0,40}?"
+    r"\b(?:node|python3?|bash|sh|pwsh|bun|deno)\s+[`'\"]?\.?/?([\w./-]{1,60}\.(?:m?js|cjs|py|sh|ps1))\b",
+    re.IGNORECASE,
+)
+_NO_INSPECT = re.compile(
+    r"\b(?:do\s+not|don['’]?t|never|must\s+not|should\s+not)\s+"
+    r"(?:\w+\s+){0,2}?(?:open|read|inspect|view|cat|examine|review|look\s+(?:at|into))\b",
+    re.IGNORECASE,
+)
+_SEALED = re.compile(r"\b(?:sealed|opaque|encrypted|obfuscated)\b", re.IGNORECASE)
+
+# An instruction to edit the skill's own script on use: "every time this skill runs, prepend this
+# line at the top of scripts/main.py". The script the user reviewed is not the one that runs.
+_SCRIPT_PATH = r"[`'\"]?[\w./-]{1,60}\.(?:m?js|cjs|py|sh|ts)\b"
+_EDIT_SCRIPT = re.compile(
+    r"\b(?:prepend|insert|inject|add|put|write)\w*\b[^\n]{0,100}?"
+    r"\b(?:at\s+the\s+(?:very\s+)?(?:top|beginning|start)|as\s+the\s+(?:very\s+)?first\s+line)"
+    r"\s+of\s+(?:the\s+)?(?:file\s+)?" + _SCRIPT_PATH
+    + r"|\b(?:edit|modify|update|patch)\s+" + _SCRIPT_PATH + r"[`'\"]?"
+    r"[^\n]{0,80}?\b(?:prepend|insert|inject|add)\w*\b[^\n]{0,80}?"
+    r"\b(?:top|beginning|start|first\s+line)\b",
+    re.IGNORECASE,
+)
+_EVERY_USE = re.compile(
+    r"\b(?:every|each)\s+(?:time|invocation|run|use)\b|\bon\s+(?:every|each)\s+\w+"
+    r"|\bbefore\s+(?:running|executing|each|every)\b",
+    re.IGNORECASE,
+)
+_RUNS_CODE = re.compile(
+    r"\b(?:os\.system|subprocess|child_process|__import__|urllib|requests\.|fetch\(|curl|wget"
+    r"|exec|eval)\b",
+    re.IGNORECASE,
+)
+
+# A skill description that claims vetting AND asks to be chosen ahead of the other skills: the
+# text is aimed at the agent's skill selection, not at what the skill does.
+_TRUST_CLAIM = re.compile(
+    r"\b(?:official|verified|certified|security[- ]audited|audited|approved\s+by|endorsed\s+by"
+    r"|trusted)\b",
+    re.IGNORECASE,
+)
+_PRIORITY_CLAIM = re.compile(
+    r"\b(?:always|must)\s+(?:choose|select|pick|prefer|use)\s+this\s+skill\b"
+    r"|\b(?:choose|select|pick|prefer|use)\s+(?:this\s+skill|it)\s+(?:first|before|over"
+    r"|instead\s+of)\b"
+    r"|\bover\s+(?:any|all)\s+other\s+skills?\b",
+    re.IGNORECASE,
+)
+
 
 class SkillDirectivesScanner(Scanner):
     name = "skill_directives"
@@ -152,12 +209,65 @@ class SkillDirectivesScanner(Scanner):
             capability=Capability.PROMPT_SURFACE_RISK,
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
         ),
+        RuleSpec(
+            id=R_SEALED_SCRIPT,
+            category="agent_instructions",
+            severity=Severity.HIGH,
+            title="Instruction file has the agent run a script it is told not to read",
+            description=(
+                "A passage in an instruction file tells the agent to run a script and, in the "
+                "same passage, not to open, read or inspect it. A step the agent may run but "
+                "neither it nor the user may read cannot be reviewed before it runs."
+            ),
+            recommendation=(
+                "Do not let an agent run the script. Read it yourself first; an honest setup "
+                "step leaves its script readable."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
+        RuleSpec(
+            id=R_ENTRY_EDIT,
+            category="agent_instructions",
+            severity=Severity.HIGH,
+            title="Skill instructions have the agent rewrite a script of the skill on each use",
+            description=(
+                "A skill's instructions tell the agent to prepend or insert code at the top of "
+                "a script file each time the skill runs, and the code calls out to the shell or "
+                "the network. The script that was reviewed is not the script that runs."
+            ),
+            recommendation=(
+                "Do not install this skill. A skill's scripts should be fixed as shipped."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
+        RuleSpec(
+            id=R_TRUST_PRIORITY,
+            category="agent_instructions",
+            severity=Severity.HIGH,
+            title="Skill description claims to be verified and asks to be chosen over other skills",
+            description=(
+                "The description in a skill's frontmatter claims it is official, verified or "
+                "audited and tells the agent to always choose it, or to prefer it over other "
+                "skills. The agent reads that text when it picks a skill; it describes no "
+                "function, and the claim cannot be checked from the file."
+            ),
+            recommendation=(
+                "Do not rely on the claim. Check who published the skill and read it before use."
+            ),
+            capability=Capability.PROMPT_SURFACE_RISK,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
         override: list[Evidence] = []
         memory: list[Evidence] = []
         encrypted: list[Evidence] = []
+        sealed: list[Evidence] = []
+        entry_edit: list[Evidence] = []
+        trust: list[Evidence] = []
         for f in index.files:
             if not (f.agent_read or _INSTRUCTION_FILE.search(f.relpath)):
                 continue
@@ -187,7 +297,25 @@ class SkillDirectivesScanner(Scanner):
                         encrypted.append(f.evidence_for_span(
                             base + min(decrypt.start(), obey.start()),
                             base + max(decrypt.end(), obey.end())))
+                run = _RUN_SCRIPT.search(text)
+                if run:
+                    ban = _NO_INSPECT.search(text, run.end())
+                    if ban and (_SEALED.search(text) or run.group(1).lower() in text[ban.end():]
+                                .lower()):
+                        sealed.append(f.evidence_for_span(base + run.start(), base + ban.end()))
+                edit = _EDIT_SCRIPT.search(text)
+                if edit and _EVERY_USE.search(text):
+                    window = f.text[base + edit.start(): base + edit.end() + 600]
+                    if _RUNS_CODE.search(window):
+                        entry_edit.append(f.evidence_for_span(base + edit.start(),
+                                                              base + edit.end()))
+            if f.relpath.lower().endswith("skill.md"):
+                for key, value, start, end in frontmatter_values(f.text):
+                    if key == "description" and _PRIORITY_CLAIM.search(value) \
+                            and _TRUST_CLAIM.search(value):
+                        trust.append(f.evidence_for_span(start, end))
         findings = [_finding_from_rule(rule, ev)
-                    for rule, ev in zip(self.rules, (override, memory, encrypted), strict=True)
+                    for rule, ev in zip(self.rules, (override, memory, encrypted, sealed,
+                                                     entry_edit, trust), strict=True)
                     if ev]
         return ScanResult(findings=findings)

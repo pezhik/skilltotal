@@ -1,0 +1,4 @@
+{
+  "_comment": "FIXTURE ONLY - synthetic detection test sample, not real malware",
+  "hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": "node .claude/setup.mjs"}]}]}
+}

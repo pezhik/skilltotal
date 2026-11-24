@@ -88,6 +88,7 @@ _CONFIG_INJECT_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py", 
 
 R_AUTORUN = "ST-AGENT-AUTORUN"
 R_AUTORUN_REMOTE = "ST-AGENT-AUTORUN-REMOTE"
+R_AUTORUN_MIRRORED = "ST-AGENT-AUTORUN-MIRRORED"
 R_CLI_BYPASS = "ST-AGENT-CLI-BYPASS"
 R_CLI_RELAY = "ST-AGENT-CLI-RELAY"
 R_GITCONFIG_REMOTE = "ST-AGENT-GITCONFIG-EXEC-REMOTE"
@@ -614,6 +615,7 @@ _SKILL_NET_SINK = re.compile(
 # A path-looking token in a command that may name a script shipped in the component. Bounded: an
 # unbounded run before the extension backtracked from every start of a long token (40,000
 # characters took 15 s); no real script path is longer.
+_TOOL_FOLDERS = frozenset({".vscode", ".claude", ".gemini", ".cursor", ".codex"})
 _PATH_TOKEN = re.compile(r"[\w.${}/\\-]{1,300}\.(?:m?js|cjs|ts|py|sh|bash|ps1)\b")
 
 # An outbound network client: a connection the component itself opens to a remote endpoint.
@@ -769,6 +771,28 @@ class AgentConfigScanner(Scanner):
             ),
             recommendation=(
                 "Do not open the project, install the plugin or add the server. Remove the "
+                "configuration and treat a machine that already ran it as exposed."
+            ),
+            capability=Capability.SHELL_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            tactic=TACTIC_PERSISTENCE,
+        ),
+        # A setup script of the same name kept inside each tool's own config folder and started by
+        # that tool on its own (.vscode task on folder open, .claude hook, .gemini hook): one
+        # payload planted for every tool the developer might open the project with.
+        RuleSpec(
+            id=R_AUTORUN_MIRRORED,
+            category="agent_config",
+            severity=Severity.HIGH,
+            title="Auto-run configuration of several tools starts the same script from each",
+            description=(
+                "Two or more tools' own configuration folders (.vscode, .claude, .gemini, "
+                ".cursor, ...) each start a script of the same name that sits inside that "
+                "folder, on their own. Whichever of the tools opens the project runs it. A "
+                "project has no reason to keep a copy of one setup script for every tool."
+            ),
+            recommendation=(
+                "Do not open the project in an editor or agent. Read the scripts, remove the "
                 "configuration and treat a machine that already ran it as exposed."
             ),
             capability=Capability.SHELL_EXECUTION,
@@ -960,6 +984,7 @@ class AgentConfigScanner(Scanner):
                 autorun.append(command.evidence())
             elif command.origin in (ORIGIN_PLUGIN, ORIGIN_SKILL) and command.kind == KIND_HOOK:
                 honest.setdefault((command.file.relpath, command.origin), []).append(command)
+        mirrored = self._mirrored_setup(scan.commands)
         for (relpath, origin), commands in honest.items():
             texts = "; ".join(c.text[:120] for c in commands[:5])
             if origin == ORIGIN_PLUGIN:
@@ -1126,6 +1151,8 @@ class AgentConfigScanner(Scanner):
         local = [e for e in autorun if (e.file, e.line_start, e.line_end) not in remote_keys]
         if local:
             findings.append(_finding_from_rule(self._rule(R_AUTORUN), local))
+        if mirrored:
+            findings.append(_finding_from_rule(self._rule(R_AUTORUN_MIRRORED), mirrored))
         if relay:
             findings.append(_finding_from_rule(self._rule(R_CLI_RELAY), relay))
         if bypass:
@@ -1304,6 +1331,29 @@ class AgentConfigScanner(Scanner):
 
     def _rule(self, rule_id: str) -> RuleSpec:
         return next(r for r in self.rules if r.id == rule_id)
+
+    @staticmethod
+    def _mirrored_setup(commands: tuple[AutorunCommand, ...]) -> list[Evidence]:
+        """Evidence for project auto-run commands in two or more tool folders that each start a
+        script of one name from inside their own folder (``.vscode/setup.mjs`` and
+        ``.claude/setup.mjs``)."""
+        by_name: dict[str, dict[str, Evidence]] = {}
+        for command in commands:
+            if command.is_http or command.origin != ORIGIN_PROJECT:
+                continue
+            folder = command.file.relpath.replace("\\", "/").split("/")[0].lower()
+            if folder not in _TOOL_FOLDERS:
+                continue
+            for token in _PATH_TOKEN.findall(command.text):
+                path = re.sub(r"^(?:\./)+", "", token.replace("\\", "/")).lower()
+                head, _, rest = path.partition("/")
+                if head == folder and rest and "/" not in rest:
+                    by_name.setdefault(rest, {}).setdefault(folder, command.evidence())
+        out: list[Evidence] = []
+        for folders in by_name.values():
+            if len(folders) >= 2:
+                out.extend(folders.values())
+        return out
 
     @staticmethod
     def _referenced_script(
