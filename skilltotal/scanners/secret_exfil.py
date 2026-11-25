@@ -120,6 +120,37 @@ _ENV_DUMP = re.compile(
     r"|\b(?:dict|str|repr)\(\s*os\.environ\s*\)",
     re.IGNORECASE,
 )
+
+
+def _env_dump(text: str) -> re.Match[str] | None:
+    """The first environment dump in ``text`` that is a command and not a word of a message.
+
+    ``env`` just before a ``)`` is the end of a subshell or a command substitution (``$(env)``,
+    ``(cd /; env)``). Inside a double-quoted string only ``$(`` starts one; a bare ``(`` there is
+    a bracket of the message: ``echo "... (restore it from the container's env)"``.
+    """
+    for m in _ENV_DUMP.finditer(text):
+        if text[m.end():m.end() + 1] != ")":
+            return m
+        depth = 0
+        opener = -1
+        for i in range(m.start(), -1, -1):
+            ch = text[i]
+            if ch == ")":
+                depth += 1
+            elif ch == "(":
+                if depth == 0:
+                    opener = i
+                    break
+                depth -= 1
+        if opener < 0 or text[opener - 1:opener] == "$":
+            return m
+        line_start = text.rfind("\n", 0, opener) + 1
+        if text.count('"', line_start, opener) % 2 == 0:
+            return m  # not inside a double-quoted string: a subshell
+    return None
+
+
 # A credential handed to its own client, a container mount or a tool's config option: read
 # locally to authenticate, not sent anywhere. Checked on the text of the command stage before
 # the path (the shapes sensitive_paths also treats as not a read).
@@ -277,7 +308,7 @@ def secret_upload(command: str, env: str = "", *, strict: bool = False) -> tuple
     if env and _credential_paths(_HOME.sub("~", env)):
         hit = _NET_CLIENT.search(text) or _INLINE_NET.search(text)
         return _original_span(command, text, hit.start(), hit.end()) if hit else None
-    m = _ENV_DUMP.search(text)
+    m = _env_dump(text)
     if m:
         return _original_span(command, text, m.start(), m.end())
     for pattern, own_hosts in _TOKEN_COMMANDS:
@@ -1726,7 +1757,7 @@ def _credential_source(line: str, strict: bool = False) -> tuple[int, tuple[str,
         if _not_sent(line, m, strict):
             continue
         return m.start(), ()
-    m = _ENV_DUMP.search(line)
+    m = _env_dump(line)
     if m:
         return m.start(), ()
     for pattern, own_hosts in _TOKEN_COMMANDS:
