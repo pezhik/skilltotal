@@ -46,6 +46,9 @@ _MAX_STEPS = 60_000
 _MAX_LEN = 100_000
 _MAX_DEPTH = 24
 _MAX_INT_BITS = 64
+# String fragments a value is assembled from before an exec/eval receives it: three pieces, joined
+# or concatenated, are how a sink name or a command is kept out of a plain-text search.
+_MIN_FRAGMENTS = 3
 # How many character-code or XOR operations, and how long a reversed or decoded text, make a
 # value "decoded" rather than spelled: `chr(10)` in a command line is a newline, not a disguise.
 _MIN_CODE_OPS = 4
@@ -70,6 +73,8 @@ _DECODE_GATE = re.compile(
     r"|b(?:16|32|64|85)decode|a85decode|fromhex|unhexlify|a2b_|rot_?13|decompress"
     # Byte values held in a named list: `bytes(codes).decode()`.
     r"|\b(?:bytes|bytearray)\s*\(\s*[A-Za-z_]"
+    # Text assembled from string fragments: `exec("".join(parts))`, `exec("pri" + "nt" + "(1)")`.
+    r"|\.join\s*\(|[\"']\s*\+\s*[\"']"
 )
 
 _B64 = {
@@ -117,11 +122,18 @@ class LiteralFolder:
         self._steps = 0
         self._code_ops = 0
         self._decoded = False
+        self._fragments = 0
+
+    @property
+    def assembled(self) -> bool:
+        """Whether the last folded value was built from several string fragments."""
+        return self._fragments >= _MIN_FRAGMENTS
 
     def fold(self, node: ast.expr) -> tuple[_Value, bool] | None:
         """The value of ``node`` and whether a decoding step produced it, or None."""
         self._code_ops = 0
         self._decoded = False
+        self._fragments = 0
         try:
             value = self._eval(node, {}, 0)
         except _FOLD_ERRORS:
@@ -200,6 +212,8 @@ class LiteralFolder:
         if isinstance(op, ast.Add):
             if type(left) is not type(right):
                 raise _Unfoldable
+            if isinstance(left, str):
+                self._fragments += 1 if self._fragments else 2
             return self._sized(left + right)  # type: ignore[operator]
         if isinstance(op, ast.Mult):
             if isinstance(left, int) and isinstance(right, int):
@@ -445,6 +459,8 @@ class LiteralFolder:
             # Checked before joining: a long separator between many items is built in one go.
             if sum(len(i) for i in items) + len(owner) * len(items) > _MAX_LEN:
                 raise _Unfoldable
+            if isinstance(owner, str) and len(items) >= _MIN_FRAGMENTS:
+                self._fragments += len(items)
             return owner.join(items)  # type: ignore[arg-type]
         if attr == "decode" and isinstance(owner, bytes):
             codec = self._eval(node.args[0], env, depth + 1) if node.args else "utf-8"
@@ -613,7 +629,7 @@ class _DecodedSinkVisitor(_CallVisitor):
         if arg is None or isinstance(arg, ast.Constant):
             return
         folded = self._folder.fold(arg)
-        if folded is None or not folded[1]:
+        if folded is None or not (folded[1] or (kind == SINK_EXEC and self._folder.assembled)):
             return
         text = as_text(folded[0])
         if text is None or len(text.strip()) < _MIN_DECODED_LEN:

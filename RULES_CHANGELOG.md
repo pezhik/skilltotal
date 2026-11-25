@@ -4,6 +4,14 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 112 (engine 1.13.0)
+
+`ST-OBF-DECODE-EXEC` (high) now also reads Python `exec`/`eval` calls whose text is assembled from
+three or more string fragments: `exec("".join(["pri", "nt(", "1)"]))` or `exec("pri" + "nt(" + "1)")`.
+No new rule id. Every piece must be a literal of the file; a part that comes from an argument, the
+environment or a call is not folded, two fragments are not reported, and a join that never reaches
+`exec`/`eval` is not reported.
+
 ## ruleset 111 (engine 1.12.0)
 
 Four new rules, all high and malicious indicators.

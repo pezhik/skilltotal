@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.12.0 · ruleset 111 · Python 3.11 · offline corpus.
+Engine 1.13.0 · ruleset 112 · Python 3.11 · offline corpus.
 
-- **recall: 100.0%** (395/395 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/306 benign samples wrongly flagged)
+- **recall: 100.0%** (396/396 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/307 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -109,7 +109,7 @@ Engine 1.12.0 · ruleset 111 · Python 3.11 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 53 | 62 | 58 | 28 |
+| AST01 | 53 | 62 | 59 | 28 |
 | AST02 | 49 | 35 | 15 | 7 |
 | AST03 | 0 | 2 | 0 | 0 |
 | AST04 | 60 | 6 | 14 | 0 |
@@ -137,7 +137,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-LOOKALIKE-IDENTIFIER` | AST01 | 0 | 0 | 3/3 | 3/3 |
 | `ST-MCP-SERVER-HIDDEN-EXEC` | AST01 | 1 | 0 | - | - |
 | `ST-MCP-STATIC-AUTH-EXEC` | AST01 | 3 | 0 | - | - |
-| `ST-OBF-DECODE-EXEC` | AST01 | 32 | 0 | - | - |
+| `ST-OBF-DECODE-EXEC` | AST01 | 33 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-PY` | AST01 | 2 | 0 | - | - |
 | `ST-OBF-DECODE-EXEC-SH` | AST01 | 15 | 0 | - | - |
 | `ST-OBF-DECRYPT-EXEC` | AST01 | 1 | 0 | - | - |

@@ -1,9 +1,9 @@
 {
-  "engine_version": "1.12.0",
-  "ruleset_version": 111,
+  "engine_version": "1.13.0",
+  "ruleset_version": 112,
   "python_version": "3.11",
-  "positives": 395,
-  "negatives": 306,
+  "positives": 396,
+  "negatives": 307,
   "recall": 1.0,
   "precision": 1.0,
   "fp_rate": 0.0,
@@ -105,7 +105,7 @@
     "AST01": {
       "node": 62,
       "manifest/text": 53,
-      "python": 58,
+      "python": 59,
       "shell": 28
     },
     "AST02": {
@@ -968,7 +968,7 @@
       "owasp": [
         "AST01"
       ],
-      "malicious_samples": 32,
+      "malicious_samples": 33,
       "benign_samples": 0,
       "should_fire": 0,
       "fired": 0,
