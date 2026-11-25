@@ -76,3 +76,13 @@ def test_every_real_section_changes_only_whitespace():
         assert body.split() == wrapped.split(), version
         # Joining is the point: no list item or paragraph keeps a line break mid-sentence.
         assert len(body.splitlines()) <= len(wrapped.strip().splitlines()), version
+
+
+def test_the_release_body_ends_with_how_to_install_that_version(capsysbinary):
+    assert release_notes.main(["release_notes.py", "1.13.0"]) == 0
+    out = capsysbinary.readouterr().out.decode("utf-8")
+    assert out.startswith("### Added")
+    assert "pipx install skilltotal==1.13.0" in out
+    assert "npx -y --package=skilltotal@1.13.0 -- skilltotal scan <source>" in out
+    assert "uses: pezhik/skilltotal@v1.13.0" in out
+    assert "/blob/v1.13.0/RULES_CHANGELOG.md" in out

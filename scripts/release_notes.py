@@ -58,6 +58,20 @@ def notes(text: str, version: str) -> str:
     return "\n".join(unwrap(section(text, version))).strip() + "\n"
 
 
+def footer(version: str) -> str:
+    """How to get exactly this version, and where its rule changes are described."""
+    fence = "`" * 3
+    return (
+        "\n### Install\n\n"
+        f"{fence}\n"
+        f"pipx install skilltotal=={version}\n"
+        f"npx -y --package=skilltotal@{version} -- skilltotal scan <source>\n"
+        f"{fence}\n\n"
+        f"GitHub Action: `uses: pezhik/skilltotal@v{version}`. Rule changes are described in "
+        f"[RULES_CHANGELOG.md](https://github.com/pezhik/skilltotal/blob/v{version}/RULES_CHANGELOG.md).\n"
+    )
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("usage: release_notes.py <version>", file=sys.stderr)
@@ -66,6 +80,7 @@ def main(argv: list[str]) -> int:
     if not body.strip():
         print(f"CHANGELOG.md has no section [{argv[1]}]", file=sys.stderr)
         return 1
+    body += footer(argv[1])
     sys.stdout.buffer.write(body.encode("utf-8"))  # the notes file is UTF-8 on any platform
     return 0
 
