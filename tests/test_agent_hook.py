@@ -282,6 +282,16 @@ def test_a_scan_over_the_time_budget_asks_the_person():
             in spec["permissionDecisionReason"])
 
 
+def test_a_scan_never_gets_more_than_the_budget(monkeypatch):
+    """CI, Windows, 2026-11: (start + 12.0) - start came out as 12.000000000000028 for a clock
+    reading like 254.83787681536361, so the first scan was handed more than the whole budget."""
+    given = []
+    monkeypatch.setattr("skilltotal.agent_hook.time.monotonic", lambda: 254.83787681536361)
+    hook_response(_bash("npm install huge"),
+                  scan=lambda source, timeout: given.append(timeout) or _report(), budget_s=12.0)
+    assert given == [12.0]
+
+
 def test_no_scan_starts_once_the_budget_is_spent():
     calls = []
     out = hook_response(

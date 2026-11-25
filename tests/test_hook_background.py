@@ -1057,16 +1057,21 @@ def test_the_hook_waits_sixty_seconds_unless_told_otherwise(monkeypatch, setting
 
 # Watches the hook whose process id it is given: notes what it sees first, then waits for it to go.
 WATCH = r'''
-import sys, time
+import os, sys, time
 from pathlib import Path
 from skilltotal import hook_scan
 
+def say(path, text):
+    # Whole or not at all: the reader polls for the file and could see it created but still empty.
+    Path(path + ".tmp").write_text(text, encoding="ascii")
+    os.replace(path + ".tmp", path)
+
 watch = hook_scan._watch_hook(int(sys.argv[1]))
-Path(sys.argv[2]).write_text("gone" if watch.gone() else "alive", encoding="ascii")
+say(sys.argv[2], "gone" if watch.gone() else "alive")
 deadline = time.monotonic() + 30
 while not watch.gone() and time.monotonic() < deadline:
     time.sleep(0.1)
-Path(sys.argv[3]).write_text("gone" if watch.gone() else "still there", encoding="ascii")
+say(sys.argv[3], "gone" if watch.gone() else "still there")
 '''
 
 # Plays the hook: starts WATCH the way a hook starts its supervisor, waits until it has looked,

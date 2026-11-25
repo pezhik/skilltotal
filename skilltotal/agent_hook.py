@@ -4660,7 +4660,8 @@ def hook_response(
             skipped.append(source)
             continue
         checked += 1
-        remaining = deadline - time.monotonic()
+        # min(): (start + budget) - now can come out a hair above the budget in floating point.
+        remaining = min(budget_s, deadline - time.monotonic())
         if remaining <= 0:
             late.append(source)
             continue
