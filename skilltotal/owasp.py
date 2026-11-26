@@ -92,6 +92,8 @@ OWASP_BY_RULE: dict[str, tuple[str, ...]] = {
     "ST-MCP-DESCRIPTION-SWAP": ("AST04",),
     "ST-MCP-DEFAULT-COMMAND": ("AST01", "AST04"),
     "ST-CLIPPER": ("AST01",),
+    "ST-NODE-DOWNLOAD-RUN-SCRIPT": ("AST01", "AST02"),
+    "ST-TELEGRAM-SESSION-EXFIL": ("AST01",),
     "ST-SHELL-EVASION": ("AST01",),
     # Post-exploitation tactics: access, persistence, masquerading and beacons are what a
     # malicious component does once it runs.

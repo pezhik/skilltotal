@@ -85,6 +85,10 @@
   "ST-FS-PY-WRITE",
   "ST-NET-PY"
  ],
+ "negative/AST01/credential-exfil/python-telegram-bot-report-upload": [
+  "ST-FS-PY-READ",
+  "ST-NET-PY"
+ ],
  "negative/AST01/credential-exfil/real-virtualenv-skipped": [],
  "negative/AST01/credential-exfil/sandbox-deny-profile": [
   "ST-NET-NODE"
@@ -436,6 +440,15 @@
  "negative/AST02/init-remote-archive-loader/installer-function-not-constructor": [
   "ST-NET-PY"
  ],
+ "negative/AST02/install-dropper/node-temp-bat-saved-not-run": [
+  "ST-FS-NODE-WRITE",
+  "ST-NET-NODE"
+ ],
+ "negative/AST02/install-dropper/node-temp-json-download-run-local-bat": [
+  "ST-FS-NODE-WRITE",
+  "ST-NET-NODE",
+  "ST-SHELL-NODE"
+ ],
  "negative/AST02/install-dropper/npm-normal-build": [
   "ST-INSTALL-NPM",
   "ST-INSTALL-NPM-PREPARE"
@@ -730,6 +743,7 @@
  "negative/AST04/prompt-injection/skill-link-title-plain": [],
  "negative/AST04/prompt-injection/skill-template-end-marker": [],
  "negative/AST04/prompt-injection/skill-updates-claude-md": [],
+ "negative/AST04/prompt-injection/skill-wrapped-copy-rules-to-wiki": [],
  "negative/AST04/prompt-injection/subagent-guardrails": [],
  "negative/AST04/prompt-injection/threat-model-asset": [
   "ST-FS-PY-READ",
@@ -965,6 +979,13 @@
   "ST-FS-PY-WRITE",
   "ST-NET-NODE",
   "ST-SENS-PATH-PY"
+ ],
+ "positive/AST01/credential-exfil/python-telegram-session-upload": [
+  "ST-CMDI-PY",
+  "ST-FS-PY-READ",
+  "ST-NET-PY",
+  "ST-SHELL-PY",
+  "ST-TELEGRAM-SESSION-EXFIL"
  ],
  "positive/AST01/credential-exfil/python-venv-named-module": [
   "ST-COMBO-EXFIL",
@@ -1871,6 +1892,12 @@
   "ST-NET-PY",
   "ST-PY-INIT-REMOTE-ARCHIVE-LOADER"
  ],
+ "positive/AST02/install-dropper/node-temp-bat-download-run": [
+  "ST-FS-NODE-WRITE",
+  "ST-NET-NODE",
+  "ST-NODE-DOWNLOAD-RUN-SCRIPT",
+  "ST-SHELL-NODE"
+ ],
  "positive/AST02/install-dropper/npm-postinstall-decode-exec": [
   "ST-DYN-NODE",
   "ST-INSTALL-DROPPER",
@@ -2503,6 +2530,9 @@
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-context-persistence": [
+  "ST-PROMPT-INJECTION"
+ ],
+ "positive/AST04/prompt-injection/skill-context-persistence-soft-wrapped": [
   "ST-PROMPT-INJECTION"
  ],
  "positive/AST04/prompt-injection/skill-env-key-in-urls": [

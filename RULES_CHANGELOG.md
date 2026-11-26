@@ -4,6 +4,21 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 114 (engine 1.15.0)
+
+Two new rules and one extended rule, from the 2026-11-26 research.
+- `ST-NODE-DOWNLOAD-RUN-SCRIPT` (high, malicious indicator): a Node.js file requests a URL, saves a
+  Windows script (`.bat`, `.cmd`, `.ps1`, `.vbs`, `.hta`) under the temporary folder and starts the
+  same path with `exec`, `spawn` or `execFile`. A script that is saved but not started, and a data
+  file downloaded beside a script shipped in the package, are not reported.
+- `ST-TELEGRAM-SESSION-EXFIL` (high, malicious indicator): one file uses the Telegram bot API, names
+  the Telegram desktop client's `tdata` session folder and uploads a file. A bot that sends its own
+  report names no session store and is not reported.
+- `ST-PROMPT-INJECTION`: prose files are also read with soft line breaks (a line that ends
+  mid-sentence, followed by a plain word) written as blanks, so a phrase wrapped over two lines is
+  matched like the same phrase on one line. Only a match that spans a break and that no earlier pass
+  matched is added.
+
 ## ruleset 113 (engine 1.14.0)
 
 Three precision changes, each found by reading findings from a scan of the MCP registry. No new

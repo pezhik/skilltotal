@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.15.0]
+
+### Added
+- Ruleset 114: `ST-NODE-DOWNLOAD-RUN-SCRIPT` and `ST-TELEGRAM-SESSION-EXFIL`, and
+  `ST-PROMPT-INJECTION` reads sentences wrapped over two lines. See `RULES_CHANGELOG.md`.
+
 ## [1.14.0]
 
 ### Fixed

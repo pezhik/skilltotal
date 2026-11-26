@@ -558,6 +558,25 @@ def _is_prose(f: IndexedFile) -> bool:
 
 _CUE_PARAGRAPH_LINES = 6
 
+# A sentence wrapped over two lines ("... so they\nstay active ..."): the phrase patterns stop at a
+# line end, so a prose file is also read once with the soft line breaks written as blanks (the same
+# length, so offsets are unchanged). A break is soft when the line ends mid-sentence and the next
+# one starts with a plain word, not a heading, list item, quote, table row, fence or tag.
+_SOFT_BREAK = re.compile(r"(?<=[A-Za-z0-9,;)\]'\"`*_-])[ \t]*\r?\n(?=[ \t]*[A-Za-z(])")
+_WRAPPED_MAX = 512 * 1024
+
+
+def _unwrapped(text: str) -> tuple[str, list[int]] | None:
+    """``text`` with each soft line break as one blank, and those break offsets; None if none."""
+    breaks = list(_SOFT_BREAK.finditer(text))
+    if not breaks:
+        return None
+    chars = list(text)
+    for m in breaks:
+        for k in range(m.start(), m.end()):
+            chars[k] = " "
+    return "".join(chars), [m.start() for m in breaks]
+
 # The loose view (see skilltotal.text_normalize.loose_fold): the same phrases with `i`/`l` read as
 # one letter, and with the blanks optional for text whose letters were spaced out.
 _STRONG_LOOSE = loose_pattern(_STRONG)
@@ -905,6 +924,23 @@ class PromptSurfaceScanner(Scanner):
                 ev = f.evidence_for_span(start, end)
                 classify(f, start, end, replace(
                     ev, snippet=ev.snippet[:200] + f"  [read as: {m.group()[:120]!r}]"))
+        # Wrapped pass, prose only: a phrase split over soft-wrapped lines. Counts only where the
+        # match spans a line break and no earlier pass matched the same text.
+        for f in index.files:
+            if not _is_prose(f) or len(f.text) > _WRAPPED_MAX:
+                continue
+            view = _unwrapped(f.text)
+            if view is None:
+                continue
+            flat, cuts = view
+            taken = matched.setdefault(f.relpath, [])
+            for m in inj_rule.pattern.finditer(flat):  # type: ignore[union-attr]
+                if not any(m.start() <= c < m.end() for c in cuts):
+                    continue
+                if any(s < m.end() and m.start() < e for s, e in taken):
+                    continue
+                taken.append(m.span())
+                classify(f, m.start(), m.end(), f.evidence_for_span(m.start(), m.end()))
         # Credentials sent off the machine and kept from the user (_covert_credential_sends), in
         # prose and agent-instruction files, as written and de-obfuscated.
         for f in index.files:

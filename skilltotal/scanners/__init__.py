@@ -57,6 +57,7 @@ from skilltotal.scanners.shell_script import ShellScriptScanner
 from skilltotal.scanners.skill_directives import SkillDirectivesScanner
 from skilltotal.scanners.skill_fetch_exec import SkillFetchExecScanner
 from skilltotal.scanners.stdlib_shadow import StdlibShadowScanner
+from skilltotal.scanners.trojan_runtime import TrojanRuntimeScanner
 from skilltotal.scanners.workflow_exfil import WorkflowExfilScanner
 
 SCANNERS: list[Scanner] = [
@@ -110,6 +111,7 @@ SCANNERS: list[Scanner] = [
     LookalikeHostScanner(),
     LookalikeIdentifierScanner(),
     CompiledRunScanner(),
+    TrojanRuntimeScanner(),
 ]
 
 
