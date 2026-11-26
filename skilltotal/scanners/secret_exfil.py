@@ -840,6 +840,8 @@ _PY_ENV_MEMBER = frozenset(
      "clear", "popitem"}
 )
 _PY_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+# Built-ins that answer yes or no about what they are given (unless the file defines the name).
+_PY_TRUTH_BUILTINS = frozenset({"any", "all"})
 # Bound for a crafted file: how many times "does this function return the environment" is worked
 # out (a real module asks once per function and parameter).
 _MAX_RETURN_QUESTIONS = 2000
@@ -958,12 +960,17 @@ def _py_env_dumps(f: IndexedFile) -> list[Evidence]:
             if (isinstance(node, ast.Name) and not one_variable(node)
                     and any((s, node.id) in tainted for s in chain(scope))):
                 return True
+            if isinstance(node, ast.Compare):
+                continue  # `"X" in env`, `env == {}`: a yes or no
             if isinstance(node, ast.Call):
                 functions = own_function(node)
                 if functions:
                     if any(call_carries(node, fn, scope, tainted) for fn in functions):
                         return True
                     continue  # its arguments went in; what came back is its own result
+                if (isinstance(node.func, ast.Name) and node.func.id in _PY_TRUTH_BUILTINS
+                        and node.func.id not in imports.names):
+                    continue  # `any(k.startswith("X_") for k in env)`: a yes or no
             for child in ast.iter_child_nodes(node):
                 # A child process's `env=` is the environment it runs in, not data it carries:
                 # what it returns (its output, a queue line read from it) holds no secret.

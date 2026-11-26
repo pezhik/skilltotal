@@ -4,6 +4,27 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 113 (engine 1.14.0)
+
+Three precision changes, each found by reading findings from a scan of the MCP registry. No new
+rule ids.
+- `ST-SECRET-EXFIL`, shell: `env` followed by `)` was always read as an environment dump. Inside a
+  double-quoted string a plain `(` does not start a subshell, so it is now read as a bracket of the
+  message, and `env)` closing it is not a dump:
+  `echo "FATAL: rsync removed app.env (restore it from the running container's env)" >&2`.
+  `"$(env)"`, `"$(printenv)"`, `(cd /; env) | curl ...` outside quotes and `env | curl ...` are
+  reported as before.
+- `ST-SECRET-EXFIL`, Python: a request that carried only yes/no facts about the environment was
+  reported as the whole environment being sent. A comparison (`"DISPLAY" in env`,
+  `"CI" not in env`) and a call to the built-in `any()` or `all()`
+  (`any(k.startswith("CODEIUM_") for k in env)`) give a boolean, so they no longer mark the value
+  as the environment. `env`, `dict(env)`, `{k: env[k] for k in env}` and `sorted(env.items())` in
+  a request are reported as before, and so is a function of the file's own that is named `any`.
+- `ST-PROMPT-INJECTION`: a phrase wrapped directly in Japanese or Chinese corner brackets
+  (`「ignore previous instructions」`, `『...』`) is treated as a quotation, the same way as a phrase
+  in straight or typographic quotes, and goes to needs-review as a cited phrase. A phrase that
+  continues past the closing bracket, or stands outside the brackets, is reported as before.
+
 ## ruleset 112 (engine 1.13.0)
 
 `ST-OBF-DECODE-EXEC` (high) now also reads Python `exec`/`eval` calls whose text is assembled from

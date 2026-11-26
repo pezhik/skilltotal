@@ -1,7 +1,7 @@
 {
-  "engine_version": "1.13.0",
-  "ruleset_version": 112,
-  "python_version": "3.11",
+  "engine_version": "1.14.0",
+  "ruleset_version": 113,
+  "python_version": "3.14",
   "positives": 396,
   "negatives": 307,
   "recall": 1.0,
@@ -103,15 +103,15 @@
   },
   "coverage_matrix": {
     "AST01": {
-      "node": 62,
+      "node": 61,
       "manifest/text": 53,
-      "python": 59,
+      "python": 60,
       "shell": 28
     },
     "AST02": {
       "manifest/text": 49,
-      "shell": 7,
-      "node": 35,
+      "shell": 8,
+      "node": 34,
       "python": 15
     },
     "AST03": {

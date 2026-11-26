@@ -4,6 +4,15 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.14.0]
+
+### Fixed
+- Ruleset 113: three false positives. `ST-SECRET-EXFIL` no longer reports `env)` that closes a
+  bracket inside a double-quoted shell string, or a Python request that carries only yes/no facts
+  about the environment (`"DISPLAY" in env`, `any(... for k in env)`). `ST-PROMPT-INJECTION` treats
+  a phrase wrapped directly in Japanese or Chinese corner brackets as a quotation and sends it to
+  needs-review. See `RULES_CHANGELOG.md`.
+
 ## [1.13.0]
 
 ### Added

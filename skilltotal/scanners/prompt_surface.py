@@ -216,8 +216,9 @@ _WEAK = alternation(
     flags=re.IGNORECASE | re.MULTILINE,
 )
 
-# Quote characters that wrap a *cited* phrase (straight, smart, guillemets, backtick).
-_QUOTES = "\"'`“”‘’«»"
+# Quote characters that wrap a *cited* phrase (straight, smart, guillemets, backtick, and the
+# corner brackets Japanese and Chinese text quotes with).
+_QUOTES = "\"'`“”‘’«»「」『』"
 # What may sit between a cited phrase and its closing quote: an ellipsis that elides the rest of it
 # (`...`, `…`) or the cited sentence's own punctuation (`"Ignore all previous instructions."`).
 _ELISION = re.compile(r" ?(?:\.{2,4}|…)|[.!?,;:]")
