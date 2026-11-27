@@ -53,6 +53,8 @@ INSTALL_DROPPER_FINDING_ID = "ST-INSTALL-DROPPER"
 POSTEX_CHAIN_FINDING_ID = "ST-POSTEX-CHAIN"
 # Rule id -> the post-exploitation tactic it is a step of, declared on each RuleSpec.
 _TACTIC_BY_ID = {r.id: r.tactic for r in all_rules() if r.tactic}
+# The rules whose findings are steps of ST-POSTEX-CHAIN.
+TACTIC_RULE_IDS = frozenset(_TACTIC_BY_ID)
 # A chain needs a way in or a call home; persistence and evasion only support one.
 _POSTEX_ENTRY_TACTICS = frozenset({TACTIC_REMOTE_ACCESS, TACTIC_COMMAND_AND_CONTROL})
 _INSTALL_HOOK_IDS = frozenset(

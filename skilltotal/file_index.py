@@ -1147,17 +1147,39 @@ _MCP_METADATA_KEYWORDS = frozenset(
 )
 
 
+def _result_text_parts(value: ast.expr) -> list[ast.expr]:
+    """The string literals that make up a returned value as text: joined by ``+``, picked by a
+    conditional expression, or the value itself. A string handed to a call (``return run("...")``)
+    is that call's argument, not the result's text, so calls are not entered."""
+    parts: list[ast.expr] = []
+    stack: list[ast.expr] = [value]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.JoinedStr) or (
+            isinstance(node, ast.Constant) and isinstance(node.value, str)
+        ):
+            parts.append(node)
+        elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            stack += [node.left, node.right]
+        elif isinstance(node, ast.IfExp):
+            stack += [node.body, node.orelse]
+    return parts
+
+
 def _python_agent_facing_spans(
     text: str, line_starts: list[int]
-) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Char-spans of Python strings a model reads, and of the functions that call sampling.
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]], list[tuple[int, int]]]:
+    """Char-spans of Python strings a model reads, of the functions that call sampling, and of
+    the text a tool or prompt function returns.
 
-    See ``IndexedFile.in_agent_facing_string`` and ``IndexedFile.sampling_regions``.
+    See ``IndexedFile.in_agent_facing_string``, ``IndexedFile.sampling_regions`` and
+    ``IndexedFile.in_tool_result_text``.
     """
     try:
         tree = ast.parse(text)
     except (SyntaxError, ValueError, RecursionError, MemoryError):  # MemoryError: parser stack
-        return [], []
+        return [], [], []
+    result_text: list[tuple[int, int]] = []
     lines = text.splitlines(keepends=True)
 
     def offset(lineno: int, col_bytes: int) -> int:
@@ -1270,6 +1292,7 @@ def _python_agent_facing_spans(
                         isinstance(sub, ast.Constant) and isinstance(sub.value, str)
                     ):
                         spans.append(span(sub))
+                result_text.extend(span(part) for part in _result_text_parts(ret.value))
         samples = any(
             isinstance(call, ast.Call)
             and isinstance(call.func, ast.Attribute)
@@ -1283,7 +1306,7 @@ def _python_agent_facing_spans(
                     isinstance(sub, ast.Constant) and isinstance(sub.value, str)
                 ):
                     spans.append(span(sub))
-    return spans, regions
+    return spans, regions, result_text
 
 
 # A JavaScript/TypeScript file written against an MCP server SDK (source or bundled output).
@@ -1745,6 +1768,9 @@ class IndexedFile:
         default=None, repr=False, compare=False
     )
     _sampling_cache: list[tuple[int, int]] | None = field(default=None, repr=False, compare=False)
+    _result_text_cache: list[tuple[int, int]] | None = field(
+        default=None, repr=False, compare=False
+    )
     # JavaScript: whether the file is an MCP server (None = not yet known), and per constant name
     # whether it is used as a description; see ``in_agent_facing_string``.
     _js_mcp_server: bool | None = field(default=None, repr=False, compare=False)
@@ -2108,9 +2134,22 @@ class IndexedFile:
 
     def _ensure_agent_facing(self) -> None:
         if self._agent_facing_cache is None:
-            self._agent_facing_cache, self._sampling_cache = _python_agent_facing_spans(
-                self.text, self._line_starts
-            )
+            (self._agent_facing_cache, self._sampling_cache,
+             self._result_text_cache) = _python_agent_facing_spans(self.text, self._line_starts)
+
+    def in_tool_result_text(self, offset: int) -> bool:
+        """True if ``offset`` is in the text a Python MCP tool or prompt function returns: a
+        string literal that is the returned value or one of the parts it is joined from.
+
+        Such text is handed to the model as the call result. A command written in it is something
+        the tool tells the agent or the person, not a step the tool's own code takes. A string the
+        return statement passes to a call (``return subprocess.run("...")``) is not result text.
+        Returns False for other files, so callers can invoke it unconditionally.
+        """
+        if self.suffix not in (".py", ".pyw"):
+            return False
+        self._ensure_agent_facing()
+        return _offset_in_spans(self._result_text_cache, offset)
 
     def sampling_regions(self) -> list[tuple[int, int]]:
         """Char-spans of code that asks the MCP client's model to run a server-written prompt.

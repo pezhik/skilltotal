@@ -30,7 +30,7 @@ Each combination id has a matching :class:`~skilltotal.scanners.base.RuleSpec` i
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from skilltotal.file_index import FileIndex
@@ -40,6 +40,7 @@ from skilltotal.scoring import (
     CONVERGENCE_FINDING_ID,
     INSTALL_DROPPER_FINDING_ID,
     POSTEX_CHAIN_FINDING_ID,
+    TACTIC_RULE_IDS,
     TRIFECTA_FINDING_ID,
     convergence_finding,
     exfiltration_finding,
@@ -92,6 +93,26 @@ def _dropper(findings, capabilities, component, fired, index):
 
 
 def _postex_chain(findings, capabilities, component, fired, index):
+    # The chain says what the component's code does. A command inside the text a tool returns to
+    # the model (setup instructions: "run `curl ... | sh`", "add this systemd unit") is something
+    # the tool tells the agent to do; its finding stays, and it is not a step of the chain.
+    if index is not None:
+        by_path = {f.relpath: f for f in index.files}
+
+        def told(e: Evidence) -> bool:
+            f = by_path.get(e.file)
+            return (f is not None and e.match_offset is not None
+                    and f.in_tool_result_text(e.match_offset))
+
+        steps: list[Finding] = []
+        for f in findings:
+            if f.id in TACTIC_RULE_IDS and any(told(e) for e in f.evidence):
+                done = [e for e in f.evidence if not told(e)]
+                if done:
+                    steps.append(replace(f, evidence=done))
+            else:
+                steps.append(f)
+        findings = steps
     return postex_chain_finding(findings)
 
 
