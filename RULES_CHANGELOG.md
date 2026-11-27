@@ -4,6 +4,15 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 116 (engine 1.17.0)
+
+One false positive fixed.
+- `ST-POSTEX-CHAIN`: a command that appears only in the text returned by a Python MCP tool or
+  prompt function no longer counts as a step of the chain, because the component's own code does
+  not run it. This covers setup instructions such as "run this installer" or "add this systemd
+  unit". The individual findings for that text are still reported. A chain whose steps are in code
+  that runs is reported as before.
+
 ## ruleset 115 (engine 1.16.0)
 
 One new rule and one extended rule, from the 2026-11-27 research.

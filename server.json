@@ -3,7 +3,7 @@
   "name": "ai.skilltotal/skilltotal",
   "title": "SkillTotal",
   "description": "Static security scan of npm and PyPI packages, MCP servers, agent skills and VS Code extensions.",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "websiteUrl": "https://www.skilltotal.ai",
   "repository": {
     "url": "https://github.com/pezhik/skilltotal",
@@ -13,7 +13,7 @@
     {
       "registryType": "pypi",
       "identifier": "skilltotal",
-      "version": "1.16.0",
+      "version": "1.17.0",
       "transport": {
         "type": "stdio"
       },

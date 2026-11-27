@@ -4,6 +4,13 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.17.0]
+
+### Fixed
+- Ruleset 116: one false positive. `ST-POSTEX-CHAIN` no longer treats a command as a step of the
+  chain when it appears only in the text a Python MCP tool or prompt function returns.
+  See `RULES_CHANGELOG.md`.
+
 ## [1.16.0]
 
 ### Added
