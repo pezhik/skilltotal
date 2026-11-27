@@ -1,9 +1,9 @@
 # SkillTotal detection-efficacy report
 
-Engine 1.15.0 · ruleset 114 · Python 3.11 · offline corpus.
+Engine 1.16.0 · ruleset 115 · Python 3.11 · offline corpus.
 
-- **recall: 100.0%** (399/399 malicious samples flagged)
-- **precision: 100.0%** · false-positive rate 0.0% (0/311 benign samples wrongly flagged)
+- **recall: 100.0%** (401/401 malicious samples flagged)
+- **precision: 100.0%** · false-positive rate 0.0% (0/313 benign samples wrongly flagged)
 
 ## Recall by OWASP class
 
@@ -66,10 +66,12 @@ Engine 1.15.0 · ruleset 114 · Python 3.11 · offline corpus.
 | mcp-sampling-sysprompt | 100% |
 | mcp-schema-default-command | 100% |
 | mcp-static-auth-exec | 100% |
+| mcp-tool-output-ansi-terminal-deception | 100% |
 | mcp-tool-poisoning | 100% |
 | module-run-embedded-infostealer-exe | 100% |
 | native-addon-dropper-sandbox-gate | 100% |
 | npm-lifecycle-remote-exec | 100% |
+| npm-path-binary-replacement-agent-cli | 100% |
 | npm-postinstall-miner | 100% |
 | npm-preinstall-id-output-curl-beacon | 100% |
 | npm-worm | 100% |
@@ -109,8 +111,8 @@ Engine 1.15.0 · ruleset 114 · Python 3.11 · offline corpus.
 
 | class | manifest/text | node | python | shell |
 |---|---|---|---|---|
-| AST01 | 53 | 62 | 60 | 28 |
-| AST02 | 49 | 36 | 15 | 7 |
+| AST01 | 53 | 63 | 60 | 28 |
+| AST02 | 49 | 37 | 15 | 7 |
 | AST03 | 0 | 2 | 0 | 0 |
 | AST04 | 61 | 6 | 14 | 0 |
 | AST05 | 0 | 0 | 6 | 0 |
@@ -123,7 +125,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 
 | rule | class | fired on malicious samples | fired on benign samples | rule samples: fired | rule samples: stayed silent |
 |---|---|---|---|---|---|
-| `ST-FS-NODE-WRITE` | - | 15 | 12 | 2/2 | 1/1 |
+| `ST-FS-NODE-WRITE` | - | 15 | 13 | 2/2 | 1/1 |
 | `ST-ACTION-SECRET-EXFIL` | AST01 | 1 | 0 | - | - |
 | `ST-ARCHIVE-PASSWORD-EXTRACT` | AST01 | 1 | 0 | - | - |
 | `ST-BYTECODE-NO-SOURCE` | AST01 | 0 | 0 | 2/2 | 2/2 |
@@ -209,7 +211,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-GIT-HOOK-PERSIST` | AST02 | 2 | 0 | 1/1 | 2/2 |
 | `ST-INSTALL-DROPPER` | AST02 | 20 | 0 | 1/1 | 1/1 |
 | `ST-INSTALL-GYP` | AST02 | 2 | 0 | - | - |
-| `ST-INSTALL-NPM` | AST02 | 52 | 31 | 1/1 | 1/1 |
+| `ST-INSTALL-NPM` | AST02 | 53 | 32 | 1/1 | 1/1 |
 | `ST-INSTALL-NPM-DNS-BEACON` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-MASKED-REGISTRY` | AST02 | 1 | 0 | - | - |
 | `ST-INSTALL-NPM-PREPARE` | AST02 | 3 | 6 | 1/1 | 1/1 |
@@ -218,6 +220,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-INSTALL-PY` | AST02 | 10 | 8 | 1/1 | 1/1 |
 | `ST-INSTALL-PY-DOWNLOAD-EXEC` | AST02 | 3 | 0 | - | - |
 | `ST-LOOKALIKE-HOST` | AST02 | 5 | 0 | 3/3 | 2/2 |
+| `ST-NPM-AGENT-CLI-REPLACE` | AST02 | 1 | 0 | - | - |
 | `ST-NPM-BIN-SHADOW` | AST02 | 0 | 0 | 1/1 | 1/1 |
 | `ST-NPM-DEPCONF-BEACON` | AST02 | 1 | 0 | - | - |
 | `ST-NPM-GIT-DEP` | AST02 | 0 | 0 | 1/1 | 1/1 |
@@ -242,7 +245,7 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-SKILL-CAP-MISMATCH` | AST03, AST04 | 1 | 2 | - | - |
 | `ST-AGENT-API-REDIRECT` | AST04 | 0 | 0 | - | - |
 | `ST-AGENT-CONFIG-INJECT` | AST04 | 1 | 3 | - | - |
-| `ST-HIDDEN-ANSI` | AST04 | 9 | 0 | - | - |
+| `ST-HIDDEN-ANSI` | AST04 | 10 | 0 | - | - |
 | `ST-HIDDEN-UNICODE` | AST04 | 13 | 0 | - | - |
 | `ST-HIDDEN-UNICODE-AMBIG` | AST04 | 0 | 0 | - | - |
 | `ST-MCP-DESCRIPTION-SWAP` | AST04 | 2 | 0 | 2/2 | 1/1 |
@@ -257,6 +260,6 @@ Each rule mapped to an OWASP class or with samples of its own, with the corpus s
 | `ST-DESERIALIZE-PY` | AST05 | 1 | 0 | 1/1 | 1/1 |
 | `ST-TAINT-DESERIAL-PY` | AST05 | 1 | 0 | - | - |
 
-126 of 133 rules fire on at least one sample.
+127 of 134 rules fire on at least one sample.
 Fired on no sample: `ST-ENCRYPTED-ARCHIVE`, `ST-AGENT-GITCONFIG-EXEC-REMOTE`, `ST-AGENT-API-REDIRECT`, `ST-HIDDEN-UNICODE-AMBIG`, `ST-MCP-ELICIT-SECRET`, `ST-MCP-TOOL-SHADOWING`, `ST-PROMPT-WEAK`.
 

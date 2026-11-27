@@ -479,7 +479,9 @@ def _carried_risk(text: str) -> str | None:
 
 
 def _ansi_context(f: IndexedFile, offset: int, mcp_code: bool) -> str | None:
-    """Where an ANSI sequence sits: "agent" text, an "example" in an instruction file, or None."""
+    """Where an ANSI sequence sits: "agent" text, an "example" in an instruction file, "output"
+    (any string in MCP server code, read only when the hidden text carries a risky payload), or
+    None."""
     if is_instruction_file(f):
         if f.suffix in (".md", ".mdx") and not f.in_markdown_prose(offset):
             return "example"  # a fenced code block in a skill: a snippet it shows, not its text
@@ -488,6 +490,8 @@ def _ansi_context(f: IndexedFile, offset: int, mcp_code: bool) -> str | None:
         return "agent" if _in_json_description(f, offset) else None
     if mcp_code and _in_code_description(f, offset):
         return "agent"
+    if mcp_code and f.string_span_at(offset) is not None:
+        return "output"  # a string an MCP server may print or return as a tool result
     return None
 
 
@@ -519,7 +523,8 @@ def _scan_overwrites(
         for span in hidden_spans(line, spelled=spelled):
             if cr_ends_lines and "carriage return" in span.how:
                 continue
-            if not script and _ansi_context(f, start + span.at, mcp_code) != "agent":
+            context = _ansi_context(f, start + span.at, mcp_code)
+            if not script and context not in ("agent", "output"):
                 continue
             hidden = line[span.start:span.end]
             risk = _carried_risk(hidden)
@@ -785,7 +790,7 @@ class InvisibleUnicodeScanner(Scanner):
             return
         for m in _ANSI_CSI.finditer(f.text):
             context = _ansi_context(f, m.start(), mcp_code)
-            if context is None:
+            if context is None or context == "output":
                 continue
             if context == "agent" and _ansi_hides(m.group(1), m.group(2)):
                 ev = f.evidence_for_span(m.start(), m.end())

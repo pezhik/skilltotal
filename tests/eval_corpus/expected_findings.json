@@ -243,6 +243,9 @@
   "ST-NET-NODE",
   "ST-SHELL-NODE"
  ],
+ "negative/AST01/mcp-tool-output-ansi-terminal-deception/colored-log-spinner": [
+  "ST-MCP-DETECTED"
+ ],
  "negative/AST01/password-archive/test-fixture-extract": [],
  "negative/AST01/post-exploitation/cli-own-launchagent": [
   "ST-POSTEX-PERSIST",
@@ -549,6 +552,10 @@
  ],
  "negative/AST02/npm-lifecycle-remote-exec/prepack-build": [
   "ST-INSTALL-NPM-PREPARE"
+ ],
+ "negative/AST02/npm-path-binary-replacement-agent-cli/own-bin-link": [
+  "ST-FS-NODE-WRITE",
+  "ST-INSTALL-NPM"
  ],
  "negative/AST02/npm-postinstall-miner/native-build-script": [
   "ST-INSTALL-NPM"
@@ -1456,6 +1463,10 @@
   "ST-SHELL-PY",
   "ST-TAINT-SHELL-PY"
  ],
+ "positive/AST01/mcp-tool-output-ansi-terminal-deception/probe-shape": [
+  "ST-HIDDEN-ANSI",
+  "ST-MCP-DETECTED"
+ ],
  "positive/AST01/password-archive/skill-download-protected-zip": [
   "ST-ARCHIVE-PASSWORD-EXTRACT"
  ],
@@ -2111,6 +2122,10 @@
  "positive/AST02/npm-lifecycle-remote-exec/preprepare-curl-sh": [
   "ST-INSTALL-NPM-PREPARE",
   "ST-INSTALL-NPM-REMOTE-EXEC"
+ ],
+ "positive/AST02/npm-path-binary-replacement-agent-cli/probe-shape": [
+  "ST-INSTALL-NPM",
+  "ST-NPM-AGENT-CLI-REPLACE"
  ],
  "positive/AST02/npm-postinstall-miner/miner-script-persistence": [
   "ST-INSTALL-MINER",

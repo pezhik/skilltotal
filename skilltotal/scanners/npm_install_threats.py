@@ -28,6 +28,7 @@ CATEGORY = "install_time_execution"
 R_DEPCONF_BEACON = "ST-NPM-DEPCONF-BEACON"
 R_SANDBOX_GATED_LOADER = "ST-NPM-SANDBOX-GATED-LOADER"
 R_INSTALL_MINER = "ST-INSTALL-MINER"
+R_AGENT_CLI_REPLACE = "ST-NPM-AGENT-CLI-REPLACE"  # nosec B105 - rule id, not a credential
 
 _JS_SUFFIXES = (".js", ".cjs", ".mjs", ".ts")
 
@@ -49,6 +50,21 @@ _NODE_ADDON = re.compile(
     r"""\brequire\s{0,3}\(\s{0,3}["']\.{1,2}/[^"'\n]{0,100}\.node["']\s{0,3}\)"""
 )
 _DETACHED = re.compile(r"\bdetached\s{0,3}:\s{0,3}true\b|\bsetsid\b")
+
+# An agent CLI's command name as a path segment or a whole string: `"claude"`, `/bin/codex`.
+_AGENT_CLI_NAME = re.compile(
+    r"""(?:["'`/\\])(?:claude|codex|gemini|opencode|cursor-agent|aider|qwen)(?:\.exe|\.cmd)?["'`]"""
+)
+# A directory that is on the user's PATH rather than the package's own folder.
+_PATH_DIR = re.compile(
+    r"""\.local["'`,/\s]{1,6}bin\b|/usr/(?:local/)?bin\b|\bhomedir\s{0,3}\(|npm_config_prefix"""
+    r"""|\bprocess\s{0,3}\.\s{0,3}env\s{0,3}\.\s{0,3}PATH\b|\bAPPDATA\b"""
+)
+# Setting the real binary aside, and putting something else under its name.
+_DISPLACE = re.compile(
+    r"\b(?:renameSync|rename|unlinkSync|rmSync|moveSync)\s{0,3}\(")
+_PLANT = re.compile(
+    r"\b(?:symlinkSync|symlink|linkSync|copyFileSync|copyFile|writeFileSync)\s{0,3}\(")
 
 _MINER = re.compile(
     r"--donate-level\b"
@@ -135,9 +151,30 @@ class NpmInstallThreatsScanner(Scanner):
             threat_class=ThreatClass.MALICIOUS_INDICATOR,
             code_context="comments",
         ),
+        RuleSpec(
+            id=R_AGENT_CLI_REPLACE,
+            category=CATEGORY,
+            severity=Severity.HIGH,
+            title="Install script replaces an AI agent's command-line program on the PATH",
+            description=(
+                "Code that npm runs when this package is installed names an AI coding agent's "
+                "command (claude, codex, gemini, ...) inside a directory on the user's PATH, "
+                "moves or deletes the file there and links or writes another file under that "
+                "name. Every later start of the agent from a shell then runs the replacement. "
+                "Installing a package has no reason to displace another program on the PATH."
+            ),
+            recommendation=(
+                "Do not install this package. If it was installed, reinstall the agent from "
+                "its vendor and compare the command on the PATH with the vendor's file."
+            ),
+            capability=Capability.INSTALL_TIME_EXECUTION,
+            threat_class=ThreatClass.MALICIOUS_INDICATOR,
+            code_context="comments",
+        ),
     ]
 
     def scan(self, index: FileIndex) -> ScanResult:
+        replace: list[Evidence] = []
         beacon: list[Evidence] = []
         gated: list[Evidence] = []
         miner: list[Evidence] = []
@@ -145,12 +182,13 @@ class NpmInstallThreatsScanner(Scanner):
             if f.suffix in _JS_SUFFIXES:
                 beacon.extend(_beacon(f))
                 gated.extend(_gated(f))
+                replace.extend(_agent_cli_replace(f))
             m = _MINER.search(f.text)
             if m is not None:
                 miner.append(f.evidence_for_span(m.start(), m.end()))
         findings = [
             _finding_from_rule(rule, evidence)
-            for rule, evidence in zip(self.rules, (beacon, gated, miner), strict=True)
+            for rule, evidence in zip(self.rules, (beacon, gated, miner, replace), strict=True)
             if evidence
         ]
         return ScanResult(findings=findings)
@@ -166,6 +204,27 @@ def _beacon(f: IndexedFile) -> list[Evidence]:
             return [f.evidence_for_span(host.start(), host.end()),
                     f.evidence_for_span(m.start(), m.end())]
     return []
+
+
+def _agent_cli_replace(f: IndexedFile) -> list[Evidence]:
+    text = f.text
+    name = None
+    for d in _PATH_DIR.finditer(text):
+        # The agent's name closes the same path expression that names the PATH folder.
+        window = text[d.end():d.end() + 120].split(";", 1)[0].split("\n", 1)[0]
+        hit = _AGENT_CLI_NAME.search(window)
+        if hit is not None:
+            name = f.evidence_for_span(d.end() + hit.start(), d.end() + hit.end())
+            break
+    if name is None:
+        return []
+    displace = _DISPLACE.search(text)
+    plant = _PLANT.search(text)
+    if displace is None or plant is None:
+        return []
+    return [name,
+            f.evidence_for_span(displace.start(), displace.end()),
+            f.evidence_for_span(plant.start(), plant.end())]
 
 
 def _gated(f: IndexedFile) -> list[Evidence]:

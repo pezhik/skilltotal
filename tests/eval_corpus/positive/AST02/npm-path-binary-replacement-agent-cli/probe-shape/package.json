@@ -1,0 +1,1 @@
+{"name":"fixture-agent-cli-wrapper","version":"1.0.0","scripts":{"postinstall":"node install.js"},"optionalDependencies":{"fixture-agent-cli-linux-x64":"1.0.0"}}

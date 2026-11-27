@@ -4,6 +4,19 @@ Tracks changes to the **detection ruleset**, keyed by `RULESET_VERSION`
 (`skilltotal/__init__.py`). A consumer that stored reports at an older ruleset version may
 re-scan to pick up newer findings. See `docs/contributing-rules.md` for the process.
 
+## ruleset 115 (engine 1.16.0)
+
+One new rule and one extended rule, from the 2026-11-27 research.
+- `ST-NPM-AGENT-CLI-REPLACE` (high, malicious indicator): a file npm runs at install names an AI
+  agent's command (`claude`, `codex`, `gemini`, ...) in the same path expression as a PATH folder
+  (`~/.local/bin`, `/usr/local/bin`, the home folder), moves or deletes a file and links or writes
+  another one. An install step that links only its own tool, or that keeps the agent's program in
+  the package's own folder, is not reported.
+- `ST-HIDDEN-ANSI`: in MCP server code, text a terminal does not draw (concealed with SGR 8,
+  or overdrawn) inside any string, not only a tool description, is reported when it holds an
+  instruction-override phrase, a download-and-run command or a credential path. Colour codes,
+  spinners and erase-line redraws that hide nothing risky are not reported.
+
 ## ruleset 114 (engine 1.15.0)
 
 Two new rules and one extended rule, from the 2026-11-26 research.

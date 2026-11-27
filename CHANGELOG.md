@@ -4,6 +4,12 @@ All notable changes to the SkillTotal engine. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com); the project uses
 [SemVer](https://semver.org). See `RULES_CHANGELOG.md` for detection-rule changes.
 
+## [1.16.0]
+
+### Added
+- Ruleset 115: `ST-NPM-AGENT-CLI-REPLACE`, and `ST-HIDDEN-ANSI` reads text hidden by an escape
+  sequence inside a string of MCP server code. See `RULES_CHANGELOG.md`.
+
 ## [1.15.0]
 
 ### Added
